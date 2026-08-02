@@ -163,10 +163,12 @@ pub enum DeviceHealth {
         serial: Option<String>,
         /// The `CorOS` version, when known.
         coros_version: Option<String>,
-        /// Seconds since anything was last received. The device pushes a
-        /// `GlobalTempo` heartbeat roughly every 0.8 s, so a value more than
-        /// a few seconds old means something is wrong even if nothing has
-        /// errored yet.
+        /// Seconds since anything was last received.
+        ///
+        /// Informational only. A large value here does NOT mean the device
+        /// is in trouble: an idle session has been measured silent for 80+ s
+        /// while healthy, so there is no threshold that separates quiet from
+        /// dead. See roadmap PROT-008.6.4.
         last_message_seconds: u64,
     },
     /// The connection dropped and the daemon is trying to re-establish it.

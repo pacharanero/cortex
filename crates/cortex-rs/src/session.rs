@@ -80,11 +80,22 @@ const SETTLE_MAX: Duration = Duration::from_secs(30);
 /// Message types the device pushes CONTINUOUSLY, regardless of whether it is
 /// still sending state.
 ///
-/// `GlobalTempo` arrives roughly every 0.8 s forever - it is the tempo and
-/// metronome clock, not state. Counting it as activity means the inbound
-/// stream is never silent, so a settle that waits for silence can never
-/// finish and always runs to [`SETTLE_MAX`]. That was measured as a 30 s
-/// handshake on every command doing 9 ms of work.
+/// `GlobalTempo` is the tempo and metronome clock, not state. It has been
+/// measured arriving roughly every 0.8 s in pairs, indefinitely. Counting it
+/// as activity means the inbound stream is never silent, so a settle that
+/// waits for silence can never finish and always runs to [`SETTLE_MAX`].
+/// That was measured as a 30 s handshake on every command doing 9 ms of work,
+/// which is why the exclusion exists.
+///
+/// **It is not always continuous, and we do not know what decides that.** A
+/// later run measured an idle subscribed session receiving nothing at all for
+/// 17 s, 30 s, and 80+ s while healthy. Both observations are real; the
+/// condition that switches between them has not been identified. So exclude
+/// these types from the settle - that reasoning holds either way, since the
+/// exclusion only ever costs a slightly earlier settle - but do not infer
+/// from this that inbound traffic is a reliable clock. See roadmap
+/// PROT-008.6.4, where a fail-fast built on that inference had to be
+/// withdrawn.
 ///
 /// Anything listed here is ignored when deciding whether the device has
 /// finished talking. It is still dispatched normally.
@@ -665,14 +676,20 @@ impl Session {
 
     /// Seconds since anything was received from the device.
     ///
-    /// The device pushes a `GlobalTempo` heartbeat roughly every 0.8 s, so a
-    /// value more than a few seconds old means the link is unhealthy even if
-    /// nothing has errored yet. That is what makes it a usable liveness
-    /// signal rather than a guess.
+    /// Counts ALL inbound traffic, heartbeats included - unlike the settle
+    /// logic, which deliberately ignores them.
     ///
-    /// Note this counts ALL inbound traffic, heartbeats included - unlike
-    /// the settle logic, which deliberately ignores them. Here the heartbeat
-    /// is exactly the signal we want.
+    /// **Not a liveness signal, despite appearances.** This was introduced
+    /// believing the device pushes a `GlobalTempo` heartbeat about every
+    /// 0.8 s, which would make a larger value conclusive. Measured on real
+    /// hardware, an idle subscribed session falls silent for long stretches
+    /// while perfectly healthy: traffic for roughly 10 s after the
+    /// handshake, then nothing for 17 s, 30 s, and 80+ s in successive runs.
+    /// A fail-fast built on a 5 s threshold abandoned requests the device
+    /// would have answered.
+    ///
+    /// So treat this as an observation to report, not a verdict to act on.
+    /// See roadmap PROT-008.6.4 before building anything on it.
     #[must_use]
     pub fn seconds_since_last_message(&self) -> u64 {
         let last = self.shared.last_any_inbound_ms.load(Ordering::Relaxed);

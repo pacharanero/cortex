@@ -78,9 +78,14 @@ impl Daemon {
                 Ok(r) => r,
                 Err(e) => Response::error(format!("building status: {e}")),
             },
+            // Answer in the same shape the direct path emits, so a caller
+            // cannot tell whether it went through the daemon. A `{:?}` dump
+            // of the protobuf would have been a second, worse format.
             Request::Version => self.respond(|c| {
-                c.version(REQUEST_TIMEOUT)
-                    .map(|v| serde_json::json!({ "raw": format!("{v:?}") }))
+                c.version(REQUEST_TIMEOUT).and_then(|v| {
+                    serde_json::to_value(crate::device_version(&v))
+                        .map_err(|e| cortex_rs::Error::Decode(format!("DeviceVersion: {e}")))
+                })
             }),
             Request::ActiveScene => {
                 self.respond(|c| c.active_scene(REQUEST_TIMEOUT).map(serde_json::Value::from))
@@ -154,6 +159,10 @@ impl Daemon {
         Status {
             daemon_version: env!("CARGO_PKG_VERSION").to_string(),
             uptime_seconds: self.started.elapsed().as_secs(),
+            // Reported raw, with no verdict attached. An idle session has
+            // been measured silent for 80+ s while perfectly healthy, so
+            // there is no threshold here that would mean anything - see
+            // roadmap PROT-008.6.4.
             device: DeviceHealth::Connected {
                 serial: None,
                 coros_version: None,

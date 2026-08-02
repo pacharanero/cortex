@@ -723,6 +723,18 @@ fn cmd_version_via_session(fmt: Format) -> Result<()> {
 }
 
 fn cmd_version(fmt: Format) -> Result<()> {
+    // Ask the held session if there is one. This command is the natural
+    // "is my unit connected?" check, so refusing it whenever a daemon runs
+    // would break it exactly when the answer is most obviously yes - and it
+    // cannot open the device for itself, because doing so alongside a held
+    // session wedges both.
+    if let Some(result) = connect::request(&cortex_rs::Request::Version) {
+        let parsed: DeviceVersion = serde_json::from_value(result?)?;
+        return emit(&parsed, fmt, print_device_version);
+    }
+
+    // Still guarded: a daemon could have started between the probe above and
+    // the open below.
     ensure_device_free()?;
     let transport = Transport::open(DeviceKind::QuadCortex)?;
 
@@ -840,11 +852,15 @@ fn connected() -> Result<(std::sync::Arc<cortex_rs::Session>, cortex_rs::QuadCor
 /// Refuse to touch the device directly while a daemon holds it.
 ///
 /// Hardware-verified, the hard way: running a command that opened the device
-/// for itself while `cortex connect` held a session left the device silent -
-/// no reply, and no `GlobalTempo` heartbeat either, though it normally
-/// arrives every 0.8 s - and every later read on the held session timed out.
-/// Nothing errored at the point of the collision, which is what makes it
-/// worth refusing loudly here.
+/// for itself while `cortex connect` held a session left every later read on
+/// that held session timing out. Nothing errored at the point of the
+/// collision - the damage only showed up on the next request - which is what
+/// makes it worth refusing loudly here rather than hoping.
+///
+/// The device also went silent at the same moment, but that is NOT the
+/// evidence: an idle session has since been measured silent for 80+ s while
+/// perfectly healthy (see roadmap PROT-008.6.4). The read failures are what
+/// establish this; the silence merely accompanied them.
 ///
 /// This is the CLI-side expression of the exclusive-access invariant in
 /// AGENTS.md: one owning process per device, not one connection per call.
@@ -1915,7 +1931,12 @@ mod tests {
 // ---------------------------------------------------------------------------
 
 /// Device firmware and identity, as reported by a `Version` READ.
-#[derive(serde::Serialize)]
+///
+/// Deserialisable as well as serialisable because the daemon answers a
+/// `Version` request in exactly this shape and the client parses it back -
+/// the "stable, documented shape" above is a contract between two of our own
+/// processes, not only an output format.
+#[derive(serde::Serialize, serde::Deserialize)]
 struct DeviceVersion {
     /// `QC` or `ATMA` (the Nano Cortex codename).
     device_type: Option<String>,

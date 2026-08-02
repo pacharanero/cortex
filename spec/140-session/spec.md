@@ -216,11 +216,17 @@ This refines the earlier finding rather than contradicting it. The **`ModelRepo`
 
 **The structural difference from Cortex Control remains.** It opens ONE session and keeps it, paying the handshake once; we open and tear down a session per command. A persistent session would remove the remaining per-command cost, and is the right shape for the MCP server, which must hold a single connection anyway.
 
-### The device is never quiet, and what that means (2026-08-02)
+### The device is sometimes never quiet, and sometimes silent for a minute (2026-08-02)
 
-**`GlobalTempo` is a continuous heartbeat.** Observed arriving roughly every 0.8 s, indefinitely, in pairs. It is the tempo and metronome clock, not state.
+**`GlobalTempo` behaved as a continuous heartbeat.** Observed arriving roughly every 0.8 s, indefinitely, in pairs. It is the tempo and metronome clock, not state.
 
 This broke the adaptive settle outright. Waiting for 1.5 s of inbound silence can never succeed against a 0.8 s heartbeat, so every subscribed handshake ran to `SETTLE_MAX` - a 30 s wait on a command doing 9 ms of work. `HEARTBEAT_TYPES` now excludes `GlobalTempo` and `IoMeter` from the liveness stamp; they are still dispatched normally, they just do not count as the device having more to say.
+
+**Later the same day, the opposite was measured, and the contradiction is unresolved.** Sampling a held session's time-since-last-message twice a second on an idle unit: traffic for roughly the first 10 s after the handshake, then nothing at all for 17 s in one run and 80+ s in another. Repeated on a fresh daemon with nothing else touching the device, same shape.
+
+Both observations are real and neither has been retracted. What differs between "never quiet" and "quiet for a minute" has not been identified - candidates include whether the metronome or tempo is actually running on the unit, the screen or UI state, and what the player last touched. Nobody should build on either reading until that is settled.
+
+The practical consequence is recorded in roadmap PROT-008.6.4: a fail-fast that abandoned a request after 5 s of silence was implemented on the strength of the first observation and had to be withdrawn, because it refused work on a perfectly healthy idle session. **Inbound traffic is not a clock.** Treat time-since-last-message as something to display, not something to decide on.
 
 **On-unit changes DO push.** Changing scene on the hardware produced `Scene` and `RecallPreset` pushes to a subscribed client. So a cached view of device state CAN be kept current, which is what makes a persistent connection worth building rather than merely faster.
 
