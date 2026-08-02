@@ -17,7 +17,36 @@ tags: ["roadmap", "planning"]
 >
 > Completed items are RETAINED here until the first release, because until then this file is the only place that records what is built and what is merely specified. Once a CHANGELOG exists to carry that record, done items move out and this becomes a pure backlog.
 >
-> **`[x]` means the code exists and passes the local gate. It does NOT mean hardware-verified.** Anything touching the wire stays provisional until its hardware smoke item (PROT-005.11, PROT-006.16) passes against a real Quad Cortex. Only `cortex version` has been round-tripped against hardware so far.
+> **`[x]` means the code exists and passes the local gate. It does NOT mean hardware-verified.** Anything touching the wire stays provisional until its hardware smoke item passes against a real Quad Cortex.
+>
+> Hardware-verified so far (2026-08-02, CorOS 4.0.1 / firmware `d14e` / serial `QA00AB123`): the transport, framing, and envelope; `version` by both the one-shot transport path and the session path; the full connect handshake, keepalive, and clean disconnect; the `request`, `await_broadcast`, and `collect` correlation primitives; the `active_scene`, `read_current_preset`, `list_presets`, `list_folders`, and `read_preset` read paths; and the `recall_preset` and `switch_scene` navigation writes. **No grid-edit or file-write path has ever run against hardware, because none is implemented yet.**
+
+## Where each ID lives
+
+This file is the single place to see where the project is up to. Each ID names work; the zone spec beside it says what that work must do and how it is designed.
+
+| ID prefix | Zone | What it covers |
+| --- | --- | --- |
+| PROT-001 | [100-transport](100-transport/spec.md) | USB HID open, read/write, the benign write STALL |
+| PROT-002 | [110-framing](110-framing/spec.md) | Report framing, flag-driven reassembly, the trailer envelope |
+| PROT-003 | [120-proto-schema](120-proto-schema/spec.md) | Vendored `.proto`, `prost` build, message types |
+| PROT-004 | [130-domain-model](130-domain-model/spec.md) | `DeviceKind`, `Row`, `Catalog`, and the typed preset/grid views |
+| PROT-005 | [140-session](140-session/spec.md) | Handshake, keepalive, correlation, broadcast waiting |
+| PROT-006 | [150-client](150-client/spec.md) | The ergonomic `QuadCortex` API |
+| PROT-007 | [150-client](150-client/spec.md) | Capture and IR export/import (investigation) |
+| CLI-00x | [200-cli](200-cli/spec.md) | The `cortex` command surface |
+| MCP-00x | [300-mcp](300-mcp/spec.md) | The MCP server and its safety boundary |
+| GUI-00x | [400-gui](400-gui/spec.md) | The Tauri desktop app |
+| DOCS-00x | - | The documentation site and the agent-facing model reference |
+| ENG-001 | [500-dx-tooling](500-dx-tooling/spec.md) | Scripts, lint, test |
+| ENG-002 | [600-ci-release](600-ci-release/spec.md) | CI and release |
+| ENG-003 | [900-project-governance](900-project-governance/spec.md) | Licensing, attribution, legal hygiene |
+| ENG-004 | [001-overview](001-overview/spec.md) | Traceability |
+| ENG-005 | - | `s/usb-trace`, for observing the official client on the wire |
+
+!!! note
+
+    Progress is tracked HERE and nowhere else. Zone folders hold `spec.md` (what it must do) and `design.md` (how it is built and why), but no `tasks.md` - see [001-overview/spec.md](001-overview/spec.md#progress-tracking) for why that convention was dropped.
 
 ## Protocol and Crate (PROT)
 
@@ -53,12 +82,12 @@ The bottom-up port of the Cortex Control USB HID protocol from `pyquadcortex` (M
 - [x] `Message` struct with `parse()` (trailer strip, message-type extraction)
 - [x] `TRAILER_LEN = 8` constant
 - [ ] **PROT-004.1**: `Preset` newtype wrapping `proto::BinaryPreset` with ergonomic field access
-- [ ] **PROT-004.2**: `Grid` model - rows, columns, blocks, the row-numbering trap (0-based API, 1-4 on screen)
+- [~] **PROT-004.2**: `Grid`. The `Row` newtype exists (`from_wire` / `from_screen`, refusing screen row 0) and encodes the numbering trap. A read-side `Grid` view over a preset is still planned. NOTE: `grid.rs` is taken by the message builders, so the domain view needs another home
 - [ ] **PROT-004.3**: `Block` struct (row, column, model_id, params)
 - [ ] **PROT-004.4**: `Scene` struct (index, label, color, bypass state)
-- [ ] **PROT-004.5**: `Catalog` - parse the device's ModelRepo payload (gzip(tar(ModelRepo.xml)), ~47 KB) into a model-id-to-metadata map
-- [ ] **PROT-004.6**: Helper functions: `blocks()`, `splits()`, `slot_to_position()`, `position_to_slot()`, `input_level_db()`, `db_to_input_level()`, `free_rows()`, `row_status()`
-- [ ] **PROT-004.7**: Constants: `UNITY_LEVEL`, `USER_SETLIST_ROOT`, `SCENE_UNLABELLED`, `BANKS`, `SLOTS_PER_BANK`, `SETLIST_SLOTS`
+- [x] **PROT-004.5**: `Catalog` - HARDWARE-VERIFIED. Container confirmed as `gzip(tar(ModelRepo.xml))`; parses 533 models, 31 categories, 3809 parameters, with the vendor's `tm` attribution carried verbatim
+- [~] **PROT-004.6**: Helpers. Done: `slot_to_position` (+ checked variant), `position_to_slot`, `input_level_db`, `db_to_input_level`, `preset_has_block`. Planned: `blocks()`, `splits()`, `free_rows()`, `row_status()`
+- [x] **PROT-004.7**: Constants: `UNITY_LEVEL`, `USER_SETLIST_ROOT`, `USER_SETLIST`, `SCENE_UNLABELLED`, `BANKS`, `SLOTS_PER_BANK`, `SETLIST_SLOTS`
 
 ### PROT-005: Session layer (zone 140)
 
@@ -74,7 +103,7 @@ The background RX thread, connect handshake, keepalive, and request/response cor
 - [x] **PROT-005.8**: `disconnect()` - send `Connection{connected: false}` (best effort)
 - [x] **PROT-005.9**: Write serialization - a `Mutex` around device writes so a keepalive cannot interleave between a multi-report message's frames
 - [x] **PROT-005.10**: 1 MiB reassembly cap - if the buffer exceeds this without completing, reset (defense against a lost LAST frame)
-- [ ] **PROT-005.11**: Hardware smoke test - connect, verify state pushes flow, disconnect cleanly (PROVISIONAL until tested against real device)
+- [x] **PROT-005.11**: Hardware smoke test - VERIFIED 2026-08-02 against CorOS 4.0.1 / firmware d14e / QA00AB123. Handshake completed in 2.2 s; state pushes flowed; `active_scene`, `read_current_preset`, and `list_presets` all answered; disconnect and thread join clean. Run with `cortex probe`
 
 ### PROT-006: Client API (zone 150)
 
@@ -82,10 +111,10 @@ The ergonomic `QuadCortex` struct - the Rust equivalent of pyquadcortex's 60+ me
 
 - [x] **PROT-006.1**: `QuadCortex` struct wrapping `Arc<Session>`, lifecycle (connect/disconnect/close, Drop)
 - [x] **PROT-006.2**: `version()` - wired through `Session::request` (correlated by type, no request_id echo)
-- [ ] **PROT-006.3**: Catalog property - lazily fetch and parse ModelRepo
-- [~] **PROT-006.4**: Read operations. Done: `read_current_preset` (live grid, no side effects), `read_preset` (recall + capture the echoing push), `active_scene`, `list_presets`, `find_preset`, `list_folders` (via `collect`), plus the `PresetEntry`/`Folder` value objects. Planned: `captures`, `list_irs`, `recents`, `favorites`, `pinned_models`, `master_volume`, `looper`, `tuner`, `io_settings`, `settings`, `global_eq`, `mode`
-- [x] **PROT-006.5**: Navigation: `recall_preset`, `switch_scene` (implemented); `copy_scene`, `set_scene_label`, `set_scene_color` (planned)
-- [ ] **PROT-006.6**: Grid write: `set_param` (with scene/promote/text/real), `set_bypass`, `set_block` (with verify), `remove_block`, `move_block`, `set_chain_input`, `set_chain_output`, `write_preset` (low-level)
+- [x] **PROT-006.3**: Catalog - `fetch_model_repo` + `Catalog::parse`. HARDWARE-VERIFIED 2026-08-02: parsed the real payload from CorOS 4.0.1 (533 models, 31 categories, 318 with vendor attribution). Container confirmed as `gzip(tar(ModelRepo.xml))` - 46,704 bytes gzipped, 558,592 tar, 556,732 XML. Wired into `cortex preset` so blocks show names, and into `cortex catalog` for search by model name OR by the gear it evokes
+- [~] **PROT-006.4**: Read operations. HARDWARE-VERIFIED 2026-08-02: `read_current_preset` (live grid, no side effects), `read_preset` (recall + capture the echoing push), `active_scene`, `list_presets`, `find_preset`, `list_folders` (via `collect`), plus the `PresetEntry`/`Folder` value objects. Planned: `captures`, `list_irs`, `recents`, `favorites`, `pinned_models`, `master_volume`, `looper`, `tuner`, `io_settings`, `settings`, `global_eq`, `mode`
+- [~] **PROT-006.5**: Navigation. HARDWARE-VERIFIED 2026-08-02: `recall_preset` (grid swap confirmed by read-back), `switch_scene` (confirmed by `active_scene`). Planned: `copy_scene`, `set_scene_label`, `set_scene_color`
+- [~] **PROT-006.6**: Grid write. HARDWARE-VERIFIED 2026-08-02: `set_block` (echo-verified, cross-checked by read-back), `set_param` (catalog name resolution, read-back confirmed), `remove_block` (DELETE action, read-back confirmed). ALSO hardware-verified 2026-08-02: `set_bypass` (all eight scene slots at once), `set_chain_input`, `set_chain_output`, `set_split` (including the odd-row refusal), and `set_param_in_scene` (the three-message promote/switch/write sequence, confirmed by a per-scene read-back). Not implemented: `move_block`, `write_preset`. The BlockRefused path is now fully hardware-verified in BOTH directions, and provoking a real refusal found a false-positive bug: a missing echo was treated as proof of refusal when echo latency merely varies. The grid read-back is now ground truth and the echo a fast path
 - [ ] **PROT-006.7**: Splitter/mixer/lane/gate: `set_splitter_param`, `set_mixer_param`, `set_lane_output`, `set_input_gate`, `set_split`, `set_split_mute`
 - [ ] **PROT-006.8**: Tempo: `set_tempo_param`, `set_tempo_option`, `set_tempo_subdivision`, `set_metronome_sound`, `set_metronome_routing`, `set_time_signature`, `set_tempo_led`, `set_metronome_volume`
 - [ ] **PROT-006.9**: Stomp/expression/MIDI: `set_stomp_assignment`, `clear_stomp_assignment`, `set_stomp_momentary`, `set_stomp_label`, `set_expression`, `set_expression_bypass`, `set_midi_out`, `set_preset_load_midi_out`
@@ -95,7 +124,57 @@ The ergonomic `QuadCortex` struct - the Rust equivalent of pyquadcortex's 60+ me
 - [ ] **PROT-006.13**: I/O ports: `set_input_port`, `set_output_port`, `set_usb_port`, `set_midi_thru`, `set_output_pairing`
 - [ ] **PROT-006.14**: Pinning/favorites: `pin_model`, `unpin_model`, `add_favorite`, `remove_favorite`
 - [ ] **PROT-006.15**: Module-level helpers: `blocks()`, `splits()`, `input_chain_rows()`, `stomp_assignments()`, `midi_out()`, `tempo_params()`, `param_options()`, `free_rows()`, `row_status()`, `params_equal()` - `slot_to_position`, `position_to_slot`, `input_level_db`, `db_to_input_level` done
-- [ ] **PROT-006.16**: Hardware smoke test - exercise recall, read_preset, set_param, save against a real Quad Cortex
+- [~] **PROT-006.16**: Hardware smoke test. Done 2026-08-02 for the implemented surface: `version`, `active_scene`, `read_current_preset`, `list_presets`, `list_folders`, `recall_preset`, `switch_scene`, `read_preset` - all against CorOS 4.0.1 / d14e / QA00AB123, with the unit restored to its starting state. Trap 14 (a recall resets the active scene) was confirmed live. Outstanding: `set_param` and `save`, which are not implemented yet (PROT-006.6, PROT-006.10)
+
+### PROT-007: Capture and IR export / import
+
+Neural Captures and user IRs live only on the unit and in Neural's cloud. No existing tool - official or community - can export a capture to a local file, so a player's own captures cannot be backed up, version-controlled, or moved between units. They are the player's OWN data, which makes this the least legally fraught significant feature on this page and arguably the most valuable.
+
+Status: **investigation, not yet designed.** The wire path is unconfirmed. `FileMessage` carries `ir_payload` and `preset_payload` `bytes` fields, and `LocalBackup`, `CloudBackup`, and `BackupsForward` message types exist in the recovered schema, so a route probably exists - but which one carries capture audio data, and in what format, is unknown.
+
+- [ ] **PROT-007.1**: Establish whether a capture's payload can be read over the wire at all, and by which message type. Capture with `CORTEX_TRACE` while Cortex Control performs a backup
+- [ ] **PROT-007.2**: Identify the on-wire container and whether it is gzipped, chunked, or both (the `ModelRepo` precedent is gzip inside a `bytes` field, ~47 KB over ~371 reports)
+- [ ] **PROT-007.3**: `export_capture(key, path)` - write one capture to a local file
+- [ ] **PROT-007.4**: `import_capture(path)` - write a capture back to the unit. **Destructive; gate behind confirmation and the MCP safety surface**
+- [ ] **PROT-007.5**: Same for user IRs (`list_irs` already enumerates them)
+- [ ] **PROT-007.6**: `cortex capture export` / `import` CLI surface
+- [ ] **PROT-007.7**: Decide and document a container format. Prefer something self-describing that records the source unit, CorOS version, and capture metadata, so a file is still meaningful years later
+
+Do not ship import before export has been round-tripped on hardware: writing a malformed capture to the unit is the most plausible way this project could damage a user's data.
+
+## Docs (DOCS)
+
+### DOCS-001: Documentation site
+
+A Zensical site per house-style [docs.md](https://github.com/marcus-pacharanero/house-style/blob/main/docs.md), served by `s/docs`.
+
+- [x] **DOCS-001.1**: Zensical 0.0.52 scaffold, `s/docs`, artifact-based Pages deploy with path filters. Builds clean
+- [x] **DOCS-001.2**: `docs/install.md` - udev rule with the reasoning, the exclusive-HID gotcha, `s/install`, completions, and a first check
+- [x] **DOCS-001.3**: `docs/walkthrough.md` - every output captured from real hardware, nothing invented. Plus `docs/cli-reference.md`, GENERATED from `--help` by `s/docs-cli-reference` so it cannot drift
+- [x] **DOCS-001.4**: `docs/protocol.md` - the wire, the handshake, correlation, the catalog, and the grid traps, with this project's own measurements marked as such
+- [x] **DOCS-001.5**: `docs/runbook-hardware-smoke.md` - ten checkpointed steps ending in a restore, with the known gaps listed
+
+### DOCS-002: Agent manual - factory preset reference
+
+A per-device, per-CorOS reference of the factory presets: what each is modelled on, and how to get a usable sound out of it. Aimed at agents driving the MCP server, who otherwise have no idea that "Brit 2203" is a Marshall-style voicing.
+
+- [ ] **DOCS-002.1**: Generate the raw preset inventory from the device rather than transcribing it - `cortex presets --setlist "/opt/neuraldsp/Factory Library"` already emits all 256 names. Keep it a build step so a CorOS update regenerates it
+- [ ] **DOCS-002.2**: Key the reference by device AND CorOS version; factory content changes between releases and a stale mapping is worse than none
+- [ ] **DOCS-002.3**: Setup tips per preset - the genuinely additive part, since the gear mapping is no longer ours to write (see below)
+- [ ] **DOCS-002.4**: Expose it to the MCP server so an agent can resolve intent ("something like a cranked Plexi") to a slot
+
+**This item shrank substantially on 2026-08-02.** The device's own catalog carries a `tm` attribute holding **Neural DSP's own attribution** for each model - `Based on Marshall(R) JCM800(R)`, `Based on ProCo(R) Rat(R)`, `Based on Universal Audio(R) 1176(R)` - on 318 of 533 models. So the "what is this modelled on" mapping does not need writing at all: it ships with the unit, in the vendor's own carefully-worded form, and `cortex catalog --search marshall` already surfaces it.
+
+That changes the plan in three ways:
+
+1. **Never paraphrase the `tm` string.** Reproduce it verbatim. It is Neural DSP's statement about other companies' marks; rewording it, or presenting our own mapping as authoritative, is both less accurate and less defensible. The crate surfaces it as `Model::based_on` and the CLI prints it unchanged.
+2. **The remaining work is genuinely additive only** - setup tips, and mapping *presets* (which the `tm` data does not cover) to the *models* they contain, which the catalog does let us resolve.
+3. **This is a runtime lookup, not a document to write.** An agent can already resolve "something like a cranked Plexi" by searching the live catalog, which stays correct across CorOS updates for free.
+
+Remaining constraints:
+
+- **Trademark caveating is still mandatory for anything WE write.** Fender, Marshall, Mesa/Boogie, Vox and the rest are other companies' marks. Follow the industry norm every modelling vendor and community site uses: describe what a preset is *evocative of*, never imply endorsement, licensing, or that the model IS the amp. Neural DSP's own naming is deliberately oblique ("Brit 2203", not "Marshall JCM800") and our docs should not undo that by publishing a decode table presented as authoritative.
+- **Preset NAMES are factual interoperability information; preset DATA is Neural DSP's.** Listing names and our own commentary is fine. Committing extracted factory preset payloads into this repo is not - see the legal hygiene section of AGENTS.md.
 
 ## CLI (CLI)
 
@@ -111,18 +190,26 @@ The `cortex` command-line surface over the crate.
 
 ### CLI-002: Format and output
 
-- [ ] **CLI-002.1**: `--format text|json` global flag, honoured by every command
-- [ ] **CLI-002.2**: `cortex version --format json` - structured JSON output
+- [x] **CLI-002.1**: `--format text|json` global flag, honoured by every command
+- [x] **CLI-002.2**: `cortex version --format json` - structured JSON. The output types are defined in the CLI rather than serialising the prost types, so the JSON is an interface with stable field names rather than a wire representation. Two fields are renamed to what they actually hold (`coros_version`, `wireless_firmware_checksum`), with the vendor's misleading names recorded in the type's docs
+- [x] **CLI-003.10**: `cortex grid [--params]` - the LIVE grid, read without side effects. Distinct from `cortex preset --slot X`, which reads a STORED slot and can only do so by recalling it, discarding unsaved edits
+- [x] **CLI-003.11**: `cortex set-param` / `set-bypass` / `set-block` / `remove-block`, taking rows as the unit LABELS them (1-4)
 - [ ] **CLI-002.3**: `--schema` / `--print-schema` - JSON Schema of a command's inputs
-- [ ] **CLI-002.4**: Data on stdout, hints on stderr (house-style invariant)
+- [x] **CLI-002.4**: Data on stdout, hints on stderr - every command follows this; progress, warnings, and handshake steps all go to stderr so output stays pipeable
 
 ### CLI-003: Preset and scene commands
 
-- [ ] **CLI-003.1**: `cortex recall --setlist <path> --slot <slot>` - recall a preset
-- [ ] **CLI-003.2**: `cortex scene --index <n>` - switch active scene
-- [ ] **CLI-003.3**: `cortex dump-preset --setlist <path> --slot <slot>` - recall and print full BinaryPreset as text or JSON
-- [ ] **CLI-003.4**: `cortex list-presets --setlist <path>` - list presets in a setlist
-- [ ] **CLI-003.5**: `cortex list-folders` - list all folders the device knows
+All HARDWARE-VERIFIED 2026-08-02 against CorOS 4.0.1 / d14e / QA00AB123. Named without the `list-` prefix, since the noun already reads as a listing and `cortex presets` is what a user reaches for.
+
+- [x] **CLI-003.1**: `cortex recall --slot <slot> [--setlist <path>] [--factory]`
+- [x] **CLI-003.2**: `cortex scene --index <0-7>` - zero-based, where the unit labels scenes A-H
+- [x] **CLI-003.3**: `cortex preset --slot <slot>` - recalls and prints the preset, with each block NAMED via the catalog and the vendor's attribution shown
+- [x] **CLI-003.4**: `cortex presets [--setlist <path>] [--include-empty]`
+- [x] **CLI-003.5**: `cortex folders` - all 399 folders, via the session's `collect`
+- [x] **CLI-003.6**: `cortex probe` - handshake plus every read path, the hardware smoke test
+- [x] **CLI-003.7**: `cortex catalog [--search <text>] [--model <id>] [--dump <file>] [--from-file <file>]`
+- [x] **CLI-003.8**: `CORTEX_TRACE=1` - stderr tracing of inbound traffic and handshake steps
+- [ ] **CLI-003.9**: `cortex capture` / `cortex ir` - export and import (blocked on PROT-007)
 
 ### CLI-004: Distribution
 
@@ -130,7 +217,8 @@ The `cortex` command-line surface over the crate.
 - [ ] **CLI-004.2**: auto-tag workflow - version bump on main creates `v<x.y.z>` tag
 - [ ] **CLI-004.3**: crates.io publish workflow (PROT layers must be complete first)
 - [ ] **CLI-004.4**: cargo-dist release pipeline (archives + installers)
-- [ ] **CLI-004.5**: Shell completions install command (`cortex completions install`)
+- [x] **CLI-004.5**: `cortex completions install` - detects the shell, writes to `~/.zfunc` (zsh) or the conventional directory, prints the one-time setup, never edits startup files
+- [x] **CLI-004.6**: `s/install` - installs from `crates/cortex-cli` (the workspace root has no `[package]`, so `cargo install --path .` fails), with a udev-rule preflight
 
 ## MCP (MCP)
 
@@ -189,6 +277,8 @@ The visual design goal is a **hardware-faithful rendering of the Quad Cortex fro
 ## Engineering (ENG)
 
 ### ENG-001: DX and testing
+- [x] **ENG-001.x**: Correlation unit tests - 12 tests over `dispatch` covering type-first matching, the id-less oldest-first fallback, cascade rejection, the stale-seed-push skip, collector semantics, and the liveness stamp. No fake transport needed; `dispatch` is a free function. The HashMap-ordering guard was verified to fail 12/12 with the bug reintroduced and 0/12 with it fixed
+- [ ] **ENG-001.y**: Fake transport for the RX loop itself - the 1 MiB reassembly cap and the FIRST-resets-stale-partial rule need frame injection
 
 - [x] `s/test` - cargo fmt + clippy + test
 - [x] `s/lint` - cargo fmt + clippy + reuse lint
@@ -214,11 +304,32 @@ The visual design goal is a **hardware-faithful rendering of the Quad Cortex fro
 - [x] NOTICE + THIRD-PARTY-NOTICES.md (pyquadcortex MIT, deskop-nano-cortex Apache-2.0, qc-stomp-tools MIT)
 - [x] Trademark and unaffiliation notice in README, AGENTS.md, NOTICE
 - [x] AGENTS.md (repo-local, pointing at parent workspace)
+- [ ] **ENG-003.1**: **Confirm the copyright holder.** Currently `2026 Dr Marcus Baw` with no company. AGENTS.md flags this as mixed-domain work with no default company, so it needs a decision. If it changes, every SPDX header and `REUSE.toml` move in ONE commit
+- [ ] **ENG-003.2**: Decide whether a contributor licence agreement is wanted. Current stance: not in scope - the AGPL header is the inbound-outbound grant
+- [ ] **ENG-003.3**: If a closed derivative ever needs to exist, add `DUAL-LICENSE.md` and the boilerplate. Requires approval
+- [ ] **ENG-003.4**: SECURITY.md and CONTRIBUTING.md before the repo is public-facing
+- [ ] **ENG-003.5**: If we ever target on-device builds, adapt `qc-stomp-tools` (MIT) with attribution and a NOTICE entry
 
 ### ENG-004: Traceability
 
 - [ ] **ENG-004.1**: Add `@see` traceability headers to all owned source files linking to zone specs
 - [ ] **ENG-004.2**: CI gate for `@see` link resolution (optional, low priority)
+
+### ENG-005: `s/usb-trace` - observe Cortex Control on the wire
+
+A script that sets up passive USB observation of the official Cortex Control app driving the device, so its traffic can be decoded against our schema. This is the tool for questions of the form "how does the official client do X" - the answer to which is evidence about the wire, not inference about intent.
+
+**Named `usb-trace`, not `usb-record` or `usb-capture`, deliberately.** "Capture" already means a Neural Capture in this domain and "record" implies audio; either would suggest this script records sound, which it emphatically does not. `trace` is already the project's word for protocol observation (`CORTEX_TRACE`), so the two read as the same idea at different levels.
+
+The method, from [the research note](../quad-cortex-linux-editor-and-protocol.md): with the QC passed through to a Windows VM under QEMU, the **host** kernel still sees the traffic. So `modprobe usbmon` plus a capture of the relevant `usbmonN` interface on the Linux host records everything, without needing USBPcap inside Windows and without the macOS exclusive-access problem.
+
+- [ ] **ENG-005.1**: `s/usb-trace` - preflight `usbmon` (module loaded, `/sys/kernel/debug/usb/usbmon` readable), identify the QC's bus from `lsusb`, and start a capture to a file
+- [ ] **ENG-005.2**: A decoder that reads a capture and prints it in the same shape as `CORTEX_TRACE` - strip the report ID, honour `len`, reassemble on the flags, gunzip a `1f 8b` payload, read the little-endian type from the trailer, decode against our vendored schema
+- [ ] **ENG-005.3**: Runbook: what to do in Cortex Control while tracing to answer a specific question, starting with capture export (PROT-007.1)
+
+**Known obstacle.** The QEMU/Windows/Cortex Control setup on the development machine works but drops its connection regularly, so it is adequate for short targeted observations and not for sustained work. Plan traces as single short scripted actions - "open the app, export one capture, stop" - rather than long exploratory sessions, and expect to repeat them.
+
+**Do not commit raw captures.** They contain readable preset, path, device, and build strings. Commit decoded findings in our own words, as the prior art does. See the legal hygiene section of AGENTS.md.
 
 ## Future
 
@@ -228,3 +339,12 @@ The visual design goal is a **hardware-faithful rendering of the Quad Cortex fro
 - **FUTURE-004**: On-device builds (qc-stomp-tools ioctl route) - only if there is a compelling reason; the USB route is preferred
 - **FUTURE-005**: Protocol-version probe - surface a CorOS version check rather than hard-coding assumptions, since the protocol has no version field on the wire
 - **FUTURE-006**: Conformance suite - port pyquadcortex's offline test suite as a Rust integration test reference
+- **FUTURE-007**: Audio feedback loop - let the MCP server "hear" the unit. The Quad Cortex presents class-compliant USB **audio** interfaces that are separate from the HID interface we use, so a host could play a standardised stimulus (DI guitar phrase, sine sweep, impulse) through the chain and capture the processed result **without contending for the exclusive HID connection**.
+
+  Confirmed on hardware 2026-08-02: of the unit's six USB interfaces, **0 through 4 are Audio class (class 1) and only interface 5 is HID (class 3)**. ALSA already enumerates the device as a working card (`USB-Audio - Quad Cortex`) with no driver work required, so the capture side of this needs no reverse engineering at all - it is an ordinary audio device that happens to also speak our HID protocol on a different interface. Comparing captured output against a dry reference would characterise what a chain is doing to the signal.
+
+  Worth being precise about what this buys, because it is not what it first appears. An agent editing a patch already has **ground truth** available: `read_current_preset` returns the actual grid, so "did my edit land on the right block" is answerable today by read-back, and audio analysis is a strictly worse way to answer it. What audio adds is **aesthetic and perceptual judgement** - "is this too dark", "is the gain staging sensible", "does this sound like the reference tone" - which read-back cannot answer at all.
+
+  So this is not a correctness or safety mechanism and should not be treated as one; it is what would let an agent iterate on *tone* rather than on *structure*. That is genuinely novel and nobody has built it, but it is a substantial subsystem (audio I/O, latency alignment, feature extraction, a perceptual similarity metric) and it should not start until the grid-edit surface it would be judging actually exists.
+
+  Open questions: does the QC expose a usable dry/wet split over USB (there is a `dry_wet` field in `USBPortSettings`) so a dry reference can be captured simultaneously rather than in a separate pass; and what stimulus set is both compact and discriminating enough to be worth standardising.

@@ -100,6 +100,35 @@ Maintainers, AI coding agents, and downstream crate consumers.
 - Toolchain + CI conventions live in `500-dx-tooling` and `600-ci-release`.
 - The MIT-licensed `pyquadcortex` .proto schema, vendored into `crates/cortex-rs/proto/`.
 
+## Progress tracking {#progress-tracking}
+
+**Progress is tracked in [roadmap.md](../roadmap.md) and nowhere else.** A zone folder holds `spec.md` (what the surface must do) and `design.md` (how it is built and why). It does NOT hold a `tasks.md`.
+
+This is a deliberate divergence from the AFX layout that `deskop-nano-cortex` uses and that this tree was modelled on. It is recorded here rather than left as silent drift.
+
+### Why
+
+The project ran both a per-zone `tasks.md` and a stable-ID roadmap for a while, and the duplication did not survive contact with the work:
+
+- `001-overview/tasks.md` claimed no zone spec and no roadmap existed, long after all thirteen zones and the roadmap were written.
+- `140-session/tasks.md` showed **0 of 41** tasks done while the session layer was built, tested, and hardware-verified.
+- `150-client/tasks.md` showed **0 of 121** done and stated that "no method here has been exercised against a device", after most of the client had been verified against one.
+
+Every one of those was wrong in the same direction: the roadmap got updated because it is what gets read, and the zone task files quietly rotted. A progress record that is confidently wrong is worse than none, because it is consulted and believed.
+
+The finer granularity was not paying for itself either. The task files also carried `<!-- files: ... -->` annotations pointing at paths that were never created (`session/mod.rs`, `client/mod.rs`), because the implementation diverged from the plan and only the code moved.
+
+### What was kept
+
+Deleting the files did not mean deleting their content:
+
+- **Task state** was reconciled into `roadmap.md`, including outstanding items that existed nowhere else - notably the governance decisions now tracked as ENG-003.1 to ENG-003.5.
+- **Design divergences** moved to the owning zone's `design.md`, which is where a decision about how something is built belongs: see [DES-SES-DIVERGENCE](../140-session/design.md) and [DES-CLI-DIVERGENCE](../150-client/design.md).
+
+### Consequence for agents
+
+To answer "where are we up to", read `roadmap.md`. To answer "what must this do" or "why is it built this way", read the zone's `spec.md` and `design.md`. Do not create a `tasks.md`; add an item to the roadmap under the zone's ID prefix instead.
+
 ## Appendix
 
 ### Spec Numbering Ranges

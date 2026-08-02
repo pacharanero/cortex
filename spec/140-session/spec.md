@@ -137,3 +137,51 @@ The "device gates push behaviour on a valid `cortex_control_version`" finding an
 ### Provisional labelling
 
 The protocol facts above are hardware-verified via `pyquadcortex`. The Rust implementation in this crate is **provisional** until the full session (handshake + keepalive + correlation + broadcast wait) has been exercised against a real Quad Cortex from this crate's own code. Label the session as "provisional" in docs and release notes until that hardware smoke run passes.
+### Hardware findings (2026-08-02, CorOS 4.0.1 / firmware d14e / QA00AB123)
+
+First contact between this crate's session layer and a real Quad Cortex. Captured with `CORTEX_TRACE=1 cortex version --session`.
+
+**The device sends the host an unsolicited `Version` READ.** A `Version` READ from the host produces TWO inbound `Version` messages, in this order:
+
+```text
+rx Version (290 bytes) request_id=None   <- the reply to our READ
+rx Version (2 bytes)   request_id=None   <- the device asking US for our version
+```
+
+The 2-byte message is `VersionMessage{action: READ}` and decodes as a structurally valid `VersionMessage` with every informational field absent. This confirms on the wire what `pyquadcortex` documents in `client.py::_hello`, and it has a consequence for [FR-8]:
+
+- READ replies carry no `request_id`, so the id-less fallback matches by TYPE alone.
+- The device's own `Version` READ is indistinguishable by type from a reply.
+- Therefore **two concurrent `Version` requests risk one of them being satisfied by the device's request rather than by a reply**, yielding a near-empty `VersionMessage` rather than an error.
+
+Mitigations, in preference order:
+
+1. Do not issue a redundant host `Version` READ during the handshake (already the case - [FR-1] step (b) sends an UPDATE announcing `cortex_control_version`, never a READ, precisely for this reason).
+2. Do not run concurrent `version()` calls on one session.
+3. A future hardening: have the id-less fallback reject a candidate whose `action` is READ, since a genuine reply is an UPDATE. Not yet implemented - see the tasks file.
+
+**Lock-contention fix validated.** Before this run the RX thread held the device mutex across a 2 s blocking read, so every `send()` waited for the current read to return. The RX poll is now a separate 200 ms `RX_POLL_TIMEOUT` (matching pyquadcortex), bounding the wait a writer can experience. The single-request path above completed with no perceptible delay.
+
+### Why the handshake sometimes takes 35 seconds (2026-08-02)
+
+Reported as "the handshake appears to hang". It does not hang; it waits, and how long depends on how warm the device is.
+
+**The `ModelRepo` READ at step (c) is load-bearing.** It looks like a gratuitous 46 KB fetch in the middle of a handshake and is the obvious thing to optimise away. Removing it was measured: the handshake dropped from ~35 s to **4.2 s**, and then **every read failed** - `active_scene`, `read_current_preset`, and `list_presets` all timed out. The device gates its push behaviour on this request. It is retained deliberately and the code says so.
+
+**The cost is the device's, not the client's.** Report-reassembly throughput was measured during the same run:
+
+| Message | Reports | Time | Rate |
+| --- | --- | --- | --- |
+| `ModelRepo` | 371 | 4551 ms | 82/sec |
+| `ModuleStats` | 179 | 119 ms | 1504/sec |
+| others | 2-72 | ~1 ms | 1500-3000/sec |
+
+The RX loop sustains 1500+ reports/sec. `ModelRepo` alone trickles at 82/sec because the unit builds the catalog on demand. Everything after it arrives at full speed.
+
+**Cold versus warm.** Two runs of identical code: 37.2 s on a cold device, 2.2 s minutes later on a warm one. The unit evidently caches the built catalog. Both runs produced working reads.
+
+**Therefore the settle is adaptive rather than fixed** ([FR-1] step (f)). A fixed sleep cannot serve both cases: short enough for the warm path leaves the cold path issuing reads into a 46 KB backlog, where replies queue behind the pushes and time out - which is exactly what "the handshake is broken" looked like. `connect` now waits for the inbound stream to fall silent for `SETTLE_QUIET_PERIOD` (1.5 s), with the caller's `settle` as a floor and `SETTLE_MAX` (30 s) as a ceiling so a permanently chatty device cannot stall the handshake.
+
+**And it reports progress.** `connect_with_progress` emits a label per step. Several seconds of silence reads as a hang regardless of whether it is one, so the CLI surfaces these on stderr without needing `CORTEX_TRACE`.
+
+**Open: an interrupted session is not announced.** Ctrl-C during a handshake never sends `Connection{connected: false}`, so the device keeps pushing to a client that has gone. The next session then contends with that backlog, which is why the first reproduction of this report stalled where an instrumented rerun did not. `ResetCommsBuffers` exists to recover from precisely this and appears to, but a signal handler that announces the disconnect would be better. Not yet implemented.

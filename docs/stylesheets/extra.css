@@ -1,0 +1,44 @@
+/* SPDX-FileCopyrightText: 2026 Dr Marcus Baw
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ *
+ * Brand accent. Deliberately not Neural DSP's palette - this is an
+ * unofficial project and should not present itself as vendor material.
+ */
+
+:root {
+  --md-primary-fg-color: #1f2933;
+  --md-accent-fg-color: #d64933;
+}
+
+[data-md-color-scheme="slate"] {
+  --md-accent-fg-color: #ff6f59;
+}
+
+/* Verified-vs-provisional labelling. The project's central discipline is
+ * being honest about what has touched real hardware, so the docs need a
+ * consistent visual for it rather than ad-hoc prose. */
+.status {
+  display: inline-block;
+  padding: 0.1rem 0.45rem;
+  border-radius: 0.2rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  vertical-align: middle;
+}
+
+.status.verified {
+  background: #1b7f4b;
+  color: #fff;
+}
+
+.status.provisional {
+  background: #b8860b;
+  color: #fff;
+}
+
+.status.planned {
+  background: #5a6672;
+  color: #fff;
+}

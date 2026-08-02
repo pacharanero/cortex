@@ -74,7 +74,10 @@ crates/
 gui/           Planned: Tauri 2 desktop app (React + Mantine + Vite), a
                 consumer of the crate.
 docs/          Protocol notes, runbooks, GUI docs.
-spec/          AFX-style spec/design/tasks per zone (mirrors deskop-nano-cortex).
+spec/          Zone specs: spec.md (what it must do) + design.md (how, and why).
+               NO tasks.md - progress lives in spec/roadmap.md alone, which is
+               a deliberate divergence from the AFX layout and is explained in
+               spec/001-overview/spec.md#progress-tracking.
 s/             Repo scripts: s/test, s/lint, s/gui-dev, s/version++ ...
 ```
 
@@ -152,6 +155,14 @@ existing projects:
 - Do not redistribute Neural DSP binaries, firmware, or artwork.
 - Do not publish raw captures containing their strings (preset, path, device,
   build strings are readable).
+- **Examples must use fictional device data.** Docs and specs are written from
+  real hardware, so it is easy to paste in a serial number, MAC address,
+  firmware checksum, or a player's own preset and Neural Capture names along
+  with the useful part. None of that belongs in a public repo: the identifiers
+  single out one person's unit and the names say what they play.
+  `s/lint-no-device-data` enforces this and runs in `s/lint` and CI. Model
+  names (`Brit 2203`, `Rodent Drive`) are Neural DSP's and identical on every
+  unit, so those are fine - it is the owner-specific values that are not.
 - Keep the recovered schema limited to what interoperability requires.
 - State clearly that the work is unofficial and unaffiliated.
 - Prefer the USB route over the device-rooting route (OpenCortex); the latter

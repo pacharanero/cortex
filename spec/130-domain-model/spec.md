@@ -164,3 +164,20 @@ The catalog comes FROM the device as a `ModelRepo` message containing a ~47KB gz
 | Row-numbering trap | Rows are 0-based in the API, 1-4 on screen; a wrong-row edit succeeds silently. |
 | `UNITY_LEVEL` | 10/13, the parameter value representing 0 dB on the -100..+30 dB span. |
 | Provisional | Not yet verified against real hardware by this project. |
+### Catalog: hardware findings (2026-08-02, CorOS 4.0.1 / d14e / QA00AB123)
+
+The `ModelRepo` container is confirmed as **`gzip(tar(ModelRepo.xml))`**, matching the research note. On the measured unit: 46,704 bytes gzipped, 558,592 bytes of tar holding a single `ModelRepo.xml`, 556,732 bytes of XML.
+
+Note this is the FIELD-level gzip, inside the protobuf `bytes` field, and is distinct from the frame-level gzip the transport already unwraps. Both kinds exist and a client must handle each in its own place.
+
+**Shape:** `Models > Category > Model > Parameter`. The measured unit declared 533 models across 31 named categories with 3,809 parameters.
+
+**A parameter's wire index is POSITIONAL** - its order within its `Model` element, not any id attribute. Entries of type `empty` and `meter` still occupy an index, so they must be retained rather than filtered during parsing; dropping them silently shifts every later parameter and produces writes that land on the wrong control while reading back cleanly.
+
+Parameter types observed: `float` (2,618), `switch` (461), `string` (396), `int` (44), `fader` (48), `meter` (8), `empty` (16).
+
+**Some declared ranges are degenerate** (`min == max`), consistent with the note that certain catalog ranges are placeholders. Unit conversion must report this rather than divide by zero, which is why `Parameter::to_normalised` returns `Option`.
+
+**The catalog carries the vendor's own trademark attribution.** Each `Model` may hold a `tm` attribute containing Neural DSP's own wording - `Based on Marshall(R) JCM800(R)`, `Based on ProCo(R) Rat(R)` - present on 318 of 533 models. This crate surfaces it verbatim as `Model::based_on` and never paraphrases it. It concerns other companies' marks and it is the vendor's statement, not ours to restate. An empty `tm=""` means "no attribution" and is normalised to `None` so a caller testing `is_some()` is not misled.
+
+**The catalog is Neural DSP's content and is read at runtime.** It must not be committed into this repository. See the legal hygiene section of AGENTS.md.

@@ -1,0 +1,62 @@
+site_name: cortex-rs
+site_description: >-
+  An unofficial, Linux-first toolkit for the Neural DSP Quad Cortex. A Rust
+  crate speaking the Cortex Control USB HID protocol, with a CLI on top.
+site_url: https://pacharanero.github.io/cortex/
+
+repo_url: https://github.com/pacharanero/cortex
+repo_name: pacharanero/cortex
+edit_uri: edit/main/docs/
+
+docs_dir: docs
+
+theme:
+  name: zensical
+  variant: modern
+  features:
+    - content.code.copy
+    - content.action.edit
+    - navigation.sections
+    - navigation.top
+    - toc.follow
+    - search.suggest
+    - search.highlight
+
+extra_css:
+  - stylesheets/extra.css
+
+nav:
+  - Home: index.md
+  - Install: install.md
+  - Walkthrough: walkthrough.md
+  - CLI reference: cli-reference.md
+  - The protocol: protocol.md
+  - Hardware smoke runbook: runbook-hardware-smoke.md
+  - Legal and attribution: legal.md
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - def_list
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.keys
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+
+copyright: >-
+  Copyright &copy; 2026 Dr Marcus Baw. Code AGPL-3.0-or-later, documentation
+  CC-BY-SA-4.0. Source
+  <a href="https://github.com/pacharanero/cortex">pacharanero/cortex</a>.
+  Unofficial and not affiliated with Neural DSP Technologies.

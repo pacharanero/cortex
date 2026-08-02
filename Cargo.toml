@@ -26,6 +26,7 @@ description = "Unofficial, Linux-first toolkit for the Neural DSP Quad Cortex (a
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 bytes = "1.12.1"
+quick-xml = "0.41"
 flate2 = "1.1.9"
 thiserror = "2"
 once_cell = "1.21.4"
@@ -41,6 +42,7 @@ prost-build = "0.14.4"
 # CLI surface (cortex-cli only).
 anyhow = "1.0.104"
 clap = { version = "4.6.5", features = ["derive"] }
+ctrlc = "3.5"
 clap_complete = "4.6.8"
 
 # MCP server surface (cortex-mcp only).

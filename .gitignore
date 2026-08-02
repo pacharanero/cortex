@@ -20,3 +20,7 @@
 .vscode/*
 !.vscode/extensions.json
 .idea
+# Docs site: build output and the local venv the docs toolchain lives in.
+# `s/docs` creates the venv; `requirements.txt` pins what goes in it.
+/site
+/.venv

@@ -58,7 +58,7 @@ println!("cargo::rerun-if-changed=proto/ProductionAutomation.proto");
 
 Both `.proto` files declare `package cortex_protobuf_v2`. This matters because `ProductionAutomation.proto` contains `import "Preset.proto"` and references `BinaryPreset` and `Model` (e.g. in `GridMessage`, `RecallPresetMessage`, `DefaultParametersModel`, `NeuralCaptureMessage`). For `prost` to resolve those cross-file references, both files must share a package.
 
-The original `pyquadcortex` recovery had `Preset.proto` without an explicit package; we added `package cortex_protobuf_v2` to it so the generated Rust types land in the same module and cross-references resolve. This is the only deliberate modification to the vendored schema; it is recorded in [DES-DELTA] below and in `tasks.md`.
+The original `pyquadcortex` recovery had `Preset.proto` without an explicit package; we added `package cortex_protobuf_v2` to it so the generated Rust types land in the same module and cross-references resolve. This is the only deliberate modification to the vendored schema; it is recorded in [DES-DELTA] below.
 
 ## [DES-INCLUDE] Module Inclusion
 
@@ -79,7 +79,7 @@ There is no version field on the wire (see AGENTS.md). A CorOS update can add `C
 
 - **Unknown enum values are preserved, not errored.** `prost` generates enums as `#[non_exhaustive]`-style with a catch-all `Unknown` variant in some configurations; we treat any `message_type` value outside `0..=71` as "unknown, log and skip" at the domain layer (130), not as a hard error here.
 - **Missing fields default.** Proto3 semantics: unknown or missing fields take their default values. Adding a field on the device side does not break decode; it just shows up as `None` in the generated `oneof` accessors.
-- **Schema edits are events.** Any change to a `.proto` file (beyond the SPDX header and the `package` line on `Preset.proto`) is a protocol-version event and must be recorded in `tasks.md` with the CorOS version that introduced it.
+- **Schema edits are events.** Any change to a `.proto` file (beyond the SPDX header and the `package` line on `Preset.proto`) is a protocol-version event and must be recorded in [roadmap.md](../roadmap.md) under PROT-003, with the CorOS version that introduced it.
 
 ## [DES-LICENSING] Licensing and Attribution Design
 
@@ -104,7 +104,7 @@ The `.proto` files are MIT-licensed material vendored under the MIT distribution
 | `Preset.proto` | Added `package cortex_protobuf_v2;` | So `ProductionAutomation.proto`'s `import "Preset.proto"` resolves cross-file `Model`/`BinaryPreset` references in `prost`. |
 | Both files | Added SPDX header + provenance note | License attribution and `reuse lint` compliance. |
 
-No other modifications. We do not rename messages, renumber enum values, or trim fields. If a future CorOS version requires a schema update, the diff against `pyquadcortex` upstream is recorded in `tasks.md`.
+No other modifications. We do not rename messages, renumber enum values, or trim fields. If a future CorOS version requires a schema update, the diff against `pyquadcortex` upstream is recorded in [roadmap.md](../roadmap.md) under PROT-003.
 
 ## [DES-LAYERS] Layer Map (cross-reference)
 

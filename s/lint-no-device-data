@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Dr Marcus Baw
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# Fail if anything that looks like REAL device data has crept into the repo.
+#
+# Documentation examples are captured from a physical unit, so it is easy for
+# a serial number, MAC address, firmware checksum, or a player's own preset
+# and capture names to be pasted in along with the useful part. None of that
+# belongs in a public repository: the identifiers single out one person's
+# hardware, and the preset names say what they play.
+#
+# This works by ALLOW-list rather than deny-list, deliberately. A deny-list
+# would mean committing the very values we are trying to keep out. So instead
+# it flags anything MATCHING the shape of device data that is not one of the
+# agreed fictional stand-ins.
+#
+# When adding an example, use the fictional set - see docs/walkthrough.md.
+
+set -euo pipefail
+cd "$(git rev-parse --show-toplevel)"
+
+# The agreed fictional values. Anything else of the same shape is a finding.
+ALLOWED_SERIAL="QA00AB123"
+ALLOWED_MAC="02:00:5e:10:00:01"
+ALLOWED_CHECKSUM="0123456789abcdef0123456789abcdef"
+
+# Search tracked files only, so build output and the docs venv are skipped.
+FILES=$(git ls-files -- '*.md' '*.rs' '*.toml' '*.yml' '*.yaml' '*.json' '*.txt' \
+        ':!:crates/cortex-rs/proto/*')
+
+findings=0
+
+report() {
+  findings=$((findings + 1))
+  echo "  $1" >&2
+}
+
+# --- Serial numbers: QA + digits/letters, the Quad Cortex format ------------
+while IFS= read -r hit; do
+  [[ -z "$hit" ]] && continue
+  [[ "$hit" == *"$ALLOWED_SERIAL"* ]] && continue
+  report "$hit"
+done < <(grep -nE '\bQA[0-9]{2}[A-Z]{2}[0-9]{3}\b' $FILES 2>/dev/null || true)
+
+# --- MAC addresses ----------------------------------------------------------
+while IFS= read -r hit; do
+  [[ -z "$hit" ]] && continue
+  [[ "$hit" == *"$ALLOWED_MAC"* ]] && continue
+  # 00:00:00:00:00:00 and ff:ff:... are structural, not identifying.
+  [[ "$hit" == *"00:00:00:00:00:00"* ]] && continue
+  report "$hit"
+done < <(grep -nEi '\b([0-9a-f]{2}:){5}[0-9a-f]{2}\b' $FILES 2>/dev/null || true)
+
+# --- 32-hex checksums, the wireless firmware identity -----------------------
+while IFS= read -r hit; do
+  [[ -z "$hit" ]] && continue
+  [[ "$hit" == *"$ALLOWED_CHECKSUM"* ]] && continue
+  report "$hit"
+done < <(grep -nE '\b[0-9a-f]{32}\b' $FILES 2>/dev/null || true)
+
+if [[ "$findings" -gt 0 ]]; then
+  cat >&2 <<EOF
+
+ERROR: $findings line(s) look like real device data.
+
+Documentation examples come from a physical unit, and a serial number, MAC
+address, or firmware checksum identifies one person's hardware. Preset and
+Neural Capture names say what they play.
+
+Replace with the fictional stand-ins used throughout the docs:
+
+  serial    $ALLOWED_SERIAL
+  MAC       $ALLOWED_MAC
+  checksum  $ALLOWED_CHECKSUM
+
+Model names (Brit 2203, Rodent Drive, ...) are Neural DSP's and identical on
+every unit, so those are fine. It is the owner-specific values that are not.
+
+If a match is a false positive - a genuine 32-hex constant, say - add it to
+the allow-list at the top of this script with a comment saying why.
+EOF
+  exit 1
+fi
+
+echo "no device data found"

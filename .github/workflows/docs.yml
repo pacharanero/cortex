@@ -1,0 +1,82 @@
+# SPDX-FileCopyrightText: 2026 Dr Marcus Baw
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# Builds and deploys the cortex-rs documentation site to GitHub Pages.
+#
+# Method: artifact-based deploy (actions/upload-pages-artifact +
+# actions/deploy-pages). The built site is handed straight to GitHub's Pages
+# servers as a workflow artifact - there is no `gh-pages` branch, no orphan
+# history, nothing in `git log --all` that did not come from a real commit.
+#
+# Repo prerequisite (one-off): Settings -> Pages -> Source must be set to
+# "GitHub Actions". If it is set to "Deploy from a branch", deploy-pages fails
+# with "Get Pages site failed". This is set once on the repo and persists.
+#
+# Action SHAs are pinned with the matching `# vX.Y.Z` comment per house style.
+
+name: docs
+
+on:
+  push:
+    branches:
+      - main
+    # Path filters so this only fires when something the site actually depends
+    # on changed - not on every Rust commit. Keep in sync with what zensical
+    # reads: docs/, the config, the pinned requirements, and this file.
+    paths:
+      - "docs/**"
+      - "mkdocs.yml"
+      - "requirements.txt"
+      - ".github/workflows/docs.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build site
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13"
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ runner.os }}-${{ hashFiles('requirements.txt') }}
+
+      - name: Install the docs toolchain
+        run: pip install -r requirements.txt
+
+      - name: Build
+        run: zensical build
+
+      - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
+
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: site
+
+  deploy:
+    name: Deploy to Pages
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    permissions:
+      pages: write
+      id-token: write
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@cd2ce8fcbc39b97be8ca5fce6e763baed58fa128 # v5.0.0

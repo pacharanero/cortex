@@ -18,6 +18,9 @@
 //!
 //! See AGENTS.md -> MCP safety surface for the full design. This file is the
 //! scaffold; the tool surface is wired up as the crate matures.
+//!
+//! @see spec/300-mcp/spec.md
+//! @see spec/300-mcp/design.md
 
 fn main() -> anyhow::Result<()> {
     eprintln!("cortex-mcp: MCP server not yet implemented (scaffold)");

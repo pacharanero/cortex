@@ -47,6 +47,9 @@
 //! - The benign write STALL: `hid_write()` returns `-1` on a write that
 //!   worked. Swallow write errors; detect a dead device via read timeouts.
 //! - No version field on the wire: a `CorOS` update can silently break things.
+//!
+//! @see spec/001-overview/spec.md
+//! @see spec/001-overview/design.md [DES-ARCH]
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
@@ -54,9 +57,11 @@
 
 pub mod device;
 pub mod framing;
+pub mod grid;
 pub mod message;
 
 #[cfg(feature = "hid")]
+pub mod catalog;
 pub mod client;
 #[cfg(feature = "hid")]
 pub mod session;
@@ -74,9 +79,11 @@ pub mod proto {
 }
 
 #[cfg(feature = "hid")]
-pub use client::QuadCortex;
+pub use catalog::{Catalog, Model, Parameter, ParameterKind};
+pub use client::{Placement, QuadCortex};
 pub use device::DeviceKind;
 pub use framing::{Flags, Frame, FrameReassembler, ReportId};
+pub use grid::{Row, Value};
 pub use message::Message;
 #[cfg(feature = "hid")]
 pub use session::{InboundMessage, Session};
@@ -124,6 +131,20 @@ pub enum Error {
     #[cfg(feature = "hid")]
     #[error("hid error: {0}")]
     Hid(String),
+
+    /// The device did not accept a block placement.
+    ///
+    /// The known cause is the preset having no DSP capacity left for that
+    /// model. Nothing on the wire says so - every host write is stalled and
+    /// there is no per-block error - so this is inferred from the absence of
+    /// the device's `Grid` echo naming the cell.
+    #[error("block refused: {0}")]
+    BlockRefused(String),
+
+    /// A row was addressed that cannot hold what was asked of it - an odd
+    /// row for a splitter, or screen row 0, which does not exist.
+    #[error("invalid row: {0}")]
+    InvalidRow(String),
 
     /// The device was not found on the USB bus. On Linux, check the udev
     /// rule and that the device is powered on (see README -> Setup).

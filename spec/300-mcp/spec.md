@@ -181,3 +181,13 @@ AI coding agents editing patches via MCP, and the maintainers who gate what an a
 | Working-copy write | Edits the recalled preset in device RAM (set_block, set_param, set_routing); persists only on save |
 | Destructive write | Overwrites a slot (save_preset); gated by the safety surface |
 | Provisional | Not yet verified against real hardware by this project; may work but is not confirmed |
+## Future: audio feedback (FUTURE-007)
+
+An agent editing a patch through this server can already establish **structural** ground truth by read-back: `read_current_preset` returns the actual grid, so "did my edit land on the intended block" is answerable today, and the row-numbering trap is detectable rather than silent.
+
+What read-back cannot answer is whether the result **sounds** any good. That is the gap [FUTURE-007](../roadmap.md) proposes to close by playing a standardised stimulus through the unit's USB audio interfaces and analysing the result.
+
+Two points matter for this zone's safety surface:
+
+1. **It is not a safety mechanism and must not be relied on as one.** Audio analysis yields inference; the grid read yields fact. A save must continue to be gated on explicit confirmation and verified by read-back, never by "it sounded fine".
+2. **It does not contend for the HID connection.** Confirmed on hardware: interfaces 0-4 of the device are USB Audio class and only interface 5 is HID. An audio capture process and this server can therefore run concurrently without violating the single-owning-process rule for the HID interface.

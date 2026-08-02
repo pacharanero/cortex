@@ -78,7 +78,7 @@ Maintainers, AI coding agents, and downstream crate consumers who decode or enco
 | --- | --- | --- |
 | NFR-1 | `cargo build -p cortex-rs` succeeds on a system with `protoc` installed and no HID hardware. | CI-enforced |
 | NFR-2 | The generated module compiles with `#![forbid(unsafe_code)]` and `clippy::pedantic` at the crate level (suppressed inside `proto` via `#[allow(...)]`). | CI-enforced |
-| NFR-3 | The `.proto` files are not modified beyond the `package` line added to `Preset.proto` and the SPDX header; any further change is a deliberate protocol-version event recorded in `tasks.md`. | Review-enforced |
+| NFR-3 | The `.proto` files are not modified beyond the `package` line added to `Preset.proto` and the SPDX header; any further change is a deliberate protocol-version event recorded in [roadmap.md](../roadmap.md) under PROT-003. | Review-enforced |
 | NFR-4 | `reuse lint` passes for the `.proto` files (MIT-licensed, copyright Stokes) and `build.rs` (AGPL-licensed, copyright Dr Marcus Baw). | CI-enforced |
 
 ## Acceptance Criteria

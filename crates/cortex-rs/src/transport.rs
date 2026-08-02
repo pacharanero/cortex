@@ -15,6 +15,9 @@
 //!   connection per call. [`Transport::open`] takes the interface
 //!   exclusively; the MCP server especially must hold a single connection
 //!   for its lifetime.
+//!
+//! @see spec/100-transport/spec.md [FR-1] [FR-5] [FR-6]
+//! @see spec/100-transport/design.md [DES-STALL] [DES-EXCLUSIVE]
 
 use std::time::Duration;
 

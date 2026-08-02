@@ -17,6 +17,9 @@
 //! Reassembly is a tiny state machine: a FIRST frame starts a buffer, middle
 //! frames append, a LAST or COMPLETE frame appends and emits the whole
 //! message. This module owns that state machine.
+//!
+//! @see spec/110-framing/spec.md [FR-1] [FR-9] [FR-13]
+//! @see spec/110-framing/design.md [DES-FRAME] [DES-REASSEMBLY] [DES-ENCODE]
 
 use serde::{Deserialize, Serialize};
 

@@ -1,0 +1,94 @@
+#!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Dr Marcus Baw
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# Summarise where the project is up to, from spec/roadmap.md.
+#
+# The roadmap is the single progress record; this just counts it, so the
+# summary can never drift from the thing it summarises. A hand-written
+# "current status" section would be wrong within a week.
+#
+#   s/progress            # per-section totals
+#   s/progress --wip      # what is in progress
+#   s/progress --next     # what is planned, by section
+#
+# Status markers: [x] done, [~] in progress, [ ] planned.
+#
+# NOTE: [x] means the code exists and passes the local gate. It does NOT
+# mean hardware-verified - the roadmap says which items are.
+
+set -euo pipefail
+cd "$(git rev-parse --show-toplevel)"
+
+exec python3 - "$@" << 'PY'
+import re
+import sys
+import pathlib
+
+roadmap = pathlib.Path("spec/roadmap.md").read_text()
+mode = sys.argv[1] if len(sys.argv) > 1 else "--summary"
+
+section = None
+sections = []
+items = []
+
+for line in roadmap.split("\n"):
+    # "## Where each ID lives" is an index, not a work section.
+    if line.startswith("## ") and not line.startswith("## Where"):
+        section = line[3:].strip()
+        sections.append([section, {"x": 0, "~": 0, " ": 0}])
+    match = re.match(r"- \[([x~ ])\]\s*(.*)", line)
+    if match and sections:
+        mark, text = match.group(1), match.group(2)
+        sections[-1][1][mark] += 1
+        items.append((section, mark, text))
+
+
+def label(text, width=96):
+    """First sentence of an item, trimmed to fit a terminal."""
+    text = re.sub(r"\*\*(.*?)\*\*", r"\1", text)
+    text = text.split(". ")[0].split(" - ")[0].strip()
+    return text if len(text) <= width else text[: width - 1] + "…"
+
+
+if mode in ("--wip", "--next"):
+    wanted = "~" if mode == "--wip" else " "
+    heading = "In progress" if mode == "--wip" else "Planned"
+    print(heading)
+    print("=" * len(heading))
+    current = None
+    for sec, mark, text in items:
+        if mark != wanted:
+            continue
+        if sec != current:
+            print(f"\n{sec}")
+            current = sec
+        print(f"  {label(text)}")
+    sys.exit(0)
+
+print(f"{'section':<32}{'done':>6}{'wip':>6}{'todo':>6}{'':>4}progress")
+print("-" * 72)
+done = wip = todo = 0
+for name, counts in sections:
+    total = sum(counts.values())
+    if total == 0:
+        continue
+    complete = counts["x"]
+    bar_width = 20
+    filled = round(bar_width * complete / total)
+    bar = "#" * filled + "." * (bar_width - filled)
+    print(
+        f"{name:<32}{complete:>6}{counts['~']:>6}{counts[' ']:>6}    {bar} {complete * 100 // total:>3}%"
+    )
+    done += complete
+    wip += counts["~"]
+    todo += counts[" "]
+
+print("-" * 72)
+total = done + wip + todo
+pct = done * 100 // total if total else 0
+print(f"{'TOTAL':<32}{done:>6}{wip:>6}{todo:>6}    {pct:>3}% of tracked items done")
+print()
+print("s/progress --wip    what is in progress")
+print("s/progress --next   what is planned")
+PY

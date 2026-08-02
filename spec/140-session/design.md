@@ -208,3 +208,20 @@ This is because:
 The session layer is a port of `pyquadcortex/pyquadcortex/transport.py::Transport` (MIT, (c) 2026 Stokes). The handshake sequence (`_hello`) lives in `pyquadcortex/pyquadcortex/client.py` upstream but is relocated to this zone because it is session-layer work. The correlation rules (type-first, id-check, the seed-push skip) and the benign-write-STALL swallowing are all confirmed by `pyquadcortex` capture and live probe. See `THIRD-PARTY-NOTICES.md` for the MIT attribution.
 
 No code is copied from the unlicensed reference repos. The protocol facts are re-expressed in this project's own words and Rust idioms.
+## [DES-SES-DIVERGENCE] Divergences from the original plan
+
+Recorded rather than silently absorbed. Both were deliberate; neither is a migration gap to close without a reason.
+
+### One `session.rs`, not a `session/` module tree
+
+The plan split the layer across `session/{mod,session,correlation,dispatch,keepalive,handshake}.rs`. It shipped as a single `crates/cortex-rs/src/session.rs`. At this size the split would produce five files of under 150 lines each with the shared `Shared` struct threaded between them; the single file is easier to read and `@see` traceability is unaffected. Revisit if it passes ~1000 lines.
+
+### The correlation tests needed no fake transport
+
+The plan assumed a fake transport for injecting inbound frames. None was needed: [`dispatch`] is a free function over `(&InboundMessage, &Shared)`, so the correlation rules can be driven directly with no device abstraction at all.
+
+12 tests cover type-first matching, the id-less oldest-first fallback, cascade rejection, broadcast predicates rejecting the stale seed push, collector observe-not-consume semantics, and the liveness stamp the adaptive settle depends on.
+
+**One of them is worth calling out, because the first version of it did not work.** `id_less_replies_drain_waiters_oldest_first` guards the HashMap-iteration-order bug. Written with two waiters, reintroducing the bug made it fail only 4 times in 12 runs - Rust randomises HashMap iteration per process, so a two-way choice comes out right about half the time. A guard that waves the regression through two runs in three is worse than none, because it looks like coverage. It now registers six waiters and asserts the whole drain ORDER, which fails 12/12 with the bug present and 0/12 without. Both figures were measured, not assumed.
+
+**Still uncovered:** the RX loop itself - the 1 MiB reassembly cap and the FIRST-flag-resets-a-stale-partial rule. Those do need frame injection, so a fake transport is still wanted, for a much smaller surface than originally assumed.

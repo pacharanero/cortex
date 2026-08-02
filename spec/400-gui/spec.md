@@ -11,7 +11,7 @@ tags: ["gui", "tauri", "react", "mantine", "vite", "deferred"]
 
 # 400 GUI - Spec (deferred stub)
 
-> The Tauri 2 desktop app: a consumer of the `cortex-rs` crate, not a second implementation of the product. **Deferred** until the crate (zones 100-150), the CLI (200), and the MCP server (300) are complete. This is a stub spec; no `design.md` or `tasks.md` yet.
+> The Tauri 2 desktop app: a consumer of the `cortex-rs` crate, not a second implementation of the product. **Deferred** until the crate (zones 100-150), the CLI (200), and the MCP server (300) are complete. This is a stub spec; no `design.md` yet.
 
 ## References
 
@@ -124,7 +124,7 @@ When this zone is unblocked, the spec will own:
 
 ## Future
 
-- **`design.md` and `tasks.md`.** Written when this zone is unblocked.
+- **`design.md`.** Written when this zone is unblocked. Progress is tracked in [roadmap.md](../roadmap.md) under GUI-00x.
 - **`docs/gui/`.** How to use and run the GUI.
 - **E2E tests.** GUI smoke tests focused on the user workflows that prove the Rust/frontend boundary is wired (house-style tauri-gui.md). Avoid brittle visual snapshots.
 - **Nano Cortex specifics.** Provisional until verified against real hardware; the GUI labels them.
@@ -137,3 +137,8 @@ When this zone is unblocked, the spec will own:
 | Tauri command | A Rust function exposed to the webview; calls `cortex-rs` and returns typed serialisable data |
 | `s/gui-dev` | Repo script that runs the Tauri dev server from any working directory |
 | Safety surface reuse | The GUI gates saves the same way the MCP server does (factory refusal, scratch range, slot backup) |
+## Related roadmap items
+
+- **[DOCS-002](../roadmap.md)** - the factory preset reference (what each factory preset evokes, and how to set it up) is aimed at agents driving the MCP server, but the GUI wants the same data to annotate the patch browser. Build it as a shared, generated artefact rather than duplicating it per surface.
+- **[PROT-007](../roadmap.md)** - capture and IR export/import. The GUI is the natural home for a "back up my captures" workflow, since it is the surface a player already has open when they care about their captures.
+- **[FUTURE-007](../roadmap.md)** - audio feedback. If the analysis subsystem is built, the GUI is where its output belongs (a spectrum or gain-staging readout beside the grid), not the CLI.

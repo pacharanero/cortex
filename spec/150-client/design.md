@@ -283,3 +283,14 @@ Name resolution: `set_param(param="THRESHOLD", model=comp)` resolves the wire in
 The `QuadCortex` client is a port of `pyquadcortex/pyquadcortex/client.py` (MIT, (c) 2026 Stokes). The ~60 methods, the helper functions, the value objects, the constants, and the domain-trap documentation all originate there, confirmed against real hardware. The `ModelCatalog` parser is ported from `pyquadcortex/pyquadcortex/catalog.py`. See `THIRD-PARTY-NOTICES.md` for the MIT attribution.
 
 No code is copied from the unlicensed reference repos. The protocol facts are re-expressed in this project's own words and Rust idioms.
+## [DES-CLI-DIVERGENCE] Divergences from the original plan
+
+### One `client.rs`, not a `client/` module tree
+
+Same rationale as [140-session/design.md](../140-session/design.md#des-ses-divergence): at this size the split would fragment more than it clarifies. Grid-edit message construction IS a separate module (`grid.rs`), because those builders are pure and benefit from being testable in isolation from the client that sends them.
+
+### What is covered without hardware
+
+Slot-name round-tripping and rejection of malformed names, dB conversion and its range guard, empty-slot detection in listings, trailing-slash key normalisation, folder occupancy counting, recall-payload encoding, the `Grid` echo matcher including its positional-fallback case, and `preset_has_block`.
+
+The grid builders in `grid.rs` are covered separately and more heavily, since that is where the silent-no-op traps live: 18 tests, three of which were verified by mutation - reintroducing UPDATE-instead-of-DELETE, a value beside the `scene_mode` flag, and an unkeyed chain each made exactly the test that claims to guard it fail.

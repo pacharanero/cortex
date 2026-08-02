@@ -9,6 +9,9 @@
 //! (USB HID framing + protobuf-in-trailer), so `cortex-rs` targets both from
 //! the start. Device-specific behaviour that is not hardware-verified is
 //! labelled provisional - see AGENTS.md.
+//!
+//! @see spec/130-domain-model/spec.md
+//! @see spec/100-transport/spec.md [FR-1]
 
 use serde::{Deserialize, Serialize};
 

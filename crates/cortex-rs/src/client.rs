@@ -36,6 +36,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::DeviceKind;
+use crate::grid::{Row, Value};
 use crate::proto::cortex_message_type::Enum as MessageType;
 use crate::proto::message_action::Enum as MessageAction;
 use crate::proto::{
@@ -67,6 +68,11 @@ pub const BANKS: u32 = 32;
 pub const SLOTS_PER_BANK: u32 = 8;
 /// Total slots per setlist (256).
 pub const SETLIST_SLOTS: u32 = BANKS * SLOTS_PER_BANK;
+
+/// Floor on the read-back used to settle a `set_block` whose echo did not
+/// arrive. Generous, because that read-back is the ground truth and a busy
+/// device is exactly the case that got us here.
+const READ_BACK_TIMEOUT: Duration = Duration::from_secs(20);
 
 /// One entry in a setlist listing: a preset occupying a slot.
 ///
@@ -196,6 +202,20 @@ fn build_recall(
 fn folder_key(info: &crate::proto::FolderInfo) -> Option<&str> {
     let crate::proto::folder_info::Key::Key(key) = info.key.as_ref()?;
     Some(key.trim_end_matches('/'))
+}
+
+/// How a block placement was confirmed.
+///
+/// Worth distinguishing, because the two carry different confidence: an echo
+/// is the device telling us it accepted the cell, while a read-back is us
+/// observing the grid afterwards. Both mean the block is there; only the
+/// second survives a slow device.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+pub enum Placement {
+    /// The device echoed a `Grid` broadcast naming the cell.
+    EchoConfirmed,
+    /// No echo arrived in time, but a read-back found the block in place.
+    ReadBackConfirmed,
 }
 
 /// The `QuadCortex` client: an ergonomic API over the session layer.
@@ -586,6 +606,59 @@ impl QuadCortex {
         Ok(folders)
     }
 
+    /// Fetch the device's raw `ModelRepo` payload.
+    ///
+    /// This is the catalog: what turns an integer model id stored in a preset
+    /// into a name, a category, and a parameter list. It comes FROM the
+    /// device, so it covers whatever this unit actually has - purchased
+    /// plugin models and the player's own Neural Captures included - which no
+    /// hard-coded table could know.
+    ///
+    /// The payload is large (~47 KB, spanning several hundred HID reports),
+    /// so allow a generous timeout. The transport already gunzips a
+    /// frame-level gzip wrapper; whatever remains is returned raw here for
+    /// the catalog parser to interpret.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`crate::Error::ReadTimeout`] if no payload-bearing
+    /// `ModelRepo` message arrives within `timeout`.
+    pub fn fetch_model_repo(&self, timeout: Duration) -> crate::Result<Vec<u8>> {
+        use crate::proto::{ModelRepoMessage, model_repo_message as mrm};
+
+        let request = ModelRepoMessage {
+            action: MessageAction::Read as i32,
+            ..Default::default()
+        };
+        let payload = prost::Message::encode_to_vec(&request);
+
+        let reply = self.session.await_broadcast(
+            MessageType::ModelRepo,
+            || {
+                let _ = self.session.send(MessageType::ModelRepo, &payload);
+            },
+            timeout,
+            // The device emits ModelRepo messages without a payload too;
+            // only a payload-bearing one is the catalog.
+            |m| {
+                prost::Message::decode(m.body.as_ref())
+                    .ok()
+                    .and_then(|r: ModelRepoMessage| r.model_repo_payload)
+                    .is_some_and(|mrm::ModelRepoPayload::ModelRepoPayload(p)| !p.is_empty())
+            },
+        )?;
+
+        let decoded: ModelRepoMessage = prost::Message::decode(reply.body.as_ref())
+            .map_err(|e| crate::Error::Decode(format!("ModelRepoMessage: {e}")))?;
+        let Some(mrm::ModelRepoPayload::ModelRepoPayload(bytes)) = decoded.model_repo_payload
+        else {
+            return Err(crate::Error::Decode(
+                "ModelRepo reply carried no payload".into(),
+            ));
+        };
+        Ok(bytes)
+    }
+
     /// Tell the device this client is going away. Sends
     /// `Connection{connected: false}` (best effort).
     pub fn disconnect(&self) {
@@ -689,6 +762,324 @@ pub fn db_to_input_level(db: f64) -> crate::Result<f64> {
     Ok((db + 12.0) / 72.0)
 }
 
+// ---------------------------------------------------------------------------
+// Grid editing
+//
+// These wrap the pure builders in `crate::grid` with sending and, where the
+// device gives us something to check, verification. Nothing here re-derives a
+// message shape; if a trap is encoded in a builder it stays encoded.
+//
+// Every edit below changes the WORKING COPY on the grid. Nothing is persisted
+// until a save, which this crate does not yet implement.
+// ---------------------------------------------------------------------------
+
+impl QuadCortex {
+    /// Re-point one grid row's input.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Ok` even on a write error, since the USB status-stage stall
+    /// makes every write appear to fail.
+    pub fn set_chain_input(&self, row: Row, in_portid: u32) -> crate::Result<()> {
+        self.send_grid(&crate::grid::set_chain_input(row, in_portid))
+    }
+
+    /// Re-point one grid row's output.
+    ///
+    /// The device does NOT validate this field: an id that means nothing is
+    /// stored rather than rejected, so a typo reads back cleanly.
+    ///
+    /// # Errors
+    ///
+    /// As [`QuadCortex::set_chain_input`].
+    pub fn set_chain_output(&self, row: Row, out_portid: u32) -> crate::Result<()> {
+        self.send_grid(&crate::grid::set_chain_output(row, out_portid))
+    }
+
+    /// Set one block parameter on the ACTIVE scene.
+    ///
+    /// To set a per-scene value use [`QuadCortex::set_param_in_scene`], which
+    /// sequences the three messages the device requires.
+    ///
+    /// # Errors
+    ///
+    /// As [`QuadCortex::set_chain_input`].
+    pub fn set_param(
+        &self,
+        row: Row,
+        column: u32,
+        param_index: u32,
+        value: Value,
+    ) -> crate::Result<()> {
+        self.send_grid(&crate::grid::set_param(row, column, param_index, value))
+    }
+
+    /// Make a block parameter follow scenes, or stop it following them.
+    ///
+    /// The flag travels alone; see [`crate::grid::set_param_scene_mode`].
+    ///
+    /// # Errors
+    ///
+    /// As [`QuadCortex::set_chain_input`].
+    pub fn set_param_scene_mode(
+        &self,
+        row: Row,
+        column: u32,
+        param_index: u32,
+        enabled: bool,
+    ) -> crate::Result<()> {
+        self.send_grid(&crate::grid::set_param_scene_mode(
+            row,
+            column,
+            param_index,
+            enabled,
+        ))
+    }
+
+    /// Set a block parameter on a NAMED scene.
+    ///
+    /// This is three messages, and it has to be. The device only keeps a
+    /// per-scene value for a parameter whose `scene_mode` is set, it applies
+    /// a written value to whichever scene is ACTIVE rather than to an index,
+    /// and it accepts either the flag or a value in one message but never
+    /// both. So: promote, switch, write. Ordering over the pipe is enough; no
+    /// settle delay is needed.
+    ///
+    /// **Side effect:** this leaves the unit sitting on `scene`. That is
+    /// visible on the hardware and changes what subsequent scene-relative
+    /// writes target.
+    ///
+    /// Pass `promote = false` only if the parameter is known already to be
+    /// scene-following; promoting an already-promoted parameter is harmless.
+    ///
+    /// # Errors
+    ///
+    /// As [`QuadCortex::set_chain_input`].
+    pub fn set_param_in_scene(
+        &self,
+        row: Row,
+        column: u32,
+        param_index: u32,
+        value: Value,
+        scene: u32,
+        promote: bool,
+    ) -> crate::Result<()> {
+        if promote {
+            self.set_param_scene_mode(row, column, param_index, true)?;
+        }
+        self.switch_scene(scene)?;
+        self.set_param(row, column, param_index, value)
+    }
+
+    /// Bypass or enable one block on the active scene.
+    ///
+    /// For a block that does not follow scenes this lands on all eight stored
+    /// scene slots at once, because bypass is then one global state.
+    ///
+    /// # Errors
+    ///
+    /// As [`QuadCortex::set_chain_input`].
+    pub fn set_bypass(&self, row: Row, column: u32, bypassed: bool) -> crate::Result<()> {
+        self.send_grid(&crate::grid::set_bypass(row, column, bypassed))
+    }
+
+    /// Remove the block at a cell.
+    ///
+    /// # Errors
+    ///
+    /// As [`QuadCortex::set_chain_input`].
+    pub fn remove_block(&self, row: Row, column: u32) -> crate::Result<()> {
+        self.send_grid(&crate::grid::remove_block(row, column))
+    }
+
+    /// Set a row's split and mix points, activating a parallel branch.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`crate::Error::InvalidRow`] for an odd row, which has no
+    /// splitter.
+    pub fn set_split(&self, row: Row, split: i32, mix: i32) -> crate::Result<()> {
+        self.send_grid(&crate::grid::set_split(row, split, mix)?)
+    }
+
+    /// Place a model in a grid cell, verifying the device accepted it.
+    ///
+    /// **A placement can be refused for want of DSP capacity.** The preset has
+    /// a processing budget; a block that does not fit is accepted on the wire
+    /// like any other write and is simply absent afterwards. Nothing in the
+    /// reply says so - every host write is stalled and there is no per-block
+    /// error message.
+    ///
+    /// So this verifies, which is possible without saving: the device echoes
+    /// a `Grid` broadcast naming the cell it accepted, and a refused block
+    /// produces no echo at all. When none arrives within `timeout` this
+    /// returns [`crate::Error::BlockRefused`].
+    ///
+    /// Use [`QuadCortex::set_block_unverified`] to send and return
+    /// immediately, in which case a save and read-back is the only way to
+    /// learn whether the block is there.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`crate::Error::BlockRefused`] if no echo naming the cell
+    /// arrives within `timeout`.
+    pub fn set_block(
+        &self,
+        row: Row,
+        column: u32,
+        model_id: u32,
+        timeout: Duration,
+    ) -> crate::Result<Placement> {
+        let payload = crate::grid::encode(&crate::grid::set_block(row, column, model_id));
+        let wire_row = row.wire();
+
+        let echoed = self.session.await_broadcast(
+            MessageType::Grid,
+            || {
+                let _ = self.session.send(MessageType::Grid, &payload);
+            },
+            timeout,
+            move |m| grid_echoes_cell(m, wire_row, column, model_id),
+        );
+
+        match echoed {
+            Ok(_) => Ok(Placement::EchoConfirmed),
+            Err(crate::Error::ReadTimeout(_)) => {
+                // A missing echo is NOT proof of refusal.
+                //
+                // Measured on hardware 2026-08-02: placing blocks into a
+                // freshly recalled preset, the first three produced no echo
+                // within 5 s and the next two echoed immediately - yet a
+                // read-back showed ALL FIVE present. The device's echo
+                // latency varies with how busy it is, exactly as its
+                // handshake latency does, so a fixed timeout produces false
+                // refusals on a busy unit.
+                //
+                // Reporting a placement as refused when it worked is the
+                // worse direction of error: the caller re-adds the block, or
+                // gives up on an edit that actually landed. So treat the echo
+                // as a FAST PATH and the grid as ground truth.
+                match self.read_current_preset(timeout.max(READ_BACK_TIMEOUT)) {
+                    Ok(preset) => {
+                        if preset_has_block(&preset, wire_row, column, model_id) {
+                            Ok(Placement::ReadBackConfirmed)
+                        } else {
+                            Err(crate::Error::BlockRefused(format!(
+                                "the device did not place model {model_id} at wire row \
+                                 {wire_row} (screen row {}) column {column}: no echo \
+                                 within {timeout:?}, and a read-back confirms the cell \
+                                 does not hold it. The usual cause is that the preset \
+                                 has no DSP capacity left for this block - try a \
+                                 cheaper one, or free a block",
+                                row.screen()
+                            )))
+                        }
+                    }
+                    // The read-back itself failed, so we genuinely cannot
+                    // tell. Say so rather than guessing either way.
+                    Err(e) => Err(crate::Error::BlockRefused(format!(
+                        "could not determine whether model {model_id} was placed at \
+                         wire row {wire_row} (screen row {}) column {column}: no echo \
+                         within {timeout:?}, and the confirming read-back also failed \
+                         ({e}). Check with `cortex grid`",
+                        row.screen()
+                    ))),
+                }
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Place a model in a grid cell without waiting for the device's echo.
+    ///
+    /// Faster, but a placement refused for DSP capacity is indistinguishable
+    /// from one that worked. Prefer [`QuadCortex::set_block`].
+    ///
+    /// # Errors
+    ///
+    /// As [`QuadCortex::set_chain_input`].
+    pub fn set_block_unverified(&self, row: Row, column: u32, model_id: u32) -> crate::Result<()> {
+        self.send_grid(&crate::grid::set_block(row, column, model_id))
+    }
+
+    /// Encode and send a grid message.
+    fn send_grid(&self, message: &crate::proto::GridMessage) -> crate::Result<()> {
+        let payload = crate::grid::encode(message);
+        self.session.send(MessageType::Grid, &payload)
+    }
+}
+
+/// Whether a preset holds a given model at a given cell.
+///
+/// Used to settle a `set_block` whose echo did not arrive: the grid is
+/// ground truth, the echo only a fast path.
+fn preset_has_block(
+    preset: &crate::proto::BinaryPreset,
+    row: u32,
+    column: u32,
+    model_id: u32,
+) -> bool {
+    let Some(chain) = preset.chains.get(row as usize) else {
+        return false;
+    };
+    let Some(model) = chain.models.get(column as usize) else {
+        return false;
+    };
+    // A zero hash means the cell is EMPTY, which is how remove_block encodes
+    // a removal. So it can never confirm a placement, not even of "model 0".
+    matches!(
+        model.hash,
+        Some(crate::proto::model::Hash::Hash(id)) if id != 0 && id == model_id
+    )
+}
+
+/// Whether a `Grid` broadcast names the given cell holding the given model.
+///
+/// Both `row` and `column` may arrive WITHOUT presence, in which case the
+/// element's position in its repeated field is the index. Treating an absent
+/// field as "not a match" would reject valid echoes and report a working
+/// placement as refused.
+fn grid_echoes_cell(message: &InboundMessage, row: u32, column: u32, model_id: u32) -> bool {
+    use crate::proto::{GridMessage, chain, grid_message, model};
+
+    let Ok(decoded) = prost::Message::decode(message.body.as_ref()) as Result<GridMessage, _>
+    else {
+        return false;
+    };
+    let Some(grid_message::Preset::Preset(preset)) = decoded.preset else {
+        return false;
+    };
+
+    for (chain_index, ch) in preset.chains.iter().enumerate() {
+        // A grid has four rows and eight columns, so an index never
+        // approaches u32; try_from documents that without an allow.
+        let fallback = u32::try_from(chain_index).unwrap_or(u32::MAX);
+        let echoed_row = ch.row.as_ref().map_or(fallback, |r| {
+            let chain::Row::Row(v) = r;
+            *v
+        });
+        if echoed_row != row {
+            continue;
+        }
+        for (model_index, m) in ch.models.iter().enumerate() {
+            let fallback = u32::try_from(model_index).unwrap_or(u32::MAX);
+            let echoed_column = m.column.as_ref().map_or(fallback, |c| {
+                let model::Column::Column(v) = c;
+                *v
+            });
+            if echoed_column != column {
+                continue;
+            }
+            if let Some(model::Hash::Hash(hash)) = m.hash {
+                if hash == model_id {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -757,9 +1148,9 @@ mod tests {
 
     #[test]
     fn preset_entry_reads_an_occupied_slot() {
-        let entry = PresetEntry::from_proto(&product(218, "BelAir (e609)")).unwrap();
+        let entry = PresetEntry::from_proto(&product(218, "Plexi Sunrise")).unwrap();
         assert_eq!(entry.index, 218);
-        assert_eq!(entry.name, "BelAir (e609)");
+        assert_eq!(entry.name, "Plexi Sunrise");
         assert_eq!(position_to_slot(entry.index), "28C");
     }
 
@@ -851,5 +1242,151 @@ mod tests {
         let payload = build_recall(USER_SETLIST, "1A", false, None).unwrap();
         let decoded: SetlistPositionMessage = prost::Message::decode(payload.as_slice()).unwrap();
         assert_eq!(decoded.request_id, None);
+    }
+
+    // -- grid echo matching -------------------------------------------------
+
+    use crate::proto::{Chain, GridMessage, Model, chain, grid_message, model};
+
+    /// Build a `Grid` broadcast as the device would send it. `keyed` controls
+    /// whether row and column carry explicit values or rely on position.
+    fn grid_echo(row: u32, column: u32, model_id: u32, keyed: bool) -> InboundMessage {
+        let mut m = Model {
+            hash: Some(model::Hash::Hash(model_id)),
+            ..Default::default()
+        };
+        let mut c = Chain::default();
+        if keyed {
+            m.column = Some(model::Column::Column(column));
+            c.row = Some(chain::Row::Row(row));
+            c.models = vec![m];
+        } else {
+            // Positional: pad so the element sits at its index.
+            c.models = (0..=column)
+                .map(|i| {
+                    if i == column {
+                        m.clone()
+                    } else {
+                        Model::default()
+                    }
+                })
+                .collect();
+        }
+        let chains = if keyed {
+            vec![c]
+        } else {
+            (0..=row)
+                .map(|i| {
+                    if i == row {
+                        c.clone()
+                    } else {
+                        Chain::default()
+                    }
+                })
+                .collect()
+        };
+        let message = GridMessage {
+            action: MessageAction::Update as i32,
+            request_id: None,
+            preset: Some(grid_message::Preset::Preset(crate::proto::BinaryPreset {
+                chains,
+                ..Default::default()
+            })),
+            update_type: None,
+        };
+        InboundMessage {
+            message_type: MessageType::Grid,
+            body: bytes::Bytes::from(prost::Message::encode_to_vec(&message)),
+            request_id: None,
+        }
+    }
+
+    #[test]
+    fn an_echo_naming_the_cell_confirms_the_placement() {
+        assert!(grid_echoes_cell(&grid_echo(2, 3, 1001, true), 2, 3, 1001));
+    }
+
+    #[test]
+    fn an_echo_without_presence_is_matched_positionally() {
+        // Row and column may arrive WITHOUT presence, in which case position
+        // in the repeated field is the index. Treating an absent field as
+        // "no match" would report a working placement as BlockRefused.
+        assert!(grid_echoes_cell(&grid_echo(2, 3, 1001, false), 2, 3, 1001));
+    }
+
+    #[test]
+    fn an_echo_for_another_cell_does_not_confirm() {
+        // A false positive here reports a DSP-refused block as placed.
+        let echo = grid_echo(2, 3, 1001, true);
+        assert!(!grid_echoes_cell(&echo, 1, 3, 1001), "wrong row matched");
+        assert!(!grid_echoes_cell(&echo, 2, 4, 1001), "wrong column matched");
+        assert!(!grid_echoes_cell(&echo, 2, 3, 9999), "wrong model matched");
+    }
+
+    #[test]
+    fn a_message_that_is_not_a_grid_echo_does_not_confirm() {
+        let not_a_grid = InboundMessage {
+            message_type: MessageType::Grid,
+            body: bytes::Bytes::from_static(b"\xff\xff\xff\xff"),
+            request_id: None,
+        };
+        assert!(!grid_echoes_cell(&not_a_grid, 0, 0, 1));
+
+        let empty = GridMessage {
+            action: MessageAction::Update as i32,
+            request_id: None,
+            preset: None,
+            update_type: None,
+        };
+        let no_preset = InboundMessage {
+            message_type: MessageType::Grid,
+            body: bytes::Bytes::from(prost::Message::encode_to_vec(&empty)),
+            request_id: None,
+        };
+        assert!(!grid_echoes_cell(&no_preset, 0, 0, 1));
+    }
+
+    #[test]
+    fn preset_has_block_finds_an_occupied_cell() {
+        use crate::proto::{BinaryPreset, Chain, Model, model};
+        let preset = BinaryPreset {
+            chains: vec![
+                Chain::default(),
+                Chain {
+                    models: vec![
+                        Model::default(),
+                        Model {
+                            hash: Some(model::Hash::Hash(6025)),
+                            ..Default::default()
+                        },
+                    ],
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+        assert!(preset_has_block(&preset, 1, 1, 6025));
+        // A different model in the cell is not a match.
+        assert!(!preset_has_block(&preset, 1, 1, 1001));
+        // An empty cell, a row that is out of range, a column that is.
+        assert!(!preset_has_block(&preset, 1, 0, 6025));
+        assert!(!preset_has_block(&preset, 9, 1, 6025));
+        assert!(!preset_has_block(&preset, 1, 9, 6025));
+    }
+
+    #[test]
+    fn preset_has_block_treats_a_zero_hash_as_empty() {
+        use crate::proto::{BinaryPreset, Chain, Model, model};
+        let preset = BinaryPreset {
+            chains: vec![Chain {
+                models: vec![Model {
+                    hash: Some(model::Hash::Hash(0)),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        assert!(!preset_has_block(&preset, 0, 0, 0));
     }
 }

@@ -1,0 +1,89 @@
+#!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Dr Marcus Baw
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# Install the `cortex` CLI from this checkout onto your PATH.
+#
+# This repo is a Cargo WORKSPACE whose root manifest has no [package], so
+# `cargo install --path .` does not work here - the binary lives in
+# crates/cortex-cli. This script points cargo at the right crate so you do
+# not have to remember that.
+#
+# Builds in release mode and installs into ~/.cargo/bin (or
+# $CARGO_INSTALL_ROOT). --locked uses the committed Cargo.lock so the install
+# is reproducible.
+#
+#   s/install                # install `cortex`
+#   s/install --mcp          # also install `cortex-mcp` (scaffold, see below)
+#   s/install --force        # reinstall over an existing copy
+#   s/install --debug        # faster build, slower runtime
+#   s/install --root ~/.local
+#
+# Any other flags are passed through to `cargo install`.
+#
+# Linux note: the binary installs fine without it, but talking to a Quad
+# Cortex needs a udev rule granting your user access to the device. This
+# script checks and tells you the one-off fix if it is missing.
+
+set -euo pipefail
+cd "$(git rev-parse --show-toplevel)"
+
+UDEV_RULE=/etc/udev/rules.d/70-quadcortex.rules
+
+install_mcp=false
+cargo_args=()
+for arg in "$@"; do
+  case "$arg" in
+    --mcp) install_mcp=true ;;
+    -h|--help) sed -n '5,26p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) cargo_args+=("$arg") ;;
+  esac
+done
+
+echo "Installing cortex from crates/cortex-cli ..." >&2
+cargo install --locked --path crates/cortex-cli "${cargo_args[@]+"${cargo_args[@]}"}"
+
+if [[ "$install_mcp" == true ]]; then
+  # Worth saying plainly rather than letting someone install a stub and
+  # wonder why their MCP client sees no tools.
+  echo >&2
+  echo "note: cortex-mcp is currently a SCAFFOLD - it starts and exits without" >&2
+  echo "      serving any tools. Installing it is only useful for development." >&2
+  echo "      See spec/300-mcp/spec.md for the intended surface." >&2
+  cargo install --locked --path crates/cortex-mcp "${cargo_args[@]+"${cargo_args[@]}"}"
+fi
+
+# --- post-install guidance -------------------------------------------------
+# Not a failure: you can legitimately install on a machine with no device
+# attached, and cargo has already done its job by this point.
+
+if [[ "$(uname -s)" == "Linux" && ! -f "$UDEV_RULE" ]]; then
+  cat >&2 <<EOF
+
+Heads up: $UDEV_RULE is not present.
+
+Without it /dev/hidraw* is root-only, so cortex will not be able to open the
+device. To fix (one-off):
+
+  echo 'KERNEL=="hidraw*", ATTRS{idVendor}=="152a", ATTRS{idProduct}=="880a", MODE="0660", TAG+="uaccess"' \\
+    | sudo tee $UDEV_RULE
+  sudo udevadm control --reload-rules
+  sudo udevadm trigger --action=add --subsystem-match=hidraw
+
+Then replug the unit. TAG+="uaccess" grants access to the logged-in user via
+systemd-logind, which is preferable to adding yourself to a group.
+EOF
+fi
+
+cat >&2 <<'EOF'
+
+Installed. Try:
+
+  cortex version                   # confirm the device answers
+  cortex catalog --search marshall # explore the model catalog
+  cortex --help
+
+Shell completions:
+
+  cortex completions install
+EOF

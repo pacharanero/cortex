@@ -15,3 +15,8 @@ if command -v reuse >/dev/null 2>&1; then
 else
     echo "s/lint: 'reuse' not installed; skipping SPDX lint (pip install reuse)" >&2
 fi
+
+# Fail if real device data (serials, MACs, firmware checksums) has crept
+# into the repo. Docs examples come from a physical unit, so this is easy to
+# do by accident and hard to undo once published.
+s/lint-no-device-data

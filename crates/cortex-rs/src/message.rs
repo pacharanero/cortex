@@ -8,6 +8,9 @@
 //! (defined in `ProductionAutomation.proto`). The remaining 6 bytes of the
 //! trailer are not part of the protobuf message body and are stripped before
 //! decoding.
+//!
+//! @see spec/110-framing/spec.md [FR-13]
+//! @see spec/120-proto-schema/spec.md
 
 use bytes::Bytes;
 

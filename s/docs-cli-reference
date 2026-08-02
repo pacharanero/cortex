@@ -1,0 +1,100 @@
+#!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Dr Marcus Baw
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# Regenerate docs/cli-reference.md from the CLI's own --help output.
+#
+# The reference is GENERATED rather than written, so it cannot drift from the
+# actual command surface. Run this after adding or changing a command, and
+# commit the result.
+#
+# Needs no device: --help never opens one.
+
+set -euo pipefail
+cd "$(git rev-parse --show-toplevel)"
+
+OUT=docs/cli-reference.md
+
+# Build once up front so cargo's progress output cannot leak into the doc.
+cargo build --quiet --bin cortex
+
+python3 - "$OUT" << 'PY'
+import subprocess, sys, pathlib
+
+out_path = pathlib.Path(sys.argv[1])
+
+
+def help_for(args):
+    """Full --help for a command path, straight from the binary."""
+    result = subprocess.run(
+        ["cargo", "run", "-q", "--bin", "cortex", "--"] + args + ["--help"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return result.stdout.strip()
+
+
+top = help_for([])
+
+# Parse the command list out of the top-level help so a new command appears
+# here automatically rather than needing to be remembered.
+commands = []
+in_commands = False
+for line in top.split("\n"):
+    if line.startswith("Commands:"):
+        in_commands = True
+        continue
+    if in_commands:
+        if line.startswith("Options:"):
+            break
+        if not line.strip():
+            continue
+        parts = line.strip().split(None, 1)
+        if parts and parts[0] != "help":
+            commands.append((parts[0], parts[1].strip() if len(parts) > 1 else ""))
+
+lines = [
+    "# CLI reference",
+    "",
+    "!!! note \"Generated\"",
+    "",
+    "    This page is generated from the CLI's own `--help` by",
+    "    `s/docs-cli-reference`, so it cannot drift from the real command",
+    "    surface. Do not edit it by hand. If it disagrees with your build,",
+    "    trust your build.",
+    "",
+    "## Global options",
+    "",
+    "Accepted by every command.",
+    "",
+    "```text",
+]
+
+options = top[top.index("Options:"):] if "Options:" in top else ""
+lines.append(options.rstrip())
+lines += [
+    "```",
+    "",
+    "`--format json` changes only the **result**. Progress, warnings, and",
+    "errors always go to stderr as plain text, so piping stdout into `jq` is",
+    "safe even for commands that print several progress lines.",
+    "",
+    "## Commands",
+    "",
+]
+
+for name, summary in commands:
+    lines.append(f"### `cortex {name}`")
+    lines.append("")
+    if summary:
+        lines.append(summary.rstrip(".") + ".")
+        lines.append("")
+    lines.append("```text")
+    lines.append(help_for([name]))
+    lines.append("```")
+    lines.append("")
+
+out_path.write_text("\n".join(lines).rstrip() + "\n")
+print(f"wrote {out_path} ({len(commands)} commands)", file=sys.stderr)
+PY

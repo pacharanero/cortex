@@ -280,3 +280,105 @@ The constants (`UNITY_LEVEL`, `USER_SETLIST_ROOT`, `SCENE_UNLABELLED`, `TEMPO_PA
 ### Provisional labelling
 
 The protocol facts are hardware-verified via `pyquadcortex`. The Rust implementation is **provisional** until each method has been exercised against a real Quad Cortex from this crate's own code. Label the client as "provisional" in docs and release notes until the hardware smoke run passes.
+### Hardware findings (2026-08-02, CorOS 4.0.1 / firmware d14e / QA00AB123)
+
+First verification of the read paths against a real Quad Cortex, via `cortex probe`, `cortex folders`, and `cortex presets`.
+
+**Verified working:** `active_scene`, `read_current_preset`, `list_presets`, `list_folders`. The connect handshake completed in 2.2 s and state pushes flowed afterwards, confirming the device does gate pushes on the handshake ([FR-2] of zone 140).
+
+**`list_folders` returned 399 folders** - the same count `pyquadcortex` reports for its unit. `/media/p4/Presets/My Presets` reported 11 occupied of 256, agreeing exactly with `list_presets` on the same key, and `/opt/neuraldsp/Factory Library` reported 256 of 256 with `is_factory` set.
+
+**Plugin artist folders report slots but no names, and this is device state rather than a decode bug.** Folders such as `/opt/neuraldsp/Plugins/Archetype: Cory Wong X/Artists/Jack Gardiner` announce a non-zero slot count (19) but zero occupied, and `list_presets` against that key returns a listing whose entries carry no `name`. The same code path against `/opt/neuraldsp/Factory Library` returns all 256 names correctly, which isolates the cause to the device: the plugin's folder structure ships with CorOS, but the preset files are absent on this unit.
+
+Consequences for callers:
+
+- `Folder::occupied` counts NAMED entries. A `0/N` folder means N declared slots with nothing loadable in them, not a parse failure.
+- `list_presets` returning an empty `Vec` with `Ok` is a legitimate answer meaning "the listing arrived and held nothing named". It is distinct from `Err(ReadTimeout)`, which means "no listing arrived - ask again". Do not collapse the two.
+
+#### Navigation and stored-preset reads (same session, 2026-08-02)
+
+A fully reversible sequence exercised the remaining implemented paths, restoring the unit to its starting state (`1A`, scene 0):
+
+| Step | Action | Observed |
+| --- | --- | --- |
+| 1 | `recall_preset("1B")` | grid became `Tweed Porchlight`, scene unchanged at 0 |
+| 2 | `switch_scene(1)` | `active_scene` became 1, grid unchanged |
+| 3 | `read_preset("1A")` | returned `Plexi Sunrise`, 4 chains, rows of 5/0/4/3 blocks |
+| 4 | (no action) | `active_scene` had returned to 0 **by itself** |
+
+**`read_preset` correlation works.** Step 3 is the hardest correlation case in the crate: the recall is tagged with a fresh `request_id` and only the `RecallPreset` push echoing that id is accepted, so the unsolicited seed push from the handshake's subscription is skipped. It returned the correct preset first time.
+
+**Every grid row reports 8 column slots.** Row 1 of `Plexi Sunrise` holds no blocks yet still reports 8 `models` entries, confirming that occupancy must be derived from a present, non-zero `hash` rather than from `models.len()`.
+
+**Trap 14 confirmed on hardware, unprompted.** Between steps 3 and 4 nothing switched the scene, yet it moved from 1 back to 0: `read_preset`'s recall reset the active scene to the preset's default. This is exactly the documented silent-retarget hazard - a scene-targeted write issued after a `read_preset` lands on the default scene rather than the one the caller selected. Observed here as a side effect of a read, which is what makes it easy to miss.
+
+#### VersionMessage field names are the vendor's, and two are inaccurate (2026-08-02)
+
+Reported as a suspected transposition on our side. It is not: verified by decoding the raw protobuf field numbers off the wire rather than trusting the recovered schema's names.
+
+| Wire field | Schema name | Actual content |
+| --- | --- | --- |
+| 4 | `zenos_git_hash` | `4.0.1` - the CorOS **version**, not a hash |
+| 5 | `zenwireless_fw_version` | `0123456789abcdef0123456789abcdef` - a 32-hex **checksum** |
+
+Field 5's value is 32 hex characters, which is MD5 length; a git SHA-1 would be 40. So neither field holds a git hash, and the two are not swapped - each simply carries something its name does not describe. `pyquadcortex` renders them identically, which is independent agreement rather than a shared bug, since both read the same field numbers from the same recovered schema.
+
+The names are Neural DSP's own and are presumably historical. We keep them so output maps to the schema, but annotate them in the CLI (`zenos_git_hash (= CorOS version)`) rather than silently passing on a misleading label. Do not "fix" this by swapping the fields.
+
+#### Grid editing verified on hardware (2026-08-02, CorOS 4.0.1 / d14e / QA00AB123)
+
+The first destructive surface, exercised end to end. Safe by construction at this stage: no save is implemented, so every grid edit is transient and a recall discards it. The unit was restored to `1A` unchanged afterwards.
+
+| Step | Action | Verified by |
+| --- | --- | --- |
+| 1 | `set_block(screen row 2, col 0, model 1)` | the device's `Grid` echo, AND an independent `read_current_preset` showing `Myth Drive` in that cell |
+| 2 | `set_param(--param GAIN --value 0.9)` | read-back showing `GAIN 0.9` |
+| 3 | `remove_block(screen row 2, col 0)` | read-back showing the row empty |
+
+**Echo verification works.** `set_block` reported "echo confirmed" and the read-back agreed, so `grid_echoes_cell` is neither over- nor under-matching on real traffic. A DSP refusal has not yet been provoked, so the negative path - no echo within the timeout - remains unverified against hardware; only the positive path is confirmed.
+
+**The screen-row convention holds end to end.** `--row 2` landed on wire row 1, confirmed by a read-back that reports both numbers.
+
+**Catalog-driven parameter naming works.** `--param GAIN` resolved to wire index 0 by reading which model occupied the cell and looking it up. An unrecognised name lists the model's real parameters (`GAIN, TREBLE, LEVEL`), which is materially better than a failed write.
+
+**Normalisation agrees with the catalog.** The untouched `TREBLE` and `LEVEL` read back as `0.5`, matching the catalog's default of 5 on a 0-10 range.
+
+**A stored preset can carry MORE parameters than the catalog describes.** Myth Drive's catalog entry declares three parameters; the stored block carried four, the last unnamed. This is the same phenomenon already recorded for the tempo block (23 described, 24 stored). Consequences: do not size a parameter array from the catalog, and do not assume an index beyond the catalog's range is invalid.
+
+**`read_current_preset` sees unsaved edits**, which is what makes it the correct inspection path during editing - and what `cortex grid` now exposes. Reading a STORED slot recalls it, which would have discarded each edit before it could be checked.
+
+#### `set_block` verification was wrong, and the fix (2026-08-02)
+
+Provoking a genuine DSP-capacity refusal - the one path that had never been exercised - found a real bug in the opposite direction.
+
+**What happened.** Placing `Cory Wong Delay-y-y` (model 6025, the catalog's most expensive at `cpu=3.5`) into a freshly recalled empty preset, the first three placements reported `BlockRefused` and the next two echoed immediately. A read-back showed **all five were present**. The three "refusals" were false.
+
+**Cause.** The echo latency varies with how busy the unit is, exactly as its handshake latency does. Straight after a recall it is still settling, so the `Grid` echo takes longer than the 5 s timeout. The original implementation treated "no echo within the timeout" as proof of refusal, which it is not.
+
+**Why this direction matters more.** Reporting a placement as refused when it worked is worse than the converse: the caller re-adds a block that is already there, or abandons an edit that actually landed. A false success would at least be caught by the next read.
+
+**Fix.** The echo is now a FAST PATH and the grid is ground truth. When no echo arrives, `set_block` reads the grid back and only reports `BlockRefused` if the cell genuinely does not hold the model. If the read-back itself fails, it says so rather than guessing either way.
+
+`set_block` now returns `Placement::EchoConfirmed` or `Placement::ReadBackConfirmed` so a caller - and the CLI - can report which check actually confirmed it. Saying "echo confirmed" when the echo timed out and a read-back rescued it would misstate how much the device told us.
+
+**Both paths verified afterwards.** With `--timeout 0`, which makes an echo impossible, a placement is still correctly confirmed by read-back. And filling the grid produced a **genuine refusal**: six blocks at `cpu=3.5` were accepted, the seventh and eighth were not - no echo AND a read-back confirming absence. So the negative path is now hardware-verified rather than merely implemented.
+
+This also gives a rough figure for the preset DSP budget: 6 x 3.5 = 21.0 catalog CPU units fit on the unit tested, 7 did not. That is a single data point on one preset shape, not a formula.
+
+#### Remaining grid write paths verified (2026-08-02)
+
+Done on the empty 2B scratchpad, unit restored to 1A afterwards. All on the working grid; nothing saved.
+
+| Path | Observed |
+| --- | --- |
+| `set_bypass` | `xxxxxxxx` - all eight scene slots set at once, confirming that bypass is one global state for a block that does not follow scenes |
+| `set_chain_input` | row input became port 4 (Return 1) |
+| `set_chain_output` | row output became port 19 (MULTIPLE) |
+| `set_split` | `split 2 rejoin 5` on an even row; **refused with an explanation on an odd row**, as designed |
+| `set_param_in_scene` | `per-scene A-H: [0.2, 0.2, 0.2, 0.8, 0.2, 0.2, 0.2, 0.2]` - scene D alone changed |
+
+**The three-message per-scene sequence works.** Promote `scene_mode`, switch scene, write value. Scene D holds 0.8 while every other scene holds 0.2, which is exactly the requested edit and could not happen if any of the three messages were dropped.
+
+**A stored preset carries eight values for EVERY parameter**, not only scene-following ones - `TREBLE` and `LEVEL` read back as eight identical entries. So the presence of eight values does not indicate `scene_mode`; only a difference between them does.
+
+**A verification tool that hides what it verifies is worse than none.** The per-scene edit initially appeared to have failed: `GAIN` read back as 0.2 on both scene A and scene D. The write was correct all along - the read-back displayed only `param_values[0]`, which is always scene A regardless of the active scene. Two wrong conclusions were available (the write failed; the device ignores `scene_mode`) and both would have been recorded as protocol findings. `cortex grid --params` now shows the whole per-scene array.
