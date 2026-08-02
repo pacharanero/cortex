@@ -1,0 +1,24 @@
+# SPDX-FileCopyrightText: 2026 Dr Marcus Baw
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+[package]
+name = "cortex-mcp"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "MCP server exposing the Neural DSP Quad Cortex (and Nano Cortex) to agentic patch editing."
+
+[[bin]]
+name = "cortex-mcp"
+path = "src/main.rs"
+
+[dependencies]
+cortex-rs = { path = "../cortex-rs" }
+anyhow = { workspace = true }
+rmcp = { workspace = true }
+tokio = { workspace = true }
+serde_json = { workspace = true }

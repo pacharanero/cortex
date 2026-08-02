@@ -1,0 +1,199 @@
+# Agent Instructions
+
+`cortex-rs` is the Rust workspace for an unofficial, Linux-first toolkit for
+the Neural DSP Quad Cortex (and, in time, the Nano Cortex). The core deliverable
+is a low-level leaf crate that speaks the Cortex Control USB HID protocol and
+exposes a typed domain model - presets, scenes, grid, blocks. On top of the
+crate sit a CLI (`cortex`), an MCP server (`cortex-mcp`) for agentic patch
+editing, and a planned Tauri desktop GUI. This project is not affiliated with
+or endorsed by Neural DSP; it is an interoperability client for hardware whose
+vendor ships no Linux editor.
+
+This file is the entry point for AI coding agents working in this Rust
+workspace. Read it before changing anything. The parent workspace at
+`/home/marcus/code/neuraldsp/` holds the vendored prior-art repos (gitignored,
+reference-only) and the protocol research note that established the facts this
+crate encodes.
+
+## Read First
+
+- [README.md](README.md) - setup (udev rule, build, run) and project overview.
+- [/home/marcus/code/neuraldsp/quad-cortex-linux-editor-and-protocol.md](../quad-cortex-linux-editor-and-protocol.md) - the research note that established the protocol facts and architecture. Authoritative for protocol behaviour.
+- [NOTICE](NOTICE) and [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) - attribution for the MIT- and Apache-2.0-licensed prior art this project ports from.
+- [/home/marcus/code/house-style/AGENTS.md](/home/marcus/code/house-style/AGENTS.md) - cross-repo standards (the source of truth for CI, distribution, licensing, docs, etc.).
+- [/home/marcus/code/house-style/licensing.md](/home/marcus/code/house-style/licensing.md), [library-extraction.md](/home/marcus/code/house-style/library-extraction.md), [rust-cli.md](/home/marcus/code/house-style/rust-cli.md), [tauri-gui.md](/home/marcus/code/house-style/tauri-gui.md) - the specific standards this project follows.
+
+## Prior art and licensing (read before reusing anything)
+
+Vendored reference repos live at the parent workspace root
+(`/home/marcus/code/neuraldsp/<repo>/`) and are gitignored; they are pinned
+shallow clones for study, not part of this build. Their licenses govern what
+may be taken from them.
+
+| Repo | License | Use |
+| --- | --- | --- |
+| `pyquadcortex` (stokes-audio) | MIT | **Port freely with attribution.** The primary protocol source; the recovered `.proto` files are vendored into `crates/cortex-rs/proto/` with their own SPDX header. The framing, the write-STALL gotcha, and the trailer-tagged envelope all originate here. Record any derivation in `NOTICE` / `THIRD-PARTY-NOTICES.md`. |
+| `deskop-nano-cortex` (rixrix) | Apache-2.0 | **Adapt with attribution.** The architectural precedent for the Tauri app (Rust device I/O, honest verified-vs-provisional labelling, AFX spec layout, release/dx tooling). No code copied yet; re-implement independently. |
+| `qc-stomp-tools` (VanIseghemThomas) | MIT | Adapt with attribution. On-device footswitch/rotary/LED ioctls - relevant only if we ever target on-device builds. |
+| `OpenCortex` (VanIseghemThomas) | **None declared** | **Reference only.** No license file; GitHub reports `license: null`, so all rights reserved. Read for understanding of the device-rooting route; do **not** copy code, scripts, or docs into this repo. |
+| `qc-extras` (roelj) | **None declared** | **Reference only.** Cross-compilation notes only. |
+| `quad-cortex-usb-re-notes` (hsaastamoinen) | **None declared** | **Reference only.** Independent USB recon corroboration; do not copy prose or captures verbatim. |
+| `toneparse` (vian21) | **None declared** | **Reference only.** Preset-file parser logic; reimplement independently if needed, do not lift code. |
+
+The MIT- and Apache-2.0-licensed material is compatible with the project
+license below. Anything copied or derived from `pyquadcortex`,
+`deskop-nano-cortex`, or `qc-stomp-tools` must carry its upstream copyright and
+a NOTICE entry. The four unlicensed repos must not have any of their content
+committed into this repo - cite findings in your own words and link out.
+
+## Project license
+
+Following house style: code is **AGPL-3.0-or-later**, written content is
+**CC-BY-SA-4.0**. An SPDX header sits on every source file, naming the
+copyright holder and the AGPL-3.0-or-later license identifier (with the
+language's comment prefix); files that cannot carry an inline header are
+covered by `REUSE.toml`. The vendored `.proto` files keep their own MIT SPDX
+header (copyright (c) 2026 Stokes) above the original recovery note.
+
+AGPL is a deliberate choice: the toolkit is not available for subsumption into
+proprietary products. We can offer dual licensing if a closed derivative
+genuinely needs to exist. The MIT/Apache prior art we port in remains under its
+own terms; attribution is recorded, not relicensed.
+
+## Architecture
+
+```text
+crates/
+  cortex-rs/    The leaf crate (no host, no async runtime). USB HID transport
+                (behind the `hid` feature), flag-driven framing, trailer-tagged
+                message envelope, typed domain model, vendored protobuf schema
+                built via prost.
+  cortex-cli/   The `cortex` binary: thin main.rs, all behaviour in the crate.
+  cortex-mcp/   The `cortex-mcp` MCP server binary (scaffold; safety surface
+                designed in, tools not yet wired).
+gui/           Planned: Tauri 2 desktop app (React + Mantine + Vite), a
+                consumer of the crate.
+docs/          Protocol notes, runbooks, GUI docs.
+spec/          AFX-style spec/design/tasks per zone (mirrors deskop-nano-cortex).
+s/             Repo scripts: s/test, s/lint, s/gui-dev, s/version++ ...
+```
+
+- **Leaf-crate discipline (house-style).** `cortex-rs` depends only on what it
+  needs to encode the protocol and domain model (serde, bytes, flate2, prost,
+  and optionally hidapi), never on the host app or an async runtime. Dependency
+  arrows point *into* the crate. This is what lets the same crate drive the CLI,
+  the MCP server, the Tauri backend, and eventually ship to crates.io. See
+  [library-extraction.md](/home/marcus/code/house-style/library-extraction.md).
+- **One implementation, many surfaces.** The CLI, MCP server, and Tauri backend
+  all call the crate's public API; none reimplements protocol or domain logic.
+  Follow the `clincalc`/`gitehr` precedent.
+- **Rust owns behaviour; the webview owns interaction.** Tauri commands return
+  typed serialisable data; the frontend renders it. See
+  [tauri-gui.md](/home/marcus/code/house-style/tauri-gui.md).
+- **Honest verified-vs-provisional labelling.** Borrow the
+  `deskop-nano-cortex` product-truth discipline: the USB HID protocol for the
+  Quad Cortex is hardware-verified (via `pyquadcortex` and re-verified on this
+  machine, CorOS 4.0.1 / firmware d14e); anything we reverse-engineer
+  ourselves or extend (e.g. unknown message types, the MCP safety surface,
+  Nano Cortex specifics) is provisional until verified against real hardware.
+  Label it as such in UI, docs, and release notes.
+- **Multi-device from the start.** The `VersionMessage.DeviceType` enum in the
+  recovered schema already carries `QC = 0` and `ATMA = 1` (`ATMA` is the Nano
+  Cortex codename). `cortex-rs` targets both; Nano-specific behaviour that is
+  not hardware-verified is labelled provisional.
+
+## Protocol invariants (do not break silently)
+
+From `quad-cortex-linux-editor-and-protocol.md` and
+`pyquadcortex/docs/protocol.md`, against CorOS 4.0.1:
+
+- Transport: USB HID, VID:PID `152A:880A`, interface 5, input report ID
+  `0x01`, output report ID `0x02`, 128-byte body + report-ID = 129 bytes at
+  the hidapi boundary.
+- Framing: `[report_id][len][flags][data...]`, flags `0x40` FIRST /
+  `0x80` LAST / `0xC0` complete / `0x00` middle. No sequence numbers, no
+  total-length field - reassembly is flag-driven.
+- Envelope: reassembled message is `protobuf ++ 8-byte trailer`; the message
+  type tag is a little-endian `uint16` `CortexMessageType` in the **trailer**,
+  not a header.
+- Compression: frame-level gzip (payload starts `1f 8b`) and field-level
+  gzip inside protobuf `bytes` fields.
+- **The benign write STALL:** every `SET_REPORT` is acted upon and *then*
+  deliberately stalled at the status stage, so `hid_write()` returns `-1` on
+  a write that worked. Swallow write errors; detect a dead device via read
+  timeouts. This is the single most important gotcha and is encoded in
+  `crates/cortex-rs/src/transport.rs`.
+- Exclusive HID access: one owning process per device, not one connection per
+  call. The MCP server especially must hold a single connection.
+- No version field on the wire: a CorOS update can silently break things.
+  Surface a protocol-version probe, not a hard-coded assumption.
+
+## MCP safety surface (when we build it)
+
+The MCP server is greenfield - no MCP server for any Neural DSP hardware
+exists. The design that matters is the safety boundary, not the tool list.
+Build in from the start:
+
+- Read and recall are free; **saving is always explicitly confirmed**.
+- Never write to the factory setlist; restrict saves to a designated scratch
+  range of USER slots unless overridden.
+- Back up the target slot (`read_preset`) before overwriting, and keep the
+  blob.
+- Surface the row-numbering trap (zero-based in the API, 1-4 on screen; a
+  wrong-row edit succeeds silently) in tool descriptions.
+- Single owning process for the USB interface.
+
+## Legal hygiene
+
+Reverse engineering for interoperability is the established case (UK CDPA
+s50B / s296A, EU Software Directive Art 6). Practical norms, following the
+existing projects:
+
+- Do not redistribute Neural DSP binaries, firmware, or artwork.
+- Do not publish raw captures containing their strings (preset, path, device,
+  build strings are readable).
+- Keep the recovered schema limited to what interoperability requires.
+- State clearly that the work is unofficial and unaffiliated.
+- Prefer the USB route over the device-rooting route (OpenCortex); the latter
+  carries warranty risk the USB route does not.
+
+## Workflow
+
+- `s/test` - run `cargo test` across the workspace.
+- `s/lint` - `cargo fmt --check`, clippy `-D warnings`, `reuse lint`.
+- `s/gui-dev` - run the Tauri dev server from any working directory (once
+  `gui/` exists).
+- `s/version++` - bump the canonical version across `Cargo.toml` (and, once
+  they exist, `gui/package.json`, `tauri.conf.json`) in one release commit.
+
+## Before Every Commit
+
+```sh
+cargo fmt --check
+cargo clippy --all-targets --all-features -- -D warnings
+cargo test --all
+reuse lint
+```
+
+Frontend changes additionally: `npm run check` (lint + typecheck) inside
+`gui/`. GUI changes additionally: the manual hardware smoke runbook against a
+real Quad Cortex - CI has no hardware.
+
+## Approval Required
+
+Ask before publishing the crate to crates.io, cutting a release tag, changing
+the license, editing `NOTICE`/`THIRD-PARTY-NOTICES.md` attribution,
+force-pushing, or any externally visible action. Do not commit vendored
+reference-repo content into this repo's tree.
+
+## Assurance
+
+- Treat agent output as a capable junior's: read the diff and run the
+  validation above.
+- For protocol behaviour, validate against real hardware where possible;
+  until then mark features provisional. The `pyquadcortex` offline test suite
+  is a useful conformance reference but is not a substitute for a hardware
+  smoke run.
+- Agent-generated tests must not be the sole basis for accepting protocol or
+  safety-surface behaviour. Cross-check against the recovered `.proto` files
+  and a real device.

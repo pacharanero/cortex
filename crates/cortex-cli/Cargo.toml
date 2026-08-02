@@ -1,0 +1,25 @@
+# SPDX-FileCopyrightText: 2026 Dr Marcus Baw
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+[package]
+name = "cortex-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Command-line surface for the Neural DSP Quad Cortex (and Nano Cortex) over USB HID."
+
+[[bin]]
+name = "cortex"
+path = "src/main.rs"
+
+[dependencies]
+cortex-rs = { path = "../cortex-rs" }
+anyhow = { workspace = true }
+clap = { workspace = true }
+clap_complete = { workspace = true }
+prost = { workspace = true }
+serde_json = { workspace = true }

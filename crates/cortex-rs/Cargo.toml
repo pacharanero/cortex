@@ -1,0 +1,43 @@
+# SPDX-FileCopyrightText: 2026 Dr Marcus Baw
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+[package]
+name = "cortex-rs"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Low-level Rust crate for the Neural DSP Quad Cortex and Nano Cortex: the Cortex Control USB HID protocol and a typed domain model. Leaf crate - no host app, no async runtime."
+
+[lib]
+name = "cortex_rs"
+path = "src/lib.rs"
+
+[features]
+default = ["hid"]
+# USB HID transport via hidapi. On by default for CLI/MCP/GUI use; disable
+# (`default-features = false`) for pure protocol/domain decoding without a
+# device present (useful for tests, analysis tools, and a crates.io consumer
+# that only wants the schema).
+hid = ["dep:hidapi"]
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+bytes = { workspace = true }
+flate2 = { workspace = true }
+thiserror = { workspace = true }
+once_cell = { workspace = true }
+prost = { workspace = true }
+uuid = { workspace = true }
+hidapi = { workspace = true, optional = true }
+
+[dev-dependencies]
+# Keep dev-deps minimal so the leaf stays light to build.
+serde_json = { workspace = true }
+
+[build-dependencies]
+prost-build = { workspace = true }

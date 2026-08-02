@@ -1,0 +1,160 @@
+---
+afx: true
+type: SPEC
+status: Living
+owner: "@pacharanero"
+version: "1.0"
+created_at: "2026-08-01T17:30:00.000Z"
+updated_at: "2026-08-01T17:30:00.000Z"
+tags: ["cli", "cortex", "clap", "completions", "version", "format", "rust-cli"]
+---
+
+# 200 CLI - Spec
+
+> The `cortex` command-line surface: a thin wrapper over the `cortex-rs` crate. All protocol and domain behaviour lives in the library; the binary adds only argument parsing, shell completions, output formatting, and the version command.
+
+## References
+
+- [001-overview spec](../001-overview/spec.md) - governing spec, traceability contract, routing index entry for this zone.
+- [001-overview design](../001-overview/design.md) [DES-ARCH] - the flow map this surface sits at the top of (`[Flow.CLI]`).
+- [100-transport spec](../100-transport/spec.md) - the transport the `version` command opens directly today (will switch to the client layer once 150 lands).
+- [130-domain-model spec](../130-domain-model/spec.md) - `DeviceKind`, `Message` types the CLI decodes.
+- [150-client spec](../150-client/spec.md) - the planned `QuadCortex` client API the future commands (`recall`, `scene`, `dump-preset`, `list-presets`) will call.
+- [house-style rust-cli.md](https://github.com/marcus-pacharanero/house-style/blob/main/rust-cli.md) - the CLI shape rules this surface follows.
+- [pyquadcortex qcctl](https://github.com/stokes-audio/pyquadcortex) - the MIT-licensed CLI whose command surface informs the planned commands.
+- Owned source: `crates/cortex-cli/src/main.rs`, `crates/cortex-cli/Cargo.toml`.
+
+## Problem Statement
+
+The CLI is one of three surfaces (CLI, MCP server, Tauri GUI) over the same `cortex-rs` crate. Its job is to be the scriptable, terminal-first interface for a Linux user with a Quad Cortex on the desk: read the firmware version, recall a preset, switch a scene, dump a preset blob, list what is on the device. It is thin by design - it parses arguments, calls the crate, prints the result - and it must stay thin so the MCP server and the Tauri backend can reuse the same behaviour without a third implementation drifting alongside.
+
+The interesting requirements are not "parse args and print" but the house-style rules that make the CLI composable and agent-friendly: a bare invocation is helpful, every command has a short description, data goes on stdout and hints on stderr, a `--format text|json` global flag is honoured by every command, shell completions are generated from the live clap command tree, and the surface is machine-discoverable via `--schema`.
+
+## Verification Basis
+
+| Claim | Status | Evidence |
+| --- | --- | --- |
+| `cortex version` round-trips a Version READ over USB HID | Hardware-verified | Succeeds on this machine, CorOS 4.0.1 / firmware `d14e`, prints all `VersionMessage` fields |
+| `cortex --version` / `-V` prints the crate version | Implemented | clap `#[command(version)]` + `propagate_version` |
+| `cortex completions <shell>` prints to stdout for bash, zsh, fish, powershell, elvish | Implemented | `clap_complete::generate` from the live `Cli::command()` |
+| SIGPIPE reset on Unix | Implemented | `libc_sigpipe_reset()` in `main()` before `Cli::parse()` |
+| `arg_required_else_help = true` | Implemented | Bare `cortex` prints help and exits successfully |
+| Planned commands (`recall`, `scene`, `dump-preset`, `list-presets`, `list-folders`) | Provisional | Not yet implemented; depend on the client layer (150) |
+
+## User Stories
+
+### Primary Users
+
+Linux users with a Quad Cortex, script writers, AI coding agents driving the CLI via `--format json`, and maintainers running `cortex version` as a smoke test.
+
+### Stories
+
+**As a** Linux user
+**I want** `cortex version` to read the real device firmware over USB
+**So that** I can confirm the device is talking and the protocol version is supported.
+
+**As a** script writer
+**I want** `cortex version --format json` to emit structured JSON on stdout
+**So that** I can pipe it into `jq` or another tool without scraping text.
+
+**As an** AI agent
+**I want** `cortex --schema` to emit a JSON Schema of command inputs
+**So that** I can discover the surface without scraping `--help`.
+
+**As a** shell user
+**I want** `cortex completions zsh` to print a completion script I can source
+**So that** tab-completion works for every subcommand and flag.
+
+**As a** maintainer
+**I want** a bare `cortex` invocation to print help, not error
+**So that** a new user running the binary with no arguments learns what it does.
+
+## Requirements
+
+### Functional Requirements
+
+#### Implemented
+
+| ID | Requirement | Priority |
+| --- | --- | --- |
+| FR-1 | The binary is `cortex` (`[[bin]] name = "cortex"`), built from a thin `main.rs` that delegates all behaviour to the crate. | Must Have |
+| FR-2 | `cortex version` opens a `Transport` for `DeviceKind::QuadCortex`, sends a `VersionMessage{action: READ}`, decodes the reply, and prints all fields as YAML-like text to stdout. | Must Have |
+| FR-3 | `cortex completions <shell>` prints shell completions to stdout via `clap_complete::generate`, supporting bash, zsh, fish, powershell, and elvish. | Must Have |
+| FR-4 | `cortex --version` / `cortex -V` prints the crate version (clap `#[command(version)]` + `propagate_version`). | Must Have |
+| FR-5 | SIGPIPE is reset to `SIG_DFL` on Unix at startup so output pipes into `head`/`less` without a panic on a closed pipe. | Must Have |
+| FR-6 | `arg_required_else_help = true`: a bare `cortex` invocation prints help and exits successfully, rather than erroring on a missing subcommand. | Must Have |
+| FR-7 | Every command carries a short `///` doc-comment used as the clap `about`, so `--help`, completions, and generated docs have no blank rows. | Must Have |
+| FR-8 | Errors print to stderr as `cortex: {e:#}` and the process exits with `ExitCode::FAILURE`; data never touches stderr. | Must Have |
+
+#### Planned
+
+| ID | Requirement | Priority |
+| --- | --- | --- |
+| FR-10 | A global `--format text\|json` flag (default `text`) is honoured by every command. `text` is for humans; `json` is for scripts and agents. `cortex version --format json` emits structured version output. | Must Have |
+| FR-11 | `cortex recall --setlist <path> --slot <slot>` recalls a preset on the device (delegates to `QuadCortex::recall_preset`). | Must Have |
+| FR-12 | `cortex scene --index <n>` switches the active scene (delegates to `QuadCortex::switch_scene`). | Must Have |
+| FR-13 | `cortex dump-preset --setlist <path> --slot <slot>` recalls a preset and prints the full `BinaryPreset` to stdout (text summary by default, JSON with `--format json`). | Must Have |
+| FR-14 | `cortex list-presets --setlist <path>` lists presets in a setlist (delegates to `QuadCortex::list_presets`). | Must Have |
+| FR-15 | `cortex list-folders` lists all folders the device knows (delegates to `QuadCortex::list_folders`). | Should Have |
+| FR-16 | `cortex --schema` / `cortex --print-schema` emits a JSON Schema of command inputs - the authoritative input contract for scripts and agents. | Should Have |
+| FR-17 | Once the client layer (150) lands, `cortex version` switches from calling `Transport::request` directly to calling `QuadCortex::version()`. | Should Have |
+
+### Non-Functional Requirements
+
+| ID | Requirement | Target |
+| --- | --- | --- |
+| NFR-1 | `main.rs` stays thin: argument parsing, dispatch, and output formatting only. All protocol and domain behaviour lives in the crate. | Review-enforced |
+| NFR-2 | clap derive is used, never the builder API. Subcommands are `#[derive(Subcommand)]`, args are `#[derive(Parser)]`. | Review-enforced |
+| NFR-3 | `anyhow::Result` is the binary's error type; typed error enums live in the library crate for callers to match on. | Review-enforced |
+| NFR-4 | stdout carries the result; stderr carries hints, progress, and errors. A user piping `cortex version --format json \| jq` gets clean data on stdout. | Review-enforced |
+| NFR-5 | Shell completions are generated from the live `Cli::command()` tree, never hand-maintained. | CI-enforced |
+| NFR-6 | The binary compiles and runs with `cargo run -p cortex-cli` on a machine with the udev rule installed and a Quad Cortex connected. | Hardware smoke |
+
+## Acceptance Criteria
+
+- [x] `cortex version` prints all `VersionMessage` fields on stdout against a real Quad Cortex.
+- [x] `cortex --version` and `cortex -V` print the crate version.
+- [x] `cortex completions <shell>` prints a completion script for each supported shell.
+- [x] A bare `cortex` prints help and exits successfully.
+- [x] `cortex version | head -1` does not panic (SIGPIPE reset).
+- [x] Errors go to stderr; stdout is clean data only.
+- [ ] `cortex version --format json` emits structured JSON on stdout.
+- [ ] `cortex recall`, `cortex scene`, `cortex dump-preset`, `cortex list-presets`, `cortex list-folders` are implemented and delegate to the client layer.
+- [ ] `cortex --schema` emits a JSON Schema of command inputs.
+- [ ] Every command honours `--format text|json`.
+
+## Non-Goals
+
+- **Protocol or domain logic.** Owned by the crate (zones 100-150). The CLI calls the crate's public API; it does not reimplement framing, protobuf, or the client surface.
+- **The MCP server.** Owned by zone 300. The CLI and MCP server are sibling surfaces over the same crate.
+- **The Tauri GUI.** Owned by zone 400 (deferred).
+- **Interactive editing.** The CLI is batch-oriented (parse, call, print). A REPL or interactive TUI is out of scope; the GUI owns interactive editing.
+
+## Dependencies
+
+- **`cortex-rs`** (workspace path) - the crate whose API the CLI calls. Currently uses `Transport`, `DeviceKind`, `proto::VersionMessage` directly; will switch to `QuadCortex` once the client layer (150) lands.
+- **`clap`** (derive) - argument parsing.
+- **`clap_complete`** - shell completions from the live command tree.
+- **`anyhow`** - the binary's error type.
+- **`prost`** - protobuf encode/decode for the `version` command's direct transport call (will be hidden behind the client layer once 150 lands).
+- **`serde_json`** - JSON output for `--format json` (planned).
+- **house-style rust-cli.md** - the shape rules this surface follows (thin main, clap derive, data on stdout, SIGPIPE reset, completions, `--format`, `--schema`).
+
+## Future
+
+- **`--format yaml`.** A third format option for the global flag, if the need arises. JSON covers the script/agent case; YAML is a human-friendly middle ground.
+- **`cortex completions install`.** The house-style ideal is `completions install [--shell <shell>] [--dir <path>]` that detects the current shell, writes the file to the standard user completion directory, and prints any one-time shell config. The current `completions <shell>` (print-to-stdout) is the packaging fallback; `install` is the human interface.
+- **`--dry-run` on mutating commands.** Once `recall` and `scene` land, a global `--dry-run` that prints the plan without touching the device follows the house-style pattern.
+- **Progress on long-running commands.** `dump-preset` and `list-presets` may take a second or more over USB; an `indicatif` progress bar on stderr (auto-hidden when not a TTY) follows the house-style pattern.
+- **Registry-driven dispatch.** If the command surface grows large, a single registry driving the CLI, schema, and any MCP tool surface keeps them from drifting.
+
+## Glossary
+
+| Term | Definition |
+| --- | --- |
+| Thin main | `main.rs` parses args and delegates; all behaviour lives in the library crate |
+| `--format` | Global flag (`text` default, `json` for scripts/agents) honoured by every command |
+| `--schema` | Emits a JSON Schema of command inputs for machine discoverability |
+| Completions | Shell completion scripts generated from the live clap command tree via `clap_complete` |
+| SIGPIPE reset | `signal(SIGPIPE, SIG_DFL)` at startup so output pipes into `head`/`less` without a panic |
+| Data on stdout | stdout carries the result; stderr carries hints, progress, and errors |

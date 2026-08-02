@@ -1,0 +1,27 @@
+# SPDX-FileCopyrightText: 2026 Dr Marcus Baw
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# REUSE bulk annotations for files that cannot carry an inline SPDX header
+# (documentation, generated lockfiles, JSON/HTML assets, and the vendored
+# MIT-licensed .proto files, which keep their own SPDX header above).
+
+version = 1
+
+[[annotations]]
+path = [
+    "**/*.md",
+    "**/*.txt",
+    "**/*.json",
+    "**/*.html",
+    "**/Cargo.lock",
+    "LICENSE",
+    "**/LICENSE",
+    ".dockerignore",
+    ".gitignore",
+    "**/.gitignore",
+    "**/.gitkeep",
+    ".editorconfig",
+]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2026 Dr Marcus Baw"
+SPDX-License-Identifier = "AGPL-3.0-or-later"

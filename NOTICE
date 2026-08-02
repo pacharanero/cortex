@@ -1,0 +1,44 @@
+SPDX-FileCopyrightText: 2026 Dr Marcus Baw
+SPDX-License-Identifier: AGPL-3.0-or-later
+
+cortex-rs
+Copyright 2026 Dr Marcus Baw
+
+This project is licensed under the GNU Affero General Public License v3.0 or
+later (see LICENSE). Code is AGPL-3.0-or-later; written content is
+CC-BY-SA-4.0. See the README licensing section for details.
+
+It includes recovered Cortex Control protobuf schema definitions vendored from
+the MIT-licensed project stokes-audio/pyquadcortex
+(<https://github.com/stokes-audio/pyquadcortex>, (c) 2026 Stokes), used under
+the terms of the MIT license. The schema carries its own SPDX header in
+crates/cortex-rs/proto/.
+
+The architectural precedent for the Tauri desktop app (Rust device I/O,
+honest verified-vs-provisional labelling, AFX spec layout) was informed by the
+Apache-2.0-licensed project rixrix/deskop-nano-cortex
+(<https://github.com/rixrix/deskop-nano-cortex>, (c) 2026 Richard Sentino),
+reviewed for structure; no source code was copied from it.
+
+Full third-party attribution and license texts are recorded in
+THIRD-PARTY-NOTICES.md.
+
+== Trademark and unaffiliation notice ==
+
+This is an unofficial, community-developed interoperability client. It is not
+affiliated with, endorsed by, or sponsored by Neural DSP Technologies. "Neural
+DSP", "Quad Cortex", "Nano Cortex", and "Cortex Control" are trademarks of
+Neural DSP Technologies. All trademarks are the property of their respective
+owners.
+
+The project reverse-engineers the Cortex Control USB HID protocol for
+interoperability, which is the established case under UK CDPA s50B / s296A and
+EU Software Directive Article 6. It does not redistribute Neural DSP binaries,
+firmware, or artwork.
+
+== Recovered schema provenance ==
+
+The protobuf schema in crates/cortex-rs/proto/ was recovered from the Neural
+DSP Cortex Control desktop application by the stokes-audio/pyquadcortex
+project. It is vendored here under the MIT license's distribution terms, with
+attribution. The schema is limited to what interoperability requires.

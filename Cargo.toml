@@ -1,0 +1,52 @@
+# SPDX-FileCopyrightText: 2026 Dr Marcus Baw
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+[workspace]
+resolver = "2"
+members = [
+    "crates/cortex-rs",
+    "crates/cortex-cli",
+    "crates/cortex-mcp",
+]
+
+[workspace.package]
+version = "0.0.1"
+edition = "2024"
+rust-version = "1.85"
+authors = ["Dr Marcus Baw"]
+license = "AGPL-3.0-or-later"
+repository = "https://github.com/pacharanero/cortex-rs"
+homepage = "https://github.com/pacharanero/cortex-rs"
+description = "Unofficial, Linux-first toolkit for the Neural DSP Quad Cortex (and Nano Cortex) over the Cortex Control USB HID protocol."
+
+[workspace.dependencies]
+# Leaf engine (crates/cortex-rs): keeps a minimal dependency surface so the
+# crate stays embeddable in the CLI, MCP server, Tauri backend, and on
+# crates.io. See AGENTS.md -> Architecture -> Leaf-crate discipline.
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+bytes = "1.12.1"
+flate2 = "1.1.9"
+thiserror = "2"
+once_cell = "1.21.4"
+uuid = { version = "1.24.0", features = ["v4"] }
+
+# USB HID transport (leaf, but hardware-bound, so kept optional via feature).
+hidapi = "2.6.6"
+
+# Protobuf decode (we use the recovered Cortex Control .proto files via prost).
+prost = "0.14.4"
+prost-build = "0.14.4"
+
+# CLI surface (cortex-cli only).
+anyhow = "1.0.104"
+clap = { version = "4.6.5", features = ["derive"] }
+clap_complete = "4.6.8"
+
+# MCP server surface (cortex-mcp only).
+rmcp = { version = "3.1.0", default-features = false, features = ["server", "transport-io"] }
+tokio = { version = "1.53.1", features = ["macros", "net", "rt-multi-thread"] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

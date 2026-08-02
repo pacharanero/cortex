@@ -1,0 +1,22 @@
+# SPDX-FileCopyrightText: 2026 Dr Marcus Baw
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+# Rust build artefacts
+/target
+**/target
+
+# Tauri / frontend
+/gui/dist
+/gui/node_modules
+/gui/src-tauri/target
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+
+# Editor / OS
+.DS_Store
+.vscode/*
+!.vscode/extensions.json
+.idea
