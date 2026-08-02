@@ -124,6 +124,37 @@ const SUBSCRIBE_TYPES: &[MessageType] = &[
     MessageType::Updater,
 ];
 
+/// How much of the connect handshake to perform.
+///
+/// The full handshake subscribes to 22 state types, which is what makes the
+/// device dump its entire state - on the unit measured, over 600 KB of folder
+/// listings alone. That dump is necessary if the command is going to READ
+/// anything, and pure overhead if it is only going to write.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConnectMode {
+    /// Subscribe to device state and wait for the dump to finish.
+    ///
+    /// This is what a long-lived editor wants: the device then pushes state
+    /// changes as they happen, without being asked.
+    ///
+    /// It is NOT needed to read: a targeted READ provokes its own reply.
+    /// Measured on hardware - `cortex presets` took 50.6 s subscribed and
+    /// 9.4 s minimal, returning the same listing, because subscribing makes
+    /// the device dump every folder it knows and the command's own READ then
+    /// makes it do so again.
+    Subscribed,
+    /// Announce the client and stop.
+    ///
+    /// Enough for the device to accept commands AND to answer targeted
+    /// reads. Skips the 22 subscribe READs and the settle, so it neither
+    /// provokes the state dump nor waits for one.
+    ///
+    /// The right default for a one-shot command. The `ModelRepo` READ is
+    /// still sent, because that one IS load-bearing - without it the device
+    /// answers nothing.
+    Minimal,
+}
+
 /// A decoded inbound message: the type tag and the decoded protobuf body.
 #[derive(Debug, Clone)]
 pub struct InboundMessage {
@@ -183,6 +214,12 @@ struct Shared {
     last_inbound_ms: AtomicU64,
     /// Session start, the origin for `last_inbound_ms`.
     started: Instant,
+    /// The `ModelRepo` payload, captured from whichever reply arrives first.
+    ///
+    /// The handshake asks for this anyway - it is load-bearing - so a caller
+    /// wanting the catalog would otherwise make the device build and send
+    /// 46 KB a second time.
+    model_repo: Mutex<Option<Vec<u8>>>,
 }
 
 /// The session owns a shared HID device handle, the background RX thread, the
@@ -218,6 +255,7 @@ impl Session {
             write_lock: Mutex::new(()),
             last_inbound_ms: AtomicU64::new(0),
             started: Instant::now(),
+            model_repo: Mutex::new(None),
         });
 
         // RX thread: gets its own clone of the Arc<HidDevice>.
@@ -454,7 +492,16 @@ impl Session {
     /// Returns [`crate::Error::ReadTimeout`] if the `ResetCommsBuffers` reply
     /// does not arrive within `timeout`.
     pub fn connect(&self, timeout: Duration, settle: Duration) -> crate::Result<()> {
-        self.connect_with_progress(timeout, settle, |_| {})
+        self.connect_with_progress(ConnectMode::Subscribed, timeout, settle, |_| {})
+    }
+
+    /// The minimal handshake: enough to issue commands and targeted reads.
+    ///
+    /// # Errors
+    ///
+    /// As [`Session::connect`].
+    pub fn connect_minimal(&self, timeout: Duration) -> crate::Result<()> {
+        self.connect_with_progress(ConnectMode::Minimal, timeout, Duration::ZERO, |_| {})
     }
 
     /// The connect handshake, reporting each step to `progress`.
@@ -468,6 +515,7 @@ impl Session {
     /// does not arrive within `timeout`.
     pub fn connect_with_progress(
         &self,
+        mode: ConnectMode,
         timeout: Duration,
         settle: Duration,
         progress: impl Fn(&str),
@@ -531,6 +579,13 @@ impl Session {
         self.send(MessageType::Connection, &payload)?;
 
         // 5. 22 subscribe READs.
+        if mode == ConnectMode::Minimal {
+            // Stop here. The subscription is what provokes the state dump,
+            // and a command-only session has nothing to do with it.
+            trace!("handshake: minimal, skipping subscription and settle");
+            return Ok(());
+        }
+
         progress("subscribing to device state");
         trace!("handshake 5/6: {} subscribe READs", SUBSCRIBE_TYPES.len());
         for mt in SUBSCRIBE_TYPES {
@@ -586,6 +641,17 @@ impl Session {
         };
         let payload = prost::Message::encode_to_vec(&msg);
         let _ = self.send(MessageType::Connection, &payload);
+    }
+
+    /// The `ModelRepo` payload captured during this session, if one has
+    /// arrived.
+    ///
+    /// The handshake requests it, so by the time a caller wants the catalog
+    /// it has usually already been received. Returning it here avoids a
+    /// second 46 KB transfer that the device builds from scratch.
+    #[must_use]
+    pub fn captured_model_repo(&self) -> Option<Vec<u8>> {
+        self.shared.model_repo.lock().unwrap().clone()
     }
 
     /// Signal the background threads to exit and join them.
@@ -794,6 +860,18 @@ fn handle_message(body: &[u8], shared: &Shared) -> crate::Result<()> {
 
 /// Route an inbound message to any matching waiters, type waiters, and collectors.
 fn dispatch(msg: &InboundMessage, shared: &Shared) {
+    // Keep the first ModelRepo payload we see. The handshake asks for one
+    // anyway, so a later catalog request can be answered without making the
+    // device build and send 46 KB again.
+    if msg.message_type == MessageType::ModelRepo {
+        if let Some(payload) = extract_model_repo_payload(&msg.body) {
+            let mut slot = shared.model_repo.lock().unwrap();
+            if slot.is_none() {
+                trace!("captured ModelRepo payload ({} bytes)", payload.len());
+                *slot = Some(payload);
+            }
+        }
+    }
     shared.last_inbound_ms.store(
         u64::try_from(shared.started.elapsed().as_millis()).unwrap_or(u64::MAX),
         Ordering::Relaxed,
@@ -875,7 +953,24 @@ fn dispatch(msg: &InboundMessage, shared: &Shared) {
 /// The background keepalive loop: send KeepAlive{UPDATE} every 5 seconds.
 fn keepalive_loop(device: Arc<Mutex<hidapi::HidDevice>>, shared: Arc<Shared>) {
     while shared.running.load(Ordering::Relaxed) {
-        thread::sleep(DEFAULT_KEEPALIVE_INTERVAL);
+        // Sleep in short slices rather than one 5 s block. `stop()` joins
+        // this thread, so a plain sleep makes every teardown wait up to a
+        // full interval - measured at 1.4 s on average and up to 5 s, paid
+        // by every command.
+        let slept = {
+            let mut elapsed = Duration::ZERO;
+            while elapsed < DEFAULT_KEEPALIVE_INTERVAL {
+                if !shared.running.load(Ordering::Relaxed) {
+                    return;
+                }
+                let remaining = DEFAULT_KEEPALIVE_INTERVAL.saturating_sub(elapsed);
+                let slice = Duration::from_millis(50).min(remaining);
+                thread::sleep(slice);
+                elapsed += slice;
+            }
+            elapsed
+        };
+        let _ = slept;
         if !shared.running.load(Ordering::Relaxed) {
             return;
         }
@@ -972,6 +1067,7 @@ mod correlation_tests {
             write_lock: Mutex::new(()),
             last_inbound_ms: AtomicU64::new(0),
             started: Instant::now(),
+            model_repo: Mutex::new(None),
         }
     }
 
@@ -1220,4 +1316,18 @@ mod correlation_tests {
             "connect() would never see the device go quiet"
         );
     }
+}
+
+/// Pull the payload out of a `ModelRepo` message body, if it carries one.
+///
+/// The device also sends payload-less `ModelRepo` messages, which are not
+/// the catalog.
+fn extract_model_repo_payload(body: &[u8]) -> Option<Vec<u8>> {
+    use crate::proto::{ModelRepoMessage, model_repo_message as mrm};
+    let decoded: ModelRepoMessage = prost::Message::decode(body).ok()?;
+    let mrm::ModelRepoPayload::ModelRepoPayload(payload) = decoded.model_repo_payload?;
+    if payload.is_empty() {
+        return None;
+    }
+    Some(payload)
 }

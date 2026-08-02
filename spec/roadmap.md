@@ -126,6 +126,18 @@ The ergonomic `QuadCortex` struct - the Rust equivalent of pyquadcortex's 60+ me
 - [ ] **PROT-006.15**: Module-level helpers: `blocks()`, `splits()`, `input_chain_rows()`, `stomp_assignments()`, `midi_out()`, `tempo_params()`, `param_options()`, `free_rows()`, `row_status()`, `params_equal()` - `slot_to_position`, `position_to_slot`, `input_level_db`, `db_to_input_level` done
 - [~] **PROT-006.16**: Hardware smoke test. Done 2026-08-02 for the implemented surface: `version`, `active_scene`, `read_current_preset`, `list_presets`, `list_folders`, `recall_preset`, `switch_scene`, `read_preset` - all against CorOS 4.0.1 / d14e / QA00AB123, with the unit restored to its starting state. Trap 14 (a recall resets the active scene) was confirmed live. Outstanding: `set_param` and `save`, which are not implemented yet (PROT-006.6, PROT-006.10)
 
+### PROT-008: Session performance
+
+Commands were taking tens of seconds for milliseconds of work. Most of that is fixed (see [140-session/spec.md](140-session/spec.md)); what is left is listed here.
+
+- [x] **PROT-008.1**: `ConnectMode::Minimal` - skip the 22-type subscription, which is what makes the device dump 600 KB and is not needed for a targeted read
+- [x] **PROT-008.2**: Capture the handshake's `ModelRepo` payload instead of requesting it a second time
+- [x] **PROT-008.3**: Name the folder in a `File` READ rather than enumerating all 399
+- [x] **PROT-008.4**: Interruptible keepalive sleep, so `stop()` does not wait up to 5 s
+- [ ] **PROT-008.5**: Retry a `File` READ that produces no listing, rather than waiting. Delivery is lazy and a bare wait varies from 5 s to 49 s across identical runs. This is `pyquadcortex`'s `wait_for_listing` approach
+- [ ] **PROT-008.6**: A persistent session. Cortex Control is fast because it opens ONE session and keeps it; we pay a handshake per command. This is also the right shape for the MCP server, which must hold a single connection anyway
+- [ ] **PROT-008.7**: Cache the catalog on disk, keyed by CorOS version. It changes only on a firmware update or a new capture
+
 ### PROT-007: Capture and IR export / import
 
 Neural Captures and user IRs live only on the unit and in Neural's cloud. No existing tool - official or community - can export a capture to a local file, so a player's own captures cannot be backed up, version-controlled, or moved between units. They are the player's OWN data, which makes this the least legally fraught significant feature on this page and arguably the most valuable.

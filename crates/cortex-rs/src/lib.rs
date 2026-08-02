@@ -85,6 +85,7 @@ pub use device::DeviceKind;
 pub use framing::{Flags, Frame, FrameReassembler, ReportId};
 pub use grid::{Row, Value};
 pub use message::Message;
+pub use session::ConnectMode;
 #[cfg(feature = "hid")]
 pub use session::{InboundMessage, Session};
 #[cfg(feature = "hid")]

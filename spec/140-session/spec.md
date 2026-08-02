@@ -185,3 +185,33 @@ The RX loop sustains 1500+ reports/sec. `ModelRepo` alone trickles at 82/sec bec
 **And it reports progress.** `connect_with_progress` emits a label per step. Several seconds of silence reads as a hang regardless of whether it is one, so the CLI surfaces these on stderr without needing `CORTEX_TRACE`.
 
 **Open: an interrupted session is not announced.** Ctrl-C during a handshake never sends `Connection{connected: false}`, so the device keeps pushing to a client that has gone. The next session then contends with that backlog, which is why the first reproduction of this report stalled where an instrumented rerun did not. `ResetCommsBuffers` exists to recover from precisely this and appears to, but a signal handler that announces the disconnect would be better. Not yet implemented.
+
+### Why commands were slow, and what fixed it (2026-08-02)
+
+Reported as "several minutes"; Cortex Control is near-instant by comparison. Measured rather than guessed, and the cause was almost entirely self-inflicted.
+
+**The baseline.** `cortex version`, which needs no handshake, took 0.77 s. `cortex scene`, which does one 9 ms write, took **32.4 s**. So essentially all of it was handshake and teardown, not work.
+
+| Command | Before | After |
+| --- | --- | --- |
+| `version` (no handshake) | 0.77 s | 0.80 s |
+| `scene` (one write) | 32.4 s | ~3 s |
+| `grid` | 13.9 s | ~2.7 s |
+| `catalog` | 26.4 s | ~1.4 s |
+| `presets` | 50.6 s | 5-19 s |
+
+**The subscribe burst was the main cost, and was not needed.** The handshake subscribes to 22 state types, and subscribing is what makes the device dump everything it has - over 600 KB of folder listings on the unit measured. That dump is what a long-lived editor wants, because it then receives state changes unsolicited. A one-shot command does not: it sends its own targeted READ, which the device answers regardless.
+
+Verified by removing it: `presets` went from 50.6 s to 9.4 s returning the same listing, and every read path still worked. Hence `ConnectMode::Minimal` (the default) and `ConnectMode::Subscribed` (which only `probe` uses, since it exists to exercise the full handshake).
+
+This refines the earlier finding rather than contradicting it. The **`ModelRepo` READ** at step (c) is still load-bearing - removing that one breaks every read. It is the 22 **subscribe** READs at step (e) that are optional for targeted reads.
+
+**A bare `File` READ enumerates everything.** `list_presets` sent one and discarded all but the folder it wanted - 399 folders' worth. Naming the folder in the request narrows what the device sends: 14.1 s versus 5.3 s for the same listing. `list_folders` still sends the bare form, because enumerating everything is what it wants.
+
+**The catalog was fetched twice.** The handshake requests `ModelRepo` (load-bearing), and `fetch_model_repo` then requested it again, making the device rebuild and resend 46 KB at 82 reports/sec. The session now captures the first payload it sees and serves it from there: 26.4 s to 1.4 s.
+
+**The keepalive slept uninterruptibly.** A plain 5 s sleep, joined by `stop()`, so every command paid up to 5 s on teardown. Now sliced.
+
+**What remains, and is the device's.** `presets` still varies from 5 s to 49 s across consecutive identical runs, always returning correct data. `pyquadcortex` documents the same: a `File` READ "does not reliably produce one promptly, delivery being lazy", and treats a timeout as "ask again" rather than as an answer. A polling retry (their `wait_for_listing`) is the documented mitigation and is not yet implemented here.
+
+**The structural difference from Cortex Control remains.** It opens ONE session and keeps it, paying the handshake once; we open and tear down a session per command. A persistent session would remove the remaining per-command cost, and is the right shape for the MCP server, which must hold a single connection anyway.

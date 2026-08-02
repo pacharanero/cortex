@@ -472,8 +472,23 @@ impl QuadCortex {
         include_empty: bool,
     ) -> crate::Result<Vec<PresetEntry>> {
         let wanted = setlist.trim_end_matches('/').to_string();
+        // Name the folder we want.
+        //
+        // A bare `File` READ makes the device enumerate EVERYTHING - 399
+        // folders and over 600 KB on the unit measured - and we then discard
+        // all but one. Naming the folder narrows what it sends: measured at
+        // 14.1 s bare versus 5.3 s targeted, returning the same listing.
+        //
+        // `list_folders` deliberately still sends the bare form, because
+        // enumerating everything is exactly what it wants.
         let request = FileMessage {
             action: MessageAction::Read as i32,
+            folder: Some(crate::proto::file_message::Folder::Folder(
+                crate::proto::FolderInfo {
+                    key: Some(crate::proto::folder_info::Key::Key(setlist.to_string())),
+                    ..Default::default()
+                },
+            )),
             ..Default::default()
         };
         let payload = prost::Message::encode_to_vec(&request);
@@ -625,6 +640,13 @@ impl QuadCortex {
     /// `ModelRepo` message arrives within `timeout`.
     pub fn fetch_model_repo(&self, timeout: Duration) -> crate::Result<Vec<u8>> {
         use crate::proto::{ModelRepoMessage, model_repo_message as mrm};
+
+        // The handshake already asked for this, so the payload has usually
+        // arrived by now. Asking again makes the device rebuild and resend
+        // 46 KB, which it does at roughly 82 reports per second.
+        if let Some(captured) = self.session.captured_model_repo() {
+            return Ok(captured);
+        }
 
         let request = ModelRepoMessage {
             action: MessageAction::Read as i32,

@@ -558,9 +558,12 @@ fn cmd_probe(listen: u64, fmt: Format) -> Result<()> {
 
     let started = std::time::Instant::now();
     eprintln!("connect handshake:");
-    session.connect_with_progress(Duration::from_secs(10), Duration::from_secs(2), |s| {
-        eprintln!("  {s} ...");
-    })?;
+    session.connect_with_progress(
+        cortex_rs::ConnectMode::Subscribed,
+        Duration::from_secs(10),
+        Duration::from_secs(2),
+        |s| eprintln!("  {s} ..."),
+    )?;
     let handshake = started.elapsed().as_secs_f32();
     eprintln!("  done ({handshake:.1}s)");
 
@@ -801,6 +804,15 @@ fn install_signal_handler() {
 /// Open a connected session. Every device-touching command needs the
 /// handshake, so this is the shared preamble.
 fn connected() -> Result<(std::sync::Arc<cortex_rs::Session>, cortex_rs::QuadCortex)> {
+    // Minimal by default. A one-shot command sends its own READ, which the
+    // device answers without a subscription - and subscribing makes it dump
+    // its entire state first, which is most of the handshake cost.
+    open_session(cortex_rs::ConnectMode::Minimal)
+}
+
+fn open_session(
+    mode: cortex_rs::ConnectMode,
+) -> Result<(std::sync::Arc<cortex_rs::Session>, cortex_rs::QuadCortex)> {
     let session = std::sync::Arc::new(cortex_rs::Session::open(DeviceKind::QuadCortex)?);
     // Make it reachable from the signal handler before the handshake, since
     // an interrupt during the handshake is exactly the case that leaves the
@@ -811,7 +823,7 @@ fn connected() -> Result<(std::sync::Arc<cortex_rs::Session>, cortex_rs::QuadCor
     // Progress to stderr: the handshake is several seconds of silence
     // otherwise, and the device's state dump can stretch it further, which
     // reads as a hang.
-    session.connect_with_progress(Duration::from_secs(10), Duration::from_secs(2), |s| {
+    session.connect_with_progress(mode, Duration::from_secs(10), Duration::from_secs(2), |s| {
         eprintln!("connecting: {s} ...");
     })?;
     let qc = cortex_rs::QuadCortex::new(session.clone());
