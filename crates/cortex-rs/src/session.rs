@@ -227,6 +227,12 @@ struct Shared {
     last_inbound_ms: AtomicU64,
     /// Session start, the origin for `last_inbound_ms`.
     started: Instant,
+    /// Milliseconds at which ANY message last arrived, heartbeats included.
+    ///
+    /// Distinct from `last_inbound_ms`, which ignores heartbeats so the
+    /// settle can tell "still dumping state" from "quiet". For liveness the
+    /// heartbeat is precisely the signal we want.
+    last_any_inbound_ms: AtomicU64,
     /// The `ModelRepo` payload, captured from whichever reply arrives first.
     ///
     /// The handshake asks for this anyway - it is load-bearing - so a caller
@@ -267,6 +273,7 @@ impl Session {
             running: AtomicBool::new(true),
             write_lock: Mutex::new(()),
             last_inbound_ms: AtomicU64::new(0),
+            last_any_inbound_ms: AtomicU64::new(0),
             started: Instant::now(),
             model_repo: Mutex::new(None),
         });
@@ -656,6 +663,23 @@ impl Session {
         let _ = self.send(MessageType::Connection, &payload);
     }
 
+    /// Seconds since anything was received from the device.
+    ///
+    /// The device pushes a `GlobalTempo` heartbeat roughly every 0.8 s, so a
+    /// value more than a few seconds old means the link is unhealthy even if
+    /// nothing has errored yet. That is what makes it a usable liveness
+    /// signal rather than a guess.
+    ///
+    /// Note this counts ALL inbound traffic, heartbeats included - unlike
+    /// the settle logic, which deliberately ignores them. Here the heartbeat
+    /// is exactly the signal we want.
+    #[must_use]
+    pub fn seconds_since_last_message(&self) -> u64 {
+        let last = self.shared.last_any_inbound_ms.load(Ordering::Relaxed);
+        let now = u64::try_from(self.shared.started.elapsed().as_millis()).unwrap_or(u64::MAX);
+        now.saturating_sub(last) / 1000
+    }
+
     /// The `ModelRepo` payload captured during this session, if one has
     /// arrived.
     ///
@@ -897,7 +921,14 @@ fn dispatch(msg: &InboundMessage, shared: &Shared) {
             }
         }
     }
-    // Heartbeats do not count as the device still having things to say.
+    // Liveness counts everything: a heartbeat is exactly what tells us the
+    // link is still up.
+    shared.last_any_inbound_ms.store(
+        u64::try_from(shared.started.elapsed().as_millis()).unwrap_or(u64::MAX),
+        Ordering::Relaxed,
+    );
+    // The settle, by contrast, must ignore heartbeats or it can never
+    // observe the device going quiet.
     if !HEARTBEAT_TYPES.contains(&msg.message_type) {
         shared.last_inbound_ms.store(
             u64::try_from(shared.started.elapsed().as_millis()).unwrap_or(u64::MAX),
@@ -1094,6 +1125,7 @@ mod correlation_tests {
             running: AtomicBool::new(true),
             write_lock: Mutex::new(()),
             last_inbound_ms: AtomicU64::new(0),
+            last_any_inbound_ms: AtomicU64::new(0),
             started: Instant::now(),
             model_repo: Mutex::new(None),
         }

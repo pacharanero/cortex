@@ -55,6 +55,7 @@
 #![warn(missing_docs)]
 #![warn(clippy::all, clippy::pedantic)]
 
+pub mod daemon;
 pub mod device;
 pub mod framing;
 pub mod grid;
@@ -81,6 +82,7 @@ pub mod proto {
 #[cfg(feature = "hid")]
 pub use catalog::{Catalog, Model, Parameter, ParameterKind};
 pub use client::{Placement, QuadCortex};
+pub use daemon::{Request, Response};
 pub use device::DeviceKind;
 pub use framing::{Flags, Frame, FrameReassembler, ReportId};
 pub use grid::{Row, Value};

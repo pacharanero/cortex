@@ -14,6 +14,8 @@
 use std::process::ExitCode;
 use std::time::Duration;
 
+mod connect;
+
 use anyhow::Result;
 use clap::{CommandFactory, Parser, Subcommand};
 use cortex_rs::proto::VersionMessage;
@@ -185,6 +187,29 @@ enum Command {
         /// reports, so allow generously.
         #[arg(long, value_name = "SECONDS", default_value = "40")]
         timeout: u64,
+    },
+    /// Hold a persistent connection to the device, serving other commands.
+    ///
+    /// The device grants its USB interface exclusively, so exactly one
+    /// process can own it. This is that process: it performs the handshake
+    /// ONCE and every other command then talks to it over a socket instead
+    /// of connecting for itself.
+    ///
+    /// That matters for more than speed. A held session SUBSCRIBES to device
+    /// state, which is how the unit reports edits you make on the hardware -
+    /// so what `cortex` reports can stay true while you play, rather than
+    /// being a snapshot from whenever the last command ran.
+    ///
+    /// Runs in the foreground. Stop it with Ctrl-C or `--stop`.
+    Connect {
+        /// Report whether a connection is running, and whether the device is
+        /// answering.
+        #[arg(long, conflicts_with = "stop")]
+        status: bool,
+        /// Ask a running connection to shut down, announcing the disconnect
+        /// to the device first.
+        #[arg(long, conflicts_with = "status")]
+        stop: bool,
     },
     /// Show the LIVE grid: what is loaded right now, unsaved edits included.
     ///
@@ -445,6 +470,7 @@ fn run(cli: Cli) -> Result<()> {
             factory,
         }) => cmd_recall(&slot, &setlist, factory, fmt),
         Some(Command::Scene { index }) => cmd_scene(index, fmt),
+        Some(Command::Connect { status, stop }) => cmd_connect(status, stop, fmt),
         Some(Command::Grid { timeout, params }) => cmd_grid(timeout, params, fmt),
         Some(Command::SetParam {
             row,
@@ -510,7 +536,7 @@ fn run(cli: Cli) -> Result<()> {
 /// Exercises the session's `collect` primitive: one READ provokes many pushes
 /// rather than one reply, so a single-shot waiter would see only the first.
 fn cmd_folders(window: u64, fmt: Format) -> Result<()> {
-    let session = std::sync::Arc::new(cortex_rs::Session::open(DeviceKind::QuadCortex)?);
+    let session = open_device()?;
     session.connect(Duration::from_secs(10), Duration::from_secs(2))?;
     let qc = cortex_rs::QuadCortex::new(session.clone());
 
@@ -553,7 +579,7 @@ fn cmd_probe(listen: u64, fmt: Format) -> Result<()> {
     }
 
     step!("opening device");
-    let session = std::sync::Arc::new(cortex_rs::Session::open(DeviceKind::QuadCortex)?);
+    let session = open_device()?;
     eprintln!("ok");
 
     let started = std::time::Instant::now();
@@ -684,7 +710,7 @@ fn cmd_probe(listen: u64, fmt: Format) -> Result<()> {
 /// would race a caller's `Version` READ reply (READ replies carry no
 /// `request_id` to disambiguate).
 fn cmd_version_via_session(fmt: Format) -> Result<()> {
-    let session = std::sync::Arc::new(cortex_rs::Session::open(DeviceKind::QuadCortex)?);
+    let session = open_device()?;
     let qc = cortex_rs::QuadCortex::new(session.clone());
 
     let result = qc.version(Duration::from_secs(10));
@@ -697,6 +723,7 @@ fn cmd_version_via_session(fmt: Format) -> Result<()> {
 }
 
 fn cmd_version(fmt: Format) -> Result<()> {
+    ensure_device_free()?;
     let transport = Transport::open(DeviceKind::QuadCortex)?;
 
     // Build a VersionMessage with action = READ. The version command works
@@ -738,7 +765,7 @@ unsafe fn libc_sigpipe_reset() {
 
 /// List the presets in a setlist.
 fn cmd_presets(setlist: &str, include_empty: bool, timeout: u64, fmt: Format) -> Result<()> {
-    let session = std::sync::Arc::new(cortex_rs::Session::open(DeviceKind::QuadCortex)?);
+    let session = open_device()?;
     session.connect(Duration::from_secs(10), Duration::from_secs(2))?;
     let qc = cortex_rs::QuadCortex::new(session.clone());
 
@@ -810,10 +837,41 @@ fn connected() -> Result<(std::sync::Arc<cortex_rs::Session>, cortex_rs::QuadCor
     open_session(cortex_rs::ConnectMode::Minimal)
 }
 
+/// Refuse to touch the device directly while a daemon holds it.
+///
+/// Hardware-verified, the hard way: running a command that opened the device
+/// for itself while `cortex connect` held a session left the device silent -
+/// no reply, and no `GlobalTempo` heartbeat either, though it normally
+/// arrives every 0.8 s - and every later read on the held session timed out.
+/// Nothing errored at the point of the collision, which is what makes it
+/// worth refusing loudly here.
+///
+/// This is the CLI-side expression of the exclusive-access invariant in
+/// AGENTS.md: one owning process per device, not one connection per call.
+fn ensure_device_free() -> Result<()> {
+    if connect::is_running() {
+        anyhow::bail!(
+            "a `cortex connect` session already holds the device.\n\
+             Opening it again here would wedge that session - the device \
+             stops answering both of us.\n\
+             Use the running session, or stop it with `cortex connect --stop`."
+        );
+    }
+    Ok(())
+}
+
+/// Open the device for a one-shot command, refusing if a daemon holds it.
+fn open_device() -> Result<std::sync::Arc<cortex_rs::Session>> {
+    ensure_device_free()?;
+    Ok(std::sync::Arc::new(cortex_rs::Session::open(
+        DeviceKind::QuadCortex,
+    )?))
+}
+
 fn open_session(
     mode: cortex_rs::ConnectMode,
 ) -> Result<(std::sync::Arc<cortex_rs::Session>, cortex_rs::QuadCortex)> {
-    let session = std::sync::Arc::new(cortex_rs::Session::open(DeviceKind::QuadCortex)?);
+    let session = open_device()?;
     // Make it reachable from the signal handler before the handshake, since
     // an interrupt during the handshake is exactly the case that leaves the
     // device in a bad state.
@@ -849,6 +907,14 @@ fn cmd_recall(slot: &str, setlist: &str, factory: bool, fmt: Format) -> Result<(
 
 /// Switch the active scene.
 fn cmd_scene(index: u32, fmt: Format) -> Result<()> {
+    // Prefer a held connection. It has already paid the handshake, so this
+    // is a socket round trip rather than a fresh session - and it avoids
+    // contending for a device interface the daemon already owns.
+    if let Some(result) = connect::request(&cortex_rs::Request::SwitchScene { scene: index }) {
+        result?;
+        return report_edit("scene", index.to_string(), fmt);
+    }
+
     let (session, qc) = connected()?;
     let result = qc.switch_scene(index);
     std::thread::sleep(Duration::from_millis(500));
@@ -1632,6 +1698,23 @@ fn print_preset(o: &PresetOut) {
 /// stored slot, which the device can only do by recalling it. This is the
 /// command to use while editing.
 fn cmd_grid(timeout: u64, params: bool, fmt: Format) -> Result<()> {
+    // The daemon's view is the LIVE grid, kept current by device pushes -
+    // including edits made on the hardware - so it is not merely faster, it
+    // can be fresher than a value we would read for ourselves.
+    if !params {
+        if let Some(result) = connect::request(&cortex_rs::Request::CurrentPreset) {
+            let value = result?;
+            return emit(&value, fmt, |v| {
+                if let Some(name) = v.get("name") {
+                    println!("name: {}", name.as_str().unwrap_or("<unnamed>"));
+                }
+                if let Some(chains) = v.get("chains") {
+                    println!("chains: {chains}");
+                }
+            });
+        }
+    }
+
     let (session, qc) = connected()?;
     let catalog = match qc.fetch_model_repo(Duration::from_secs(40)) {
         Ok(payload) => cortex_rs::Catalog::parse(&payload).ok(),
@@ -1696,6 +1779,47 @@ fn cmd_set_split(row: u32, split: i32, mix: i32, fmt: Format) -> Result<()> {
         )
     };
     report_edit("set_split", detail, fmt)
+}
+
+/// Run, query, or stop the persistent connection.
+fn cmd_connect(status: bool, stop: bool, fmt: Format) -> Result<()> {
+    if status {
+        let Some(result) = connect::request(&cortex_rs::Request::Status) else {
+            // Not an error: "no connection running" is a legitimate answer to
+            // "what is the status", and a caller scripting against this
+            // should not have to parse stderr to find out.
+            let out = serde_json::json!({ "running": false });
+            return emit(&out, fmt, |_| println!("not running"));
+        };
+        let value = result?;
+        return emit(&value, fmt, |v| {
+            println!("running: true");
+            if let Some(uptime) = v.get("uptime_seconds") {
+                println!("uptime_seconds: {uptime}");
+            }
+            if let Some(device) = v.get("device") {
+                println!("device: {}", device.get("state").unwrap_or(device));
+                if let Some(since) = device.get("last_message_seconds") {
+                    println!("last_message_seconds: {since}");
+                }
+            }
+            if let Some(cache) = v.get("cache") {
+                println!("cached_catalog: {}", cache.get("catalog").unwrap_or(cache));
+            }
+        });
+    }
+
+    if stop {
+        let Some(result) = connect::request(&cortex_rs::Request::Shutdown) else {
+            anyhow::bail!("no connection is running");
+        };
+        result?;
+        return emit(&serde_json::json!({ "stopped": true }), fmt, |_| {
+            println!("stopped")
+        });
+    }
+
+    connect::run()
 }
 
 #[cfg(test)]
