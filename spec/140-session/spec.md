@@ -239,3 +239,28 @@ So:
 - `pyquadcortex` reports 2.03-3.80 s handshakes, and ~9 s for `read_preset`, so the device being slow at some operations is normal rather than a fault of ours.
 
 **This is the argument for a persistent connection, stated precisely.** The subscription is not wasteful in itself - it is what makes the device report on-unit edits, and therefore what makes a cache trustworthy. It is wasteful *per command*. Pay it once in a held session and both problems disappear: no repeated dumps, and a cache that stays correct.
+
+### On-unit edits push, including knob turns (2026-08-02)
+
+The question that gates a cached persistent connection: does the device tell a subscribed client when the PLAYER changes something on the hardware? If not, a cache of device state silently goes stale and is worse than no cache.
+
+**It does.** Captured while the unit was operated by hand:
+
+| Action on the unit | Pushed |
+| --- | --- |
+| Turning knobs on several blocks | **135 `Grid`** messages, 23 bytes each - sparse parameter updates in the same shape we send |
+| Bypassing and un-bypassing a block | `Grid` at 15 and 17 bytes |
+| Changing scene by footswitch | `Scene` and `RecallPreset` |
+| (accompanying) | 15 `UndoRedo`, 2 `PresetDirty` |
+
+All `Grid` traffic arrived well after the initial subscription dump had finished, so it is attributable to the hand edits rather than to the handshake.
+
+**Consequence for `cortex connect`.** A held, subscribed session can cache live device state - including parameter values - and keep it correct, because the device reports edits made both by us and by the player. That is what makes the cache trustworthy rather than merely fast.
+
+It also settles the design tension recorded above. The 22-type subscription is expensive per command and is exactly right per session: it is the mechanism by which the cache stays true.
+
+Caveats to carry into the implementation:
+
+- `PresetDirty` marks the grid as having unsaved changes. It is the signal that a cached preset no longer matches the stored slot.
+- A knob sweep produces a BURST of `Grid` messages (135 for a handful of knobs). The cache should apply them, not queue work per message.
+- Nothing here says what happens across a RECONNECT. If the connection drops, edits made while away are invisible, so a reconnect must invalidate the cache wholesale rather than resume.

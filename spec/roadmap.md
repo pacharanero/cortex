@@ -135,7 +135,15 @@ Commands were taking tens of seconds for milliseconds of work. Most of that is f
 - [x] **PROT-008.3**: Name the folder in a `File` READ rather than enumerating all 399
 - [x] **PROT-008.4**: Interruptible keepalive sleep, so `stop()` does not wait up to 5 s
 - [ ] **PROT-008.5**: Retry a `File` READ that produces no listing, rather than waiting. Delivery is lazy and a bare wait varies from 5 s to 49 s across identical runs. This is `pyquadcortex`'s `wait_for_listing` approach
-- [ ] **PROT-008.6**: A persistent session. Cortex Control is fast because it opens ONE session and keeps it; we pay a handshake per command. This is also the right shape for the MCP server, which must hold a single connection anyway
+- [ ] **PROT-008.6**: `cortex connect` - a persistent, subscribed session. **This is the next substantial piece of work.** Cortex Control is fast because it opens ONE session and keeps it; we pay a handshake per command. It is also the right shape for the MCP server, which must hold a single connection anyway, and for the GUI.
+  - [ ] **008.6.1**: `cortex connect` holds a `ConnectMode::Subscribed` session and owns the HID interface. Subscribing is expensive per command and correct per session: it is how the device reports edits made by the player
+  - [ ] **008.6.2**: A unix socket at `$XDG_RUNTIME_DIR`, line-delimited JSON, reusing the existing `--format json` output types so client and daemon share one contract
+  - [ ] **008.6.3**: Lifecycle: `--status`, clean `--stop` that announces the disconnect, idle timeout, stale-socket detection
+  - [ ] **008.6.4**: **Health reporting.** Detect a dropped or unresponsive device and say so, rather than hanging. Reconnect with backoff, reporting each attempt
+  - [ ] **008.6.5**: Cache device state, kept current by the subscription. Verified pushable: parameter values (`Grid`), bypass (`Grid`), scene (`Scene`/`RecallPreset`), dirty state (`PresetDirty`). Plus static data: the catalog and folder listings
+  - [ ] **008.6.6**: **Invalidate the cache wholesale on reconnect.** Edits made while disconnected are invisible, so resuming a stale cache would silently lie
+  - [ ] **008.6.7**: Commands address the daemon when it is running. `version` keeps addressing the device directly, since it needs no handshake and is the natural "is my unit connected" check for a new user
+  - [ ] **008.6.8**: Fall back to a direct `Minimal` session when no daemon is running, so single commands still work standalone
 - [ ] **PROT-008.7**: Cache the catalog on disk, keyed by CorOS version. It changes only on a firmware update or a new capture
 
 ### PROT-007: Capture and IR export / import
