@@ -77,6 +77,19 @@ const SETTLE_QUIET_PERIOD: Duration = Duration::from_millis(1500);
 /// stall the handshake indefinitely.
 const SETTLE_MAX: Duration = Duration::from_secs(30);
 
+/// Message types the device pushes CONTINUOUSLY, regardless of whether it is
+/// still sending state.
+///
+/// `GlobalTempo` arrives roughly every 0.8 s forever - it is the tempo and
+/// metronome clock, not state. Counting it as activity means the inbound
+/// stream is never silent, so a settle that waits for silence can never
+/// finish and always runs to [`SETTLE_MAX`]. That was measured as a 30 s
+/// handshake on every command doing 9 ms of work.
+///
+/// Anything listed here is ignored when deciding whether the device has
+/// finished talking. It is still dispatched normally.
+const HEARTBEAT_TYPES: &[MessageType] = &[MessageType::GlobalTempo, MessageType::IoMeter];
+
 /// Whether inbound/outbound tracing is enabled, read once from the
 /// `CORTEX_TRACE` environment variable.
 ///
@@ -884,10 +897,13 @@ fn dispatch(msg: &InboundMessage, shared: &Shared) {
             }
         }
     }
-    shared.last_inbound_ms.store(
-        u64::try_from(shared.started.elapsed().as_millis()).unwrap_or(u64::MAX),
-        Ordering::Relaxed,
-    );
+    // Heartbeats do not count as the device still having things to say.
+    if !HEARTBEAT_TYPES.contains(&msg.message_type) {
+        shared.last_inbound_ms.store(
+            u64::try_from(shared.started.elapsed().as_millis()).unwrap_or(u64::MAX),
+            Ordering::Relaxed,
+        );
+    }
     trace!(
         "rx {:?} ({} bytes) request_id={:?}",
         msg.message_type,

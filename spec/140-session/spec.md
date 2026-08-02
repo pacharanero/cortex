@@ -215,3 +215,27 @@ This refines the earlier finding rather than contradicting it. The **`ModelRepo`
 **What remains, and is the device's.** `presets` still varies from 5 s to 49 s across consecutive identical runs, always returning correct data. `pyquadcortex` documents the same: a `File` READ "does not reliably produce one promptly, delivery being lazy", and treats a timeout as "ask again" rather than as an answer. A polling retry (their `wait_for_listing`) is the documented mitigation and is not yet implemented here.
 
 **The structural difference from Cortex Control remains.** It opens ONE session and keeps it, paying the handshake once; we open and tear down a session per command. A persistent session would remove the remaining per-command cost, and is the right shape for the MCP server, which must hold a single connection anyway.
+
+### The device is never quiet, and what that means (2026-08-02)
+
+**`GlobalTempo` is a continuous heartbeat.** Observed arriving roughly every 0.8 s, indefinitely, in pairs. It is the tempo and metronome clock, not state.
+
+This broke the adaptive settle outright. Waiting for 1.5 s of inbound silence can never succeed against a 0.8 s heartbeat, so every subscribed handshake ran to `SETTLE_MAX` - a 30 s wait on a command doing 9 ms of work. `HEARTBEAT_TYPES` now excludes `GlobalTempo` and `IoMeter` from the liveness stamp; they are still dispatched normally, they just do not count as the device having more to say.
+
+**On-unit changes DO push.** Changing scene on the hardware produced `Scene` and `RecallPreset` pushes to a subscribed client. So a cached view of device state CAN be kept current, which is what makes a persistent connection worth building rather than merely faster.
+
+Not yet established: whether turning a knob on the unit produces a `Grid` push. No `Grid` was observed, but no knob turn was confirmed within the window either. Verify before caching parameter values.
+
+### Congestion: cause corrected
+
+An earlier note here claimed that repeated connect/disconnect cycles degrade the device. **That was wrong**, and `pyquadcortex` had already tested it: they opened and abandoned twelve sessions with no goodbye and measured no degradation - the seed push still arrived, subscriptions still fired, and `read_preset` was unchanged (9.04 s to 8.77 s).
+
+The real cause is narrower: **a SUBSCRIBED handshake makes the device dump over 600 KB, and that leaves it busy for whatever comes next.** Measured in sequence: two subscribed `probe` runs at 24 s and 39 s, then a minimal `scene` at 44.6 s inheriting the backlog, then 2.8 s and 4.9 s once it cleared.
+
+So:
+
+- A minimal handshake costs 3-5 s and does not congest the device.
+- A subscribed handshake costs tens of seconds and taxes the next command too.
+- `pyquadcortex` reports 2.03-3.80 s handshakes, and ~9 s for `read_preset`, so the device being slow at some operations is normal rather than a fault of ours.
+
+**This is the argument for a persistent connection, stated precisely.** The subscription is not wasteful in itself - it is what makes the device report on-unit edits, and therefore what makes a cache trustworthy. It is wasteful *per command*. Pay it once in a held session and both problems disappear: no repeated dumps, and a cache that stays correct.
