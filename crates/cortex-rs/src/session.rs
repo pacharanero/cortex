@@ -773,6 +773,18 @@ fn rx_loop(device: Arc<Mutex<hidapi::HidDevice>>, shared: Arc<Shared>) {
                 continue;
             }
         };
+        // Let a waiting writer in before reacquiring the device lock.
+        //
+        // Rust's Mutex is not fair. When the device has a backlog every read
+        // returns immediately, so this loop reacquires the lock the instant
+        // it releases it and a foreground `send()` can starve indefinitely -
+        // observed as a handshake hanging on its second message for 90 s
+        // while the device was demonstrably alive.
+        //
+        // Yielding costs nothing when nobody is waiting, and the RX thread
+        // has no deadline of its own.
+        thread::yield_now();
+
         if n == 0 {
             // Timeout, not an error; loop and check running.
             continue;
