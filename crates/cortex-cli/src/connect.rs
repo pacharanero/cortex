@@ -160,6 +160,57 @@ impl Daemon {
                     }),
                 }
             }
+            // Rows arrive as plain wire indices and are rebuilt here, so
+            // the newtype's guard against the wire/screen mix-up stays real.
+            Request::SetParam {
+                row,
+                column,
+                param_index,
+                value,
+                scene,
+                promote,
+            } => self.respond(move |c| {
+                let row = cortex_rs::Row::from_wire(row);
+                match scene {
+                    Some(scene) => {
+                        c.set_param_in_scene(row, column, param_index, value, scene, promote)
+                    }
+                    None => {
+                        if promote {
+                            c.set_param_scene_mode(row, column, param_index, true)?;
+                        }
+                        c.set_param(row, column, param_index, value)
+                    }
+                }
+                .map(|()| serde_json::json!({ "applied": true }))
+            }),
+            Request::SetBypass {
+                row,
+                column,
+                bypass,
+            } => self.respond(move |c| {
+                c.set_bypass(cortex_rs::Row::from_wire(row), column, bypass)
+                    .map(|()| serde_json::json!({ "applied": true }))
+            }),
+            Request::RemoveBlock { row, column } => self.respond(move |c| {
+                c.remove_block(cortex_rs::Row::from_wire(row), column)
+                    .map(|()| serde_json::json!({ "applied": true }))
+            }),
+            Request::SetSplit { row, split, mix } => self.respond(move |c| {
+                c.set_split(cortex_rs::Row::from_wire(row), split, mix)
+                    .map(|()| serde_json::json!({ "applied": true }))
+            }),
+            Request::SetRouting { row, input, output } => self.respond(move |c| {
+                let row = cortex_rs::Row::from_wire(row);
+                match (input, output) {
+                    (Some(port), None) => c.set_chain_input(row, port),
+                    (None, Some(port)) => c.set_chain_output(row, port),
+                    _ => Err(cortex_rs::Error::NotFound(
+                        "set-routing needs exactly one of input or output".into(),
+                    )),
+                }
+                .map(|()| serde_json::json!({ "applied": true }))
+            }),
             Request::CpuLoad => match self.session.cpu_load() {
                 Some(load) => match serde_json::to_value(crate::cpu_load(&load)) {
                     Ok(value) => Response::Ok { data: value },

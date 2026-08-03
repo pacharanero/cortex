@@ -96,7 +96,7 @@ impl Row {
 /// Not every parameter is a number: a cabinet's microphone selection is a
 /// string, and a capture's identity is a string. The device stores whichever
 /// it is given, so the distinction has to survive to the wire.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum Value {
     /// A normalised 0..1 float, which is what the wire carries for a knob.
     Normalised(f32),

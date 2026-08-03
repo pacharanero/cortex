@@ -89,6 +89,61 @@ pub enum Request {
     },
     /// The device model catalog.
     Catalog,
+    /// Write a parameter value.
+    ///
+    /// Rows travel as a plain zero-based WIRE index, not a [`crate::Row`].
+    /// That type exists to keep wire rows and the 1-4 shown on screen from
+    /// being interchangeable, and deriving `Deserialize` on it would let any
+    /// integer off a socket become one - defeating the guard on a mistake
+    /// that succeeds silently and edits the wrong row.
+    SetParam {
+        /// Zero-based wire row.
+        row: u32,
+        /// Zero-based column.
+        column: u32,
+        /// Parameter index within the block.
+        param_index: u32,
+        /// The value to write.
+        value: crate::grid::Value,
+        /// Write into this scene rather than the active one.
+        scene: Option<u32>,
+        /// Make the parameter follow scenes first.
+        promote: bool,
+    },
+    /// Bypass or enable a block.
+    SetBypass {
+        /// Zero-based wire row.
+        row: u32,
+        /// Zero-based column.
+        column: u32,
+        /// Whether the block should be bypassed.
+        bypass: bool,
+    },
+    /// Remove a block from the grid.
+    RemoveBlock {
+        /// Zero-based wire row.
+        row: u32,
+        /// Zero-based column.
+        column: u32,
+    },
+    /// Set a row's split and mix columns.
+    SetSplit {
+        /// Zero-based wire row.
+        row: u32,
+        /// Column at which the row branches.
+        split: i32,
+        /// Column at which it rejoins, or negative for never.
+        mix: i32,
+    },
+    /// Set a row's input or output port.
+    SetRouting {
+        /// Zero-based wire row.
+        row: u32,
+        /// The input port, if setting the input.
+        input: Option<u32>,
+        /// The output port, if setting the output.
+        output: Option<u32>,
+    },
     /// The most recent CPU load pushed by the device.
     ///
     /// Only meaningful on a subscribed session, which is the daemon's: a

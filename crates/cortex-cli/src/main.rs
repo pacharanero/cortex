@@ -1444,20 +1444,27 @@ fn block_at(preset: &cortex_rs::proto::BinaryPreset, row: u32, column: u32) -> O
 /// Bypass or enable a block.
 fn cmd_set_bypass(row: u32, column: u32, bypass: bool, fmt: Format) -> Result<()> {
     let row = wire_row(row)?;
+    let detail = format!(
+        "row {} column {column} {}",
+        row.screen(),
+        if bypass { "bypassed" } else { "enabled" }
+    );
+
+    if let Some(result) = connect::request(&cortex_rs::Request::SetBypass {
+        row: row.wire(),
+        column,
+        bypass,
+    }) {
+        result?;
+        return report_edit("set_bypass", detail, fmt);
+    }
+
     let (session, qc) = connected()?;
     let result = qc.set_bypass(row, column, bypass);
     qc.disconnect();
     session.stop();
     result?;
-    report_edit(
-        "set_bypass",
-        format!(
-            "row {} column {column} {}",
-            row.screen(),
-            if bypass { "bypassed" } else { "enabled" }
-        ),
-        fmt,
-    )
+    report_edit("set_bypass", detail, fmt)
 }
 
 /// Place a model in a grid cell.
@@ -1501,16 +1508,22 @@ fn cmd_set_block(
 /// Remove the block at a grid cell.
 fn cmd_remove_block(row: u32, column: u32, fmt: Format) -> Result<()> {
     let row = wire_row(row)?;
+    let detail = format!("row {} column {column}", row.screen());
+
+    if let Some(result) = connect::request(&cortex_rs::Request::RemoveBlock {
+        row: row.wire(),
+        column,
+    }) {
+        result?;
+        return report_edit("remove_block", detail, fmt);
+    }
+
     let (session, qc) = connected()?;
     let result = qc.remove_block(row, column);
     qc.disconnect();
     session.stop();
     result?;
-    report_edit(
-        "remove_block",
-        format!("row {} column {column}", row.screen()),
-        fmt,
-    )
+    report_edit("remove_block", detail, fmt)
 }
 
 /// Convert a preset into the output shape, naming blocks through the catalog.
@@ -1826,30 +1839,37 @@ fn cmd_grid(timeout: u64, params: bool, fmt: Format) -> Result<()> {
 /// Re-point a row's input or output.
 fn cmd_set_routing(row: u32, input: Option<u32>, output: Option<u32>, fmt: Format) -> Result<()> {
     let row = wire_row(row)?;
+    let (which, port) = match (input, output) {
+        (Some(port), None) => ("input", port),
+        (None, Some(port)) => ("output", port),
+        _ => unreachable!("clap gives exactly one of input or output"),
+    };
+    let detail = format!("row {} {which} = port {port}", row.screen());
+
+    if let Some(result) = connect::request(&cortex_rs::Request::SetRouting {
+        row: row.wire(),
+        input,
+        output,
+    }) {
+        result?;
+        return report_edit(&format!("set_{which}"), detail, fmt);
+    }
+
     let (session, qc) = connected()?;
     let result = match (input, output) {
-        (Some(port), None) => qc.set_chain_input(row, port).map(|()| ("input", port)),
-        (None, Some(port)) => qc.set_chain_output(row, port).map(|()| ("output", port)),
+        (Some(port), None) => qc.set_chain_input(row, port),
+        (None, Some(port)) => qc.set_chain_output(row, port),
         _ => unreachable!("clap gives exactly one of input or output"),
     };
     qc.disconnect();
     session.stop();
-    let (which, port) = result?;
-    report_edit(
-        &format!("set_{which}"),
-        format!("row {} {which} = port {port}", row.screen()),
-        fmt,
-    )
+    result?;
+    report_edit(&format!("set_{which}"), detail, fmt)
 }
 
 /// Set a row's split and mix points.
 fn cmd_set_split(row: u32, split: i32, mix: i32, fmt: Format) -> Result<()> {
     let row = wire_row(row)?;
-    let (session, qc) = connected()?;
-    let result = qc.set_split(row, split, mix);
-    qc.disconnect();
-    session.stop();
-    result?;
     let detail = if split < 0 {
         format!("row {} branch cleared", row.screen())
     } else if mix < 0 {
@@ -1863,6 +1883,20 @@ fn cmd_set_split(row: u32, split: i32, mix: i32, fmt: Format) -> Result<()> {
             row.screen()
         )
     };
+    if let Some(result) = connect::request(&cortex_rs::Request::SetSplit {
+        row: row.wire(),
+        split,
+        mix,
+    }) {
+        result?;
+        return report_edit("set_split", detail, fmt);
+    }
+
+    let (session, qc) = connected()?;
+    let result = qc.set_split(row, split, mix);
+    qc.disconnect();
+    session.stop();
+    result?;
     report_edit("set_split", detail, fmt)
 }
 
