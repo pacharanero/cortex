@@ -947,18 +947,9 @@ fn rx_loop(device: Arc<Mutex<hidapi::HidDevice>>, shared: Arc<Shared>) {
 
 /// Decode a reassembled body, decompress if needed, and dispatch to waiters.
 fn handle_message(body: &[u8], shared: &Shared) -> crate::Result<()> {
-    let mut msg = crate::message::Message::parse(body)?;
-
-    // Frame-level gzip decompression.
-    if msg.body.starts_with(&[0x1f, 0x8b]) {
-        use std::io::Read;
-        let mut decoder = flate2::read::GzDecoder::new(&msg.body[..]);
-        let mut decompressed = Vec::new();
-        decoder
-            .read_to_end(&mut decompressed)
-            .map_err(|e| crate::Error::Decode(format!("gzip: {e}")))?;
-        msg.body = bytes::Bytes::from(decompressed);
-    }
+    // Trailer first, then gzip. Shared with the offline decoder so the two
+    // cannot drift - see `Message::decode`.
+    let (msg, _gzipped) = crate::message::Message::decode(body)?;
 
     let mt = MessageType::try_from(i32::from(msg.message_type)).unwrap_or(MessageType::Undefined);
     let request_id = extract_request_id(&msg.body);

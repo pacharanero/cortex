@@ -15,6 +15,7 @@ use std::process::ExitCode;
 use std::time::Duration;
 
 mod connect;
+mod decode;
 
 use anyhow::Result;
 use clap::{CommandFactory, Parser, Subcommand};
@@ -187,6 +188,19 @@ enum Command {
         /// reports, so allow generously.
         #[arg(long, value_name = "SECONDS", default_value = "40")]
         timeout: u64,
+    },
+    /// Decode a USB capture into Cortex Control messages.
+    ///
+    /// Reads `tshark` field output on standard input and prints one line per
+    /// reassembled message, in the same shape as `CORTEX_TRACE`. Use
+    /// `s/usb-decode`, which supplies the right `tshark` invocation.
+    ///
+    /// Works on a capture of ANY client, which is the point: it is how a
+    /// recording of Cortex Control gets read against our own schema.
+    DecodeTrace {
+        /// Print only the summary line, not every message.
+        #[arg(long)]
+        quiet: bool,
     },
     /// Hold a persistent connection to the device, serving other commands.
     ///
@@ -471,6 +485,9 @@ fn run(cli: Cli) -> Result<()> {
         }) => cmd_recall(&slot, &setlist, factory, fmt),
         Some(Command::Scene { index }) => cmd_scene(index, fmt),
         Some(Command::Connect { status, stop }) => cmd_connect(status, stop, fmt),
+        Some(Command::DecodeTrace { quiet }) => {
+            decode::decode_stream(std::io::stdin().lock(), quiet)
+        }
         Some(Command::Grid { timeout, params }) => cmd_grid(timeout, params, fmt),
         Some(Command::SetParam {
             row,

@@ -274,6 +274,81 @@ Options:
           Print version
 ```
 
+### `cortex decode-trace`
+
+Decode a USB capture into Cortex Control messages.
+
+```text
+Decode a USB capture into Cortex Control messages.
+
+Reads `tshark` field output on standard input and prints one line per reassembled message, in the same shape as `CORTEX_TRACE`. Use `s/usb-decode`, which supplies the right `tshark` invocation.
+
+Works on a capture of ANY client, which is the point: it is how a recording of Cortex Control gets read against our own schema.
+
+Usage: cortex decode-trace [OPTIONS]
+
+Options:
+      --quiet
+          Print only the summary line, not every message
+
+      --format <FORMAT>
+          Output format. `text` is for humans; `json` is for scripts and agents, and is stable enough to parse.
+          
+          Only the RESULT changes format. Progress, warnings, and errors always go to stderr as plain text, so `cortex presets --format json | jq` gets clean JSON regardless.
+
+          Possible values:
+          - text: Human-readable, the default
+          - json: Machine-readable JSON
+          
+          [default: text]
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+  -V, --version
+          Print version
+```
+
+### `cortex connect`
+
+Hold a persistent connection to the device, serving other commands.
+
+```text
+Hold a persistent connection to the device, serving other commands.
+
+The device grants its USB interface exclusively, so exactly one process can own it. This is that process: it performs the handshake ONCE and every other command then talks to it over a socket instead of connecting for itself.
+
+That matters for more than speed. A held session SUBSCRIBES to device state, which is how the unit reports edits you make on the hardware - so what `cortex` reports can stay true while you play, rather than being a snapshot from whenever the last command ran.
+
+Runs in the foreground. Stop it with Ctrl-C or `--stop`.
+
+Usage: cortex connect [OPTIONS]
+
+Options:
+      --status
+          Report whether a connection is running, and whether the device is answering
+
+      --stop
+          Ask a running connection to shut down, announcing the disconnect to the device first
+
+      --format <FORMAT>
+          Output format. `text` is for humans; `json` is for scripts and agents, and is stable enough to parse.
+          
+          Only the RESULT changes format. Progress, warnings, and errors always go to stderr as plain text, so `cortex presets --format json | jq` gets clean JSON regardless.
+
+          Possible values:
+          - text: Human-readable, the default
+          - json: Machine-readable JSON
+          
+          [default: text]
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+  -V, --version
+          Print version
+```
+
 ### `cortex grid`
 
 Show the LIVE grid: what is loaded right now, unsaved edits included.

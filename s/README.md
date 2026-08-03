@@ -85,3 +85,17 @@ sudo modprobe usbmon
 ```
 
 Writes to `traces/`, which is gitignored. **Captures must not be committed**: they hold Neural DSP's strings verbatim alongside the unit's serial number and the owner's preset names.
+
+## `s/usb-decode`
+
+Read a capture as Cortex Control messages rather than raw USB frames.
+
+Drives `tshark` and pipes it into `cortex decode-trace`, which reassembles using the crate's own framing, trailer and gzip code - so the decoder cannot disagree with what the client actually does.
+
+- `s/usb-decode traces/foo.pcapng` - decode a capture
+- `s/usb-decode --live` - decode as it happens
+- `s/usb-decode --quiet` - counts only
+
+`--live` is the development monitor. Run it in a second terminal and every message to and from the unit appears as it goes past, whoever sent it - our client, Cortex Control in the VM, or the unit's own front panel. Wireshark's GUI can watch the same traffic but knows nothing of our framing, so it shows 129-byte blobs where this shows messages.
+
+It was a capture of our *own* client that found the writer starvation in `session.rs`, which had been costing up to 100 seconds a handshake and had been misattributed to the device for a full day. Reach for this earlier than feels necessary.

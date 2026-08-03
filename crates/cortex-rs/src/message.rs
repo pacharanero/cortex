@@ -58,6 +58,39 @@ impl Message {
     pub fn message_type_value(&self) -> u16 {
         self.message_type
     }
+
+    /// Parse a reassembled buffer and decompress a frame-level gzip body.
+    ///
+    /// Returns the message and whether its body arrived gzipped, which is
+    /// worth surfacing: it distinguishes a large message from an expensive
+    /// one.
+    ///
+    /// The order matters and is easy to get wrong. The 8-byte trailer is
+    /// stripped FIRST, because the type tag sits outside the compression; a
+    /// decoder that gunzips before reading the trailer finds neither.
+    ///
+    /// Exists so the live RX path and any offline decoder share one
+    /// implementation. They previously could not disagree because there was
+    /// only one; this keeps that true now there is more than one caller.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`crate::Error::Trailer`] if the buffer is too short, or
+    /// [`crate::Error::Decode`] if a gzip body will not inflate.
+    pub fn decode(reassembled: &[u8]) -> crate::Result<(Self, bool)> {
+        let mut msg = Self::parse(reassembled)?;
+        let gzipped = msg.body.starts_with(&[0x1f, 0x8b]);
+        if gzipped {
+            use std::io::Read;
+            let mut decoder = flate2::read::GzDecoder::new(&msg.body[..]);
+            let mut decompressed = Vec::new();
+            decoder
+                .read_to_end(&mut decompressed)
+                .map_err(|e| crate::Error::Decode(format!("gzip: {e}")))?;
+            msg.body = Bytes::from(decompressed);
+        }
+        Ok((msg, gzipped))
+    }
 }
 
 #[cfg(test)]

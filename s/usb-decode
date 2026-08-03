@@ -1,0 +1,128 @@
+#!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Dr Marcus Baw
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# Read a USB capture as Cortex Control messages.
+#
+# Supplies the `tshark` invocation that `cortex decode-trace` expects, and
+# pipes one into the other. The decoding itself is the crate's own framing,
+# trailer and gzip code, so this cannot disagree with what the client does.
+#
+#   s/usb-decode traces/foo.pcapng     # decode a capture
+#   s/usb-decode --live                # decode as it happens
+#   s/usb-decode --live --quiet        # counts only
+#
+# `--live` is the development monitor. Run it in a second terminal and every
+# message to and from the unit appears as it goes past, whether it came from
+# our client, from Cortex Control in the VM, or from the unit's own front
+# panel. Wireshark's GUI can watch the same traffic, but it knows nothing of
+# our framing - it would show 129-byte blobs, not messages.
+#
+# Both directions are shown. Inbound reports arrive on the interrupt IN
+# endpoint and carry their bytes in `usb.capdata`; our writes are SET_REPORTs
+# on the control endpoint, whose bytes are in `usb.data_fragment` instead.
+# Asking for both fields and taking whichever is populated is what makes one
+# pass cover both directions.
+
+set -euo pipefail
+cd "$(git rev-parse --show-toplevel)"
+
+VID_PID="152a:880a"
+FILE=""
+LIVE=""
+QUIET=""
+
+while [[ $# -gt 0 ]]; do
+	case "$1" in
+	--live)
+		LIVE=1
+		shift
+		;;
+	--quiet)
+		QUIET="--quiet"
+		shift
+		;;
+	-h | --help)
+		sed -n '5,26p' "$0" | sed 's/^# \{0,1\}//'
+		exit 0
+		;;
+	*)
+		FILE="$1"
+		shift
+		;;
+	esac
+done
+
+fail() {
+	echo >&2
+	echo "usb-decode: $1" >&2
+	shift
+	for line in "$@"; do echo "  $line" >&2; done
+	exit 1
+}
+
+command -v tshark >/dev/null 2>&1 ||
+	fail "tshark is not installed." "sudo pacman -S wireshark-cli"
+
+CORTEX="./target/release/cortex"
+[[ -x "$CORTEX" ]] || CORTEX="./target/debug/cortex"
+[[ -x "$CORTEX" ]] ||
+	fail "no cortex binary built." "cargo build --release"
+
+FIELDS=(-T fields -e frame.time_relative -e usb.endpoint_address
+	-e usb.capdata -e usb.data_fragment)
+
+if [[ -n "$LIVE" ]]; then
+	LSUSB_LINE="$(lsusb -d "$VID_PID" 2>/dev/null | head -1 || true)"
+	[[ -n "$LSUSB_LINE" ]] ||
+		fail "no Quad Cortex ($VID_PID) on the USB bus."
+	BUS="$(echo "$LSUSB_LINE" | awk '{print $2}' | sed 's/^0*//')"
+	DEV="$(echo "$LSUSB_LINE" | awk '{print $4}' | tr -d ':' | sed 's/^0*//')"
+
+	# Same group problem as s/usb-trace: tshark captures through dumpcap, so
+	# it needs the capture group, and a login session that predates the
+	# membership does not have it.
+	SG_GROUP=""
+	DUMPCAP="$(command -v dumpcap 2>/dev/null || true)"
+	if [[ -n "$DUMPCAP" && ! -x "$DUMPCAP" ]]; then
+		DC_GROUP="$(stat -c %G "$DUMPCAP")"
+		getent group "$DC_GROUP" | grep -qE "(:|,)$(id -un)(,|$)" && SG_GROUP="$DC_GROUP"
+	fi
+
+	echo "usb-decode: watching usbmon${BUS} device ${DEV} - Ctrl-C to stop" >&2
+	# -l keeps tshark line-buffered, without which nothing appears until it
+	# has a block's worth - fatal for a live monitor.
+	CMD="$(printf '%q ' tshark -i "usbmon${BUS}" -l -Y "usb.device_address==${DEV}" "${FIELDS[@]}")"
+	if [[ -n "$SG_GROUP" ]]; then
+		sg "$SG_GROUP" -c "$CMD" | "$CORTEX" decode-trace $QUIET
+	else
+		eval "$CMD" | "$CORTEX" decode-trace $QUIET
+	fi
+	exit 0
+fi
+
+[[ -n "$FILE" ]] || fail "give a capture file, or --live." "s/usb-decode traces/foo.pcapng"
+[[ -f "$FILE" ]] || fail "no such file: $FILE"
+
+# s/usb-trace writes a sidecar recording which device address the unit had.
+# Bus and address are assigned at plug time, so without it a capture cannot be
+# filtered with confidence after the fact.
+SIDECAR="${FILE%.pcapng}.txt"
+DEV=""
+[[ -f "$SIDECAR" ]] && DEV="$(awk '/^device/ {print $2}' "$SIDECAR")"
+
+if [[ -n "$DEV" ]]; then
+	FILTER="usb.device_address==${DEV}"
+	echo "usb-decode: ${FILE}, device ${DEV} (from $(basename "$SIDECAR"))" >&2
+else
+	# No sidecar: fall back to decoding everything and let the framing sort
+	# it out. Reports from another device will not parse as our frames.
+	FILTER=""
+	echo "usb-decode: ${FILE}, no sidecar - decoding all devices on the bus" >&2
+fi
+
+if [[ -n "$FILTER" ]]; then
+	tshark -r "$FILE" -Y "$FILTER" "${FIELDS[@]}" 2>/dev/null | "$CORTEX" decode-trace $QUIET
+else
+	tshark -r "$FILE" "${FIELDS[@]}" 2>/dev/null | "$CORTEX" decode-trace $QUIET
+fi
