@@ -77,9 +77,39 @@ fail() {
 # Each check names its own fix. A capture that fails halfway through a session
 # with the official client wastes the setup, so everything is checked first.
 
-command -v dumpcap >/dev/null 2>&1 ||
+DUMPCAP="$(command -v dumpcap 2>/dev/null || true)"
+[[ -n "$DUMPCAP" ]] ||
 	fail "dumpcap is not installed (it ships with the Wireshark CLI tools)." \
 		"sudo pacman -S wireshark-cli"
+
+# Being on PATH is not the same as being runnable. Distributions ship dumpcap
+# 0750 root:wireshark so that capture rights are a group decision, so the
+# check that matters is the execute bit, not existence. Testing the wrong one
+# cost a 200 s capture that failed at the last step.
+SG_GROUP=""
+if [[ ! -x "$DUMPCAP" ]]; then
+	DC_GROUP="$(stat -c %G "$DUMPCAP")"
+	if getent group "$DC_GROUP" | grep -qE "(:|,)$(id -un)(,|$)"; then
+		# Member in /etc/group, but this login session predates that and
+		# carries the old group set. `sg` re-reads the group file, so the
+		# capture can proceed now rather than after a logout.
+		SG_GROUP="$DC_GROUP"
+	else
+		fail "$DUMPCAP is not executable by $(id -un) (it is $(stat -c '%A %U:%G' "$DUMPCAP"))." \
+			"sudo usermod -aG ${DC_GROUP} \$USER" \
+			"Then either log out and back in, or re-run this script - it will" \
+			"use 'sg ${DC_GROUP}' automatically until the session catches up."
+	fi
+fi
+
+# Run dumpcap, stepping into the right group first if this session lacks it.
+run_dumpcap() {
+	if [[ -n "$SG_GROUP" ]]; then
+		sg "$SG_GROUP" -c "$(printf '%q ' "$DUMPCAP" "$@")"
+	else
+		"$DUMPCAP" "$@"
+	fi
+}
 
 # Read /proc/modules directly rather than piping lsmod into grep.
 #
@@ -116,23 +146,18 @@ IFACE="usbmon${BUS}"
 	fail "/dev/${IFACE} does not exist, though usbmon is loaded." \
 		"Try reloading it: sudo modprobe -r usbmon && sudo modprobe usbmon"
 
-if [[ ! -r "/dev/${IFACE}" ]]; then
-	# usbmon creates its nodes 0600 root:root. The usual Wireshark advice -
-	# join the wireshark group and setcap dumpcap - does NOT help here:
-	# cap_net_raw and cap_net_admin say nothing about permission to open a
-	# root-owned character device. It needs a udev rule, or root.
-	fail "/dev/${IFACE} is not readable by $(whoami) (usbmon nodes are 0600 root:root)." \
+# usbmon creates its nodes 0600 root:root, so they are normally unreadable by
+# a user - and that is usually fine. Distributions grant dumpcap
+# cap_dac_override precisely so it can open them without the whole capture
+# running as root. So the question is not "can I read this node" but "can
+# dumpcap", and only the answer to the second one blocks anything.
+if [[ ! -r "/dev/${IFACE}" ]] && ! getcap "$DUMPCAP" 2>/dev/null | grep -q cap_dac_override; then
+	fail "/dev/${IFACE} is not readable by $(id -un), and dumpcap lacks cap_dac_override." \
 		"One-off:" \
 		"  sudo dumpcap -i ${IFACE} -w traces/trace.pcapng" \
 		"" \
-		"Persistent, so this script works unprivileged, and effective immediately:" \
-		"  sudo tee /etc/udev/rules.d/99-usbmon.rules <<<'SUBSYSTEM==\"usbmon\", GROUP=\"wheel\", MODE=\"0640\"'" \
-		"  sudo udevadm control --reload && sudo modprobe -r usbmon && sudo modprobe usbmon" \
-		"" \
-		"Group 'wheel' rather than the conventional 'wireshark' on purpose:" \
-		"you are already in wheel, so it needs no re-login, and wheel already" \
-		"has sudo - it can read this traffic regardless. Use 'wireshark'" \
-		"instead if this account should NOT have blanket capture rights."
+		"Or grant dumpcap the capability it is normally shipped with:" \
+		"  sudo setcap cap_dac_override,cap_net_admin,cap_net_raw+eip \$(command -v dumpcap)"
 fi
 
 # --- capture --------------------------------------------------------------
@@ -154,12 +179,15 @@ captured      $(date -Iseconds)
 EOF
 
 echo "usb-trace: capturing ${IFACE} (bus ${BUS}, device ${DEV_ADDR}) -> ${OUTPUT}"
+[[ -z "$SG_GROUP" ]] ||
+	echo "usb-trace: this session predates your '${SG_GROUP}' membership; using sg"
+
 if [[ -n "$SECONDS_TO_RUN" ]]; then
 	echo "usb-trace: stopping after ${SECONDS_TO_RUN}s"
-	dumpcap -i "$IFACE" -w "$OUTPUT" -a "duration:${SECONDS_TO_RUN}" -q
+	run_dumpcap -i "$IFACE" -w "$OUTPUT" -a "duration:${SECONDS_TO_RUN}" -q
 else
 	echo "usb-trace: press Ctrl-C to stop"
-	dumpcap -i "$IFACE" -w "$OUTPUT" -q
+	run_dumpcap -i "$IFACE" -w "$OUTPUT" -q
 fi
 
 echo "usb-trace: wrote ${OUTPUT} ($(du -h "$OUTPUT" | cut -f1))"

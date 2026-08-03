@@ -19,7 +19,7 @@
 #![allow(clippy::missing_panics_doc, clippy::needless_pass_by_value)]
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -232,6 +232,16 @@ struct Shared {
     /// Write serializer: ensures one logical message's reports are written as
     /// an atomic group. Separate from the state mutexes above.
     write_lock: Mutex<()>,
+    /// How many threads are waiting to write to the device.
+    ///
+    /// The RX loop stands aside while this is non-zero. Without it a writer
+    /// can starve for tens of seconds: the RX loop holds the device lock
+    /// across a blocking read and reacquires it the instant it lets go, and
+    /// Rust's `Mutex` is not fair, so "release, then yield" is a race the
+    /// writer routinely loses. Measured on the wire: 46.8 s between the
+    /// handshake's first and second messages, the bus silent throughout,
+    /// and the device answering in 217 us once finally asked.
+    writers_waiting: AtomicUsize,
     /// Milliseconds since `started` at which the last inbound message was
     /// dispatched. Lets `connect` tell "the device is still dumping state"
     /// from "the device has gone quiet", which a fixed sleep cannot.
@@ -283,6 +293,7 @@ impl Session {
             next_id: AtomicU64::new(1),
             running: AtomicBool::new(true),
             write_lock: Mutex::new(()),
+            writers_waiting: AtomicUsize::new(0),
             last_inbound_ms: AtomicU64::new(0),
             last_any_inbound_ms: AtomicU64::new(0),
             started: Instant::now(),
@@ -330,6 +341,9 @@ impl Session {
     pub fn send(&self, message_type: MessageType, payload: &[u8]) -> crate::Result<()> {
         let reports = encode_message(message_type as u16, payload);
         let _lock = self.shared.write_lock.lock().unwrap();
+        // Announce the intent to write BEFORE contending for the device lock,
+        // so the RX loop stops reacquiring it and this write gets through.
+        let _intent = WriteIntent::new(&self.shared.writers_waiting);
         let device = self.device.lock().unwrap();
         for report in &reports {
             let _ = device.write(report);
@@ -806,6 +820,32 @@ fn decode_varint(bytes: &[u8]) -> Option<(u64, usize)> {
     None
 }
 
+/// How long the RX loop waits between checks while standing aside for a
+/// writer. Short, because it delays every write by up to this much.
+const WRITER_BACKOFF: Duration = Duration::from_millis(1);
+
+/// Marks a thread as waiting to write, so the RX loop stands aside.
+///
+/// RAII rather than a bare increment and decrement: a panic between
+/// announcing the intent and finishing the write would otherwise leave the
+/// count above zero forever, and the RX loop would keep standing aside for a
+/// writer that no longer exists - turning a transient fault into a session
+/// that receives nothing at all.
+struct WriteIntent<'a>(&'a AtomicUsize);
+
+impl<'a> WriteIntent<'a> {
+    fn new(counter: &'a AtomicUsize) -> Self {
+        counter.fetch_add(1, Ordering::AcqRel);
+        Self(counter)
+    }
+}
+
+impl Drop for WriteIntent<'_> {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
 /// The background RX loop: read frames, reassemble, decode, dispatch.
 fn rx_loop(device: Arc<Mutex<hidapi::HidDevice>>, shared: Arc<Shared>) {
     let mut reassembler = FrameReassembler::new();
@@ -816,6 +856,16 @@ fn rx_loop(device: Arc<Mutex<hidapi::HidDevice>>, shared: Arc<Shared>) {
         let mut buf = vec![0u8; HID_REPORT_LEN];
         let timeout_ms =
             i32::try_from(RX_POLL_TIMEOUT.as_millis().min(i32::MAX as u128)).unwrap_or(i32::MAX);
+        // Stand aside for any thread waiting to write, BEFORE taking the
+        // device lock. Yielding after releasing it is not enough: the writer
+        // and this loop then race for an unfair mutex, and with a backlog to
+        // read the loop wins almost every time.
+        while shared.writers_waiting.load(Ordering::Acquire) > 0
+            && shared.running.load(Ordering::Relaxed)
+        {
+            thread::sleep(WRITER_BACKOFF);
+        }
+
         let n = {
             let device = device.lock().unwrap();
             if let Ok(n) = device.read_timeout(&mut buf, timeout_ms) {
@@ -827,16 +877,15 @@ fn rx_loop(device: Arc<Mutex<hidapi::HidDevice>>, shared: Arc<Shared>) {
                 continue;
             }
         };
-        // Let a waiting writer in before reacquiring the device lock.
+        // Hand over promptly to a writer that arrived while the lock was
+        // held. This is only a latency tweak; the guarantee comes from the
+        // `writers_waiting` gate at the top of the loop.
         //
-        // Rust's Mutex is not fair. When the device has a backlog every read
-        // returns immediately, so this loop reacquires the lock the instant
-        // it releases it and a foreground `send()` can starve indefinitely -
-        // observed as a handshake hanging on its second message for 90 s
-        // while the device was demonstrably alive.
-        //
-        // Yielding costs nothing when nobody is waiting, and the RX thread
-        // has no deadline of its own.
+        // A bare yield WAS the whole mitigation, and it does not work. It
+        // leaves writer and reader racing for an unfair mutex, and with a
+        // backlog to read the reader wins: 46.8 s of bus silence between the
+        // handshake's first and second messages, on a device answering in
+        // 217 us. Keep the gate; this line alone is not a fix.
         thread::yield_now();
 
         if n == 0 {
@@ -1141,6 +1190,7 @@ mod correlation_tests {
             next_id: AtomicU64::new(1),
             running: AtomicBool::new(true),
             write_lock: Mutex::new(()),
+            writers_waiting: AtomicUsize::new(0),
             last_inbound_ms: AtomicU64::new(0),
             last_any_inbound_ms: AtomicU64::new(0),
             started: Instant::now(),
