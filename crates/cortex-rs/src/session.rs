@@ -649,6 +649,78 @@ impl Session {
         self.connect_with_progress(ConnectMode::Minimal, timeout, Duration::ZERO, |_| {})
     }
 
+    /// Read the device's `Version` and keep it, best effort.
+    ///
+    /// Failure is not fatal: the identity is a convenience, and the
+    /// handshake's job is to get the device pushing.
+    fn read_device_version(&self, timeout: Duration) {
+        // 2. Version READ, before announcing our own.
+        //
+        // Cortex Control does this, and the ordering earns its keep twice
+        // over: it gets the device's identity into the session while nothing
+        // else is competing for the reply, and it removes the race that made
+        // a later `Version` READ unreliable - those replies carry no
+        // `request_id`, so our own announce is indistinguishable from a
+        // device reply to anyone waiting on the type alone.
+        //
+        // Costs about 0.7 s, measured against Cortex Control doing the same.
+        trace!("handshake 2/7: Version READ");
+        let read = encode_read_message(MessageType::Version);
+        match self.await_broadcast(
+            MessageType::Version,
+            || {
+                let _ = self.send(MessageType::Version, &read);
+            },
+            timeout,
+            |m| !m.body.is_empty(),
+        ) {
+            Ok(reply) => match prost::Message::decode(reply.body.as_ref()) {
+                Ok(v) => {
+                    let v: VersionMessage = v;
+                    trace!("handshake 2/7: device version received");
+                    *self.shared.device_version.lock().unwrap() = Some(v);
+                }
+                Err(e) => trace!("handshake 2/7: version undecodable: {e}"),
+            },
+            // Not fatal. The identity is a convenience; the handshake's job
+            // is to get the device pushing, and it can do that without this.
+            Err(e) => trace!("handshake 2/7: no version reply ({e})"),
+        }
+    }
+
+    /// Ask for the model catalog and wait for it to arrive.
+    ///
+    /// Waiting is the point - see the comment inside.
+    fn fetch_catalog(&self, payload: &[u8], timeout: Duration) {
+        // Wait for the catalog before sending anything else.
+        //
+        // Cortex Control paces its handshake this way: request, wait for the
+        // reply, then the next request. Firing the whole handshake at once
+        // instead makes the device serialise ~24 requests against a 46 KB
+        // transfer, and the catalog stalls behind the pile-up - measured at
+        // a single 4.4 s gap mid-transfer, where the reports either side of
+        // it arrive 0.6 ms apart. Cortex Control sees no such gap and has the
+        // whole catalog in 0.65 s.
+        trace!("handshake 4/8: ModelRepo READ");
+        match self.await_broadcast(
+            MessageType::ModelRepo,
+            || {
+                let _ = self.send(MessageType::ModelRepo, payload);
+            },
+            timeout,
+            // Only the real catalog, not an echo: it is tens of kilobytes.
+            |m| m.body.len() > 1024,
+        ) {
+            Ok(reply) => trace!(
+                "handshake 4/8: catalog received ({} bytes)",
+                reply.body.len()
+            ),
+            // Not fatal on its own - the READ still gated the device's push
+            // behaviour, which is the load-bearing part.
+            Err(e) => trace!("handshake 4/8: catalog did not arrive ({e})"),
+        }
+    }
+
     /// The connect handshake, reporting each step to `progress`.
     ///
     /// The handshake is several seconds of silence otherwise, which reads as
@@ -678,39 +750,8 @@ impl Session {
         let _ = self.request(MessageType::ResetCommsBuffers, &payload, rid, timeout)?;
         trace!("handshake 1/6: reply received");
 
-        // 2. Version READ, before announcing our own.
-        //
-        // Cortex Control does this, and the ordering earns its keep twice
-        // over: it gets the device's identity into the session while nothing
-        // else is competing for the reply, and it removes the race that made
-        // a later `Version` READ unreliable - those replies carry no
-        // `request_id`, so our own announce is indistinguishable from a
-        // device reply to anyone waiting on the type alone.
-        //
-        // Costs about 0.7 s, measured against Cortex Control doing the same.
         progress("reading device version");
-        trace!("handshake 2/7: Version READ");
-        let read = encode_read_message(MessageType::Version);
-        match self.await_broadcast(
-            MessageType::Version,
-            || {
-                let _ = self.send(MessageType::Version, &read);
-            },
-            timeout,
-            |m| !m.body.is_empty(),
-        ) {
-            Ok(reply) => match prost::Message::decode(reply.body.as_ref()) {
-                Ok(v) => {
-                    let v: VersionMessage = v;
-                    trace!("handshake 2/7: device version received");
-                    *self.shared.device_version.lock().unwrap() = Some(v);
-                }
-                Err(e) => trace!("handshake 2/7: version undecodable: {e}"),
-            },
-            // Not fatal. The identity is a convenience; the handshake's job
-            // is to get the device pushing, and it can do that without this.
-            Err(e) => trace!("handshake 2/7: no version reply ({e})"),
-        }
+        self.read_device_version(timeout);
 
         // 3. Version UPDATE announcing cortex_control_version.
         let version_msg = VersionMessage {
@@ -744,8 +785,7 @@ impl Session {
         // 1500+ reports/sec, while this one message trickles in at 82
         // reports/sec because the unit builds the catalog on demand.
         progress("requesting model catalog");
-        trace!("handshake 3/6: ModelRepo READ");
-        self.send(MessageType::ModelRepo, &payload)?;
+        self.fetch_catalog(&payload, timeout);
 
         // 4. Connection{connected: true}.
         let conn_msg = ConnectionMessage {

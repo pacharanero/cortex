@@ -68,7 +68,7 @@ The device **will not push state to a client that has merely opened the pipe**:
 7. `CPULoad` **CREATE** - not a READ. See [Not everything is subscribed with a READ](#cpuload-create).
 8. Settle.
 
-Steps 3 to 7 are fire-and-forget: the device answers them as pushes rather than correlated replies, so nothing waits on them individually.
+Steps 5 to 7 are fire-and-forget: the device answers them as pushes rather than correlated replies. Steps 2 and 4 wait for their replies before continuing - see [Pace the handshake](#pace-the-handshake).
 
 ### The ModelRepo READ is load-bearing
 
@@ -96,16 +96,21 @@ The device answers control transfers in about 220 microseconds. Releasing the lo
 
 Measured effect of fixing it: handshake from a 2.2-102.7 s spread to a flat 2.2 s; preset listing from 5.4-18.2 s to 5.33-5.38 s. The best case did not change in either.
 
-### Catalog transfer rate
+### Pace the handshake
 
-The `ModelRepo` reply is 371 reports, about 46.7 KB. Measured from request to last report on the same unit:
+**Wait for a large reply before issuing the next request.** Cortex Control does, and the difference is substantial.
 
-| Client | Elapsed | Rate |
-| --- | --- | --- |
-| Cortex Control | 0.65 s | ~570 reports/sec |
-| `cortex` | 4.98 s | ~75 reports/sec |
+Firing the whole handshake at once - the catalog READ, `Connection`, and the subscribe burst, roughly 24 requests inside a millisecond - makes the device serialise them against a 46 KB transfer. The catalog then stalls behind the pile-up:
 
-The difference is unexplained and is not a property of the device. A slow bulk transfer is not evidence that the unit is building something on demand.
+| Handshake | `ModelRepo` request to last report |
+| --- | --- |
+| all requests fired at once | 5.06 s, including a single 4.4 s stall mid-transfer |
+| waiting for the catalog first | 0.67 s |
+| Cortex Control | 0.65 s |
+
+The reports either side of that 4.4 s stall arrive 0.6 ms apart, so it is not a throughput limit - it is queueing the client created. Cortex Control shows no such gap.
+
+Waiting costs about a second of wall time on the handshake itself and returns it several times over: the catalog is in hand when the handshake completes, rather than still arriving for another four seconds.
 
 ### The device sends the host an unsolicited `Version` READ
 
