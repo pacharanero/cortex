@@ -23,6 +23,10 @@ default = ["hid"]
 # device present (useful for tests, analysis tools, and a crates.io consumer
 # that only wants the schema).
 hid = ["dep:hidapi"]
+# A scriptable HidLink for tests, so the session, the handshake and anything
+# built on them can be exercised without a device. Enabled by dev-dependencies
+# of downstream crates that test against a fake session.
+test-support = []
 
 [dependencies]
 serde = { workspace = true }

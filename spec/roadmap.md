@@ -268,7 +268,6 @@ Improve on the Cortex Control appearance while staying familiar enough to naviga
 ## Engineering (ENG)
 
 ### ENG-001: DX and testing
-- [ ] **ENG-001.y**: Fake transport for the RX loop itself - the 1 MiB reassembly cap and the FIRST-resets-stale-partial rule need frame injection
 
 - [ ] **ENG-001.1**: `s/gui-dev` (once `gui/` exists)
 - [ ] **ENG-001.2**: `s/version++` exists (CLI-004.1). Outstanding: teach it the GUI manifests - `gui/package.json` and `gui/src-tauri/tauri.conf.json` must move in the same release commit once they exist

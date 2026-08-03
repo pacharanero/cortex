@@ -292,6 +292,14 @@ struct Shared {
     last_inbound_ms: AtomicU64,
     /// Session start, the origin for `last_inbound_ms`.
     started: Instant,
+    /// Whether anything has ever been received.
+    ///
+    /// Explicit rather than inferred from `last_any_inbound_ms != 0`, because
+    /// that field holds milliseconds since session start and 0 is a real
+    /// timestamp for the first millisecond - so "arrived immediately" and
+    /// "never arrived" were indistinguishable. Hardware hid it: the handshake
+    /// takes seconds, so nothing ever landed inside that window.
+    heard_anything: AtomicBool,
     /// Milliseconds at which ANY message last arrived, heartbeats included.
     ///
     /// Distinct from `last_inbound_ms`, which ignores heartbeats so the
@@ -323,7 +331,7 @@ struct Shared {
 /// `Clone`; callers hold it by reference or behind an `Arc<Session>` at the
 /// host layer.
 pub struct Session {
-    device: Arc<Mutex<hidapi::HidDevice>>,
+    device: Arc<Mutex<dyn crate::link::HidLink>>,
     shared: Arc<Shared>,
     rx_handle: Mutex<Option<thread::JoinHandle<()>>>,
     keepalive_handle: Mutex<Option<thread::JoinHandle<()>>>,
@@ -340,8 +348,22 @@ impl Session {
     /// the bus, or [`crate::Error::Hid`] if `hidapi` fails to open the device.
     pub fn open(kind: DeviceKind) -> crate::Result<Self> {
         let transport = crate::Transport::open(kind)?;
-        let device = Arc::new(Mutex::new(transport.into_device()));
+        let device: Arc<Mutex<dyn crate::link::HidLink>> =
+            Arc::new(Mutex::new(transport.into_device()));
+        Self::over(device)
+    }
 
+    /// Start a session over any [`HidLink`](crate::link::HidLink).
+    ///
+    /// The substitutable entry point: `open` is this with a real device
+    /// attached. Exists so the RX loop, the handshake and the writer gate can
+    /// be tested at all - none of them were reachable without hardware, and
+    /// they are where this project's costly bugs have lived.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`crate::Error::Hid`] if a background thread cannot be spawned.
+    pub fn over(device: Arc<Mutex<dyn crate::link::HidLink>>) -> crate::Result<Self> {
         let shared = Arc::new(Shared {
             pending: Mutex::new(HashMap::new()),
             type_waiters: Mutex::new(Vec::new()),
@@ -351,6 +373,7 @@ impl Session {
             write_lock: Mutex::new(()),
             writers_waiting: AtomicUsize::new(0),
             last_inbound_ms: AtomicU64::new(0),
+            heard_anything: AtomicBool::new(false),
             last_any_inbound_ms: AtomicU64::new(0),
             started: Instant::now(),
             cpu_load: Mutex::new(None),
@@ -913,7 +936,7 @@ impl Session {
     /// here first, or it will condemn every session in its opening seconds.
     #[must_use]
     pub fn has_heard_from_device(&self) -> bool {
-        self.shared.last_any_inbound_ms.load(Ordering::Relaxed) > 0
+        self.shared.heard_anything.load(Ordering::Relaxed)
     }
 
     /// The most recent CPU load pushed by the device, if any has arrived.
@@ -1070,7 +1093,7 @@ impl Drop for WriteIntent<'_> {
 }
 
 /// The background RX loop: read frames, reassemble, decode, dispatch.
-fn rx_loop(device: Arc<Mutex<hidapi::HidDevice>>, shared: Arc<Shared>) {
+fn rx_loop(device: Arc<Mutex<dyn crate::link::HidLink>>, shared: Arc<Shared>) {
     let mut reassembler = FrameReassembler::new();
     let mut report_count: usize = 0;
     let mut partial_started = Instant::now();
@@ -1211,6 +1234,7 @@ fn dispatch(msg: &InboundMessage, shared: &Shared) {
     }
     // Liveness counts everything: a heartbeat is exactly what tells us the
     // link is still up.
+    shared.heard_anything.store(true, Ordering::Relaxed);
     shared.last_any_inbound_ms.store(
         u64::try_from(shared.started.elapsed().as_millis()).unwrap_or(u64::MAX),
         Ordering::Relaxed,
@@ -1299,7 +1323,7 @@ fn dispatch(msg: &InboundMessage, shared: &Shared) {
 
 /// The background keepalive loop: send KeepAlive{UPDATE} every
 /// [`DEFAULT_KEEPALIVE_INTERVAL`].
-fn keepalive_loop(device: Arc<Mutex<hidapi::HidDevice>>, shared: Arc<Shared>) {
+fn keepalive_loop(device: Arc<Mutex<dyn crate::link::HidLink>>, shared: Arc<Shared>) {
     while shared.running.load(Ordering::Relaxed) {
         // Sleep in short slices rather than one 5 s block. `stop()` joins
         // this thread, so a plain sleep makes every teardown wait up to a
@@ -1425,6 +1449,7 @@ mod correlation_tests {
             write_lock: Mutex::new(()),
             writers_waiting: AtomicUsize::new(0),
             last_inbound_ms: AtomicU64::new(0),
+            heard_anything: AtomicBool::new(false),
             last_any_inbound_ms: AtomicU64::new(0),
             started: Instant::now(),
             cpu_load: Mutex::new(None),
@@ -1692,4 +1717,140 @@ fn extract_model_repo_payload(body: &[u8]) -> Option<Vec<u8>> {
         return None;
     }
     Some(payload)
+}
+
+#[cfg(test)]
+mod link_tests {
+    //! Tests over a fake [`HidLink`](crate::link::HidLink).
+    //!
+    //! These exist because the RX loop, the writer gate and the keepalive
+    //! were previously unreachable without hardware - and every one of them
+    //! has already shipped a bug that cost a day to find on real hardware.
+    //! Each test below pins one of those.
+
+    use super::*;
+    use crate::link::FakeLink;
+
+    /// One complete inbound report carrying `body` plus the 8-byte trailer.
+    fn inbound(message_type: u16, body: &[u8]) -> Vec<u8> {
+        let mut msg = body.to_vec();
+        msg.extend_from_slice(&message_type.to_le_bytes());
+        msg.extend_from_slice(&[0u8; 6]);
+        // [report id 0x01][len][flags FIRST|LAST][data]
+        let mut report = vec![0x01, u8::try_from(msg.len()).unwrap(), 0xC0];
+        report.extend_from_slice(&msg);
+        report
+    }
+
+    fn session_over(link: &FakeLink) -> Session {
+        let device: Arc<Mutex<dyn crate::link::HidLink>> = Arc::new(Mutex::new(link.clone()));
+        Session::over(device).expect("session over a fake link")
+    }
+
+    /// The bug that cost the most: a reader holding the device lock across a
+    /// blocking read, reacquiring it the instant it lets go, starves a
+    /// foreground write. On hardware that showed as 46.8 s of silent bus in
+    /// the middle of a handshake, on a device answering in 217 us.
+    ///
+    /// The fake is saturated so every read returns immediately, which is the
+    /// only condition under which the race is lost - a link that ever went
+    /// quiet would let the writer through by luck.
+    #[test]
+    fn a_waiting_writer_is_not_starved_by_the_rx_loop() {
+        let link = FakeLink::new().saturated(inbound(MessageType::GlobalTempo as u16, &[]));
+        let session = session_over(&link);
+        // Let the RX loop reach its steady state before contending with it.
+        thread::sleep(Duration::from_millis(100));
+
+        let before = link.write_count();
+        let start = Instant::now();
+        session.send(MessageType::KeepAlive, &[]).unwrap();
+        let waited = start.elapsed();
+        session.stop();
+
+        assert!(
+            link.write_count() > before,
+            "the write never reached the device at all"
+        );
+        assert!(
+            waited < Duration::from_secs(5),
+            "a write waited {waited:?} behind the RX loop - the writer gate is not holding it off"
+        );
+    }
+
+    /// The RX loop must reassemble a frame and deliver it to a waiter.
+    #[test]
+    fn a_reassembled_message_reaches_a_waiter() {
+        let link = FakeLink::new();
+        let session = session_over(&link);
+
+        let got = session.await_broadcast(
+            MessageType::GlobalTempo,
+            || link.push_inbound(inbound(MessageType::GlobalTempo as u16, &[])),
+            Duration::from_secs(3),
+            |_| true,
+        );
+        session.stop();
+        assert!(got.is_ok(), "a queued report never reached the waiter");
+    }
+
+    /// Keepalives must go out about once a second. At 5 s the device stops
+    /// pushing state entirely, which is what made healthy sessions look dead.
+    #[test]
+    fn keepalives_go_out_about_once_a_second() {
+        let link = FakeLink::new();
+        let session = session_over(&link);
+        thread::sleep(Duration::from_millis(2_500));
+        let count = link.write_count();
+        session.stop();
+
+        assert!(
+            count >= 2,
+            "only {count} keepalives in 2.5s; the interval has drifted above 1s, \
+             and the device stops pushing when they are too sparse"
+        );
+    }
+
+    /// Silence is only meaningful once the device has spoken. Before the
+    /// first message there is nothing to compare against, and a health check
+    /// that missed this would condemn every session in its opening seconds.
+    #[test]
+    fn silence_means_nothing_until_the_device_has_spoken() {
+        let link = FakeLink::new();
+        let session = session_over(&link);
+        assert!(
+            !session.has_heard_from_device(),
+            "a session that has received nothing must not claim it has"
+        );
+
+        link.push_inbound(inbound(MessageType::GlobalTempo as u16, &[]));
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while Instant::now() < deadline && !session.has_heard_from_device() {
+            thread::sleep(Duration::from_millis(20));
+        }
+        let heard = session.has_heard_from_device();
+        session.stop();
+        assert!(heard, "an inbound message did not register as contact");
+    }
+
+    /// A malformed report must not wedge the loop or be mistaken for a
+    /// message.
+    #[test]
+    fn a_malformed_report_is_skipped_without_stopping_the_loop() {
+        let link = FakeLink::new();
+        let session = session_over(&link);
+
+        link.push_inbound(vec![0xFF, 0xFF, 0xFF]); // not our framing
+        let got = session.await_broadcast(
+            MessageType::GlobalTempo,
+            || link.push_inbound(inbound(MessageType::GlobalTempo as u16, &[])),
+            Duration::from_secs(3),
+            |_| true,
+        );
+        session.stop();
+        assert!(
+            got.is_ok(),
+            "a bad report stopped the loop delivering good ones"
+        );
+    }
 }

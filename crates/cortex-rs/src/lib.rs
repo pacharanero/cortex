@@ -59,6 +59,7 @@ pub mod daemon;
 pub mod device;
 pub mod framing;
 pub mod grid;
+pub mod link;
 pub mod message;
 
 #[cfg(feature = "hid")]
