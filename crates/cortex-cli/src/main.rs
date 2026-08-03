@@ -807,6 +807,16 @@ unsafe fn libc_sigpipe_reset() {
 
 /// List the presets in a setlist.
 fn cmd_presets(setlist: &str, include_empty: bool, timeout: u64, fmt: Format) -> Result<()> {
+    // Prefer a held session. A listing is the most expensive read the CLI
+    // does, and the daemon has already paid for the handshake.
+    if let Some(result) = connect::request(&cortex_rs::Request::ListPresets {
+        setlist: setlist.to_string(),
+        include_empty,
+    }) {
+        let entries: Vec<PresetEntryOut> = serde_json::from_value(result?)?;
+        return emit(&entries, fmt, print_preset_entries);
+    }
+
     let session = open_device()?;
     session.connect(Duration::from_secs(10), Duration::from_secs(2))?;
     let qc = cortex_rs::QuadCortex::new(session.clone());
@@ -817,15 +827,19 @@ fn cmd_presets(setlist: &str, include_empty: bool, timeout: u64, fmt: Format) ->
     session.stop();
 
     let entries: Vec<PresetEntryOut> = result?.iter().map(PresetEntryOut::from).collect();
-    emit(&entries, fmt, |entries| {
-        for e in entries {
-            println!(
-                "{:>4}  {}",
-                e.slot,
-                if e.name.is_empty() { "-" } else { &e.name }
-            );
-        }
-    })
+    emit(&entries, fmt, print_preset_entries)
+}
+
+/// Print a setlist listing. Shared so the routed and direct paths cannot
+/// drift into two formats.
+fn print_preset_entries(entries: &Vec<PresetEntryOut>) {
+    for e in entries {
+        println!(
+            "{:>4}  {}",
+            e.slot,
+            if e.name.is_empty() { "-" } else { &e.name }
+        );
+    }
 }
 
 /// The session currently held by a running command, so a signal handler can
@@ -936,6 +950,21 @@ fn open_session(
 
 /// Recall a preset by slot.
 fn cmd_recall(slot: &str, setlist: &str, factory: bool, fmt: Format) -> Result<()> {
+    // Through the daemon when there is one. It keeps its session, so the
+    // settling sleep the direct path needs is unnecessary there.
+    if let Some(result) = connect::request(&cortex_rs::Request::RecallPreset {
+        setlist: setlist.to_string(),
+        slot: slot.to_string(),
+        factory,
+    }) {
+        result?;
+        let out = ActionOut {
+            action: "recall".into(),
+            detail: format!("{slot} in {setlist}"),
+        };
+        return emit(&out, fmt, |o| println!("{}: {}", o.action, o.detail));
+    }
+
     let (session, qc) = connected()?;
     let result = qc.recall_preset(setlist, slot, factory);
     // Give the device a moment to service the recall before tearing the
@@ -1012,6 +1041,16 @@ fn cmd_catalog(
     // the device, and without a 2 s handshake per iteration.
     let payload = if let Some(path) = from_file {
         std::fs::read(path)?
+    } else if let Some(result) = connect::request(&cortex_rs::Request::Catalog) {
+        // The daemon already holds this from its handshake, so this is a
+        // socket read rather than another 46 KB transfer off the device.
+        let value = result?;
+        serde_json::from_value(
+            value
+                .get("payload")
+                .cloned()
+                .ok_or_else(|| anyhow::anyhow!("daemon returned no catalog payload"))?,
+        )?
     } else {
         let (session, qc) = connected()?;
         let result = qc.fetch_model_repo(Duration::from_secs(timeout));
@@ -2110,7 +2149,7 @@ struct ProbeOut {
 }
 
 /// A setlist listing entry.
-#[derive(serde::Serialize)]
+#[derive(serde::Serialize, serde::Deserialize)]
 struct PresetEntryOut {
     /// Linear slot index, 0-255.
     index: u32,

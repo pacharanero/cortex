@@ -139,15 +139,27 @@ impl Daemon {
                         )
                     })
             }),
-            Request::Catalog => self.respond(|c| {
-                c.fetch_model_repo(REQUEST_TIMEOUT).and_then(|payload| {
-                    cortex_rs::Catalog::parse(&payload).map(|catalog| {
-                        serde_json::json!({
-                            "models": catalog.len(),
-                        })
-                    })
-                })
-            }),
+            // Return the raw payload, not a summary. The caller parses it
+            // with the same code the direct path uses, so the two cannot
+            // render different catalogs.
+            //
+            // Served from the handshake's own copy: the device builds this
+            // on request, and asking twice costs another 46 KB transfer.
+            Request::Catalog => {
+                let cached = self.session.captured_model_repo();
+                match cached {
+                    Some(payload) => match serde_json::to_value(payload) {
+                        Ok(v) => Response::Ok {
+                            data: serde_json::json!({ "payload": v }),
+                        },
+                        Err(e) => Response::error(format!("catalog payload: {e}")),
+                    },
+                    None => self.respond(|c| {
+                        c.fetch_model_repo(REQUEST_TIMEOUT)
+                            .map(|payload| serde_json::json!({ "payload": payload }))
+                    }),
+                }
+            }
             Request::CpuLoad => match self.session.cpu_load() {
                 Some(load) => match serde_json::to_value(crate::cpu_load(&load)) {
                     Ok(value) => Response::Ok { data: value },
