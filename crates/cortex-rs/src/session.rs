@@ -169,10 +169,6 @@ macro_rules! trace {
 /// The 22 state types the device requires a READ for before it starts pushing.
 const SUBSCRIBE_TYPES: &[MessageType] = &[
     MessageType::ModuleStats,
-    // Cortex Control subscribes to this and we did not. It is what drives a
-    // live CPU% display: the device then pushes total load plus a per-column
-    // breakdown flagged by DSP core.
-    MessageType::CpuLoad,
     MessageType::License,
     MessageType::UndoRedo,
     MessageType::IoSettings,
@@ -776,6 +772,28 @@ impl Session {
             let payload = encode_read_message(*mt);
             self.send(*mt, &payload)?;
         }
+
+        // CPU load is asked for differently, and the difference is load-
+        // bearing. Every other subscribe is a plain READ; Cortex Control
+        // sends this one with action CREATE and a `request_id`, which on the
+        // wire is a single field 2 and no action at all - proto3 omits a
+        // default, and CREATE is 0.
+        //
+        // Verified: a READ here is simply ignored. Our subscribe burst went
+        // out with `CpuLoad` as a READ and the device never pushed a single
+        // load message, while Cortex Control received roughly one a second
+        // over the same kind of session. Reading it as "create a
+        // subscription" rather than "read a value" also makes more sense of
+        // a message whose reply is a continuous stream.
+        let rid = self.next_request_id();
+        let cpu = CpuLoadMessage {
+            action: MessageAction::Create as i32,
+            request_id: Some(crate::proto::cpu_load_message::RequestId::RequestId(rid)),
+            ..Default::default()
+        };
+        trace!("handshake 5/7: CpuLoad CREATE (rid={rid})");
+        let payload = prost::Message::encode_to_vec(&cpu);
+        self.send(MessageType::CpuLoad, &payload)?;
 
         // 6. Settle until the device stops talking.
         //

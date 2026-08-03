@@ -321,6 +321,11 @@ Options:
       --quiet
           Print only the summary line, not every message
 
+      --verbose
+          Also describe each message's protobuf fields.
+          
+          Generic, so it works on message types we do not model - which is the case that matters when reading a capture of another client.
+
       --format <FORMAT>
           Output format. `text` is for humans; `json` is for scripts and agents, and is stable enough to parse.
           

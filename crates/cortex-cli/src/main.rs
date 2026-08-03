@@ -207,6 +207,12 @@ enum Command {
         /// Print only the summary line, not every message.
         #[arg(long)]
         quiet: bool,
+        /// Also describe each message's protobuf fields.
+        ///
+        /// Generic, so it works on message types we do not model - which is
+        /// the case that matters when reading a capture of another client.
+        #[arg(long, conflicts_with = "quiet")]
+        verbose: bool,
     },
     /// Hold a persistent connection to the device, serving other commands.
     ///
@@ -492,8 +498,8 @@ fn run(cli: Cli) -> Result<()> {
         Some(Command::Scene { index }) => cmd_scene(index, fmt),
         Some(Command::Connect { status, stop }) => cmd_connect(status, stop, fmt),
         Some(Command::Cpu) => cmd_cpu(fmt),
-        Some(Command::DecodeTrace { quiet }) => {
-            decode::decode_stream(std::io::stdin().lock(), quiet)
+        Some(Command::DecodeTrace { quiet, verbose }) => {
+            decode::decode_stream(std::io::stdin().lock(), quiet, verbose)
         }
         Some(Command::Grid { timeout, params }) => cmd_grid(timeout, params, fmt),
         Some(Command::SetParam {

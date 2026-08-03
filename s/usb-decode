@@ -11,6 +11,7 @@
 #   s/usb-decode traces/foo.pcapng     # decode a capture
 #   s/usb-decode --live                # decode as it happens
 #   s/usb-decode --live --quiet        # counts only
+#   s/usb-decode FILE --verbose        # describe each message's fields
 #
 # `--live` is the development monitor. Run it in a second terminal and every
 # message to and from the unit appears as it goes past, whether it came from
@@ -40,6 +41,10 @@ while [[ $# -gt 0 ]]; do
 		;;
 	--quiet)
 		QUIET="--quiet"
+		shift
+		;;
+	--verbose)
+		QUIET="--verbose"
 		shift
 		;;
 	-h | --help)

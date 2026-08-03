@@ -71,7 +71,7 @@ struct Stream {
 /// Returns an error only if the input cannot be read. Malformed lines are
 /// skipped: a capture is a recording of reality, and reality includes noise
 /// from other devices and reports truncated by the end of the capture.
-pub fn decode_stream(reader: impl BufRead, quiet: bool) -> Result<()> {
+pub fn decode_stream(reader: impl BufRead, quiet: bool, verbose: bool) -> Result<()> {
     let mut reassemblers = [FrameReassembler::new(), FrameReassembler::new()];
     let mut streams = [Stream::default(), Stream::default()];
     let mut messages = 0usize;
@@ -171,6 +171,11 @@ pub fn decode_stream(reader: impl BufRead, quiet: bool) -> Result<()> {
                                     reports,
                                     if reports == 1 { "" } else { "s" }
                                 );
+                                if verbose {
+                                    for field in dump_fields(&msg.body) {
+                                        println!("                {field}");
+                                    }
+                                }
                             }
                         }
                         Err(e) => {
@@ -195,6 +200,109 @@ pub fn decode_stream(reader: impl BufRead, quiet: bool) -> Result<()> {
 
     eprintln!("decoded {messages} messages ({skipped} skipped, {resyncs} resync bytes)");
     Ok(())
+}
+
+/// Describe a protobuf body field by field, without knowing its schema.
+///
+/// Generic on purpose. A per-type match over the 70-odd message types would
+/// decode more prettily and would go blank on exactly the messages worth
+/// looking at - the ones the official client sends that we do not model. The
+/// wire format carries field numbers and types regardless, which is enough to
+/// compare two clients' requests byte for byte.
+///
+/// Values are shown, not just counted, because the question this answers is
+/// usually "how does their request differ from ours".
+fn dump_fields(body: &[u8]) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut i = 0usize;
+    while i < body.len() {
+        let Some((key, used)) = varint(&body[i..]) else {
+            out.push(format!("<undecodable at byte {i}>"));
+            break;
+        };
+        i += used;
+        let field = key >> 3;
+        let wire = key & 7;
+        match wire {
+            0 => {
+                let Some((v, used)) = varint(&body[i..]) else {
+                    out.push(format!("field {field}: <truncated varint>"));
+                    break;
+                };
+                i += used;
+                out.push(format!("field {field}: varint {v}"));
+            }
+            1 => {
+                if i + 8 > body.len() {
+                    out.push(format!("field {field}: <truncated 64-bit>"));
+                    break;
+                }
+                let bytes: [u8; 8] = body[i..i + 8].try_into().unwrap();
+                i += 8;
+                out.push(format!(
+                    "field {field}: 64-bit {} (f64 {})",
+                    u64::from_le_bytes(bytes),
+                    f64::from_le_bytes(bytes)
+                ));
+            }
+            2 => {
+                let Some((len, used)) = varint(&body[i..]) else {
+                    out.push(format!("field {field}: <truncated length>"));
+                    break;
+                };
+                i += used;
+                let len = usize::try_from(len).unwrap_or(usize::MAX);
+                if i + len > body.len() {
+                    out.push(format!("field {field}: <truncated {len}-byte value>"));
+                    break;
+                }
+                let value = &body[i..i + len];
+                i += len;
+                // Show text as text. Most length-delimited fields here are
+                // names, keys and paths, and reading those as hex would hide
+                // the most useful thing in the message.
+                match std::str::from_utf8(value) {
+                    Ok(t) if t.chars().all(|c| !c.is_control()) && !t.is_empty() => {
+                        out.push(format!("field {field}: \"{t}\""));
+                    }
+                    _ => out.push(format!("field {field}: {len} bytes (nested or binary)")),
+                }
+            }
+            5 => {
+                if i + 4 > body.len() {
+                    out.push(format!("field {field}: <truncated 32-bit>"));
+                    break;
+                }
+                let bytes: [u8; 4] = body[i..i + 4].try_into().unwrap();
+                i += 4;
+                out.push(format!(
+                    "field {field}: 32-bit {} (f32 {})",
+                    u32::from_le_bytes(bytes),
+                    f32::from_le_bytes(bytes)
+                ));
+            }
+            other => {
+                // 3 and 4 are the deprecated group markers; anything else
+                // means the stream is not what we think it is, and guessing
+                // further would invent structure.
+                out.push(format!("field {field}: unsupported wire type {other}"));
+                break;
+            }
+        }
+    }
+    out
+}
+
+/// Read one protobuf varint, returning its value and the bytes consumed.
+fn varint(bytes: &[u8]) -> Option<(u64, usize)> {
+    let mut value = 0u64;
+    for (i, b) in bytes.iter().take(10).enumerate() {
+        value |= u64::from(b & 0x7f) << (7 * i);
+        if b & 0x80 == 0 {
+            return Some((value, i + 1));
+        }
+    }
+    None
 }
 
 /// The `CortexMessageType` name for a trailer tag.
@@ -255,6 +363,23 @@ mod tests {
     }
 
     #[test]
+    fn fields_are_described_without_a_schema() {
+        // field 1 varint 2; field 2 string "hi"
+        let body = [0x08, 0x02, 0x12, 0x02, b'h', b'i'];
+        let got = dump_fields(&body);
+        assert_eq!(got[0], "field 1: varint 2");
+        assert_eq!(got[1], "field 2: \"hi\"");
+    }
+
+    #[test]
+    fn a_truncated_field_is_reported_not_guessed() {
+        // Claims a 9-byte string but supplies 2. Inventing the rest would be
+        // worse than saying so.
+        let body = [0x12, 0x09, b'h', b'i'];
+        assert!(dump_fields(&body)[0].contains("truncated"));
+    }
+
+    #[test]
     fn a_report_split_across_transfers_still_decodes() {
         // The case that matters for a VM capture: QEMU delivers a 129-byte
         // report as 128 bytes plus 1 byte. Split across lines, the decoder
@@ -271,7 +396,7 @@ mod tests {
         let input = format!("1.0\t0x81\t{first}\t\n1.1\t0x81\t{rest}\t\n");
 
         // Decoding must not error, and must consume both halves as one report.
-        decode_stream(input.as_bytes(), true).unwrap();
+        decode_stream(input.as_bytes(), true, false).unwrap();
     }
 
     fn hex(bytes: &[u8]) -> String {
