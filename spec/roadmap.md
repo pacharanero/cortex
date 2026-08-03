@@ -266,16 +266,16 @@ All HARDWARE-VERIFIED 2026-08-02 against CorOS 4.0.1 / d14e / QA00AB123. Named w
 
 The surface grew verb-first (`set-param`, `set-bypass`, `remove-block`) and should be rooted in the nouns the Neural DSP / Quad Cortex user guide uses - preset, slot, grid, row, column - named exactly as a player meets them.
 
-- [ ] **CLI-005.1**: Agree the target shape and the vocabulary. **Blocked on [queries.md](queries.md) 1**, which asks whether the player-facing word is *block* or *module* (the wire says `Model` and `ModuleStats`; the UI may differ), whether old names survive as hidden aliases, and where `cortex session start` belongs given it is our concept rather than the device's
-- [ ] **CLI-005.2**: Restructure to noun-then-verb, e.g. `cortex preset list|show|recall`, `cortex block bypass|remove|set`, `cortex row input|output|split`
-- [ ] **CLI-005.3**: Regenerate completions and the command reference; update the walkthrough
+  - [x] **CLI-005.1**: Vocabulary settled on evidence rather than taste: **block**, not module. The vendor-facing material in the vendored prior art uses *block* 310 times against *module* 35, including `pyquadcortex`'s manual-coverage notes, and our own docs already said block 29 times. The wire's own names (`Model`, `ModuleStats`) stay in the protocol docs. Clean break, no legacy aliases - nothing is released. The held session became `cortex session start|status|stop`, keeping `connect` as a visible alias since it is the word the protocol docs use
+  - [x] **CLI-005.2**: Restructured to noun-then-verb: `session`, `preset`, `setlist`, `grid`, `block`, `row`, `device`, plus `scene`, `catalog`, `completions`, `decode-trace`. Single-letter aliases where they do not collide (`s p sl g b r d sc c`). Grouping `version` under `device` also removes a real ambiguity with `--version`, which is the CLI's own. Adds a global `--zero-based` so `--row` takes 0-3 rather than the 1-4 printed on the unit - scripts and agents usually hold a zero-based index already, and converting by hand is the arithmetic that silently edits the wrong row
+  - [x] **CLI-005.3**: Command reference regenerated and every prose reference to the old names swept, in docs, specs and the Rust help text alike
 
 ### CLI-006: Command reference with syntax and examples
 
 `docs/cli-reference.md` is currently the raw `--help` dump for every subcommand, which is accurate and hard to read.
 
-- [ ] **CLI-006.1**: Emit syntax plus a worked example per command. Syntax stays generated from clap so it cannot drift; the examples need authoring. **Blocked on [queries.md](queries.md) 2** - the proposal is to put them in clap's `after_help`, so `cortex <cmd> --help` shows the example too and there is one source
-- [ ] **CLI-006.2**: Group the reference by noun once CLI-005 lands, rather than listing commands alphabetically
+  - [x] **CLI-006.1**: 22 worked examples live in clap's `after_help`, so they appear in `cortex <cmd> --help` as well as the reference, from one source. **A test walks the command tree and checks every example names a real command and real flags** - examples are the part of the help a reader copies verbatim, so a stale one fails in their terminal rather than ours, and unlike syntax they cannot be generated
+  - [x] **CLI-006.2**: The generator recurses one level, so the reference is grouped by noun with a section per verb. It has to: the arguments live on the verb, and stopping at `cortex preset` would document none of them
 
 ### CLI-004: Distribution
 
