@@ -302,8 +302,8 @@ The `cortex-mcp` MCP server for agentic patch editing. Greenfield - no MCP serve
 
 The reason this project has an MCP server at all is that an agent can do things no editor UI can: take a plain-English brief, research what it means, and build the preset. That has to be demonstrated, not asserted.
 
-- [ ] **MCP-003.1**: A worked demo in the docs - a brief like "a basic 1987 GnR Slash tone" taken through research, model selection, and grid construction to a working preset. **Blocked on [queries.md](queries.md) 3**: whether the demo builds into the live grid without saving (reversible by recall, needs no save confirmation, still demonstrates the capability), and whether it may browse live or should cite a fixed set of sources so it reproduces and does not age
-- [ ] **MCP-003.2**: A second demo for the reverse direction - "why does this preset not fit" - using the per-core CPU breakdown, which is a question the official editor answers poorly
+- [ ] **MCP-003.1**: A worked demo - a brief like "a basic 1987 GnR Slash tone" taken through research, model selection and grid construction to a working tone. **Decided:** build into the LIVE grid and stop short of saving, starting from an empty preset. That needs no save confirmation, is reversible by recalling, and still shows the capability. **The agent researches the web live rather than following a fixed recipe** - the research is the part worth demonstrating, and a canned recipe would show nothing an editor cannot already do. The demo therefore will not reproduce byte-for-byte, which is accepted.
+- [ ] **MCP-003.2**: A second demo for the reverse direction - "why does this preset not fit" - using the per-core CPU breakdown, which is a question the official editor answers poorly. The useful answer is not just a number but a strategy: which blocks could move to the other core, row or column.
 
 ### MCP-002: Tool surface
 
@@ -334,10 +334,12 @@ The visual design goal is a **hardware-faithful rendering of the Quad Cortex fro
 
 ### GUI-005: Always-visible preset directory and CPU load
 
+Stack confirmed as Tauri 2 + React + Mantine, as AGENTS.md says, unless a concrete reason to change appears.
+
 Improve on the Cortex Control appearance while staying familiar enough to navigate without relearning.
 
-- [ ] **GUI-005.1**: Preset directory in a left sidebar, visible at all times rather than behind a picker. **Blocked on [queries.md](queries.md) 4** for tree-vs-flat: the device reports 399 folders and only a couple hold anything, so a tree risks looking emptier than the unit is
-- [ ] **GUI-005.2**: CPU load visible at all times. `Session::cpu_load()` supplies total plus a per-column breakdown flagged by DSP core (PROT-008.6.12); the per-core detail is what explains why a preset will not fit, which is the question a player actually has
+- [ ] **GUI-005.1**: Preset directory in a left sidebar, visible at all times rather than behind a picker. **Decided:** a tree (setlist then slots), showing only populated folders by default. The unit reports 399 folders and two hold anything, so an unfiltered tree would misrepresent how full the unit is.
+- [ ] **GUI-005.2**: CPU load visible at all times, **including the per-column, per-core breakdown**, not just a total. `Session::cpu_load()` supplies both (PROT-008.6.12). The per-core detail is the actionable part: when a preset will not fit, it shows which work could move to the other core, row or column.
 
 ### GUI-003: Wrapper panels
 
