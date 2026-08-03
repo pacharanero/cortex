@@ -192,7 +192,6 @@ Complete. See [completed.md](completed.md).
 
 ### CLI-004: Distribution
 
-- [ ] **CLI-004.2**: auto-tag workflow - version bump on main creates `v<x.y.z>` tag
 - [ ] **CLI-004.3**: crates.io publish workflow (PROT layers must be complete first)
 - [ ] **CLI-004.4**: cargo-dist release pipeline (archives + installers)
 

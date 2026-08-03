@@ -1,0 +1,94 @@
+# SPDX-FileCopyrightText: 2026 Dr Marcus Baw
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+name: Auto-tag on version bump
+
+# When a push to main bumps the workspace version, create the matching
+# `v<version>` tag.
+#
+# This is the second half of the release contract: `s/version++` lands the
+# bump on main and deliberately does NOT tag, so that release authority lives
+# in CI rather than on a maintainer's laptop. The same command works before
+# and after main is branch-protected - the only difference is whether the
+# bump lands by direct push or by merged PR, and the tag is minted after the
+# review either way.
+#
+# The tag is created through the API rather than `git push`, because a push
+# made with the default GITHUB_TOKEN does not trigger downstream workflows.
+# Once release.yml and publish-crates.yml exist (CLI-004.3, CLI-004.4) they
+# are invoked from here via `workflow_call` for the same reason - relying on
+# the tag push to trigger them would silently never fire.
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  tag:
+    name: Detect version bump and create tag
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      tag: ${{ steps.bump.outputs.tag }}
+      bumped: ${{ steps.bump.outputs.bumped }}
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Two commits, so the previous version can be read for comparison.
+          fetch-depth: 2
+          persist-credentials: false
+
+      - name: Detect Cargo.toml version change
+        id: bump
+        run: |
+          # Every crate takes version.workspace = true, so the workspace
+          # version in the root Cargo.toml is the only one that moves.
+          new=$(grep -m1 '^version = "' Cargo.toml | cut -d'"' -f2)
+          old=$(git show HEAD~1:Cargo.toml 2>/dev/null \
+                  | grep -m1 '^version = "' | cut -d'"' -f2 || echo "")
+
+          if [ -z "$new" ]; then
+            echo "::warning::Could not read version from Cargo.toml"
+            echo "bumped=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "$new" = "$old" ]; then
+            echo "No version change ($new) - nothing to tag."
+            echo "bumped=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          tag="v$new"
+          # Idempotent: a re-run must not fail on a tag it already made.
+          if git rev-parse "refs/tags/$tag" >/dev/null 2>&1; then
+            echo "Tag $tag already exists - a previous run created it."
+            echo "bumped=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "Cargo.toml: $old -> $new"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "bumped=true" >> "$GITHUB_OUTPUT"
+
+      - name: Create and push tag
+        if: steps.bump.outputs.bumped == 'true'
+        env:
+          COMMIT_SHA: ${{ github.sha }}
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.bump.outputs.tag }}
+        run: |
+          tag_object=$(gh api --method POST "repos/${GITHUB_REPOSITORY}/git/tags" \
+            -f tag="$TAG" \
+            -f message="Release $TAG" \
+            -f object="$COMMIT_SHA" \
+            -f type=commit \
+            --jq .sha)
+          gh api --method POST "repos/${GITHUB_REPOSITORY}/git/refs" \
+            -f ref="refs/tags/$TAG" \
+            -f sha="$tag_object"
+          echo "Created $TAG"
