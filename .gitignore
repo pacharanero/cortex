@@ -24,3 +24,12 @@
 # `s/docs` creates the venv; `requirements.txt` pins what goes in it.
 /site
 /.venv
+
+# USB traces from `s/usb-trace`.
+#
+# These MUST NOT be committed. A raw capture of the official client contains
+# Neural DSP's own strings verbatim, plus this unit's serial number and the
+# owner's preset and Neural Capture names - all of it readable. Findings get
+# written up in our own words; the bytes stay local. See AGENTS.md, "Legal
+# hygiene".
+/traces

@@ -1,0 +1,151 @@
+#!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Dr Marcus Baw
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# Observe the Quad Cortex on the USB wire.
+#
+# This is the tool for questions of the form "how does the official client do
+# X". The answer to those is evidence about the wire, not inference about
+# intent - and this project has already spent effort reasoning from assumed
+# protocol facts that turned out not to hold.
+#
+# The method: with the QC passed through to the Windows VM running Cortex
+# Control, the HOST kernel still sees every transfer, because QEMU's USB
+# passthrough goes out through the host's own USB stack. So usbmon on Linux
+# records the official client's traffic without installing anything inside
+# Windows.
+#
+# It works just as well on our own client, which is the cheaper use: it tells
+# us what is actually on the wire, rather than what our RX path believes
+# arrived.
+#
+#   s/usb-trace                    # capture until Ctrl-C
+#   s/usb-trace --seconds 30       # capture for a fixed window
+#   s/usb-trace --output FILE      # choose the file (default: traces/...)
+#
+# Captures the whole bus, not just the QC. Filtering one device out of a
+# shared bus is a decode-time job (see `s/usb-decode`, ENG-005.2); the device
+# address needed to do it is printed below and stored beside the capture.
+#
+# NOTE: the binary usbmon interface is used, via dumpcap, deliberately. The
+# text interface at /sys/kernel/debug/usb/usbmon/<bus>u truncates payload
+# data, which would silently drop bytes from the middle of a 128-byte body -
+# the worst possible failure for a protocol capture, because it looks like it
+# worked.
+#
+# Output MUST NOT be committed. A capture holds Neural DSP's strings verbatim
+# alongside this unit's serial and the owner's preset names. `traces/` is
+# gitignored; keep it that way.
+
+set -euo pipefail
+cd "$(git rev-parse --show-toplevel)"
+
+VID_PID="152a:880a"
+SECONDS_TO_RUN=""
+OUTPUT=""
+
+while [[ $# -gt 0 ]]; do
+	case "$1" in
+	--seconds)
+		SECONDS_TO_RUN="${2:?--seconds needs a value}"
+		shift 2
+		;;
+	--output)
+		OUTPUT="${2:?--output needs a value}"
+		shift 2
+		;;
+	-h | --help)
+		sed -n '5,38p' "$0" | sed 's/^# \{0,1\}//'
+		exit 0
+		;;
+	*)
+		echo "usb-trace: unknown argument '$1'" >&2
+		exit 2
+		;;
+	esac
+done
+
+fail() {
+	echo >&2
+	echo "usb-trace: $1" >&2
+	shift
+	for line in "$@"; do echo "  $line" >&2; done
+	exit 1
+}
+
+# --- preflight ------------------------------------------------------------
+# Each check names its own fix. A capture that fails halfway through a session
+# with the official client wastes the setup, so everything is checked first.
+
+command -v dumpcap >/dev/null 2>&1 ||
+	fail "dumpcap is not installed (it ships with the Wireshark CLI tools)." \
+		"sudo pacman -S wireshark-cli"
+
+if ! lsmod | grep -q '^usbmon'; then
+	fail "the usbmon kernel module is not loaded." \
+		"sudo modprobe usbmon" \
+		"" \
+		"To load it at every boot:" \
+		"echo usbmon | sudo tee /etc/modules-load.d/usbmon.conf"
+fi
+
+# --- find the device ------------------------------------------------------
+# lsusb prints e.g. 'Bus 003 Device 007: ID 152a:880a ...'. The bus number
+# picks the usbmon interface; the device address is what the decoder needs to
+# tell the QC apart from everything else on that bus.
+
+LSUSB_LINE="$(lsusb -d "$VID_PID" 2>/dev/null | head -1 || true)"
+[[ -n "$LSUSB_LINE" ]] ||
+	fail "no Quad Cortex ($VID_PID) on the USB bus." \
+		"Check it is powered on and connected." \
+		"If it is passed through to the Windows VM, that is fine - the host still sees it."
+
+BUS="$(echo "$LSUSB_LINE" | awk '{print $2}' | sed 's/^0*//')"
+DEV_ADDR="$(echo "$LSUSB_LINE" | awk '{print $4}' | tr -d ':' | sed 's/^0*//')"
+IFACE="usbmon${BUS}"
+
+# dumpcap reads /dev/usbmonN. Group membership alone is not enough if the
+# node is missing, which happens when usbmon loaded after the bus enumerated.
+[[ -e "/dev/${IFACE}" ]] ||
+	fail "/dev/${IFACE} does not exist, though usbmon is loaded." \
+		"Try reloading it: sudo modprobe -r usbmon && sudo modprobe usbmon"
+
+if [[ ! -r "/dev/${IFACE}" ]]; then
+	fail "/dev/${IFACE} is not readable by $(whoami)." \
+		"Grant capture rights without running the whole capture as root:" \
+		"  sudo usermod -aG wireshark \$USER" \
+		"  sudo setcap cap_net_raw,cap_net_admin+eip \$(command -v dumpcap)" \
+		"Then log out and back in for the group to take effect." \
+		"" \
+		"Or, for a one-off: sudo dumpcap -i ${IFACE} -w <file>"
+fi
+
+# --- capture --------------------------------------------------------------
+
+mkdir -p traces
+if [[ -z "$OUTPUT" ]]; then
+	OUTPUT="traces/qc-$(date +%Y%m%d-%H%M%S).pcapng"
+fi
+
+# Record where the QC was, beside the capture. Bus and address are assigned at
+# plug time, so a capture without them cannot be filtered later with
+# confidence - and re-plugging between capture and decode is easy to forget.
+cat >"${OUTPUT%.pcapng}.txt" <<EOF
+interface     ${IFACE}
+bus           ${BUS}
+device        ${DEV_ADDR}
+vid:pid       ${VID_PID}
+captured      $(date -Iseconds)
+EOF
+
+echo "usb-trace: capturing ${IFACE} (bus ${BUS}, device ${DEV_ADDR}) -> ${OUTPUT}"
+if [[ -n "$SECONDS_TO_RUN" ]]; then
+	echo "usb-trace: stopping after ${SECONDS_TO_RUN}s"
+	dumpcap -i "$IFACE" -w "$OUTPUT" -a "duration:${SECONDS_TO_RUN}" -q
+else
+	echo "usb-trace: press Ctrl-C to stop"
+	dumpcap -i "$IFACE" -w "$OUTPUT" -q
+fi
+
+echo "usb-trace: wrote ${OUTPUT} ($(du -h "$OUTPUT" | cut -f1))"
+echo "usb-trace: this capture contains real device data - do not commit it"

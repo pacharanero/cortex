@@ -64,3 +64,24 @@ python3 -m venv .venv
 Regenerate `docs/cli-reference.md` from the CLI's own `--help`, so the reference cannot drift from the real command surface. Run after adding or changing a command, and commit the result.
 
 - `s/docs-cli-reference`
+
+## `s/usb-trace`
+
+Record the USB traffic to and from the Quad Cortex, using `usbmon` on the Linux host.
+
+This is how to answer "what does the official client actually do". With the unit passed through to the Windows VM running Cortex Control, the host kernel still sees every transfer - QEMU's passthrough goes out through the host's own USB stack - so nothing needs installing inside Windows. It works equally well on our own client, which is the cheaper use: it shows what is on the wire rather than what our RX path believes arrived.
+
+Named `usb-trace` rather than `usb-capture` because "capture" already means a Neural Capture in this domain, and `trace` is the project's existing word for protocol observation (`CORTEX_TRACE`).
+
+- `s/usb-trace` - capture until Ctrl-C
+- `s/usb-trace --seconds 30` - capture a fixed window
+- `s/usb-trace --output FILE` - choose the file
+
+One-off setup, which the script's preflight will prescribe if missing:
+
+```sh
+sudo pacman -S wireshark-cli
+sudo modprobe usbmon
+```
+
+Writes to `traces/`, which is gitignored. **Captures must not be committed**: they hold Neural DSP's strings verbatim alongside the unit's serial number and the owner's preset names.

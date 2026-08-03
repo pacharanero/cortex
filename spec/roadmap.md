@@ -365,7 +365,8 @@ A script that sets up passive USB observation of the official Cortex Control app
 
 The method, from [the research note](../quad-cortex-linux-editor-and-protocol.md): with the QC passed through to a Windows VM under QEMU, the **host** kernel still sees the traffic. So `modprobe usbmon` plus a capture of the relevant `usbmonN` interface on the Linux host records everything, without needing USBPcap inside Windows and without the macOS exclusive-access problem.
 
-- [ ] **ENG-005.1**: `s/usb-trace` - preflight `usbmon` (module loaded, `/sys/kernel/debug/usb/usbmon` readable), identify the QC's bus from `lsusb`, and start a capture to a file
+- [x] **ENG-005.1**: `s/usb-trace` - preflight `usbmon` (module loaded, `/dev/usbmonN` present and readable) and `dumpcap`, identify the QC's bus and device address from `lsusb`, and start a capture to a gitignored `traces/`. Each preflight failure names its own fix rather than just refusing, because a setup error discovered halfway through a session with the official client wastes the whole session. Writes a sidecar `.txt` recording bus and device address: both are assigned at plug time, so a capture without them cannot be filtered afterwards with any confidence.
+  - Uses the **binary** usbmon interface via `dumpcap`, not the text interface at `/sys/kernel/debug/usb/usbmon/<bus>u`. The text interface truncates payload data, which would drop bytes from the middle of a 128-byte body while still looking like a successful capture.
 - [ ] **ENG-005.2**: A decoder that reads a capture and prints it in the same shape as `CORTEX_TRACE` - strip the report ID, honour `len`, reassemble on the flags, gunzip a `1f 8b` payload, read the little-endian type from the trailer, decode against our vendored schema
 - [ ] **ENG-005.3**: Runbook: what to do in Cortex Control while tracing to answer a specific question, starting with capture export (PROT-007.1)
 
