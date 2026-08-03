@@ -781,6 +781,11 @@ Options:
           
           [default: 20]
 
+      --show-empty
+          Also list folders holding no presets.
+          
+          The unit reports hundreds of them, nearly all empty, which buries the two or three you actually use.
+
       --format <FORMAT>
           Output format. `text` is for humans; `json` is for scripts and agents, and is stable enough to parse.
           

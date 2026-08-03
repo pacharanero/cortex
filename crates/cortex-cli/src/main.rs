@@ -419,6 +419,12 @@ enum Command {
         /// Seconds to gather folder announcements.
         #[arg(long, value_name = "SECONDS", default_value = "20")]
         window: u64,
+        /// Also list folders holding no presets.
+        ///
+        /// The unit reports hundreds of them, nearly all empty, which buries
+        /// the two or three you actually use.
+        #[arg(long)]
+        show_empty: bool,
     },
     /// Generate or install shell completions.
     ///
@@ -475,7 +481,7 @@ fn run(cli: Cli) -> Result<()> {
     let fmt = cli.format;
     match cli.command {
         Some(Command::Probe { listen }) => cmd_probe(listen, fmt),
-        Some(Command::Folders { window }) => cmd_folders(window, fmt),
+        Some(Command::Folders { window, show_empty }) => cmd_folders(window, show_empty, fmt),
         Some(Command::Catalog {
             search,
             model,
@@ -565,7 +571,7 @@ fn run(cli: Cli) -> Result<()> {
 ///
 /// Exercises the session's `collect` primitive: one READ provokes many pushes
 /// rather than one reply, so a single-shot waiter would see only the first.
-fn cmd_folders(window: u64, fmt: Format) -> Result<()> {
+fn cmd_folders(window: u64, show_empty: bool, fmt: Format) -> Result<()> {
     let session = open_device()?;
     session.connect(Duration::from_secs(10), Duration::from_secs(2))?;
     let qc = cortex_rs::QuadCortex::new(session.clone());
@@ -576,7 +582,17 @@ fn cmd_folders(window: u64, fmt: Format) -> Result<()> {
     qc.disconnect();
     session.stop();
 
-    emit(&folders, fmt, |folders| {
+    // Hide the empty ones unless asked. The device reports 399 folders and
+    // all but a handful hold nothing, so the default listing was mostly
+    // noise obscuring its own useful lines.
+    let total = folders.len();
+    let folders: Vec<_> = folders
+        .into_iter()
+        .filter(|f| show_empty || f.occupied > 0)
+        .collect();
+    let hidden = total - folders.len();
+
+    emit(&folders, fmt, move |folders| {
         for f in folders {
             println!(
                 "{:>4}/{:<4} {}{}",
@@ -585,6 +601,9 @@ fn cmd_folders(window: u64, fmt: Format) -> Result<()> {
                 f.key,
                 if f.is_factory { "  [factory]" } else { "" }
             );
+        }
+        if hidden > 0 {
+            eprintln!("{hidden} empty folders hidden; --show-empty lists them");
         }
     })
 }
@@ -1079,6 +1098,21 @@ fn cmd_catalog(
             .into_iter()
             .map(ModelOut::from)
             .collect();
+        // Say when nothing matched. Printing nothing at all is
+        // indistinguishable from a broken command, and the catalog is full of
+        // renamed models - the unit has no "Carvin", it has a "Solo 100" that
+        // is a Soldano - so a search finding nothing is a normal outcome that
+        // needs to look like one.
+        //
+        // The message goes to stderr and stdout stays empty, so a script
+        // piping this still gets nothing rather than prose.
+        if found.is_empty() {
+            eprintln!(
+                "no model matches '{needle}'. Names are Neural DSP's own, but the \
+                 manufacturer they are based on is searchable too - try a maker \
+                 ('marshall', 'soldano') or a family ('plexi', 'od')."
+            );
+        }
         return emit(&found, fmt, |found| {
             for m in found {
                 print_model_line(m);

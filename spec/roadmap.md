@@ -262,6 +262,21 @@ All HARDWARE-VERIFIED 2026-08-02 against CorOS 4.0.1 / d14e / QA00AB123. Named w
 - [x] **CLI-003.8**: `CORTEX_TRACE=1` - stderr tracing of inbound traffic and handshake steps
 - [ ] **CLI-003.9**: `cortex capture` / `cortex ir` - export and import (blocked on PROT-007)
 
+### CLI-005: Noun-primitive command redesign
+
+The surface grew verb-first (`set-param`, `set-bypass`, `remove-block`) and should be rooted in the nouns the Neural DSP / Quad Cortex user guide uses - preset, slot, grid, row, column - named exactly as a player meets them.
+
+- [ ] **CLI-005.1**: Agree the target shape and the vocabulary. **Blocked on [queries.md](queries.md) 1**, which asks whether the player-facing word is *block* or *module* (the wire says `Model` and `ModuleStats`; the UI may differ), whether old names survive as hidden aliases, and where `cortex connect` belongs given it is our concept rather than the device's
+- [ ] **CLI-005.2**: Restructure to noun-then-verb, e.g. `cortex preset list|show|recall`, `cortex block bypass|remove|set`, `cortex row input|output|split`
+- [ ] **CLI-005.3**: Regenerate completions and the command reference; update the walkthrough
+
+### CLI-006: Command reference with syntax and examples
+
+`docs/cli-reference.md` is currently the raw `--help` dump for every subcommand, which is accurate and hard to read.
+
+- [ ] **CLI-006.1**: Emit syntax plus a worked example per command. Syntax stays generated from clap so it cannot drift; the examples need authoring. **Blocked on [queries.md](queries.md) 2** - the proposal is to put them in clap's `after_help`, so `cortex <cmd> --help` shows the example too and there is one source
+- [ ] **CLI-006.2**: Group the reference by noun once CLI-005 lands, rather than listing commands alphabetically
+
 ### CLI-004: Distribution
 
 - [ ] **CLI-004.1**: `s/version++` script - bump version across Cargo.toml in one release commit
@@ -282,6 +297,13 @@ The `cortex-mcp` MCP server for agentic patch editing. Greenfield - no MCP serve
 - [ ] **MCP-001.3**: Back up the target slot (`read_preset`) before overwriting, and keep the blob
 - [ ] **MCP-001.4**: Surface the row-numbering trap (0-based API, 1-4 on screen) in tool descriptions
 - [ ] **MCP-001.5**: Single owning process for the USB interface
+
+### MCP-003: Show what the MCP server is for
+
+The reason this project has an MCP server at all is that an agent can do things no editor UI can: take a plain-English brief, research what it means, and build the preset. That has to be demonstrated, not asserted.
+
+- [ ] **MCP-003.1**: A worked demo in the docs - a brief like "a basic 1987 GnR Slash tone" taken through research, model selection, and grid construction to a working preset. **Blocked on [queries.md](queries.md) 3**: whether the demo builds into the live grid without saving (reversible by recall, needs no save confirmation, still demonstrates the capability), and whether it may browse live or should cite a fixed set of sources so it reproduces and does not age
+- [ ] **MCP-003.2**: A second demo for the reverse direction - "why does this preset not fit" - using the per-core CPU breakdown, which is a question the official editor answers poorly
 
 ### MCP-002: Tool surface
 
@@ -309,6 +331,13 @@ The visual design goal is a **hardware-faithful rendering of the Quad Cortex fro
 - [ ] **GUI-002.3**: Mode-aware footswitch labels - reflect the current device mode (Preset / Stomp / Scene / Looper / Tuner)
 - [ ] **GUI-002.4**: The OLED grid mirrors the device's live state (signal chain, block icons, bypass, active scene) from the crate's read paths
 - [ ] **GUI-002.5**: Honest state - render what the device reports, not what the GUI thinks it sent
+
+### GUI-005: Always-visible preset directory and CPU load
+
+Improve on the Cortex Control appearance while staying familiar enough to navigate without relearning.
+
+- [ ] **GUI-005.1**: Preset directory in a left sidebar, visible at all times rather than behind a picker. **Blocked on [queries.md](queries.md) 4** for tree-vs-flat: the device reports 399 folders and only a couple hold anything, so a tree risks looking emptier than the unit is
+- [ ] **GUI-005.2**: CPU load visible at all times. `Session::cpu_load()` supplies total plus a per-column breakdown flagged by DSP core (PROT-008.6.12); the per-core detail is what explains why a preset will not fit, which is the question a player actually has
 
 ### GUI-003: Wrapper panels
 
@@ -355,7 +384,7 @@ The visual design goal is a **hardware-faithful rendering of the Quad Cortex fro
 - [x] NOTICE + THIRD-PARTY-NOTICES.md (pyquadcortex MIT, deskop-nano-cortex Apache-2.0, qc-stomp-tools MIT)
 - [x] Trademark and unaffiliation notice in README, AGENTS.md, NOTICE
 - [x] AGENTS.md (repo-local, pointing at parent workspace)
-- [ ] **ENG-003.1**: **Confirm the copyright holder.** Currently `2026 Dr Marcus Baw` with no company. AGENTS.md flags this as mixed-domain work with no default company, so it needs a decision. If it changes, every SPDX header and `REUSE.toml` move in ONE commit
+- [x] **ENG-003.1**: **Copyright holder confirmed as `Dr Marcus Baw`**, with no company, which is what every SPDX header already says. Revisit only if a company is formed; if it changes, every header and `REUSE.toml` move in ONE commit
 - [ ] **ENG-003.2**: Decide whether a contributor licence agreement is wanted. Current stance: not in scope - the AGPL header is the inbound-outbound grant
 - [ ] **ENG-003.3**: If a closed derivative ever needs to exist, add `DUAL-LICENSE.md` and the boilerplate. Requires approval
 - [ ] **ENG-003.4**: SECURITY.md and CONTRIBUTING.md before the repo is public-facing
