@@ -53,12 +53,12 @@ The device grants its USB interface exclusively, so exactly one process can own 
 
 That matters for more than speed. A held session SUBSCRIBES to device state, which is how the unit reports edits you make on the hardware - so what `cortex` reports can stay true while you play, rather than being a snapshot from whenever the last command ran.
 
-Runs in the foreground. Stop it with Ctrl-C or `--stop`. Report whether a connection is running, and whether the device is answering. Ask a running connection to shut down, announcing the disconnect to the device first.
+`start` runs it in the background and returns once it is serving; `status` reports on it; `stop` ends it, announcing the disconnect to the device first.
 
 Usage: cortex session [OPTIONS] <COMMAND>
 
 Commands:
-  start   Open the session and serve other commands. Runs in the foreground
+  start   Open the session and serve other commands
   status  Report whether a session is running, and whether the device answers
   stop    Ask a running session to shut down, announcing the disconnect first
   help    Print this message or the help of the given subcommand(s)
@@ -89,14 +89,23 @@ Options:
 
 #### `cortex session start`
 
-Open the session and serve other commands. Runs in the foreground.
+Open the session and serve other commands.
 
 ```text
-Open the session and serve other commands. Runs in the foreground
+Open the session and serve other commands.
+
+Runs in the BACKGROUND by default, detached from the terminal, so closing the terminal does not take the session with it. The log goes beside the socket in `$XDG_RUNTIME_DIR`.
+
+It waits for the session to start serving before returning, so a handshake that fails is reported here rather than discovered by the next command.
 
 Usage: cortex session start [OPTIONS]
 
 Options:
+      --foreground
+          Stay in the foreground, logging to the terminal.
+          
+          This is what the background mode runs internally. Useful when a handshake is misbehaving and you want to watch it happen.
+
       --format <FORMAT>
           Output format. `text` is for humans; `json` is for scripts and agents, and is stable enough to parse.
           
@@ -120,8 +129,8 @@ Options:
           Print version
 
 Examples:
-  cortex session start
-  cortex session start   # foreground; append & to background it
+  cortex session start                # background, detached
+  cortex session start --foreground   # stay attached and watch it
 ```
 
 #### `cortex session status`

@@ -108,11 +108,9 @@ enum Command {
     /// so what `cortex` reports can stay true while you play, rather than
     /// being a snapshot from whenever the last command ran.
     ///
-    /// Runs in the foreground. Stop it with Ctrl-C or `--stop`.
-    /// Report whether a connection is running, and whether the device is
-    /// answering.
-    /// Ask a running connection to shut down, announcing the disconnect
-    /// to the device first.
+    /// `start` runs it in the background and returns once it is serving;
+    /// `status` reports on it; `stop` ends it, announcing the disconnect to
+    /// the device first.
     #[command(visible_alias = "connect", alias = "s")]
     Session {
         #[command(subcommand)]
@@ -245,11 +243,26 @@ enum Command {
 /// What to do with the held session.
 #[derive(Subcommand, Debug)]
 enum SessionCmd {
-    /// Open the session and serve other commands. Runs in the foreground.
+    /// Open the session and serve other commands.
+    ///
+    /// Runs in the BACKGROUND by default, detached from the terminal, so
+    /// closing the terminal does not take the session with it. The log goes
+    /// beside the socket in `$XDG_RUNTIME_DIR`.
+    ///
+    /// It waits for the session to start serving before returning, so a
+    /// handshake that fails is reported here rather than discovered by the
+    /// next command.
     #[command(
-        after_help = "Examples:\n  cortex session start\n  cortex session start   # foreground; append & to background it"
+        after_help = "Examples:\n  cortex session start                # background, detached\n  cortex session start --foreground   # stay attached and watch it"
     )]
-    Start,
+    Start {
+        /// Stay in the foreground, logging to the terminal.
+        ///
+        /// This is what the background mode runs internally. Useful when a
+        /// handshake is misbehaving and you want to watch it happen.
+        #[arg(long)]
+        foreground: bool,
+    },
     /// Report whether a session is running, and whether the device answers.
     #[command(after_help = "Examples:\n  cortex session status")]
     Status,
@@ -614,7 +627,13 @@ fn run(cli: Cli) -> Result<()> {
 
     match cli.command {
         Some(Command::Session { command }) => match command {
-            SessionCmd::Start => cmd_connect(false, false, fmt),
+            SessionCmd::Start { foreground } => {
+                if foreground {
+                    cmd_connect(false, false, fmt)
+                } else {
+                    connect::start_detached()
+                }
+            }
             SessionCmd::Status => cmd_connect(true, false, fmt),
             SessionCmd::Stop => cmd_connect(false, true, fmt),
         },

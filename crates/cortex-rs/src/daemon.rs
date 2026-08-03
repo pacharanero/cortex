@@ -50,6 +50,18 @@ pub fn socket_path() -> PathBuf {
     std::env::temp_dir().join(format!("cortex-{uid}.sock"))
 }
 
+/// Where a backgrounded session writes its log.
+///
+/// Beside the socket, and for the same reasons: user-owned, `0700`, and
+/// cleared on logout. A session log is worthless after the session that
+/// produced it has gone, so it should not outlive one.
+#[must_use]
+pub fn log_path() -> PathBuf {
+    let mut path = socket_path();
+    path.set_extension("log");
+    path
+}
+
 /// A request from a client to the daemon.
 ///
 /// Deliberately mirrors the `QuadCortex` API rather than the CLI's command

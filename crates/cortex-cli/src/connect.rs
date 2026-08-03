@@ -335,7 +335,7 @@ pub fn run() -> Result<()> {
     };
 
     eprintln!("cortex session: listening on {}", path.display());
-    eprintln!("cortex session: press Ctrl-C to stop");
+    eprintln!("cortex session: stop with `cortex session stop`, or Ctrl-C if attached");
 
     for stream in listener.incoming() {
         let stream = match stream {
@@ -450,6 +450,126 @@ fn write_response(writer: &mut UnixStream, response: &Response) -> std::io::Resu
 #[must_use]
 pub fn is_running() -> bool {
     UnixStream::connect(socket_path()).is_ok()
+}
+
+// `setsid`, used to detach from the terminal so closing it does not kill the
+// session. Declared rather than pulled in with a `libc` dependency, matching
+// how the CLI already handles `SIGPIPE`.
+#[cfg(unix)]
+unsafe extern "C" {
+    fn setsid() -> i32;
+}
+
+/// Start the session in the background, returning once it is serving.
+///
+/// Re-executes this binary with `--foreground` rather than forking in place.
+/// The session spawns an RX thread and a keepalive thread, and forking a
+/// process that is about to become multithreaded is a well-known way to
+/// deadlock in the child; re-exec starts from a clean single-threaded state.
+///
+/// The parent waits for the socket to answer before reporting success. That
+/// matters more here than it looks: the handshake can fail (no device, or
+/// another owner), and a fire-and-forget spawn would report success and leave
+/// the failure to be discovered by the next command.
+///
+/// # Errors
+///
+/// Returns an error if a session is already running, if the child cannot be
+/// spawned, or if it exits or goes quiet before it starts serving.
+pub fn start_detached() -> Result<()> {
+    if is_running() {
+        anyhow::bail!(
+            "a cortex session is already running. \
+             Check it with `cortex session status`, or replace it with \
+             `cortex session stop` first."
+        );
+    }
+
+    let log = cortex_rs::daemon::log_path();
+    let file = std::fs::File::create(&log)?;
+    let exe = std::env::current_exe()?;
+
+    let mut cmd = std::process::Command::new(exe);
+    cmd.args(["session", "start", "--foreground"])
+        .stdin(std::process::Stdio::null())
+        .stdout(file.try_clone()?)
+        .stderr(file);
+
+    #[cfg(unix)]
+    unsafe {
+        use std::os::unix::process::CommandExt;
+        cmd.pre_exec(|| {
+            // New session, so the daemon is not in the terminal's process
+            // group and does not get SIGHUP when the terminal closes.
+            if setsid() == -1 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+
+    let mut child = cmd.spawn()?;
+    eprintln!(
+        "cortex session: starting in the background, logging to {}",
+        log.display()
+    );
+
+    // Poll until it serves. The handshake is seconds, and slower on a unit
+    // that is busy, so this is generous - but bounded, because a wait with no
+    // end is indistinguishable from a hang.
+    let deadline = Instant::now() + Duration::from_secs(120);
+    while Instant::now() < deadline {
+        // Ask it something, rather than merely checking the socket accepts.
+        //
+        // The socket is bound BEFORE the handshake on purpose, so that the
+        // device is claimed for the whole startup window - which means an
+        // accepting socket says nothing about whether the session is serving
+        // yet. Only a served reply does. A client arriving early waits in the
+        // listen backlog, so this both tests and waits.
+        if answers_status(Duration::from_secs(2)) {
+            eprintln!("cortex session: ready. Stop it with `cortex session stop`.");
+            return Ok(());
+        }
+        if let Some(status) = child.try_wait()? {
+            let tail = std::fs::read_to_string(&log).unwrap_or_default();
+            let tail: Vec<&str> = tail.lines().rev().take(6).collect();
+            anyhow::bail!(
+                "the session exited before it started serving ({status}):\n  {}",
+                tail.into_iter().rev().collect::<Vec<_>>().join("\n  ")
+            );
+        }
+        std::thread::sleep(Duration::from_millis(200));
+    }
+    anyhow::bail!(
+        "the session did not start within 120s; see {}",
+        log.display()
+    )
+}
+
+/// Whether a running session answers a `Status` request within `timeout`.
+///
+/// Distinct from [`is_running`], which only asks whether the socket accepts.
+/// During startup those differ for several seconds, which is exactly the
+/// window this has to tell apart.
+fn answers_status(timeout: Duration) -> bool {
+    let Ok(stream) = UnixStream::connect(socket_path()) else {
+        return false;
+    };
+    if stream.set_read_timeout(Some(timeout)).is_err() {
+        return false;
+    }
+    let Ok(mut writer) = stream.try_clone() else {
+        return false;
+    };
+    let Ok(mut line) = serde_json::to_string(&Request::Status) else {
+        return false;
+    };
+    line.push('\n');
+    if writer.write_all(line.as_bytes()).is_err() || writer.flush().is_err() {
+        return false;
+    }
+    let mut reply = String::new();
+    BufReader::new(stream).read_line(&mut reply).is_ok() && !reply.trim().is_empty()
 }
 
 /// Send one request to a running daemon, if there is one.
