@@ -1,13 +1,23 @@
-<!--
-SPDX-FileCopyrightText: 2026 Dr Marcus Baw
-SPDX-License-Identifier: CC-BY-SA-4.0
--->
-
 # Queries
 
 Open questions for Marcus. Answer inline under each; I will action and remove them.
 
 Raised while working through `spec/marcus-notes.md`.
+
+## 0. Documentation licence: AGENTS.md and REUSE.toml disagree
+
+**Found while adding this file, and it predates it.**
+
+- [AGENTS.md](../AGENTS.md) and [README.md](../README.md) both state that written content is **CC-BY-SA-4.0**.
+- [REUSE.toml](../REUSE.toml) licenses `**/*.md`, `docs/**` and the rest of the prose as **AGPL-3.0-or-later**.
+
+No file actually carried a CC-BY-SA-4.0 SPDX tag, so `reuse lint` never had cause to notice - the licence is named in prose but never asserted. Adding one to this file immediately failed the lint, because `LICENSES/` holds only `AGPL-3.0-or-later.txt` and `MIT.txt`.
+
+So today the documentation is, in licensing fact, AGPL-3.0-or-later.
+
+**Question: which did you intend?** AGENTS.md lists changing the licence as needing your approval, so I have not touched it - this file now carries no inline tag and inherits AGPL like every other `.md`.
+
+If CC-BY-SA-4.0 was the intent, the fix is: add `LICENSES/CC-BY-SA-4.0.txt` (`reuse download CC-BY-SA-4.0`), split the REUSE.toml annotation so prose gets CC-BY-SA-4.0 and code-adjacent files keep AGPL, and do it in one commit.
 
 ## 1. CLI redesign: what is the target shape?
 
