@@ -2,7 +2,8 @@
 # SPDX-FileCopyrightText: 2026 Dr Marcus Baw
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
-# Summarise where the project is up to, from spec/roadmap.md.
+# Summarise where the project is up to, from spec/roadmap.md (outstanding)
+# and spec/completed.md (finished).
 #
 # The roadmap is the single progress record; this just counts it, so the
 # summary can never drift from the thing it summarises. A hand-written
@@ -25,23 +26,38 @@ import re
 import sys
 import pathlib
 
-roadmap = pathlib.Path("spec/roadmap.md").read_text()
+# Outstanding work lives in roadmap.md and finished work in completed.md, so
+# both are counted. Splitting them keeps the roadmap readable without making
+# the totals lie about how much is done.
+sources = [pathlib.Path("spec/roadmap.md")]
+archive = pathlib.Path("spec/completed.md")
+if archive.exists():
+    sources.append(archive)
+
 mode = sys.argv[1] if len(sys.argv) > 1 else "--summary"
 
 section = None
-sections = []
+order = []
+totals = {}
 items = []
 
-for line in roadmap.split("\n"):
-    # "## Where each ID lives" is an index, not a work section.
-    if line.startswith("## ") and not line.startswith("## Where"):
-        section = line[3:].strip()
-        sections.append([section, {"x": 0, "~": 0, " ": 0}])
-    match = re.match(r"- \[([x~ ])\]\s*(.*)", line)
-    if match and sections:
-        mark, text = match.group(1), match.group(2)
-        sections[-1][1][mark] += 1
-        items.append((section, mark, text))
+for source in sources:
+    section = None
+    for line in source.read_text().split("\n"):
+        # "## Where each ID lives" is an index, not a work section.
+        if line.startswith("## ") and not line.startswith("## Where"):
+            section = line[3:].strip()
+            if section not in totals:
+                totals[section] = {"x": 0, "~": 0, " ": 0}
+                order.append(section)
+        # Sub-items are indented; they are work too.
+        match = re.match(r"\s*- \[([x~ ])\]\s*(.*)", line)
+        if match and section:
+            mark, text = match.group(1), match.group(2)
+            totals[section][mark] += 1
+            items.append((section, mark, text))
+
+sections = [[name, totals[name]] for name in order]
 
 
 def label(text, width=96):

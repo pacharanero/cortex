@@ -75,8 +75,9 @@ gui/           Planned: Tauri 2 desktop app (React + Mantine + Vite), a
                 consumer of the crate.
 docs/          Protocol notes, runbooks, GUI docs.
 spec/          Zone specs: spec.md (what it must do) + design.md (how, and why).
-               NO tasks.md - progress lives in spec/roadmap.md alone, which is
-               a deliberate divergence from the AFX layout and is explained in
+               NO tasks.md - progress lives in spec/roadmap.md (outstanding)
+               and spec/completed.md (finished, moved verbatim), which is a
+               deliberate divergence from the AFX layout and is explained in
                spec/001-overview/spec.md#progress-tracking.
 s/             Repo scripts: s/test, s/lint, s/gui-dev, s/version++ ...
 ```

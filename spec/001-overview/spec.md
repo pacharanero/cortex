@@ -102,7 +102,11 @@ Maintainers, AI coding agents, and downstream crate consumers.
 
 ## Progress tracking {#progress-tracking}
 
-**Progress is tracked in [roadmap.md](../roadmap.md) and nowhere else.** A zone folder holds `spec.md` (what the surface must do) and `design.md` (how it is built and why). It does NOT hold a `tasks.md`.
+**Progress is tracked in [roadmap.md](../roadmap.md) and [completed.md](../completed.md), and nowhere else.** A zone folder holds `spec.md` (what the surface must do) and `design.md` (how it is built and why). It does NOT hold a `tasks.md`.
+
+The split is presentational, not a second record: `roadmap.md` carries what is outstanding, and a finished item moves verbatim to `completed.md`. `s/progress` counts both, so the totals do not change when something moves.
+
+Finished items are **moved, not deleted**. Many carry the measurement that settled a question - why the keepalive is 1 s, why `CPULoad` is asked for with `CREATE`, what the handshake actually costs - and those are exactly the entries needed again when something regresses or an outside contributor asks why.
 
 This is a deliberate divergence from the AFX layout that `deskop-nano-cortex` uses and that this tree was modelled on. It is recorded here rather than left as silent drift.
 
