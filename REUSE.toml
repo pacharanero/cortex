@@ -4,6 +4,14 @@
 # REUSE bulk annotations for files that cannot carry an inline SPDX header
 # (documentation, generated lockfiles, JSON/HTML assets, and the vendored
 # MIT-licensed .proto files, which keep their own SPDX header above).
+#
+# Two blocks, because the project licenses prose and code differently: written
+# content is CC-BY-SA-4.0 and everything else is AGPL-3.0-or-later. REUSE takes
+# the LAST matching annotation, so the prose block sits at the end and wins for
+# Markdown while the general block still covers assets, lockfiles and config.
+#
+# Both were previously AGPL, which contradicted the stated licence in AGENTS.md
+# and README.md - the split makes the files match what the project says.
 
 version = 1
 
@@ -28,3 +36,10 @@ path = [
 precedence = "aggregate"
 SPDX-FileCopyrightText = "2026 Dr Marcus Baw"
 SPDX-License-Identifier = "AGPL-3.0-or-later"
+
+# Written content. The project's prose licence, per AGENTS.md.
+[[annotations]]
+path = ["**/*.md"]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2026 Dr Marcus Baw"
+SPDX-License-Identifier = "CC-BY-SA-4.0"
