@@ -111,13 +111,19 @@ IFACE="usbmon${BUS}"
 		"Try reloading it: sudo modprobe -r usbmon && sudo modprobe usbmon"
 
 if [[ ! -r "/dev/${IFACE}" ]]; then
-	fail "/dev/${IFACE} is not readable by $(whoami)." \
-		"Grant capture rights without running the whole capture as root:" \
-		"  sudo usermod -aG wireshark \$USER" \
-		"  sudo setcap cap_net_raw,cap_net_admin+eip \$(command -v dumpcap)" \
-		"Then log out and back in for the group to take effect." \
+	# usbmon creates its nodes 0600 root:root. The usual Wireshark advice -
+	# join the wireshark group and setcap dumpcap - does NOT help here:
+	# cap_net_raw and cap_net_admin say nothing about permission to open a
+	# root-owned character device. It needs a udev rule, or root.
+	fail "/dev/${IFACE} is not readable by $(whoami) (usbmon nodes are 0600 root:root)." \
+		"One-off, simplest:" \
+		"  sudo dumpcap -i ${IFACE} -w traces/trace.pcapng" \
 		"" \
-		"Or, for a one-off: sudo dumpcap -i ${IFACE} -w <file>"
+		"Persistent, so this script works unprivileged:" \
+		"  sudo tee /etc/udev/rules.d/99-usbmon.rules <<<'SUBSYSTEM==\"usbmon\", GROUP=\"wireshark\", MODE=\"0640\"'" \
+		"  sudo usermod -aG wireshark \$USER" \
+		"  sudo udevadm control --reload && sudo modprobe -r usbmon && sudo modprobe usbmon" \
+		"Then log out and back in for the group to take effect."
 fi
 
 # --- capture --------------------------------------------------------------
