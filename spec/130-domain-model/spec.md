@@ -45,7 +45,7 @@ Maintainers, AI coding agents, and the CLI/MCP/GUI surfaces that consume the cra
 **So that** a tool that edits row 2 (API) does not silently hit the on-screen row 3.
 
 **As a** CLI user
-**I want** `cortex version` to resolve the `DeviceType` from a `VersionMessage` into a `DeviceKind`
+**I want** `cortex device version` to resolve the `DeviceType` from a `VersionMessage` into a `DeviceKind`
 **So that** the output says "Quad Cortex" or "Nano Cortex" instead of `QC`/`ATMA`.
 
 **As a** crate consumer

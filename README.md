@@ -19,7 +19,7 @@ patch editing, and a planned Tauri desktop GUI.
 
 Pre-alpha scaffold. The transport, framing, and message-envelope modules are
 in place; the protobuf schema is vendored and built via `prost`; the
-`cortex version` command and the GUI/MCP tool surfaces are stubbed. See
+`cortex device version` command and the GUI/MCP tool surfaces are stubbed. See
 `AGENTS.md` for the roadmap and protocol invariants.
 
 ## What it is

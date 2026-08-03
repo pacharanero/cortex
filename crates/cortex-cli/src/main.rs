@@ -54,10 +54,19 @@ struct Cli {
     /// agents, and is stable enough to parse.
     ///
     /// Only the RESULT changes format. Progress, warnings, and errors always
-    /// go to stderr as plain text, so `cortex presets --format json | jq`
+    /// go to stderr as plain text, so `cortex preset list --format json | jq`
     /// gets clean JSON regardless.
     #[arg(long, global = true, value_enum, default_value = "text")]
     format: Format,
+
+    /// Take `--row` as 0-3 rather than the 1-4 shown on the unit.
+    ///
+    /// The unit labels its rows 1-4 and the wire numbers them 0-3, so the
+    /// default matches what a player sees. Scripts and agents generally have
+    /// a zero-based index already, and converting it back by hand is exactly
+    /// the sort of arithmetic that silently edits the wrong row.
+    #[arg(long, global = true)]
+    zero_based: bool,
 }
 
 /// How to render a command's result.
@@ -87,79 +96,73 @@ fn emit<T: serde::Serialize>(value: &T, format: Format, text: impl FnOnce(&T)) -
 
 #[derive(Subcommand, Debug)]
 enum Command {
-    /// Read the device firmware version (CorOS, app, bootloader, zencoder).
-    Version {
-        /// Read via the session layer (background RX thread + correlated
-        /// request) instead of the one-shot synchronous transport.
-        ///
-        /// Both paths are valid: a `Version` READ is answered without the
-        /// connect handshake. This flag exists to exercise the session layer
-        /// against hardware. Both paths are now verified; see
-        /// spec/140-session/spec.md.
-        #[arg(long)]
-        session: bool,
+    /// Hold a persistent connection to the device, serving other commands.
+    ///
+    /// The device grants its USB interface exclusively, so exactly one
+    /// process can own it. This is that process: it performs the handshake
+    /// ONCE and every other command then talks to it over a socket instead
+    /// of connecting for itself.
+    ///
+    /// That matters for more than speed. A held session SUBSCRIBES to device
+    /// state, which is how the unit reports edits you make on the hardware -
+    /// so what `cortex` reports can stay true while you play, rather than
+    /// being a snapshot from whenever the last command ran.
+    ///
+    /// Runs in the foreground. Stop it with Ctrl-C or `--stop`.
+    /// Report whether a connection is running, and whether the device is
+    /// answering.
+    /// Ask a running connection to shut down, announcing the disconnect
+    /// to the device first.
+    #[command(visible_alias = "connect", alias = "s")]
+    Session {
+        #[command(subcommand)]
+        command: SessionCmd,
     },
-    /// Run the connect handshake and report the state the device pushes back.
-    ///
-    /// This is the hardware smoke test for the session layer. It performs the
-    /// full handshake, holds the session open for a window so device pushes
-    /// can arrive, prints a tally of what came back, then disconnects.
-    ///
-    /// Read-only: the handshake sends READs and a connect announcement. It
-    /// never writes preset data and never saves.
-    Probe {
-        /// Extra seconds to hold the session open after the handshake before
-        /// reading. The handshake already waits for the device to go quiet,
-        /// so 0 is usually fine; raise it if reads time out.
-        #[arg(long, value_name = "SECONDS", default_value = "0")]
-        listen: u64,
+    /// Presets: list a setlist, show one, or load one onto the unit.
+    #[command(alias = "p")]
+    Preset {
+        #[command(subcommand)]
+        command: PresetCmd,
     },
-    /// Recall a preset by slot, making it the one loaded on the grid.
-    ///
-    /// CHANGES WHAT IS HEARD. Nothing is saved and no stored preset is
-    /// modified, but the grid is replaced and any unsaved edits are lost.
-    Recall {
-        /// Slot name: bank number then letter, e.g. `1A`, `12H`, `28C`.
-        /// Bank is 1-32 and letter is A-H, giving 256 slots per setlist.
-        #[arg(long, value_name = "BANK+LETTER")]
-        slot: String,
-        /// Absolute device path of the setlist, e.g.
-        /// `/media/p4/Presets/My Presets`. Run `cortex folders` to list them.
-        #[arg(long, value_name = "PATH", default_value = cortex_rs::client::USER_SETLIST)]
-        setlist: String,
-        /// Mark the setlist as the read-only factory library. Needed for
-        /// paths under /opt/neuraldsp/Factory Library.
-        #[arg(long)]
-        factory: bool,
+    /// Setlists: the folders of presets the unit holds.
+    #[command(alias = "sl")]
+    Setlist {
+        #[command(subcommand)]
+        command: SetlistCmd,
+    },
+    /// The signal grid that is loaded right now.
+    #[command(alias = "g")]
+    Grid {
+        #[command(subcommand)]
+        command: GridCmd,
+    },
+    /// One block in the grid: its parameters, bypass, model, or removal.
+    #[command(alias = "b")]
+    Block {
+        #[command(subcommand)]
+        command: BlockCmd,
+    },
+    /// A grid row: its input, its output, and where it splits.
+    #[command(alias = "r")]
+    Row {
+        #[command(subcommand)]
+        command: RowCmd,
+    },
+    /// The unit itself: firmware, DSP load, and a connection probe.
+    #[command(alias = "d")]
+    Device {
+        #[command(subcommand)]
+        command: DeviceCmd,
     },
     /// Switch the active scene.
     ///
     /// CHANGES WHAT IS HEARD. Nothing is saved.
+    #[command(alias = "sc")]
     Scene {
         /// Scene number, 0-7 ZERO-BASED: 0 is scene A and 7 is scene H.
         /// The unit labels them A-H, so scene C is `--index 2`.
         #[arg(long, value_name = "0-7")]
         index: u32,
-    },
-    /// Recall a slot and dump the preset it loads.
-    ///
-    /// CHANGES WHAT IS HEARD: there is no side-effect-free way to read a
-    /// STORED preset - the device only emits a preset when it recalls one.
-    /// Use `cortex probe` if you want the live grid without recalling.
-    Preset {
-        /// Slot name: bank number then letter, e.g. `1A`, `28C`.
-        /// Bank is 1-32, letter A-H.
-        #[arg(long, value_name = "BANK+LETTER")]
-        slot: String,
-        /// Absolute device path of the setlist. `cortex folders` lists them.
-        #[arg(long, value_name = "PATH", default_value = cortex_rs::client::USER_SETLIST)]
-        setlist: String,
-        /// Mark the setlist as the read-only factory library.
-        #[arg(long)]
-        factory: bool,
-        /// Also show each block's stored parameter values.
-        #[arg(long)]
-        params: bool,
     },
     /// Fetch the device model catalog and write the raw payload to a file.
     ///
@@ -168,6 +171,7 @@ enum Command {
     /// purchased plugins and the player's own Neural Captures.
     ///
     /// Read-only.
+    #[command(alias = "c")]
     Catalog {
         /// Case-insensitive substring to match against a model's name AND
         /// the gear it is based on, e.g. `marshall`, `tape echo`.
@@ -189,12 +193,6 @@ enum Command {
         #[arg(long, value_name = "SECONDS", default_value = "40")]
         timeout: u64,
     },
-    /// Show the unit's live DSP load.
-    ///
-    /// The device pushes this about once a second, but only to a client that
-    /// has subscribed - so this needs a running `cortex connect`. A one-shot
-    /// command uses a minimal handshake and never asks the device to push it.
-    Cpu,
     /// Decode a USB capture into Cortex Control messages.
     ///
     /// Reads `tshark` field output on standard input and prints one line per
@@ -214,36 +212,131 @@ enum Command {
         #[arg(long, conflicts_with = "quiet")]
         verbose: bool,
     },
-    /// Hold a persistent connection to the device, serving other commands.
+    /// Generate or install shell completions.
     ///
-    /// The device grants its USB interface exclusively, so exactly one
-    /// process can own it. This is that process: it performs the handshake
-    /// ONCE and every other command then talks to it over a socket instead
-    /// of connecting for itself.
+    /// `cortex completions install` is the one to use: it detects your shell,
+    /// writes the completion file to the standard location, and prints any
+    /// one-time setup still needed. It never edits your shell startup files.
     ///
-    /// That matters for more than speed. A held session SUBSCRIBES to device
-    /// state, which is how the unit reports edits you make on the hardware -
-    /// so what `cortex` reports can stay true while you play, rather than
-    /// being a snapshot from whenever the last command ran.
-    ///
-    /// Runs in the foreground. Stop it with Ctrl-C or `--stop`.
-    Connect {
-        /// Report whether a connection is running, and whether the device is
-        /// answering.
-        #[arg(long, conflicts_with = "stop")]
-        status: bool,
-        /// Ask a running connection to shut down, announcing the disconnect
-        /// to the device first.
-        #[arg(long, conflicts_with = "status")]
-        stop: bool,
+    /// `cortex completions <shell>` prints the script to stdout instead,
+    /// which is the stable interface for packagers and unusual setups.
+    Completions {
+        /// A shell to generate for, or `install` to install for your own.
+        #[arg(value_enum)]
+        target: CompletionTarget,
+        /// Override the shell detected from $SHELL when using `install`.
+        #[arg(long, value_enum)]
+        shell: Option<clap_complete::Shell>,
+        /// Directory to write the correctly-named file into, instead of
+        /// stdout (or instead of the standard location, with `install`).
+        #[arg(long, value_name = "DIR", value_hint = clap::ValueHint::DirPath)]
+        dir: Option<std::path::PathBuf>,
     },
+}
+
+/// What to do with the held session.
+#[derive(Subcommand, Debug)]
+enum SessionCmd {
+    /// Open the session and serve other commands. Runs in the foreground.
+    Start,
+    /// Report whether a session is running, and whether the device answers.
+    Status,
+    /// Ask a running session to shut down, announcing the disconnect first.
+    Stop,
+}
+
+/// Commands acting on presets.
+#[derive(Subcommand, Debug)]
+enum PresetCmd {
+    /// List the presets in a setlist, in slot order.
+    ///
+    /// Read-only: this does NOT change what is loaded on the grid.
+    List {
+        /// Absolute device path of the setlist, e.g.
+        /// `/media/p4/Presets/My Presets`. Run `cortex setlist list` to list them.
+        #[arg(long, value_name = "PATH", default_value = cortex_rs::client::USER_SETLIST)]
+        setlist: String,
+        /// Include empty slots, so a free slot can be found.
+        #[arg(long)]
+        include_empty: bool,
+        /// Seconds to wait for the listing. Delivery is lazy; a timeout means
+        /// "ask again", not "the setlist is empty".
+        #[arg(long, value_name = "SECONDS", default_value = "25")]
+        timeout: u64,
+    },
+    /// Recall a slot and dump the preset it loads.
+    ///
+    /// CHANGES WHAT IS HEARD: there is no side-effect-free way to read a
+    /// STORED preset - the device only emits a preset when it recalls one.
+    /// Use `cortex probe` if you want the live grid without recalling.
+    Show {
+        /// Slot name: bank number then letter, e.g. `1A`, `28C`.
+        /// Bank is 1-32, letter A-H.
+        #[arg(long, value_name = "BANK+LETTER")]
+        slot: String,
+        /// Absolute device path of the setlist. `cortex setlist list` lists them.
+        #[arg(long, value_name = "PATH", default_value = cortex_rs::client::USER_SETLIST)]
+        setlist: String,
+        /// Mark the setlist as the read-only factory library.
+        #[arg(long)]
+        factory: bool,
+        /// Also show each block's stored parameter values.
+        #[arg(long)]
+        params: bool,
+    },
+    /// Recall a preset by slot, making it the one loaded on the grid.
+    ///
+    /// CHANGES WHAT IS HEARD. Nothing is saved and no stored preset is
+    /// modified, but the grid is replaced and any unsaved edits are lost.
+    Recall {
+        /// Slot name: bank number then letter, e.g. `1A`, `12H`, `28C`.
+        /// Bank is 1-32 and letter is A-H, giving 256 slots per setlist.
+        #[arg(long, value_name = "BANK+LETTER")]
+        slot: String,
+        /// Absolute device path of the setlist, e.g.
+        /// `/media/p4/Presets/My Presets`. Run `cortex setlist list` to list them.
+        #[arg(long, value_name = "PATH", default_value = cortex_rs::client::USER_SETLIST)]
+        setlist: String,
+        /// Mark the setlist as the read-only factory library. Needed for
+        /// paths under /opt/neuraldsp/Factory Library.
+        #[arg(long)]
+        factory: bool,
+    },
+}
+
+/// Commands acting on setlists.
+#[derive(Subcommand, Debug)]
+enum SetlistCmd {
+    /// List every folder the device knows: setlists, captures, IR libraries.
+    ///
+    /// A single `File` READ makes the device enumerate all its folders, which
+    /// arrive over ten to twenty seconds. There is no total-count field on the
+    /// wire, so this always waits the full window.
+    ///
+    /// Read-only.
+    List {
+        /// Seconds to gather folder announcements.
+        #[arg(long, value_name = "SECONDS", default_value = "20")]
+        window: u64,
+        /// Also list folders holding no presets.
+        ///
+        /// The unit reports hundreds of them, nearly all empty, which buries
+        /// the two or three you actually use.
+        #[arg(long)]
+        show_empty: bool,
+    },
+}
+
+/// Commands acting on the grid as a whole.
+#[derive(Subcommand, Debug)]
+enum GridCmd {
     /// Show the LIVE grid: what is loaded right now, unsaved edits included.
     ///
     /// Read-only and side-effect free. This is the command to use while
     /// editing: `cortex preset --slot X` reads a STORED slot and can only do
     /// so by recalling it, which discards unsaved edits and resets the
     /// active scene.
-    Grid {
+    Show {
         /// Seconds to wait for the grid.
         #[arg(long, value_name = "SECONDS", default_value = "15")]
         timeout: u64,
@@ -252,6 +345,11 @@ enum Command {
         #[arg(long)]
         params: bool,
     },
+}
+
+/// Commands acting on one block in the grid.
+#[derive(Subcommand, Debug)]
+enum BlockCmd {
     /// Set a block parameter on the grid.
     ///
     /// CHANGES THE WORKING GRID. Nothing is saved: the edit lives on the
@@ -260,7 +358,7 @@ enum Command {
     ///
     /// Rows are given as the unit LABELS them, 1-4, not the zero-based wire
     /// index. Use `cortex preset --slot <slot>` to see what is where.
-    SetParam {
+    Param {
         /// Grid row as shown on the unit, 1-4.
         #[arg(long, value_name = "1-4")]
         row: u32,
@@ -295,7 +393,7 @@ enum Command {
     /// Bypass or enable a block on the grid.
     ///
     /// CHANGES THE WORKING GRID. Nothing is saved.
-    SetBypass {
+    Bypass {
         /// Grid row as shown on the unit, 1-4.
         #[arg(long, value_name = "1-4")]
         row: u32,
@@ -313,7 +411,7 @@ enum Command {
     /// Verifies the device accepted it: a placement refused for want of DSP
     /// capacity is accepted on the wire and simply absent afterwards, with
     /// no error, so this waits for the device's echo naming the cell.
-    SetBlock {
+    Set {
         /// Grid row as shown on the unit, 1-4.
         #[arg(long, value_name = "1-4")]
         row: u32,
@@ -331,10 +429,26 @@ enum Command {
         #[arg(long, value_name = "SECONDS", default_value = "5")]
         timeout: u64,
     },
+    /// Remove the block at a grid cell.
+    ///
+    /// CHANGES THE WORKING GRID. Nothing is saved.
+    Remove {
+        /// Grid row as shown on the unit, 1-4.
+        #[arg(long, value_name = "1-4")]
+        row: u32,
+        /// Grid column, 0-7.
+        #[arg(long, value_name = "0-7")]
+        column: u32,
+    },
+}
+
+/// Commands acting on a grid row.
+#[derive(Subcommand, Debug)]
+enum RowCmd {
     /// Re-point a grid row's input.
     ///
     /// CHANGES THE WORKING GRID. Nothing is saved.
-    SetInput {
+    Input {
         /// Grid row as shown on the unit, 1-4.
         #[arg(long, value_name = "1-4")]
         row: u32,
@@ -351,7 +465,7 @@ enum Command {
     /// routing, while 19 (MULTIPLE) is a real output. The device does not
     /// validate this field, so a meaningless id is stored rather than
     /// rejected and reads back cleanly.
-    SetOutput {
+    Output {
         /// Grid row as shown on the unit, 1-4.
         #[arg(long, value_name = "1-4")]
         row: u32,
@@ -365,7 +479,7 @@ enum Command {
     ///
     /// Only screen rows 1 and 3 can branch; their parallel lane is the row
     /// below. Rows 2 and 4 have no splitter and are refused.
-    SetSplit {
+    Split {
         /// Grid row as shown on the unit. Must be 1 or 3.
         #[arg(long, value_name = "1|3")]
         row: u32,
@@ -381,70 +495,43 @@ enum Command {
         )]
         mix: i32,
     },
-    /// Remove the block at a grid cell.
-    ///
-    /// CHANGES THE WORKING GRID. Nothing is saved.
-    RemoveBlock {
-        /// Grid row as shown on the unit, 1-4.
-        #[arg(long, value_name = "1-4")]
-        row: u32,
-        /// Grid column, 0-7.
-        #[arg(long, value_name = "0-7")]
-        column: u32,
-    },
-    /// List the presets in a setlist, in slot order.
-    ///
-    /// Read-only: this does NOT change what is loaded on the grid.
-    Presets {
-        /// Absolute device path of the setlist, e.g.
-        /// `/media/p4/Presets/My Presets`. Run `cortex folders` to list them.
-        #[arg(long, value_name = "PATH", default_value = cortex_rs::client::USER_SETLIST)]
-        setlist: String,
-        /// Include empty slots, so a free slot can be found.
-        #[arg(long)]
-        include_empty: bool,
-        /// Seconds to wait for the listing. Delivery is lazy; a timeout means
-        /// "ask again", not "the setlist is empty".
-        #[arg(long, value_name = "SECONDS", default_value = "25")]
-        timeout: u64,
-    },
-    /// List every folder the device knows: setlists, captures, IR libraries.
-    ///
-    /// A single `File` READ makes the device enumerate all its folders, which
-    /// arrive over ten to twenty seconds. There is no total-count field on the
-    /// wire, so this always waits the full window.
-    ///
-    /// Read-only.
-    Folders {
-        /// Seconds to gather folder announcements.
-        #[arg(long, value_name = "SECONDS", default_value = "20")]
-        window: u64,
-        /// Also list folders holding no presets.
+}
+
+/// Commands reporting on the unit itself.
+#[derive(Subcommand, Debug)]
+enum DeviceCmd {
+    /// Read the device firmware version (CorOS, app, bootloader, zencoder).
+    Version {
+        /// Read via the session layer (background RX thread + correlated
+        /// request) instead of the one-shot synchronous transport.
         ///
-        /// The unit reports hundreds of them, nearly all empty, which buries
-        /// the two or three you actually use.
+        /// Both paths are valid: a `Version` READ is answered without the
+        /// connect handshake. This flag exists to exercise the session layer
+        /// against hardware. Both paths are now verified; see
+        /// spec/140-session/spec.md.
         #[arg(long)]
-        show_empty: bool,
+        session: bool,
     },
-    /// Generate or install shell completions.
+    /// Show the unit's live DSP load.
     ///
-    /// `cortex completions install` is the one to use: it detects your shell,
-    /// writes the completion file to the standard location, and prints any
-    /// one-time setup still needed. It never edits your shell startup files.
+    /// The device pushes this about once a second, but only to a client that
+    /// has subscribed - so this needs a running `cortex session start`. A one-shot
+    /// command uses a minimal handshake and never asks the device to push it.
+    Cpu,
+    /// Run the connect handshake and report the state the device pushes back.
     ///
-    /// `cortex completions <shell>` prints the script to stdout instead,
-    /// which is the stable interface for packagers and unusual setups.
-    Completions {
-        /// A shell to generate for, or `install` to install for your own.
-        #[arg(value_enum)]
-        target: CompletionTarget,
-        /// Override the shell detected from $SHELL when using `install`.
-        #[arg(long, value_enum)]
-        shell: Option<clap_complete::Shell>,
-        /// Directory to write the correctly-named file into, instead of
-        /// stdout (or instead of the standard location, with `install`).
-        #[arg(long, value_name = "DIR", value_hint = clap::ValueHint::DirPath)]
-        dir: Option<std::path::PathBuf>,
+    /// This is the hardware smoke test for the session layer. It performs the
+    /// full handshake, holds the session open for a window so device pushes
+    /// can arrive, prints a tally of what came back, then disconnects.
+    ///
+    /// Read-only: the handshake sends READs and a connect announcement. It
+    /// never writes preset data and never saves.
+    Probe {
+        /// Extra seconds to hold the session open after the handshake before
+        /// reading. The handshake already waits for the device to go quiet,
+        /// so 0 is usually fine; raise it if reads time out.
+        #[arg(long, value_name = "SECONDS", default_value = "0")]
+        listen: u64,
     },
 }
 
@@ -479,9 +566,87 @@ fn main() -> ExitCode {
 
 fn run(cli: Cli) -> Result<()> {
     let fmt = cli.format;
+    // Recorded rather than threaded through every row-taking command. Six
+    // signatures would otherwise grow an argument that none of them decide.
+    let _ = ZERO_BASED.set(cli.zero_based);
+
     match cli.command {
-        Some(Command::Probe { listen }) => cmd_probe(listen, fmt),
-        Some(Command::Folders { window, show_empty }) => cmd_folders(window, show_empty, fmt),
+        Some(Command::Session { command }) => match command {
+            SessionCmd::Start => cmd_connect(false, false, fmt),
+            SessionCmd::Status => cmd_connect(true, false, fmt),
+            SessionCmd::Stop => cmd_connect(false, true, fmt),
+        },
+        Some(Command::Preset { command }) => match command {
+            PresetCmd::List {
+                setlist,
+                include_empty,
+                timeout,
+            } => cmd_presets(&setlist, include_empty, timeout, fmt),
+            PresetCmd::Show {
+                slot,
+                setlist,
+                factory,
+                params,
+            } => cmd_preset(&slot, &setlist, factory, params, fmt),
+            PresetCmd::Recall {
+                slot,
+                setlist,
+                factory,
+            } => cmd_recall(&slot, &setlist, factory, fmt),
+        },
+        Some(Command::Setlist { command }) => match command {
+            SetlistCmd::List { window, show_empty } => cmd_folders(window, show_empty, fmt),
+        },
+        Some(Command::Grid { command }) => match command {
+            GridCmd::Show { timeout, params } => cmd_grid(timeout, params, fmt),
+        },
+        Some(Command::Block { command }) => match command {
+            BlockCmd::Param {
+                row,
+                column,
+                param,
+                index,
+                value,
+                real,
+                text,
+                scene,
+            } => cmd_set_param(
+                row,
+                column,
+                param.as_deref(),
+                index,
+                value,
+                real,
+                text.as_deref(),
+                scene,
+                fmt,
+            ),
+            BlockCmd::Bypass {
+                row,
+                column,
+                bypass,
+            } => cmd_set_bypass(row, column, bypass, fmt),
+            BlockCmd::Set {
+                row,
+                column,
+                model,
+                no_verify,
+                timeout,
+            } => cmd_set_block(row, column, model, no_verify, timeout, fmt),
+            BlockCmd::Remove { row, column } => cmd_remove_block(row, column, fmt),
+        },
+        Some(Command::Row { command }) => match command {
+            RowCmd::Input { row, port } => cmd_set_routing(row, Some(port), None, fmt),
+            RowCmd::Output { row, port } => cmd_set_routing(row, None, Some(port), fmt),
+            RowCmd::Split { row, split, mix } => cmd_set_split(row, split, mix, fmt),
+        },
+        Some(Command::Device { command }) => match command {
+            DeviceCmd::Version { session: true } => cmd_version_via_session(fmt),
+            DeviceCmd::Version { session: false } => cmd_version(fmt),
+            DeviceCmd::Cpu => cmd_cpu(fmt),
+            DeviceCmd::Probe { listen } => cmd_probe(listen, fmt),
+        },
+        Some(Command::Scene { index }) => cmd_scene(index, fmt),
         Some(Command::Catalog {
             search,
             model,
@@ -496,67 +661,9 @@ fn run(cli: Cli) -> Result<()> {
             timeout,
             fmt,
         ),
-        Some(Command::Recall {
-            slot,
-            setlist,
-            factory,
-        }) => cmd_recall(&slot, &setlist, factory, fmt),
-        Some(Command::Scene { index }) => cmd_scene(index, fmt),
-        Some(Command::Connect { status, stop }) => cmd_connect(status, stop, fmt),
-        Some(Command::Cpu) => cmd_cpu(fmt),
         Some(Command::DecodeTrace { quiet, verbose }) => {
             decode::decode_stream(std::io::stdin().lock(), quiet, verbose)
         }
-        Some(Command::Grid { timeout, params }) => cmd_grid(timeout, params, fmt),
-        Some(Command::SetParam {
-            row,
-            column,
-            param,
-            index,
-            value,
-            real,
-            text,
-            scene,
-        }) => cmd_set_param(
-            row,
-            column,
-            param.as_deref(),
-            index,
-            value,
-            real,
-            text.as_deref(),
-            scene,
-            fmt,
-        ),
-        Some(Command::SetBypass {
-            row,
-            column,
-            bypass,
-        }) => cmd_set_bypass(row, column, bypass, fmt),
-        Some(Command::SetBlock {
-            row,
-            column,
-            model,
-            no_verify,
-            timeout,
-        }) => cmd_set_block(row, column, model, no_verify, timeout, fmt),
-        Some(Command::RemoveBlock { row, column }) => cmd_remove_block(row, column, fmt),
-        Some(Command::SetInput { row, port }) => cmd_set_routing(row, Some(port), None, fmt),
-        Some(Command::SetOutput { row, port }) => cmd_set_routing(row, None, Some(port), fmt),
-        Some(Command::SetSplit { row, split, mix }) => cmd_set_split(row, split, mix, fmt),
-        Some(Command::Preset {
-            slot,
-            setlist,
-            factory,
-            params,
-        }) => cmd_preset(&slot, &setlist, factory, params, fmt),
-        Some(Command::Presets {
-            setlist,
-            include_empty,
-            timeout,
-        }) => cmd_presets(&setlist, include_empty, timeout, fmt),
-        Some(Command::Version { session: true }) => cmd_version_via_session(fmt),
-        Some(Command::Version { session: false }) => cmd_version(fmt),
         Some(Command::Completions { target, shell, dir }) => {
             cmd_completions(target, shell, dir.as_deref())
         }
@@ -915,7 +1022,7 @@ fn connected() -> Result<(std::sync::Arc<cortex_rs::Session>, cortex_rs::QuadCor
 /// Refuse to touch the device directly while a daemon holds it.
 ///
 /// Hardware-verified, the hard way: running a command that opened the device
-/// for itself while `cortex connect` held a session left every later read on
+/// for itself while `cortex session start` held a session left every later read on
 /// that held session timing out. Nothing errored at the point of the
 /// collision - the damage only showed up on the next request - which is what
 /// makes it worth refusing loudly here rather than hoping.
@@ -930,10 +1037,10 @@ fn connected() -> Result<(std::sync::Arc<cortex_rs::Session>, cortex_rs::QuadCor
 fn ensure_device_free() -> Result<()> {
     if connect::is_running() {
         anyhow::bail!(
-            "a `cortex connect` session already holds the device.\n\
+            "a `cortex session` is already holding the device.\n\
              Opening it again here would wedge that session - the device \
              stops answering both of us.\n\
-             Use the running session, or stop it with `cortex connect --stop`."
+             Use the running session, or stop it with `cortex session stop`."
         );
     }
     Ok(())
@@ -1333,8 +1440,28 @@ fn cmd_completions(
     Ok(())
 }
 
-/// Resolve a screen row (1-4) into the zero-based wire row.
+/// Whether `--row` arrives zero-based, from the global `--zero-based` flag.
+///
+/// A process-wide read-once value rather than an argument on every command
+/// that takes a row: it is a property of how the caller talks to us, not a
+/// decision any individual command makes.
+static ZERO_BASED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+
+/// Resolve a `--row` argument into the zero-based wire row.
+///
+/// Defaults to the 1-4 printed on the unit, because the CLI is for players.
+/// `--zero-based` switches to the wire's own 0-3, which is what a script
+/// already holds.
+///
+/// The conversion has to be explicit: a wrong row is accepted, reads back
+/// correctly, and changes the wrong thing.
 fn wire_row(row: u32) -> Result<cortex_rs::Row> {
+    if *ZERO_BASED.get().unwrap_or(&false) {
+        if row > 3 {
+            anyhow::bail!("row {row} is out of range: --zero-based rows are 0-3");
+        }
+        return Ok(cortex_rs::Row::from_wire(row));
+    }
     Ok(cortex_rs::Row::from_screen(row)?)
 }
 
@@ -2346,9 +2473,9 @@ fn cpu_load(v: &cortex_rs::proto::CpuLoadMessage) -> CpuLoadOut {
 fn cmd_cpu(fmt: Format) -> Result<()> {
     let Some(result) = connect::request(&cortex_rs::Request::CpuLoad) else {
         anyhow::bail!(
-            "no `cortex connect` session is running.\n\
+            "no `cortex session start` session is running.\n\
              The device only pushes CPU load to a subscribed client, so this \
-             needs a held session: start one with `cortex connect`."
+             needs a held session: start one with `cortex session start`."
         );
     };
     let parsed: CpuLoadOut = serde_json::from_value(result?)?;

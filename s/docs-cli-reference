@@ -84,16 +84,57 @@ lines += [
     "",
 ]
 
+def subcommands_of(text):
+    """Child commands listed in a command's own help, if it has any."""
+    found, seen = [], False
+    for line in text.split("\n"):
+        if line.startswith("Commands:"):
+            seen = True
+            continue
+        if seen:
+            if line.startswith("Options:") or line.startswith("Arguments:"):
+                break
+            if not line.strip():
+                continue
+            parts = line.strip().split(None, 1)
+            if parts and parts[0] != "help":
+                found.append((parts[0], parts[1].strip() if len(parts) > 1 else ""))
+    return found
+
+
+# Two levels, because the surface is noun-then-verb: `cortex preset list`
+# carries the arguments, and a reference stopping at `cortex preset` would
+# document none of them.
 for name, summary in commands:
+    text = help_for([name])
     lines.append(f"### `cortex {name}`")
     lines.append("")
     if summary:
         lines.append(summary.rstrip(".") + ".")
         lines.append("")
+
+    children = subcommands_of(text)
+    if not children:
+        lines.append("```text")
+        lines.append(text)
+        lines.append("```")
+        lines.append("")
+        continue
+
     lines.append("```text")
-    lines.append(help_for([name]))
+    lines.append(text)
     lines.append("```")
     lines.append("")
+    for child, child_summary in children:
+        lines.append(f"#### `cortex {name} {child}`")
+        lines.append("")
+        if child_summary:
+            lines.append(child_summary.rstrip(".") + ".")
+            lines.append("")
+        lines.append("```text")
+        lines.append(help_for([name, child]))
+        lines.append("```")
+        lines.append("")
 
 out_path.write_text("\n".join(lines).rstrip() + "\n")
 print(f"wrote {out_path} ({len(commands)} commands)", file=sys.stderr)

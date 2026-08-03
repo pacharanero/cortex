@@ -9,7 +9,7 @@ Record the CorOS version, firmware, and serial from step 1 alongside the result:
 - Quit Cortex Control. It holds the HID interface exclusively.
 - Connect the unit by USB and power it on.
 - **Headphones or nothing.** Several steps change what is heard.
-- Note what is currently loaded, so you can restore it: `cortex grid`.
+- Note what is currently loaded, so you can restore it: `cortex grid show`.
 
 !!! info "Why this is safe"
 
@@ -18,7 +18,7 @@ Record the CorOS version, firmware, and serial from step 1 alongside the result:
 ## 1. Device is reachable
 
 ```sh
-cortex version
+cortex device version
 ```
 
 - [ ] Reports device type, serial, and firmware versions
@@ -29,7 +29,7 @@ This needs no handshake, so a failure here is a connection or permissions proble
 ## 2. Session layer
 
 ```sh
-cortex version --session
+cortex device version --session
 ```
 
 - [ ] Same output as step 1
@@ -39,7 +39,7 @@ Exercises a different path: background RX thread, correlated request, clean thre
 ## 3. Handshake and read paths
 
 ```sh
-cortex probe
+cortex device probe
 ```
 
 - [ ] Handshake completes, each step printed
@@ -51,8 +51,8 @@ A cold device can take ~35 s; a warm one ~2 s. Both are normal. Reads timing out
 ## 4. Enumeration
 
 ```sh
-cortex presets
-cortex folders
+cortex preset list
+cortex setlist list
 ```
 
 - [ ] Presets match what the unit shows
@@ -76,10 +76,10 @@ cortex catalog --model 1001
 Changes what is heard. Note the starting slot first.
 
 ```sh
-cortex recall --slot 1B
-cortex grid                    # confirm the grid changed
+cortex preset recall --slot 1B
+cortex grid show                    # confirm the grid changed
 cortex scene --index 1
-cortex probe                   # confirm active_scene: 1
+cortex device probe                   # confirm active_scene: 1
 ```
 
 - [ ] The recall changed the loaded preset
@@ -88,7 +88,7 @@ cortex probe                   # confirm active_scene: 1
 ## 7. Stored preset read
 
 ```sh
-cortex preset --slot 1A
+cortex preset show --slot 1A
 ```
 
 - [ ] Returns the preset with blocks named through the catalog
@@ -98,19 +98,19 @@ Then check the documented trap:
 
 ```sh
 cortex scene --index 1
-cortex preset --slot 1A
-cortex probe                   # active_scene should be back to 0
+cortex preset show --slot 1A
+cortex device probe                   # active_scene should be back to 0
 ```
 
 - [ ] The scene reset itself, because the recall resets it to the preset default
 
 ## 8. Grid editing
 
-Pick an empty cell. `cortex grid` shows which are free.
+Pick an empty cell. `cortex grid show` shows which are free.
 
 ```sh
-cortex set-block --row 2 --column 0 --model 1
-cortex grid --params
+cortex block set --row 2 --column 0 --model 1
+cortex grid show --params
 ```
 
 - [ ] Reports `echo confirmed`
@@ -118,22 +118,22 @@ cortex grid --params
 - [ ] The screen row you asked for is the row it landed on
 
 ```sh
-cortex set-param --row 2 --column 0 --param GAIN --value 0.9
-cortex grid --params
+cortex block param --row 2 --column 0 --param GAIN --value 0.9
+cortex grid show --params
 ```
 
 - [ ] `GAIN` reads back as `0.9`
 - [ ] Untouched parameters sit at their catalog defaults
 
 ```sh
-cortex set-param --row 2 --column 0 --param WOBBLE --value 0.5
+cortex block param --row 2 --column 0 --param WOBBLE --value 0.5
 ```
 
 - [ ] Refused, listing the model's real parameter names
 
 ```sh
-cortex remove-block --row 2 --column 0
-cortex grid
+cortex block remove --row 2 --column 0
+cortex grid show
 ```
 
 - [ ] The cell is empty again
@@ -141,8 +141,8 @@ cortex grid
 ## 9. Restore
 
 ```sh
-cortex recall --slot <the slot you started on>
-cortex grid
+cortex preset recall --slot <the slot you started on>
+cortex grid show
 ```
 
 - [ ] Back to the starting state
@@ -150,7 +150,7 @@ cortex grid
 ## 10. Output contract
 
 ```sh
-cortex presets --format json | jq -r '.[] | .slot'
+cortex preset list --format json | jq -r '.[] | .slot'
 ```
 
 - [ ] Valid JSON on stdout despite progress lines on stderr

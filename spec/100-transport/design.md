@@ -115,7 +115,7 @@ The MCP server (zone `300`) must construct a single `Transport` at startup and h
 
 ### Implications for the CLI
 
-The CLI (zone `200`) opens a `Transport` for the duration of one command (e.g. `cortex version`) and drops it on exit. This is fine: the process is short-lived, and there is no long-lived owner to contend with.
+The CLI (zone `200`) opens a `Transport` for the duration of one command (e.g. `cortex device version`) and drops it on exit. This is fine: the process is short-lived, and there is no long-lived owner to contend with.
 
 ### Alternatives considered
 

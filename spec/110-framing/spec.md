@@ -44,14 +44,14 @@ The framing layer is deliberately I/O-free. It does not know about `hidapi`, gzi
 
 | Claim | Status | Evidence |
 | --- | --- | --- |
-| Report layout `[report_id][len][flags][data...]`, 128-byte body + 1-byte report ID | Hardware-verified | Matches `pyquadcortex/docs/protocol.md` and re-confirmed by `cortex version` round-trip on this machine |
+| Report layout `[report_id][len][flags][data...]`, 128-byte body + 1-byte report ID | Hardware-verified | Matches `pyquadcortex/docs/protocol.md` and re-confirmed by `cortex device version` round-trip on this machine |
 | Input report ID `0x01`, output report ID `0x02` | Hardware-verified | Observed in both directions on a real Quad Cortex |
 | `flags`: `0x40` FIRST, `0x80` LAST, `0xC0` COMPLETE, `0x00` MIDDLE | Hardware-verified | Matches `pyquadcortex/framing.py` and observed in captures |
 | No sequence numbers, no total-length field; reassembly is flag-driven | Hardware-verified | Confirmed by `pyquadcortex` and by multi-frame RecallPreset pushes on this machine |
 | `CHUNK_SIZE = 126` (128-byte body minus 2-byte `[len][flags]` prefix) | Hardware-verified | Matches `pyquadcortex` `CHUNK_SIZE = REPORT_SIZE - 2` |
 | 8-byte trailer = `[message_type u16 LE][6 bytes: zeros from host, device-filled, ignored]` | Hardware-verified | Matches `pyquadcortex` `TRAILER_SIZE = 8`; the 6 trailing bytes are observed device-filled on input but have no documented meaning |
 | A `FIRST` frame arriving mid-partial drops the stale buffer | Hardware-verified | Observed: the device interleaves unsolicited pushes (RecallPreset, parameter changes) with replies; a new `FIRST` mid-message is routine, not an error |
-| `encode_message` output round-trips through `Frame::parse` + `FrameReassembler` + `Message::parse` | Hardware-verified | The `encode_then_decode_round_trips` unit test passes; `cortex version` exercises the full path on hardware |
+| `encode_message` output round-trips through `Frame::parse` + `FrameReassembler` + `Message::parse` | Hardware-verified | The `encode_then_decode_round_trips` unit test passes; `cortex device version` exercises the full path on hardware |
 
 The `pyquadcortex` offline test suite is a conformance reference but not a substitute for a hardware smoke run. Agent-generated tests must not be the sole basis for accepting framing behaviour.
 

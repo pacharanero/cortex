@@ -1,9 +1,9 @@
 // SPDX-FileCopyrightText: 2026 Dr Marcus Baw
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-//! The wire contract between `cortex connect` and its clients.
+//! The wire contract between `cortex session start` and its clients.
 //!
-//! `cortex connect` holds one subscribed session and owns the HID interface;
+//! `cortex session start` holds one subscribed session and owns the HID interface;
 //! everything else talks to it over a unix socket. This module defines what
 //! they say to each other, and lives in the crate rather than the CLI so the
 //! MCP server and the Tauri backend can speak the same protocol rather than

@@ -139,7 +139,7 @@ The "device gates push behaviour on a valid `cortex_control_version`" finding an
 The protocol facts above are hardware-verified via `pyquadcortex`. The Rust implementation in this crate is **provisional** until the full session (handshake + keepalive + correlation + broadcast wait) has been exercised against a real Quad Cortex from this crate's own code. Label the session as "provisional" in docs and release notes until that hardware smoke run passes.
 ### Hardware findings (2026-08-02, CorOS 4.0.1 / firmware d14e / QA00AB123)
 
-First contact between this crate's session layer and a real Quad Cortex. Captured with `CORTEX_TRACE=1 cortex version --session`.
+First contact between this crate's session layer and a real Quad Cortex. Captured with `CORTEX_TRACE=1 cortex device version --session`.
 
 **The device sends the host an unsolicited `Version` READ.** A `Version` READ from the host produces TWO inbound `Version` messages, in this order:
 
@@ -190,7 +190,7 @@ The RX loop sustains 1500+ reports/sec. `ModelRepo` alone trickles at 82/sec bec
 
 Reported as "several minutes"; Cortex Control is near-instant by comparison. Measured rather than guessed, and the cause was almost entirely self-inflicted.
 
-**The baseline.** `cortex version`, which needs no handshake, took 0.77 s. `cortex scene`, which does one 9 ms write, took **32.4 s**. So essentially all of it was handshake and teardown, not work.
+**The baseline.** `cortex device version`, which needs no handshake, took 0.77 s. `cortex scene`, which does one 9 ms write, took **32.4 s**. So essentially all of it was handshake and teardown, not work.
 
 | Command | Before | After |
 | --- | --- | --- |
@@ -261,7 +261,7 @@ The question that gates a cached persistent connection: does the device tell a s
 
 All `Grid` traffic arrived well after the initial subscription dump had finished, so it is attributable to the hand edits rather than to the handshake.
 
-**Consequence for `cortex connect`.** A held, subscribed session can cache live device state - including parameter values - and keep it correct, because the device reports edits made both by us and by the player. That is what makes the cache trustworthy rather than merely fast.
+**Consequence for `cortex session start`.** A held, subscribed session can cache live device state - including parameter values - and keep it correct, because the device reports edits made both by us and by the player. That is what makes the cache trustworthy rather than merely fast.
 
 It also settles the design tension recorded above. The 22-type subscription is expensive per command and is exactly right per session: it is the mechanism by which the cache stays true.
 

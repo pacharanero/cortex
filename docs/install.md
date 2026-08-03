@@ -112,7 +112,7 @@ autoload -Uz compinit && compinit
 ## 5. Check it works
 
 ```sh
-cortex version
+cortex device version
 ```
 
 You should see your unit's firmware and serial number:

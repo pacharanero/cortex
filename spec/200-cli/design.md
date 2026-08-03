@@ -106,14 +106,14 @@ A global `--format text|json` flag on `Cli` (not per-command) is the house-style
 
 ### Alternatives considered
 
-- **Per-command `--format`.** Rejected: the contract must be uniform. A user piping `cortex recall --format json | jq` should not have to remember which commands support it.
+- **Per-command `--format`.** Rejected: the contract must be uniform. A user piping `cortex preset recall --format json | jq` should not have to remember which commands support it.
 - **A `--json` boolean.** Rejected: `--format` is extensible (yaml, table) without adding a flag per format.
 
 ## [DES-VERSION] The `version` command
 
 ### Behaviour
 
-`cortex version` is the one implemented command that touches the device. It opens a `Transport`, builds a `VersionMessage{action: READ}`, encodes it with `prost`, calls `Transport::request`, decodes the reply, and prints every field as YAML-like text to stdout.
+`cortex device version` is the one implemented command that touches the device. It opens a `Transport`, builds a `VersionMessage{action: READ}`, encodes it with `prost`, calls `Transport::request`, decodes the reply, and prints every field as YAML-like text to stdout.
 
 ### Design choice: direct transport call (temporary)
 
@@ -135,7 +135,7 @@ The current `print_version` function prints `label: value` lines, one per field,
 
 ### Alternatives considered
 
-- **Wait for the client layer before shipping `version`.** Rejected: `cortex version` is the hardware smoke test. Shipping it early proved the transport, framing, and proto layers against a real device before the session layer existed.
+- **Wait for the client layer before shipping `version`.** Rejected: `cortex device version` is the hardware smoke test. Shipping it early proved the transport, framing, and proto layers against a real device before the session layer existed.
 - **Use `serde_yaml` for the text path.** Rejected: a dependency for a flat `label: value` print. The Debug-strip trick is cheap and dependency-free.
 
 ## [DES-COMPLETIONS] Shell completions
@@ -184,7 +184,7 @@ unsafe fn libc_sigpipe_reset() {
 
 ### Behaviour
 
-Data goes on stdout; everything else (hints, progress, errors) goes on stderr. `eprintln!("cortex: {e:#}")` is the error path; `println!` is the data path. A user piping `cortex version | head -1` gets the first data line on stdout and never sees an error mixed in.
+Data goes on stdout; everything else (hints, progress, errors) goes on stderr. `eprintln!("cortex: {e:#}")` is the error path; `println!` is the data path. A user piping `cortex device version | head -1` gets the first data line on stdout and never sees an error mixed in.
 
 ### Design choice: `eprintln` for errors, `println` for data
 

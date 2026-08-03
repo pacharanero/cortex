@@ -11,7 +11,7 @@ Every output on this page is real, captured from a Quad Cortex running CorOS 4.0
 ## Talk to the device
 
 ```sh
-cortex version
+cortex device version
 ```
 
 ```text
@@ -38,7 +38,7 @@ mac_address                02:00:5e:10:00:01
 ## Check everything works
 
 ```sh
-cortex probe
+cortex device probe
 ```
 
 ```text
@@ -72,7 +72,7 @@ preset_count: 11
 ## Browse presets
 
 ```sh
-cortex presets
+cortex preset list
 ```
 
 ```text
@@ -94,10 +94,10 @@ Slots are named as the unit labels them: bank 1-32 then letter A-H. Empty slots 
 The factory library is just another setlist:
 
 ```sh
-cortex presets --setlist "/opt/neuraldsp/Factory Library"
+cortex preset list --setlist "/opt/neuraldsp/Factory Library"
 ```
 
-And `cortex folders` lists every folder the device knows - 399 of them on the unit tested, including plugin artist packs and the captures library.
+And `cortex setlist list` lists every folder the device knows - 399 of them on the unit tested, including plugin artist packs and the captures library.
 
 ## Explore the model catalog
 
@@ -171,7 +171,7 @@ Those indices are what the wire uses. You rarely need them - `set-param` takes n
 ## Look at a preset
 
 ```sh
-cortex preset --slot 1A
+cortex preset show --slot 1A
 ```
 
 ```text
@@ -200,20 +200,20 @@ row 3 (screen row 4):
 
     There is no side-effect-free way to read a **stored** preset: the device only emits one when it recalls it. So this changes what is loaded and what you hear, and discards any unsaved edit.
 
-    To inspect what is loaded **right now** without disturbing it, use `cortex grid`.
+    To inspect what is loaded **right now** without disturbing it, use `cortex grid show`.
 
 ## Edit the grid
 
 ```sh
-cortex grid --params        # what is loaded right now, no side effects
+cortex grid show --params        # what is loaded right now, no side effects
 ```
 
 Rows are given as the unit labels them, **1-4**.
 
 ```sh
-cortex set-block --row 2 --column 0 --model 1
-cortex set-param --row 2 --column 0 --param GAIN --value 0.9
-cortex grid --params
+cortex block set --row 2 --column 0 --model 1
+cortex block param --row 2 --column 0 --param GAIN --value 0.9
+cortex grid show --params
 ```
 
 ```text
@@ -233,7 +233,7 @@ cortex: Myth Drive has no parameter "WOBBLE". It has: GAIN, TREBLE, LEVEL
 You can also give a value in the parameter's own units:
 
 ```sh
-cortex set-param --row 1 --column 1 --param THRESHOLD --real -20
+cortex block param --row 1 --column 1 --param THRESHOLD --real -20
 ```
 
 !!! danger "Nothing is saved"
@@ -247,7 +247,7 @@ cortex set-param --row 1 --column 1 --param THRESHOLD --real -20
 Every command takes `--format json`:
 
 ```sh
-cortex presets --format json | jq -r '.[] | "\(.slot)  \(.name)"'
+cortex preset list --format json | jq -r '.[] | "\(.slot)  \(.name)"'
 cortex catalog --model 1001 --format json | jq '.parameters[] | select(.read_only | not)'
 ```
 
@@ -256,7 +256,7 @@ Progress and warnings always go to stderr, so stdout stays clean for piping even
 ## When something is wrong
 
 ```sh
-CORTEX_TRACE=1 cortex probe
+CORTEX_TRACE=1 cortex device probe
 ```
 
 Traces every inbound message type, size, and correlation id to stderr, plus each handshake step. This is what to attach to a bug report.

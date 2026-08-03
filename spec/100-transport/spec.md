@@ -39,9 +39,9 @@ This zone owns the `Transport` struct that wraps `hidapi::HidDevice` and encodes
 | Claim | Status | Evidence |
 | --- | --- | --- |
 | VID:PID `152A:880A`, interface 5 | Hardware-verified | Real Quad Cortex on this machine, CorOS 4.0.1 / firmware `d14e`, presenting at `/dev/hidraw7` |
-| Input report ID `0x01`, output report ID `0x02`, 128-byte body | Hardware-verified | Matches `pyquadcortex/docs/protocol.md` and re-confirmed by `cortex version` round-trip on this machine |
+| Input report ID `0x01`, output report ID `0x02`, 128-byte body | Hardware-verified | Matches `pyquadcortex/docs/protocol.md` and re-confirmed by `cortex device version` round-trip on this machine |
 | The benign write STALL (`hid_write` returns `-1` on success) | Hardware-verified | Observed on this machine; documented in `pyquadcortex` |
-| Swallow write errors, detect dead device via read timeout | Hardware-verified | `cortex version` succeeds despite `-1` writes; a powered-off device surfaces as `Error::ReadTimeout` |
+| Swallow write errors, detect dead device via read timeout | Hardware-verified | `cortex device version` succeeds despite `-1` writes; a powered-off device surfaces as `Error::ReadTimeout` |
 | `Transport::request` gzip-decompresses frame-level payloads starting `1f 8b` | Hardware-verified | Observed on RecallPreset pushes from `pyquadcortex`; the `version` round-trip does not compress |
 | Nano Cortex VID:PID | Provisional | `0x152A:0xFFFF` placeholder in `device.rs`; product ID to be recorded once verified against real hardware |
 
@@ -57,7 +57,7 @@ CLI users, the MCP server, the future Tauri GUI backend, and downstream crate co
 
 **As a** CLI user
 **I want** `Transport::request` to swallow the write STALL and return the reassembled reply
-**So that** `cortex version` works without me knowing the device stalls every write.
+**So that** `cortex device version` works without me knowing the device stalls every write.
 
 **As an** MCP server author
 **I want** `Transport::open` to take the HID interface exclusively and hold it

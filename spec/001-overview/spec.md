@@ -46,7 +46,7 @@ Maintainers, AI coding agents, and downstream crate consumers.
 **So that** I can embed it in analysis tools, tests, or a different transport.
 
 **As a** CLI user
-**I want** `cortex version` to read the real device firmware over USB
+**I want** `cortex device version` to read the real device firmware over USB
 **So that** I can confirm the device is talking and the protocol version is supported.
 
 **As a** maintainer

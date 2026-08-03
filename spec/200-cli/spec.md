@@ -34,7 +34,7 @@ The interesting requirements are not "parse args and print" but the house-style 
 
 | Claim | Status | Evidence |
 | --- | --- | --- |
-| `cortex version` round-trips a Version READ over USB HID | Hardware-verified | Succeeds on this machine, CorOS 4.0.1 / firmware `d14e`, prints all `VersionMessage` fields |
+| `cortex device version` round-trips a Version READ over USB HID | Hardware-verified | Succeeds on this machine, CorOS 4.0.1 / firmware `d14e`, prints all `VersionMessage` fields |
 | `cortex --version` / `-V` prints the crate version | Implemented | clap `#[command(version)]` + `propagate_version` |
 | `cortex completions <shell>` prints to stdout for bash, zsh, fish, powershell, elvish | Implemented | `clap_complete::generate` from the live `Cli::command()` |
 | SIGPIPE reset on Unix | Implemented | `libc_sigpipe_reset()` in `main()` before `Cli::parse()` |
@@ -45,16 +45,16 @@ The interesting requirements are not "parse args and print" but the house-style 
 
 ### Primary Users
 
-Linux users with a Quad Cortex, script writers, AI coding agents driving the CLI via `--format json`, and maintainers running `cortex version` as a smoke test.
+Linux users with a Quad Cortex, script writers, AI coding agents driving the CLI via `--format json`, and maintainers running `cortex device version` as a smoke test.
 
 ### Stories
 
 **As a** Linux user
-**I want** `cortex version` to read the real device firmware over USB
+**I want** `cortex device version` to read the real device firmware over USB
 **So that** I can confirm the device is talking and the protocol version is supported.
 
 **As a** script writer
-**I want** `cortex version --format json` to emit structured JSON on stdout
+**I want** `cortex device version --format json` to emit structured JSON on stdout
 **So that** I can pipe it into `jq` or another tool without scraping text.
 
 **As an** AI agent
@@ -78,7 +78,7 @@ Linux users with a Quad Cortex, script writers, AI coding agents driving the CLI
 | ID | Requirement | Priority |
 | --- | --- | --- |
 | FR-1 | The binary is `cortex` (`[[bin]] name = "cortex"`), built from a thin `main.rs` that delegates all behaviour to the crate. | Must Have |
-| FR-2 | `cortex version` opens a `Transport` for `DeviceKind::QuadCortex`, sends a `VersionMessage{action: READ}`, decodes the reply, and prints all fields as YAML-like text to stdout. | Must Have |
+| FR-2 | `cortex device version` opens a `Transport` for `DeviceKind::QuadCortex`, sends a `VersionMessage{action: READ}`, decodes the reply, and prints all fields as YAML-like text to stdout. | Must Have |
 | FR-3 | `cortex completions <shell>` prints shell completions to stdout via `clap_complete::generate`, supporting bash, zsh, fish, powershell, and elvish. | Must Have |
 | FR-4 | `cortex --version` / `cortex -V` prints the crate version (clap `#[command(version)]` + `propagate_version`). | Must Have |
 | FR-5 | SIGPIPE is reset to `SIG_DFL` on Unix at startup so output pipes into `head`/`less` without a panic on a closed pipe. | Must Have |
@@ -90,14 +90,14 @@ Linux users with a Quad Cortex, script writers, AI coding agents driving the CLI
 
 | ID | Requirement | Priority |
 | --- | --- | --- |
-| FR-10 | A global `--format text\|json` flag (default `text`) is honoured by every command. `text` is for humans; `json` is for scripts and agents. `cortex version --format json` emits structured version output. | Must Have |
-| FR-11 | `cortex recall --setlist <path> --slot <slot>` recalls a preset on the device (delegates to `QuadCortex::recall_preset`). | Must Have |
+| FR-10 | A global `--format text\|json` flag (default `text`) is honoured by every command. `text` is for humans; `json` is for scripts and agents. `cortex device version --format json` emits structured version output. | Must Have |
+| FR-11 | `cortex preset recall --setlist <path> --slot <slot>` recalls a preset on the device (delegates to `QuadCortex::recall_preset`). | Must Have |
 | FR-12 | `cortex scene --index <n>` switches the active scene (delegates to `QuadCortex::switch_scene`). | Must Have |
 | FR-13 | `cortex dump-preset --setlist <path> --slot <slot>` recalls a preset and prints the full `BinaryPreset` to stdout (text summary by default, JSON with `--format json`). | Must Have |
 | FR-14 | `cortex list-presets --setlist <path>` lists presets in a setlist (delegates to `QuadCortex::list_presets`). | Must Have |
 | FR-15 | `cortex list-folders` lists all folders the device knows (delegates to `QuadCortex::list_folders`). | Should Have |
 | FR-16 | `cortex --schema` / `cortex --print-schema` emits a JSON Schema of command inputs - the authoritative input contract for scripts and agents. | Should Have |
-| FR-17 | Once the client layer (150) lands, `cortex version` switches from calling `Transport::request` directly to calling `QuadCortex::version()`. | Should Have |
+| FR-17 | Once the client layer (150) lands, `cortex device version` switches from calling `Transport::request` directly to calling `QuadCortex::version()`. | Should Have |
 
 ### Non-Functional Requirements
 
@@ -106,20 +106,20 @@ Linux users with a Quad Cortex, script writers, AI coding agents driving the CLI
 | NFR-1 | `main.rs` stays thin: argument parsing, dispatch, and output formatting only. All protocol and domain behaviour lives in the crate. | Review-enforced |
 | NFR-2 | clap derive is used, never the builder API. Subcommands are `#[derive(Subcommand)]`, args are `#[derive(Parser)]`. | Review-enforced |
 | NFR-3 | `anyhow::Result` is the binary's error type; typed error enums live in the library crate for callers to match on. | Review-enforced |
-| NFR-4 | stdout carries the result; stderr carries hints, progress, and errors. A user piping `cortex version --format json \| jq` gets clean data on stdout. | Review-enforced |
+| NFR-4 | stdout carries the result; stderr carries hints, progress, and errors. A user piping `cortex device version --format json \| jq` gets clean data on stdout. | Review-enforced |
 | NFR-5 | Shell completions are generated from the live `Cli::command()` tree, never hand-maintained. | CI-enforced |
 | NFR-6 | The binary compiles and runs with `cargo run -p cortex-cli` on a machine with the udev rule installed and a Quad Cortex connected. | Hardware smoke |
 
 ## Acceptance Criteria
 
-- [x] `cortex version` prints all `VersionMessage` fields on stdout against a real Quad Cortex.
+- [x] `cortex device version` prints all `VersionMessage` fields on stdout against a real Quad Cortex.
 - [x] `cortex --version` and `cortex -V` print the crate version.
 - [x] `cortex completions <shell>` prints a completion script for each supported shell.
 - [x] A bare `cortex` prints help and exits successfully.
-- [x] `cortex version | head -1` does not panic (SIGPIPE reset).
+- [x] `cortex device version | head -1` does not panic (SIGPIPE reset).
 - [x] Errors go to stderr; stdout is clean data only.
-- [ ] `cortex version --format json` emits structured JSON on stdout.
-- [ ] `cortex recall`, `cortex scene`, `cortex dump-preset`, `cortex list-presets`, `cortex list-folders` are implemented and delegate to the client layer.
+- [ ] `cortex device version --format json` emits structured JSON on stdout.
+- [ ] `cortex preset recall`, `cortex scene`, `cortex dump-preset`, `cortex list-presets`, `cortex list-folders` are implemented and delegate to the client layer.
 - [ ] `cortex --schema` emits a JSON Schema of command inputs.
 - [ ] Every command honours `--format text|json`.
 

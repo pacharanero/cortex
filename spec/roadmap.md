@@ -58,7 +58,7 @@ The bottom-up port of the Cortex Control USB HID protocol from `pyquadcortex` (M
 - [x] `Transport::write(&[u8])` - send a message, split into HID frames, swallow the STALL
 - [x] `Transport::read(Duration)` - read one 129-byte input report
 - [x] `Transport::request(message_type, payload, timeout)` - synchronous request/response with reassembly + gzip
-- [x] Hardware-verified: `cortex version` reads CorOS 4.0.1 / firmware d14e from a real Quad Cortex
+- [x] Hardware-verified: `cortex device version` reads CorOS 4.0.1 / firmware d14e from a real Quad Cortex
 
 ### PROT-002: Framing layer (zone 110)
 
@@ -103,7 +103,7 @@ The background RX thread, connect handshake, keepalive, and request/response cor
 - [x] **PROT-005.8**: `disconnect()` - send `Connection{connected: false}` (best effort)
 - [x] **PROT-005.9**: Write serialization - a `Mutex` around device writes so a keepalive cannot interleave between a multi-report message's frames
 - [x] **PROT-005.10**: 1 MiB reassembly cap - if the buffer exceeds this without completing, reset (defense against a lost LAST frame)
-- [x] **PROT-005.11**: Hardware smoke test - VERIFIED 2026-08-02 against CorOS 4.0.1 / firmware d14e / QA00AB123. Handshake completed in 2.2 s; state pushes flowed; `active_scene`, `read_current_preset`, and `list_presets` all answered; disconnect and thread join clean. Run with `cortex probe`
+- [x] **PROT-005.11**: Hardware smoke test - VERIFIED 2026-08-02 against CorOS 4.0.1 / firmware d14e / QA00AB123. Handshake completed in 2.2 s; state pushes flowed; `active_scene`, `read_current_preset`, and `list_presets` all answered; disconnect and thread join clean. Run with `cortex device probe`
 
 ### PROT-006: Client API (zone 150)
 
@@ -134,8 +134,8 @@ Commands were taking tens of seconds for milliseconds of work. Most of that is f
 - [x] **PROT-008.2**: Capture the handshake's `ModelRepo` payload instead of requesting it a second time
 - [x] **PROT-008.3**: Name the folder in a `File` READ rather than enumerating all 399
 - [x] **PROT-008.4**: Interruptible keepalive sleep, so `stop()` does not wait up to 5 s
-- [x] **PROT-008.5**: Reduce the spread on a `File` READ listing. **Resolved, and the diagnosis was wrong from the start.** The spread was not the device delivering lazily; it was our own RX loop starving the writer, so the READ sat unsent. Fixed in `session.rs` by a writer-priority gate. Measured `cortex presets` before 5.4/8.1/10.1/11.4/18.2 s, after 5.34/5.33/5.38/5.34/5.37 s - the floor unchanged, the tail gone entirely. See the ENG-005 note below for how the wire capture identified it.
-  - **Retrying was tried and made it worse**, which in hindsight was the clue. Re-firing the READ added writes, and writes were the thing being starved - so the "fix" fed the actual fault. At the time this was read as the device rebuilding the listing repeatedly, which was plausible and wrong. Recorded here because the measurement was sound even though the explanation was not. Implemented as a re-fire every 3 s with a single waiter held across attempts, measured A/B over 5 runs each of `cortex presets`:
+- [x] **PROT-008.5**: Reduce the spread on a `File` READ listing. **Resolved, and the diagnosis was wrong from the start.** The spread was not the device delivering lazily; it was our own RX loop starving the writer, so the READ sat unsent. Fixed in `session.rs` by a writer-priority gate. Measured `cortex preset list` before 5.4/8.1/10.1/11.4/18.2 s, after 5.34/5.33/5.38/5.34/5.37 s - the floor unchanged, the tail gone entirely. See the ENG-005 note below for how the wire capture identified it.
+  - **Retrying was tried and made it worse**, which in hindsight was the clue. Re-firing the READ added writes, and writes were the thing being starved - so the "fix" fed the actual fault. At the time this was read as the device rebuilding the listing repeatedly, which was plausible and wrong. Recorded here because the measurement was sound even though the explanation was not. Implemented as a re-fire every 3 s with a single waiter held across attempts, measured A/B over 5 runs each of `cortex preset list`:
 
     | | min | median | max | mean |
     | --- | --- | --- | --- | --- |
@@ -145,8 +145,8 @@ Commands were taking tens of seconds for milliseconds of work. Most of that is f
     About 3.5x worse. Three of the five retry runs exceeded the baseline's worst run. The ordering confound runs the wrong way to explain it away: the baseline arm ran *second*, so drift would have penalised it, and it still won. The mechanism is plain in hindsight - each re-send makes the device build the whole 256-slot listing again, adding exactly the load that made it slow. A `File` READ is not a cheap poll.
   - Untested variants that are not ruled out: a much longer retry interval (10 s+), or retrying only after evidence the request was dropped rather than on a timer. Neither is worth trying until there is a way to tell "dropped" from "still working", which the protocol does not currently give us.
   - The `pyquadcortex` `wait_for_listing` approach was the original motivation here. Whatever it does, a naive periodic re-READ is not it.
-- [ ] **PROT-008.6**: `cortex connect` - a persistent, subscribed session. **In progress: the session holds and serves, the cache and health work do not exist yet.** Cortex Control is fast because it opens ONE session and keeps it; we pay a handshake per command. It is also the right shape for the MCP server, which must hold a single connection anyway, and for the GUI. Measured against a held session: `scene` 0.07 s, `grid` 0.14 s, `--status` 0.005 s, against a 3-5 s direct baseline.
-  - [x] **008.6.1**: `cortex connect` holds a `ConnectMode::Subscribed` session and owns the HID interface. Subscribing is expensive per command and correct per session: it is how the device reports edits made by the player
+- [ ] **PROT-008.6**: `cortex session start` - a persistent, subscribed session. **In progress: the session holds and serves, the cache and health work do not exist yet.** Cortex Control is fast because it opens ONE session and keeps it; we pay a handshake per command. It is also the right shape for the MCP server, which must hold a single connection anyway, and for the GUI. Measured against a held session: `scene` 0.07 s, `grid` 0.14 s, `--status` 0.005 s, against a 3-5 s direct baseline.
+  - [x] **008.6.1**: `cortex session start` holds a `ConnectMode::Subscribed` session and owns the HID interface. Subscribing is expensive per command and correct per session: it is how the device reports edits made by the player
   - [x] **008.6.2**: A unix socket at `$XDG_RUNTIME_DIR`, line-delimited JSON, reusing the existing `--format json` output types so client and daemon share one contract
   - [ ] **008.6.3**: Lifecycle: `--status` (done), clean `--stop` that announces the disconnect (done, and bounded by a watchdog - see below), stale-socket detection (done), **idle timeout (outstanding)**
   - [ ] **008.6.4**: **Health reporting.** Detect a dropped or unresponsive device and say so, rather than hanging. Reconnect with backoff, reporting each attempt.
@@ -156,8 +156,8 @@ Commands were taking tens of seconds for milliseconds of work. Most of that is f
     - `status` therefore reports `last_message_seconds` raw, with no verdict attached, and the doc comments that used to present it as a liveness signal have been corrected.
   - [ ] **008.6.5**: Cache device state, kept current by the subscription. Verified pushable: parameter values (`Grid`), bypass (`Grid`), scene (`Scene`/`RecallPreset`), dirty state (`PresetDirty`). Plus static data: the catalog and folder listings
   - [ ] **008.6.6**: **Invalidate the cache wholesale on reconnect.** Edits made while disconnected are invisible, so resuming a stale cache would silently lie
-  - [x] **008.6.11**: **`Version` READ before announcing our own**, mirroring Cortex Control. Costs ~0.8 s (handshake 2.2 s -> 3.0 s, three consecutive runs) and buys two things: `connect --status` can report the unit's serial and `CorOS` version, which it previously left `None`, and `cortex version` through the daemon is served from that cache in **0.002 s** rather than 2.86 s. It also removes a documented race - `Version` READ replies carry no `request_id`, so a later caller's reply is indistinguishable from the handshake's own announce.
-  - [x] **008.6.12**: **`CpuLoad` for a live DSP-load display.** Added to the subscribe set and exposed as `Session::cpu_load()` and `cortex cpu`, with a typed view carrying total load plus a per-column breakdown flagged by DSP core (`is_on_core2` - the QC splits the grid across two cores).
+  - [x] **008.6.11**: **`Version` READ before announcing our own**, mirroring Cortex Control. Costs ~0.8 s (handshake 2.2 s -> 3.0 s, three consecutive runs) and buys two things: `connect --status` can report the unit's serial and `CorOS` version, which it previously left `None`, and `cortex device version` through the daemon is served from that cache in **0.002 s** rather than 2.86 s. It also removes a documented race - `Version` READ replies carry no `request_id`, so a later caller's reply is indistinguishable from the handshake's own announce.
+  - [x] **008.6.12**: **`CpuLoad` for a live DSP-load display.** Added to the subscribe set and exposed as `Session::cpu_load()` and `cortex device cpu`, with a typed view carrying total load plus a per-column breakdown flagged by DSP core (`is_on_core2` - the QC splits the grid across two cores).
     - **Asked for with CREATE, not READ.** Every other subscribe is a plain READ and gets answered; a READ for `CPULoad` is silently ignored, and that cost an afternoon of looking for the difference elsewhere (keepalive rate, missing `CloudProduct`, a UI toggle). Cortex Control sends action `CREATE` with a `request_id`, which on the wire is a single field 2 and no action field at all - proto3 omits defaults, and `CREATE` is 0. Reading it as "create a subscription" rather than "read a value" also makes more sense of a message whose reply is a continuous stream.
     - Found by `cortex decode-trace --verbose` (ENG-005.3) on its first use, by putting our request and CC's side by side: `field 1: varint 3` against `field 2: varint 2`. Nothing about the message sizes or types differed, so no amount of staring at the message log would have shown it.
     - The first push lands about 8 s after the request, not immediately - long enough that an early check reads as failure. Verified working: total 54.8 % with a per-column breakdown across four rows, second-core columns flagged.
@@ -209,7 +209,7 @@ A Zensical site per house-style [docs.md](https://github.com/marcus-pacharanero/
 
 A per-device, per-CorOS reference of the factory presets: what each is modelled on, and how to get a usable sound out of it. Aimed at agents driving the MCP server, who otherwise have no idea that "Brit 2203" is a Marshall-style voicing.
 
-- [ ] **DOCS-002.1**: Generate the raw preset inventory from the device rather than transcribing it - `cortex presets --setlist "/opt/neuraldsp/Factory Library"` already emits all 256 names. Keep it a build step so a CorOS update regenerates it
+- [ ] **DOCS-002.1**: Generate the raw preset inventory from the device rather than transcribing it - `cortex preset list --setlist "/opt/neuraldsp/Factory Library"` already emits all 256 names. Keep it a build step so a CorOS update regenerates it
 - [ ] **DOCS-002.2**: Key the reference by device AND CorOS version; factory content changes between releases and a stale mapping is worse than none
 - [ ] **DOCS-002.3**: Setup tips per preset - the genuinely additive part, since the gear mapping is no longer ours to write (see below)
 - [ ] **DOCS-002.4**: Expose it to the MCP server so an agent can resolve intent ("something like a cranked Plexi") to a slot
@@ -233,7 +233,7 @@ The `cortex` command-line surface over the crate.
 
 ### CLI-001: Scaffold and version
 
-- [x] `cortex version` - reads device firmware, prints all fields
+- [x] `cortex device version` - reads device firmware, prints all fields
 - [x] `cortex completions <shell>` - bash, zsh, fish, powershell
 - [x] `cortex --version` / `-V` - standard version flag
 - [x] SIGPIPE reset, `arg_required_else_help`
@@ -242,22 +242,22 @@ The `cortex` command-line surface over the crate.
 ### CLI-002: Format and output
 
 - [x] **CLI-002.1**: `--format text|json` global flag, honoured by every command
-- [x] **CLI-002.2**: `cortex version --format json` - structured JSON. The output types are defined in the CLI rather than serialising the prost types, so the JSON is an interface with stable field names rather than a wire representation. Two fields are renamed to what they actually hold (`coros_version`, `wireless_firmware_checksum`), with the vendor's misleading names recorded in the type's docs
-- [x] **CLI-003.10**: `cortex grid [--params]` - the LIVE grid, read without side effects. Distinct from `cortex preset --slot X`, which reads a STORED slot and can only do so by recalling it, discarding unsaved edits
-- [x] **CLI-003.11**: `cortex set-param` / `set-bypass` / `set-block` / `remove-block`, taking rows as the unit LABELS them (1-4)
+- [x] **CLI-002.2**: `cortex device version --format json` - structured JSON. The output types are defined in the CLI rather than serialising the prost types, so the JSON is an interface with stable field names rather than a wire representation. Two fields are renamed to what they actually hold (`coros_version`, `wireless_firmware_checksum`), with the vendor's misleading names recorded in the type's docs
+- [x] **CLI-003.10**: `cortex grid show [--params]` - the LIVE grid, read without side effects. Distinct from `cortex preset show --slot X`, which reads a STORED slot and can only do so by recalling it, discarding unsaved edits
+- [x] **CLI-003.11**: `cortex block param` / `set-bypass` / `set-block` / `remove-block`, taking rows as the unit LABELS them (1-4)
 - [ ] **CLI-002.3**: `--schema` / `--print-schema` - JSON Schema of a command's inputs
 - [x] **CLI-002.4**: Data on stdout, hints on stderr - every command follows this; progress, warnings, and handshake steps all go to stderr so output stays pipeable
 
 ### CLI-003: Preset and scene commands
 
-All HARDWARE-VERIFIED 2026-08-02 against CorOS 4.0.1 / d14e / QA00AB123. Named without the `list-` prefix, since the noun already reads as a listing and `cortex presets` is what a user reaches for.
+All HARDWARE-VERIFIED 2026-08-02 against CorOS 4.0.1 / d14e / QA00AB123. Named without the `list-` prefix, since the noun already reads as a listing and `cortex preset list` is what a user reaches for.
 
-- [x] **CLI-003.1**: `cortex recall --slot <slot> [--setlist <path>] [--factory]`
+- [x] **CLI-003.1**: `cortex preset recall --slot <slot> [--setlist <path>] [--factory]`
 - [x] **CLI-003.2**: `cortex scene --index <0-7>` - zero-based, where the unit labels scenes A-H
-- [x] **CLI-003.3**: `cortex preset --slot <slot>` - recalls and prints the preset, with each block NAMED via the catalog and the vendor's attribution shown
-- [x] **CLI-003.4**: `cortex presets [--setlist <path>] [--include-empty]`
-- [x] **CLI-003.5**: `cortex folders` - all 399 folders, via the session's `collect`
-- [x] **CLI-003.6**: `cortex probe` - handshake plus every read path, the hardware smoke test
+- [x] **CLI-003.3**: `cortex preset show --slot <slot>` - recalls and prints the preset, with each block NAMED via the catalog and the vendor's attribution shown
+- [x] **CLI-003.4**: `cortex preset list [--setlist <path>] [--include-empty]`
+- [x] **CLI-003.5**: `cortex setlist list` - all 399 folders, via the session's `collect`
+- [x] **CLI-003.6**: `cortex device probe` - handshake plus every read path, the hardware smoke test
 - [x] **CLI-003.7**: `cortex catalog [--search <text>] [--model <id>] [--dump <file>] [--from-file <file>]`
 - [x] **CLI-003.8**: `CORTEX_TRACE=1` - stderr tracing of inbound traffic and handshake steps
 - [ ] **CLI-003.9**: `cortex capture` / `cortex ir` - export and import (blocked on PROT-007)
@@ -266,7 +266,7 @@ All HARDWARE-VERIFIED 2026-08-02 against CorOS 4.0.1 / d14e / QA00AB123. Named w
 
 The surface grew verb-first (`set-param`, `set-bypass`, `remove-block`) and should be rooted in the nouns the Neural DSP / Quad Cortex user guide uses - preset, slot, grid, row, column - named exactly as a player meets them.
 
-- [ ] **CLI-005.1**: Agree the target shape and the vocabulary. **Blocked on [queries.md](queries.md) 1**, which asks whether the player-facing word is *block* or *module* (the wire says `Model` and `ModuleStats`; the UI may differ), whether old names survive as hidden aliases, and where `cortex connect` belongs given it is our concept rather than the device's
+- [ ] **CLI-005.1**: Agree the target shape and the vocabulary. **Blocked on [queries.md](queries.md) 1**, which asks whether the player-facing word is *block* or *module* (the wire says `Model` and `ModuleStats`; the UI may differ), whether old names survive as hidden aliases, and where `cortex session start` belongs given it is our concept rather than the device's
 - [ ] **CLI-005.2**: Restructure to noun-then-verb, e.g. `cortex preset list|show|recall`, `cortex block bypass|remove|set`, `cortex row input|output|split`
 - [ ] **CLI-005.3**: Regenerate completions and the command reference; update the walkthrough
 

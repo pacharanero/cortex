@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Dr Marcus Baw
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-//! `cortex connect`: one held session, served over a unix socket.
+//! `cortex session start`: one held session, served over a unix socket.
 //!
 //! The device grants its HID interface exclusively, so exactly one process
 //! can own it. This is that process. Everything else talks to it.
@@ -43,7 +43,7 @@ impl Daemon {
     /// how the device reports edits made by the PLAYER on the hardware. It
     /// is expensive per command and correct once per session.
     fn connect() -> Result<Self> {
-        eprintln!("cortex connect: opening device ...");
+        eprintln!("cortex session: opening device ...");
         let session = Arc::new(Session::open(DeviceKind::QuadCortex)?);
 
         let started = Instant::now();
@@ -51,10 +51,10 @@ impl Daemon {
             cortex_rs::ConnectMode::Subscribed,
             Duration::from_secs(15),
             Duration::from_secs(2),
-            |step| eprintln!("cortex connect:   {step} ..."),
+            |step| eprintln!("cortex session:   {step} ..."),
         )?;
         eprintln!(
-            "cortex connect: connected in {:.1}s",
+            "cortex session: connected in {:.1}s",
             started.elapsed().as_secs_f32()
         );
 
@@ -291,12 +291,12 @@ pub fn run() -> Result<()> {
         if UnixStream::connect(&path).is_ok() {
             anyhow::bail!(
                 "a cortex daemon is already running on {}. Stop it with \
-                 `cortex connect --stop`, or use the existing one.",
+                 `cortex session stop`, or use the existing one.",
                 path.display()
             );
         }
         eprintln!(
-            "cortex connect: removing a stale socket at {} (nothing was listening)",
+            "cortex session: removing a stale socket at {} (nothing was listening)",
             path.display()
         );
         std::fs::remove_file(&path)?;
@@ -334,14 +334,14 @@ pub fn run() -> Result<()> {
         }
     };
 
-    eprintln!("cortex connect: listening on {}", path.display());
-    eprintln!("cortex connect: press Ctrl-C to stop");
+    eprintln!("cortex session: listening on {}", path.display());
+    eprintln!("cortex session: press Ctrl-C to stop");
 
     for stream in listener.incoming() {
         let stream = match stream {
             Ok(s) => s,
             Err(e) => {
-                eprintln!("cortex connect: accept failed: {e}");
+                eprintln!("cortex session: accept failed: {e}");
                 continue;
             }
         };
@@ -350,7 +350,7 @@ pub fn run() -> Result<()> {
         }
     }
 
-    eprintln!("cortex connect: shutting down");
+    eprintln!("cortex session: shutting down");
 
     // Teardown talks to the device, and a wedged device is exactly the state
     // someone reaches for `--stop` in. Observed: a daemon whose session had
@@ -362,7 +362,7 @@ pub fn run() -> Result<()> {
     std::thread::spawn(|| {
         std::thread::sleep(SHUTDOWN_GRACE);
         eprintln!(
-            "cortex connect: teardown did not finish within {}s; exiting anyway",
+            "cortex session: teardown did not finish within {}s; exiting anyway",
             SHUTDOWN_GRACE.as_secs()
         );
         std::process::exit(0);
@@ -390,7 +390,7 @@ fn serve(daemon: &Daemon, stream: UnixStream) -> Control {
     let peer = match stream.try_clone() {
         Ok(s) => s,
         Err(e) => {
-            eprintln!("cortex connect: could not clone stream: {e}");
+            eprintln!("cortex session: could not clone stream: {e}");
             return Control::Continue;
         }
     };
@@ -401,7 +401,7 @@ fn serve(daemon: &Daemon, stream: UnixStream) -> Control {
         let line = match line {
             Ok(l) => l,
             Err(e) => {
-                eprintln!("cortex connect: read failed: {e}");
+                eprintln!("cortex session: read failed: {e}");
                 return Control::Continue;
             }
         };

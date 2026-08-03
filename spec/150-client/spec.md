@@ -282,7 +282,7 @@ The constants (`UNITY_LEVEL`, `USER_SETLIST_ROOT`, `SCENE_UNLABELLED`, `TEMPO_PA
 The protocol facts are hardware-verified via `pyquadcortex`. The Rust implementation is **provisional** until each method has been exercised against a real Quad Cortex from this crate's own code. Label the client as "provisional" in docs and release notes until the hardware smoke run passes.
 ### Hardware findings (2026-08-02, CorOS 4.0.1 / firmware d14e / QA00AB123)
 
-First verification of the read paths against a real Quad Cortex, via `cortex probe`, `cortex folders`, and `cortex presets`.
+First verification of the read paths against a real Quad Cortex, via `cortex device probe`, `cortex setlist list`, and `cortex preset list`.
 
 **Verified working:** `active_scene`, `read_current_preset`, `list_presets`, `list_folders`. The connect handshake completed in 2.2 s and state pushes flowed afterwards, confirming the device does gate pushes on the handshake ([FR-2] of zone 140).
 
@@ -345,7 +345,7 @@ The first destructive surface, exercised end to end. Safe by construction at thi
 
 **A stored preset can carry MORE parameters than the catalog describes.** Myth Drive's catalog entry declares three parameters; the stored block carried four, the last unnamed. This is the same phenomenon already recorded for the tempo block (23 described, 24 stored). Consequences: do not size a parameter array from the catalog, and do not assume an index beyond the catalog's range is invalid.
 
-**`read_current_preset` sees unsaved edits**, which is what makes it the correct inspection path during editing - and what `cortex grid` now exposes. Reading a STORED slot recalls it, which would have discarded each edit before it could be checked.
+**`read_current_preset` sees unsaved edits**, which is what makes it the correct inspection path during editing - and what `cortex grid show` now exposes. Reading a STORED slot recalls it, which would have discarded each edit before it could be checked.
 
 #### `set_block` verification was wrong, and the fix (2026-08-02)
 
@@ -381,4 +381,4 @@ Done on the empty 2B scratchpad, unit restored to 1A afterwards. All on the work
 
 **A stored preset carries eight values for EVERY parameter**, not only scene-following ones - `TREBLE` and `LEVEL` read back as eight identical entries. So the presence of eight values does not indicate `scene_mode`; only a difference between them does.
 
-**A verification tool that hides what it verifies is worse than none.** The per-scene edit initially appeared to have failed: `GAIN` read back as 0.2 on both scene A and scene D. The write was correct all along - the read-back displayed only `param_values[0]`, which is always scene A regardless of the active scene. Two wrong conclusions were available (the write failed; the device ignores `scene_mode`) and both would have been recorded as protocol findings. `cortex grid --params` now shows the whole per-scene array.
+**A verification tool that hides what it verifies is worse than none.** The per-scene edit initially appeared to have failed: `GAIN` read back as 0.2 on both scene A and scene D. The write was correct all along - the read-back displayed only `param_values[0]`, which is always scene A regardless of the active scene. Two wrong conclusions were available (the write failed; the device ignores `scene_mode`) and both would have been recorded as protocol findings. `cortex grid show --params` now shows the whole per-scene array.

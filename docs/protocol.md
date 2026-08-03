@@ -247,7 +247,7 @@ There is no side-effect-free way to read a *stored* preset: the device only emit
 
 **Measured here**, and it demonstrated itself unprompted: we set scene 1, called `read_preset`, and the scene returned to 0 *by itself* because the recall reset it to the preset's default. A scene-targeted write issued after a `read_preset` therefore lands on the default scene rather than the one you selected.
 
-Use `read_current_preset` (`cortex grid`) to inspect while editing.
+Use `read_current_preset` (`cortex grid show`) to inspect while editing.
 
 ## Version field names {#version-field-names}
 
