@@ -146,6 +146,18 @@ Build in from the start:
   wrong-row edit succeeds silently) in tool descriptions.
 - Single owning process for the USB interface.
 
+## Keep the protocol documentation current
+
+[docs/protocol.md](docs/protocol.md) is the public write-up of the Cortex Control USB HID protocol, written for someone else building a client for this hardware. No such document existed when this project started.
+
+**When you learn something new about the protocol, add it there in the same change** - not only in a code comment or a roadmap entry, which serve us rather than the reader. Specifically:
+
+- Any device behaviour worth knowing in advance, including behaviour that turned out to be a client-side bug. "This looks like the device and is not" is among the most useful things on the page.
+- Any measurement contradicting something the page claims. **Correct it rather than adding a caveat** - a wrong claim is worse than no claim, and several have survived on that page for months.
+- Anything that fails silently: a request the device ignores without erroring, a collision that only surfaces on the next call, a field that turns out to matter. Those are what a newcomer cannot discover unaided.
+
+Write it as reference, not as narrative: the facts and the numbers, not how they were arrived at. Label anything unverified against hardware as provisional, and give the `CorOS` version where a measurement might depend on it.
+
 ## Legal hygiene
 
 Reverse engineering for interoperability is the established case (UK CDPA

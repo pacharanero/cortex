@@ -30,6 +30,10 @@ A client must **swallow write errors** and detect a dead device via read timeout
 
 The device grants the HID interface to one process at a time. Quit Cortex Control before using anything else, and expect the reverse to hold while `cortex` has a session open.
 
+**Nothing enforces this, and violating it fails silently.** On Linux a second process opens the device without error. The held session then stops working - every subsequent read on it times out - while the offending command appears to succeed. Nothing errors at the moment of collision; the damage shows on the *next* request.
+
+A client should therefore refuse to open the device when it can tell another owner exists, rather than relying on the OS. A daemon holding a session should take its ownership claim (lock file, socket) **before** the handshake: the handshake is seconds long, and a claim registered afterwards leaves that window unguarded.
+
 ## Framing
 
 ```text
@@ -53,34 +57,55 @@ Two independent kinds of gzip are in play, and a client needs both in different 
 
 ## The connect handshake
 
-The device **will not push state to a client that has merely opened the pipe**. Six steps:
+The device **will not push state to a client that has merely opened the pipe**:
 
 1. `ResetCommsBuffers` with a fresh 32-hex `session_id`, sent as a correlated request.
-2. `Version` UPDATE announcing `cortex_control_version: "4.0.1"`. The device gates push behaviour on a valid version. Note this is an UPDATE, never a READ - see below.
-3. `ModelRepo` READ.
-4. `Connection{connected: true}`.
-5. 22 subscribe READs.
-6. Settle.
+2. `Version` READ. Cortex Control does this before announcing its own, and doing it here rather than later avoids a race described below.
+3. `Version` UPDATE announcing `cortex_control_version: "4.0.1"`. The device gates push behaviour on a valid version.
+4. `ModelRepo` READ. Load-bearing - see below.
+5. `Connection{connected: true}`.
+6. 22 subscribe READs.
+7. `CPULoad` **CREATE** - not a READ. See [Not everything is subscribed with a READ](#cpuload-create).
+8. Settle.
+
+Steps 3 to 7 are fire-and-forget: the device answers them as pushes rather than correlated replies, so nothing waits on them individually.
 
 ### The ModelRepo READ is load-bearing
 
 **Measured here.** Step 3 looks like a gratuitous 46 KB fetch in the middle of a handshake, and is the obvious thing to optimise away. We removed it: the handshake dropped from ~35 s to **4.2 s**, and then *every* read failed - `active_scene`, `read_current_preset`, and `list_presets` all timed out. The device gates its push behaviour on that request.
 
-### Why it can take 35 seconds
+### Handshake cost
 
-**Measured here.** Reassembly throughput during a cold connect:
+A cold connect completes in **2-3 seconds**, for `cortex` and for Cortex Control alike, measured on `CorOS` 4.0.1.
 
-| Message | Reports | Time | Rate |
-| --- | --- | --- | --- |
-| `ModelRepo` | 371 | 4551 ms | 82/sec |
-| `ModuleStats` | 179 | 119 ms | 1504/sec |
-| others | 2-72 | ~1 ms | 1500-3000/sec |
+Longer than that, or varying between identical runs, indicates a client-side problem. The device answers control transfers in about 220 microseconds and does not throttle a handshake.
 
-The client sustains 1500+ reports/sec. `ModelRepo` alone trickles at 82/sec because the unit **builds the catalog on demand**. Everything after it arrives at full speed.
+### Do not let a read loop starve your writer
 
-Two runs of identical code: **37.2 s cold, 2.2 s warm.** The unit evidently caches what it built.
+A background thread holding the device lock across a blocking read, and reacquiring it immediately on release, will starve a foreground write. Neither `hidapi` nor the device reports anything.
 
-This is why `cortex` settles **adaptively** - waiting for the inbound stream to fall silent rather than sleeping a fixed period. No fixed value serves both cases: short enough for the warm path leaves the cold path issuing reads into a 46 KB backlog, where replies queue behind the pushes and time out.
+On a capture it looks like this:
+
+```text
+48.799  OUT  ResetCommsBuffers    <- first write
+48.807  IN   ResetCommsBuffers    <- answered in 8 ms
+95.638  OUT  KeepAlive            <- 47 seconds of idle bus
+```
+
+The device answers control transfers in about 220 microseconds. Releasing the lock and yielding is not sufficient - the mutex is unfair, and with a backlog to read the reader wins the race. The writer must be able to make the reader stand aside.
+
+Measured effect of fixing it: handshake from a 2.2-102.7 s spread to a flat 2.2 s; preset listing from 5.4-18.2 s to 5.33-5.38 s. The best case did not change in either.
+
+### Catalog transfer rate
+
+The `ModelRepo` reply is 371 reports, about 46.7 KB. Measured from request to last report on the same unit:
+
+| Client | Elapsed | Rate |
+| --- | --- | --- |
+| Cortex Control | 0.65 s | ~570 reports/sec |
+| `cortex` | 4.98 s | ~75 reports/sec |
+
+The difference is unexplained and is not a property of the device. A slow bulk transfer is not evidence that the unit is building something on demand.
 
 ### The device sends the host an unsolicited `Version` READ
 
@@ -93,7 +118,54 @@ rx Version (2 bytes)     <- the device asking US for our version
 
 The 2-byte one is `VersionMessage{action: READ}` and decodes as a structurally valid `VersionMessage` with every informational field absent. Since READ replies carry no `request_id`, it is indistinguishable by type from a real reply, so **two concurrent `version()` calls risk one being satisfied by the device's request** - yielding a near-empty message rather than an error.
 
-Harmless in practice because the handshake announces with an UPDATE and never a READ, which is exactly why pyquadcortex does it that way.
+Do the `Version` READ inside the handshake, before announcing, and keep the result. A READ issued later cannot be told apart from the device's own request, and the handshake has to ask anyway.
+
+## Keeping the session alive
+
+### Send a keepalive every second
+
+Cortex Control sends `KeepAlive` every **1.04 s** (681 over 708 s).
+
+**At a 5 second interval the device stops pushing state.** A subscribed session runs normally for about 40 seconds, then falls silent indefinitely. There is no error and no warning.
+
+At 1 second, a subscribed session is never quiet: zero seconds of silence across a 90 second idle, against Cortex Control's longest inbound gap of 0.11 s over the same test.
+
+A session that goes quiet is a keepalive problem until proven otherwise.
+
+### `GlobalTempo` is a continuous heartbeat, in pairs
+
+Arrives in pairs: about 35 ms between the two messages of a pair, 0.5-0.8 s between pairs. It is the tempo and metronome clock, not state.
+
+- **Exclude it from any settle that waits for inbound silence**, or the settle can never finish.
+- **It makes silence a usable liveness signal** - but only at a correct keepalive interval. Silence means the link is down, not that the device is idle.
+
+### Not everything is subscribed with a READ {#cpuload-create}
+
+**`CPULoad` is asked for with `CREATE`, and a READ is silently ignored.**
+
+Every other subscribe in the burst is a plain `READ` and gets answered. `CPULoad` is not. Cortex Control sends `action: CREATE` with a `request_id`, which on the wire is a single field 2 and no action field at all - proto3 omits default values, and `CREATE` is 0:
+
+```text
+Cortex Control:  field 2: varint 2      <- request_id, action absent (CREATE)
+a plain READ:    field 1: varint 3      <- action = READ, no request_id
+```
+
+The device answers the first and ignores the second, with no error either way. Semantically it reads correctly once seen: you are *creating* a subscription whose reply is a continuous stream, not *reading* a value once.
+
+The first push arrives roughly **8 seconds** after the request, not immediately - long enough that an early check looks like failure.
+
+Whether other message types share this convention is not established. If a subscribe of yours is being ignored, this is the first thing to try.
+
+## Observing the wire
+
+On Linux, `usbmon` captures everything, and **it works even when the unit is passed through to a VM** - QEMU's passthrough goes out through the host's own USB stack, so the host sees the official client's traffic without installing anything inside Windows. Every Cortex Control figure on this page was obtained that way.
+
+Two traps in the capture itself, each of which makes a capture look one-sided rather than mis-parsed:
+
+- **QEMU splits each 129-byte report into a 128-byte transfer plus a 1-byte transfer.** A parser assuming one transfer holds one report sees a truncated report followed by a stray byte, and reassembles nothing. Treat each direction as a byte stream and cut it into fixed 129-byte reports.
+- **Wireshark puts the payload in different fields depending on what it worked out about the device.** `usb.data_fragment` for the control transfers you send; `usbhid.data` once it has seen the descriptors and knows the interface is HID, which happens if your capture includes the device enumerating; `usb.capdata` when it has not. Read all three and take whichever is populated. Asking for one and getting nothing is indistinguishable from a device that said nothing.
+
+Use the binary usbmon interface, via `dumpcap` or `tshark`. The text interface at `/sys/kernel/debug/usb/usbmon/<bus>u` truncates payload data, which drops bytes from the middle of a 128-byte body while still looking like a successful capture.
 
 ## Correlation
 
