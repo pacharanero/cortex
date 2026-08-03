@@ -119,6 +119,26 @@ pub enum Error {
     #[error("read timeout after {0:?}")]
     ReadTimeout(std::time::Duration),
 
+    /// Nothing at all has arrived from the device for long enough that the
+    /// link must be considered down.
+    ///
+    /// Distinct from [`Error::ReadTimeout`], and worth the separate variant:
+    /// a read timeout means "the answer I wanted did not come", which a busy
+    /// but healthy device can produce. This means "the device has stopped
+    /// talking altogether", which a kept-alive session never does - measured
+    /// at 0 s of silence across a 90 s idle, and 0.11 s for Cortex Control
+    /// over the same test.
+    ///
+    /// That distinction is only true while keepalives are frequent enough.
+    /// At a 5 s interval the device stops pushing and healthy sessions do
+    /// fall silent, which is how this check came to be built, withdrawn, and
+    /// rebuilt. See [`crate::session`] and roadmap PROT-008.6.4.
+    ///
+    /// Reported in seconds rather than a `Duration` because the source is a
+    /// second-resolution counter; anything finer would be false precision.
+    #[error("device silent for {0}s (a kept-alive session is never quiet)")]
+    DeviceSilent(u64),
+
     /// A slot name was malformed. Slots are a bank number 1-32 followed by
     /// a letter A-H, e.g. `"28C"`.
     #[error("invalid slot name: {0}")]

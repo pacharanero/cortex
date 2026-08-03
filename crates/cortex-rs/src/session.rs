@@ -53,6 +53,47 @@ const DEFAULT_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(1);
 /// timeout.
 const DELIVERY_GRACE: Duration = Duration::from_millis(500);
 
+/// How often a blocked wait wakes to check whether the device has gone quiet.
+///
+/// A polling interval, not a timeout. Waking costs nothing and sends nothing;
+/// it only bounds how late a verdict can be.
+const SILENCE_POLL: Duration = Duration::from_millis(500);
+
+/// How long the device may be completely silent before a wait gives up.
+///
+/// Set from the worst case, not the typical one. In steady state a kept-alive
+/// session is never quiet - 0 s across a 90 s idle, and 0.11 s for Cortex
+/// Control over the same test - but there is a lull straight after the
+/// handshake, measured climbing to 4-5 s before the device begins streaming.
+/// That lull is expected: the handshake ENDS by waiting for the device to go
+/// quiet, so the count starts from a deliberately quiet moment.
+///
+/// A threshold of 5 s sat exactly on that boundary and refused a healthy
+/// `version` seconds after connecting. Ten gives roughly double the observed
+/// lull while still turning a dead device into a verdict in a third of the
+/// 30 s request timeout.
+///
+/// All of this holds only while [`DEFAULT_KEEPALIVE_INTERVAL`] is frequent
+/// enough. At 5 s the device stops pushing and healthy sessions fall silent
+/// indefinitely, which is how an earlier version of this check was built on
+/// sand, withdrawn, and rebuilt.
+const SILENCE_LIMIT: Duration = Duration::from_secs(10);
+
+/// Why a wait stopped waiting.
+///
+/// Distinguishing `Silent` from `TimedOut` is the point: "the device stopped
+/// talking" and "my answer did not arrive" call for different reactions, and
+/// collapsing them into one timeout is what made an unresponsive device look
+/// like a hang.
+enum WaitOutcome {
+    /// The waiter was satisfied.
+    Fired,
+    /// The budget expired with the device still talking.
+    TimedOut,
+    /// Nothing arrived at all for this many seconds.
+    Silent(u64),
+}
+
 /// Hard upper bound on reassembled body size. A legitimate message never
 /// reaches this (the `ModelRepo` reply, ~47 KB, is the largest observed).
 const MAX_MESSAGE_BODY: usize = 1 << 20; // 1 MiB
@@ -353,6 +394,46 @@ impl Session {
         Ok(())
     }
 
+    /// Block until the waiter fires, the budget expires, or the device goes
+    /// quiet.
+    ///
+    /// Polls in short slices rather than sleeping out the whole budget, so
+    /// silence is noticed while it is happening rather than at the end.
+    /// Purely observational: this sends NOTHING. Re-sending on this path was
+    /// measured at roughly 3.5x worse - see roadmap PROT-008.5 before
+    /// reaching for a retry here.
+    ///
+    /// Before the FIRST message of a session there is nothing to compare
+    /// against, so the check stays disabled until the device has been heard
+    /// from once. Otherwise every fresh session would look dead for its
+    /// opening seconds, and `Version` is answered without a handshake, so a
+    /// session opened only to ask for it may legitimately have heard nothing
+    /// yet.
+    fn wait_or_silence(&self, event: &(Mutex<bool>, Condvar), timeout: Duration) -> WaitOutcome {
+        let deadline = Instant::now() + timeout;
+        let (lock, cvar) = event;
+        let mut fired = lock.lock().unwrap();
+        while !*fired {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return WaitOutcome::TimedOut;
+            }
+            let slice = SILENCE_POLL.min(remaining);
+            let (guard, _) = cvar.wait_timeout(fired, slice).unwrap();
+            fired = guard;
+            if *fired {
+                break;
+            }
+            if self.has_heard_from_device() {
+                let silent = self.seconds_since_last_message();
+                if silent >= SILENCE_LIMIT.as_secs() {
+                    return WaitOutcome::Silent(silent);
+                }
+            }
+        }
+        WaitOutcome::Fired
+    }
+
     /// Send a message and block until the matching reply arrives. Correlates
     /// by message type first, `request_id` as consistency check.
     ///
@@ -384,16 +465,17 @@ impl Session {
         // Send.
         self.send(message_type, payload)?;
 
-        // Wait for the event or timeout.
-        let (lock, cvar) = &*event;
-        let result = lock.lock().unwrap();
-        if *result {
-            drop(result);
-        } else {
-            let (result, timeout_res) = cvar.wait_timeout(result, timeout).unwrap();
-            if !*result {
-                drop(result);
-                // Timed out. Check if the RX thread already popped the entry.
+        // Wait for the reply, the budget, or the device going quiet.
+        match self.wait_or_silence(&event, timeout) {
+            WaitOutcome::Fired => {}
+            WaitOutcome::Silent(seconds) => {
+                // Retire the waiter: nothing is coming, and leaving it
+                // registered would strand it for the life of the session.
+                self.shared.pending.lock().unwrap().remove(&request_id);
+                return Err(crate::Error::DeviceSilent(seconds));
+            }
+            WaitOutcome::TimedOut => {
+                // Check whether the RX thread already popped the entry.
                 let delivered_by_rx = self
                     .shared
                     .pending
@@ -403,6 +485,7 @@ impl Session {
                     .is_none();
                 if delivered_by_rx {
                     // The RX thread is committed to delivering; wait a grace.
+                    let (lock, cvar) = &*event;
                     let result = lock.lock().unwrap();
                     if !*result {
                         let (result, _) = cvar.wait_timeout(result, DELIVERY_GRACE).unwrap();
@@ -413,7 +496,6 @@ impl Session {
                 } else {
                     return Err(crate::Error::ReadTimeout(timeout));
                 }
-                let _ = timeout_res;
             }
         }
 
@@ -450,23 +532,24 @@ impl Session {
             .push(waiter.clone());
         trigger();
 
-        // Wait.
-        let (lock, cvar) = &*event;
-        let result = lock.lock().unwrap();
-        if *result {
-            drop(result);
-        } else {
-            let (result, _) = cvar.wait_timeout(result, timeout).unwrap();
-            if !*result {
-                drop(result);
-                // Timed out; remove the waiter.
+        // Wait for a match, the budget, or the device going quiet.
+        let outcome = self.wait_or_silence(&event, timeout);
+        if !matches!(outcome, WaitOutcome::Fired) {
+            // Retire the waiter first, so it cannot collect a late broadcast
+            // that nobody is waiting for.
+            {
                 let mut waiters = self.shared.type_waiters.lock().unwrap();
                 waiters.retain(|w| !Arc::ptr_eq(w, &waiter));
-                if waiter.slot.lock().unwrap().is_some() {
-                    return Ok(waiter.slot.lock().unwrap().take().unwrap());
-                }
-                return Err(crate::Error::ReadTimeout(timeout));
             }
+            // A match can still have landed in the race window between the
+            // wait giving up and the waiter being retired.
+            if let Some(message) = waiter.slot.lock().unwrap().take() {
+                return Ok(message);
+            }
+            return match outcome {
+                WaitOutcome::Silent(seconds) => Err(crate::Error::DeviceSilent(seconds)),
+                _ => Err(crate::Error::ReadTimeout(timeout)),
+            };
         }
 
         let slot = waiter.slot.lock().unwrap().take();
@@ -709,6 +792,17 @@ impl Session {
         let last = self.shared.last_any_inbound_ms.load(Ordering::Relaxed);
         let now = u64::try_from(self.shared.started.elapsed().as_millis()).unwrap_or(u64::MAX);
         now.saturating_sub(last) / 1000
+    }
+
+    /// Whether anything has EVER been received on this session.
+    ///
+    /// [`Self::seconds_since_last_message`] measures from session start when
+    /// nothing has arrived yet, which reads as a long silence on a session
+    /// that is merely new. Anything deciding "is this device dead" must check
+    /// here first, or it will condemn every session in its opening seconds.
+    #[must_use]
+    pub fn has_heard_from_device(&self) -> bool {
+        self.shared.last_any_inbound_ms.load(Ordering::Relaxed) > 0
     }
 
     /// The `ModelRepo` payload captured during this session, if one has
