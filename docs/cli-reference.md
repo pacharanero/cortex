@@ -118,6 +118,10 @@ Options:
 
   -V, --version
           Print version
+
+Examples:
+  cortex session start
+  cortex session start   # foreground; append & to background it
 ```
 
 #### `cortex session status`
@@ -151,6 +155,9 @@ Options:
 
   -V, --version
           Print version
+
+Examples:
+  cortex session status
 ```
 
 #### `cortex session stop`
@@ -184,6 +191,9 @@ Options:
 
   -V, --version
           Print version
+
+Examples:
+  cortex session stop
 ```
 
 ### `cortex preset`
@@ -271,6 +281,10 @@ Options:
 
   -V, --version
           Print version
+
+Examples:
+  cortex preset list
+  cortex preset list --include-empty
 ```
 
 #### `cortex preset show`
@@ -320,6 +334,10 @@ Options:
 
   -V, --version
           Print version
+
+Examples:
+  cortex preset show --slot 1B
+  cortex preset show --slot 1B --params
 ```
 
 #### `cortex preset recall`
@@ -366,6 +384,9 @@ Options:
 
   -V, --version
           Print version
+
+Examples:
+  cortex preset recall --slot 2B
 ```
 
 ### `cortex setlist`
@@ -450,6 +471,10 @@ Options:
 
   -V, --version
           Print version
+
+Examples:
+  cortex setlist list
+  cortex setlist list --show-empty
 ```
 
 ### `cortex grid`
@@ -530,6 +555,10 @@ Options:
 
   -V, --version
           Print version
+
+Examples:
+  cortex grid show
+  cortex grid show --params
 ```
 
 ### `cortex block`
@@ -631,6 +660,11 @@ Options:
 
   -V, --version
           Print version
+
+Examples:
+  cortex block param --row 1 --column 2 --param GAIN --real 7.5
+  cortex block param --row 1 --column 2 --index 0 --value 0.75
+  cortex block param --row 1 --column 2 --param GAIN --value 0.9 --scene 2
 ```
 
 #### `cortex block bypass`
@@ -675,6 +709,10 @@ Options:
 
   -V, --version
           Print version
+
+Examples:
+  cortex block bypass --row 1 --column 2 --bypass   # bypass it
+  cortex block bypass --row 1 --column 2             # enable it
 ```
 
 #### `cortex block set`
@@ -729,6 +767,9 @@ Options:
 
   -V, --version
           Print version
+
+Examples:
+  cortex block set --row 1 --column 2 --model 1001   # find ids with: cortex catalog --search
 ```
 
 #### `cortex block remove`
@@ -770,6 +811,9 @@ Options:
 
   -V, --version
           Print version
+
+Examples:
+  cortex block remove --row 1 --column 2
 ```
 
 ### `cortex row`
@@ -850,6 +894,9 @@ Options:
 
   -V, --version
           Print version
+
+Examples:
+  cortex row input --row 1 --port 0
 ```
 
 #### `cortex row output`
@@ -893,6 +940,9 @@ Options:
 
   -V, --version
           Print version
+
+Examples:
+  cortex row output --row 1 --port 0
 ```
 
 #### `cortex row split`
@@ -941,6 +991,10 @@ Options:
 
   -V, --version
           Print version
+
+Examples:
+  cortex row split --row 1 --split 3 --mix 6   # branch at 3, rejoin at 6
+  cortex row split --row 1 --split -1 --mix -1  # clear the branch
 ```
 
 ### `cortex device`
@@ -1018,6 +1072,10 @@ Options:
 
   -V, --version
           Print version
+
+Examples:
+  cortex device version
+  cortex device version --format json
 ```
 
 #### `cortex device cpu`
@@ -1053,6 +1111,9 @@ Options:
 
   -V, --version
           Print version
+
+Examples:
+  cortex device cpu   # needs a running: cortex session start
 ```
 
 #### `cortex device probe`
@@ -1095,6 +1156,9 @@ Options:
 
   -V, --version
           Print version
+
+Examples:
+  cortex device probe
 ```
 
 ### `cortex scene`
@@ -1133,6 +1197,9 @@ Options:
 
   -V, --version
           Print version
+
+Examples:
+  cortex scene --index 2
 ```
 
 ### `cortex catalog`
@@ -1187,6 +1254,11 @@ Options:
 
   -V, --version
           Print version
+
+Examples:
+  cortex catalog --search plexi
+  cortex catalog --model 1001
+  cortex catalog --dump repo.bin
 ```
 
 ### `cortex decode-trace`
@@ -1232,6 +1304,10 @@ Options:
 
   -V, --version
           Print version
+
+Examples:
+  s/usb-decode traces/capture.pcapng          # the usual way
+  s/usb-decode --live                          # watch it happen
 ```
 
 ### `cortex completions`
@@ -1289,4 +1365,7 @@ Options:
 
   -V, --version
           Print version
+
+Examples:
+  cortex completions install
 ```

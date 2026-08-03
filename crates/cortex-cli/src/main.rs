@@ -158,6 +158,7 @@ enum Command {
     ///
     /// CHANGES WHAT IS HEARD. Nothing is saved.
     #[command(alias = "sc")]
+    #[command(after_help = "Examples:\n  cortex scene --index 2")]
     Scene {
         /// Scene number, 0-7 ZERO-BASED: 0 is scene A and 7 is scene H.
         /// The unit labels them A-H, so scene C is `--index 2`.
@@ -172,6 +173,9 @@ enum Command {
     ///
     /// Read-only.
     #[command(alias = "c")]
+    #[command(
+        after_help = "Examples:\n  cortex catalog --search plexi\n  cortex catalog --model 1001\n  cortex catalog --dump repo.bin"
+    )]
     Catalog {
         /// Case-insensitive substring to match against a model's name AND
         /// the gear it is based on, e.g. `marshall`, `tape echo`.
@@ -201,6 +205,9 @@ enum Command {
     ///
     /// Works on a capture of ANY client, which is the point: it is how a
     /// recording of Cortex Control gets read against our own schema.
+    #[command(
+        after_help = "Examples:\n  s/usb-decode traces/capture.pcapng          # the usual way\n  s/usb-decode --live                          # watch it happen"
+    )]
     DecodeTrace {
         /// Print only the summary line, not every message.
         #[arg(long)]
@@ -220,6 +227,7 @@ enum Command {
     ///
     /// `cortex completions <shell>` prints the script to stdout instead,
     /// which is the stable interface for packagers and unusual setups.
+    #[command(after_help = "Examples:\n  cortex completions install")]
     Completions {
         /// A shell to generate for, or `install` to install for your own.
         #[arg(value_enum)]
@@ -238,10 +246,15 @@ enum Command {
 #[derive(Subcommand, Debug)]
 enum SessionCmd {
     /// Open the session and serve other commands. Runs in the foreground.
+    #[command(
+        after_help = "Examples:\n  cortex session start\n  cortex session start   # foreground; append & to background it"
+    )]
     Start,
     /// Report whether a session is running, and whether the device answers.
+    #[command(after_help = "Examples:\n  cortex session status")]
     Status,
     /// Ask a running session to shut down, announcing the disconnect first.
+    #[command(after_help = "Examples:\n  cortex session stop")]
     Stop,
 }
 
@@ -251,6 +264,7 @@ enum PresetCmd {
     /// List the presets in a setlist, in slot order.
     ///
     /// Read-only: this does NOT change what is loaded on the grid.
+    #[command(after_help = "Examples:\n  cortex preset list\n  cortex preset list --include-empty")]
     List {
         /// Absolute device path of the setlist, e.g.
         /// `/media/p4/Presets/My Presets`. Run `cortex setlist list` to list them.
@@ -269,6 +283,9 @@ enum PresetCmd {
     /// CHANGES WHAT IS HEARD: there is no side-effect-free way to read a
     /// STORED preset - the device only emits a preset when it recalls one.
     /// Use `cortex probe` if you want the live grid without recalling.
+    #[command(
+        after_help = "Examples:\n  cortex preset show --slot 1B\n  cortex preset show --slot 1B --params"
+    )]
     Show {
         /// Slot name: bank number then letter, e.g. `1A`, `28C`.
         /// Bank is 1-32, letter A-H.
@@ -288,6 +305,7 @@ enum PresetCmd {
     ///
     /// CHANGES WHAT IS HEARD. Nothing is saved and no stored preset is
     /// modified, but the grid is replaced and any unsaved edits are lost.
+    #[command(after_help = "Examples:\n  cortex preset recall --slot 2B")]
     Recall {
         /// Slot name: bank number then letter, e.g. `1A`, `12H`, `28C`.
         /// Bank is 1-32 and letter is A-H, giving 256 slots per setlist.
@@ -314,6 +332,7 @@ enum SetlistCmd {
     /// wire, so this always waits the full window.
     ///
     /// Read-only.
+    #[command(after_help = "Examples:\n  cortex setlist list\n  cortex setlist list --show-empty")]
     List {
         /// Seconds to gather folder announcements.
         #[arg(long, value_name = "SECONDS", default_value = "20")]
@@ -336,6 +355,7 @@ enum GridCmd {
     /// editing: `cortex preset --slot X` reads a STORED slot and can only do
     /// so by recalling it, which discards unsaved edits and resets the
     /// active scene.
+    #[command(after_help = "Examples:\n  cortex grid show\n  cortex grid show --params")]
     Show {
         /// Seconds to wait for the grid.
         #[arg(long, value_name = "SECONDS", default_value = "15")]
@@ -358,6 +378,9 @@ enum BlockCmd {
     ///
     /// Rows are given as the unit LABELS them, 1-4, not the zero-based wire
     /// index. Use `cortex preset --slot <slot>` to see what is where.
+    #[command(
+        after_help = "Examples:\n  cortex block param --row 1 --column 2 --param GAIN --real 7.5\n  cortex block param --row 1 --column 2 --index 0 --value 0.75\n  cortex block param --row 1 --column 2 --param GAIN --value 0.9 --scene 2"
+    )]
     Param {
         /// Grid row as shown on the unit, 1-4.
         #[arg(long, value_name = "1-4")]
@@ -393,6 +416,9 @@ enum BlockCmd {
     /// Bypass or enable a block on the grid.
     ///
     /// CHANGES THE WORKING GRID. Nothing is saved.
+    #[command(
+        after_help = "Examples:\n  cortex block bypass --row 1 --column 2 --bypass   # bypass it\n  cortex block bypass --row 1 --column 2             # enable it"
+    )]
     Bypass {
         /// Grid row as shown on the unit, 1-4.
         #[arg(long, value_name = "1-4")]
@@ -411,6 +437,9 @@ enum BlockCmd {
     /// Verifies the device accepted it: a placement refused for want of DSP
     /// capacity is accepted on the wire and simply absent afterwards, with
     /// no error, so this waits for the device's echo naming the cell.
+    #[command(
+        after_help = "Examples:\n  cortex block set --row 1 --column 2 --model 1001   # find ids with: cortex catalog --search"
+    )]
     Set {
         /// Grid row as shown on the unit, 1-4.
         #[arg(long, value_name = "1-4")]
@@ -432,6 +461,7 @@ enum BlockCmd {
     /// Remove the block at a grid cell.
     ///
     /// CHANGES THE WORKING GRID. Nothing is saved.
+    #[command(after_help = "Examples:\n  cortex block remove --row 1 --column 2")]
     Remove {
         /// Grid row as shown on the unit, 1-4.
         #[arg(long, value_name = "1-4")]
@@ -448,6 +478,7 @@ enum RowCmd {
     /// Re-point a grid row's input.
     ///
     /// CHANGES THE WORKING GRID. Nothing is saved.
+    #[command(after_help = "Examples:\n  cortex row input --row 1 --port 0")]
     Input {
         /// Grid row as shown on the unit, 1-4.
         #[arg(long, value_name = "1-4")]
@@ -465,6 +496,7 @@ enum RowCmd {
     /// routing, while 19 (MULTIPLE) is a real output. The device does not
     /// validate this field, so a meaningless id is stored rather than
     /// rejected and reads back cleanly.
+    #[command(after_help = "Examples:\n  cortex row output --row 1 --port 0")]
     Output {
         /// Grid row as shown on the unit, 1-4.
         #[arg(long, value_name = "1-4")]
@@ -479,6 +511,9 @@ enum RowCmd {
     ///
     /// Only screen rows 1 and 3 can branch; their parallel lane is the row
     /// below. Rows 2 and 4 have no splitter and are refused.
+    #[command(
+        after_help = "Examples:\n  cortex row split --row 1 --split 3 --mix 6   # branch at 3, rejoin at 6\n  cortex row split --row 1 --split -1 --mix -1  # clear the branch"
+    )]
     Split {
         /// Grid row as shown on the unit. Must be 1 or 3.
         #[arg(long, value_name = "1|3")]
@@ -501,6 +536,9 @@ enum RowCmd {
 #[derive(Subcommand, Debug)]
 enum DeviceCmd {
     /// Read the device firmware version (CorOS, app, bootloader, zencoder).
+    #[command(
+        after_help = "Examples:\n  cortex device version\n  cortex device version --format json"
+    )]
     Version {
         /// Read via the session layer (background RX thread + correlated
         /// request) instead of the one-shot synchronous transport.
@@ -517,6 +555,9 @@ enum DeviceCmd {
     /// The device pushes this about once a second, but only to a client that
     /// has subscribed - so this needs a running `cortex session start`. A one-shot
     /// command uses a minimal handshake and never asks the device to push it.
+    #[command(
+        after_help = "Examples:\n  cortex device cpu   # needs a running: cortex session start"
+    )]
     Cpu,
     /// Run the connect handshake and report the state the device pushes back.
     ///
@@ -526,6 +567,7 @@ enum DeviceCmd {
     ///
     /// Read-only: the handshake sends READs and a connect announcement. It
     /// never writes preset data and never saves.
+    #[command(after_help = "Examples:\n  cortex device probe")]
     Probe {
         /// Extra seconds to hold the session open after the handshake before
         /// reading. The handshake already waits for the device to go quiet,
@@ -2117,6 +2159,86 @@ mod tests {
         // Catches conflicting args, bad defaults, and duplicate names at test
         // time rather than on first run.
         Cli::command().debug_assert();
+    }
+
+    /// Every `after_help` example must name a real command and real flags.
+    ///
+    /// Examples are the part of the help a reader copies verbatim, so a stale
+    /// one is worse than none - it fails in their terminal, not ours. They
+    /// cannot be generated, so this checks them instead.
+    #[test]
+    fn every_help_example_uses_a_real_command_and_flags() {
+        let root = Cli::command();
+
+        /// Longs accepted everywhere, which clap attaches at parse time
+        /// rather than listing on each subcommand.
+        const GLOBALS: [&str; 3] = ["--format", "--zero-based", "--help"];
+
+        /// Walk as far as the tokens name subcommands, then stop.
+        ///
+        /// Stopping matters: `cortex completions install` takes `install` as
+        /// a positional VALUE, not a subcommand, and a resolver insisting on
+        /// consuming every token would call a valid example broken.
+        fn resolve<'a>(root: &'a clap::Command, path: &[&str]) -> (&'a clap::Command, usize) {
+            let mut cmd = root;
+            let mut used = 0;
+            for step in path {
+                match cmd
+                    .get_subcommands()
+                    .find(|c| c.get_name() == *step || c.get_all_aliases().any(|a| a == *step))
+                {
+                    Some(next) => {
+                        cmd = next;
+                        used += 1;
+                    }
+                    None => break,
+                }
+            }
+            (cmd, used)
+        }
+
+        fn walk(root: &clap::Command, cmd: &clap::Command, failures: &mut Vec<String>) {
+            if let Some(after) = cmd.get_after_help() {
+                for line in after.to_string().lines() {
+                    let line = line.split('#').next().unwrap_or_default().trim();
+                    let Some(rest) = line.strip_prefix("cortex ") else {
+                        continue;
+                    };
+                    // Shell operators are not part of the command.
+                    let tokens: Vec<&str> = rest
+                        .split_whitespace()
+                        .take_while(|t| !matches!(*t, "&" | "|" | ">" | "&&"))
+                        .collect();
+                    let path: Vec<&str> = tokens
+                        .iter()
+                        .take_while(|t| !t.starts_with('-'))
+                        .copied()
+                        .collect();
+                    let (target, used) = resolve(root, &path);
+                    if used == 0 && !path.is_empty() {
+                        failures.push(format!("no such command: cortex {}", path.join(" ")));
+                        continue;
+                    }
+                    let longs: Vec<String> = target
+                        .get_arguments()
+                        .filter_map(|a| a.get_long().map(|l| format!("--{l}")))
+                        .collect();
+                    for flag in tokens.iter().filter(|t| t.starts_with("--")) {
+                        let flag = flag.trim_end_matches(|c: char| !c.is_ascii_alphanumeric());
+                        if !GLOBALS.contains(&flag) && !longs.iter().any(|l| l == flag) {
+                            failures.push(format!("cortex {}: no {flag}", path.join(" ")));
+                        }
+                    }
+                }
+            }
+            for sub in cmd.get_subcommands() {
+                walk(root, sub, failures);
+            }
+        }
+
+        let mut failures = Vec::new();
+        walk(&root, &root, &mut failures);
+        assert!(failures.is_empty(), "stale help examples: {failures:#?}");
     }
 
     #[test]
