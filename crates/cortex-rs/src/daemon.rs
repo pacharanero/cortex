@@ -165,10 +165,9 @@ pub enum DeviceHealth {
         coros_version: Option<String>,
         /// Seconds since anything was last received.
         ///
-        /// Informational only. A large value here does NOT mean the device
-        /// is in trouble: an idle session has been measured silent for 80+ s
-        /// while healthy, so there is no threshold that separates quiet from
-        /// dead. See roadmap PROT-008.6.4.
+        /// A healthy session reads 0 here even when idle, because the
+        /// device pushes continuously while it is being kept alive. A large
+        /// value means something is wrong. See roadmap PROT-008.6.4.
         last_message_seconds: u64,
     },
     /// The connection dropped and the daemon is trying to re-establish it.

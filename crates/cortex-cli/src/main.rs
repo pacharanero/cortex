@@ -874,10 +874,10 @@ fn connected() -> Result<(std::sync::Arc<cortex_rs::Session>, cortex_rs::QuadCor
 /// collision - the damage only showed up on the next request - which is what
 /// makes it worth refusing loudly here rather than hoping.
 ///
-/// The device also went silent at the same moment, but that is NOT the
-/// evidence: an idle session has since been measured silent for 80+ s while
-/// perfectly healthy (see roadmap PROT-008.6.4). The read failures are what
-/// establish this; the silence merely accompanied them.
+/// The device also went silent at the same moment. That looked like weak
+/// evidence for a while, because our own sessions were falling silent for
+/// unrelated reasons (too slow a keepalive, since fixed). The read failures
+/// are the sound part regardless.
 ///
 /// This is the CLI-side expression of the exclusive-access invariant in
 /// AGENTS.md: one owning process per device, not one connection per call.

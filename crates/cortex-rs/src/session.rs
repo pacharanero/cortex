@@ -39,8 +39,14 @@ use crate::transport::HID_REPORT_LEN;
 /// Captured on the wire against `CorOS` 4.0.1.
 const CC_VERSION: &str = "4.0.1";
 
-/// Default keepalive interval. Cortex Control pings every ~5 seconds.
-const DEFAULT_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(5);
+/// Default keepalive interval.
+///
+/// Measured from a capture of Cortex Control: 681 keepalives over 708 s, one
+/// every 1.04 s. This was previously 5 s, on a comment asserting that was
+/// what Cortex Control did - it is not, and the difference is not cosmetic.
+/// Our subscribed sessions fell silent after roughly 40 s idle while CC's
+/// never went quiet for more than 0.11 s over the same test.
+const DEFAULT_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(1);
 
 /// After a request wait times out, a reply can still land in the race window.
 /// Wait this long for the RX thread to finish delivering before declaring a
@@ -87,15 +93,11 @@ const SETTLE_MAX: Duration = Duration::from_secs(30);
 /// That was measured as a 30 s handshake on every command doing 9 ms of work,
 /// which is why the exclusion exists.
 ///
-/// **It is not always continuous, and we do not know what decides that.** A
-/// later run measured an idle subscribed session receiving nothing at all for
-/// 17 s, 30 s, and 80+ s while healthy. Both observations are real; the
-/// condition that switches between them has not been identified. So exclude
-/// these types from the settle - that reasoning holds either way, since the
-/// exclusion only ever costs a slightly earlier settle - but do not infer
-/// from this that inbound traffic is a reliable clock. See roadmap
-/// PROT-008.6.4, where a fail-fast built on that inference had to be
-/// withdrawn.
+/// It stops if the client stops earning it. Sessions that appeared to go
+/// quiet for 17 s, 30 s and 80+ s were sending keepalives only every 5 s; at
+/// the 1 s interval Cortex Control uses, the stream does not pause. The
+/// exclusion here is still right - a settle waiting for silence must ignore a
+/// clock - but the silence itself was ours. See roadmap PROT-008.6.4.
 ///
 /// Anything listed here is ignored when deciding whether the device has
 /// finished talking. It is still dispatched normally.
@@ -693,17 +695,15 @@ impl Session {
     /// Counts ALL inbound traffic, heartbeats included - unlike the settle
     /// logic, which deliberately ignores them.
     ///
-    /// **Not a liveness signal, despite appearances.** This was introduced
-    /// believing the device pushes a `GlobalTempo` heartbeat about every
-    /// 0.8 s, which would make a larger value conclusive. Measured on real
-    /// hardware, an idle subscribed session falls silent for long stretches
-    /// while perfectly healthy: traffic for roughly 10 s after the
-    /// handshake, then nothing for 17 s, 30 s, and 80+ s in successive runs.
-    /// A fail-fast built on a 5 s threshold abandoned requests the device
-    /// would have answered.
+    /// A healthy subscribed session is never quiet for long. Measured
+    /// against a keepalive of 1 s, this reads 0 throughout a 90 s idle; a
+    /// capture of Cortex Control shows its longest inbound gap at 0.11 s.
     ///
-    /// So treat this as an observation to report, not a verdict to act on.
-    /// See roadmap PROT-008.6.4 before building anything on it.
+    /// It was briefly believed that an idle session legitimately falls silent
+    /// for 80+ s, and a fail-fast was withdrawn on that basis. That silence
+    /// was our own doing - the keepalive interval was 5 s, and the device
+    /// stops pushing when they are that sparse. With that fixed, silence is a
+    /// usable signal again. See roadmap PROT-008.6.4.
     #[must_use]
     pub fn seconds_since_last_message(&self) -> u64 {
         let last = self.shared.last_any_inbound_ms.load(Ordering::Relaxed);

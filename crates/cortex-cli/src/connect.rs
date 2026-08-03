@@ -159,10 +159,9 @@ impl Daemon {
         Status {
             daemon_version: env!("CARGO_PKG_VERSION").to_string(),
             uptime_seconds: self.started.elapsed().as_secs(),
-            // Reported raw, with no verdict attached. An idle session has
-            // been measured silent for 80+ s while perfectly healthy, so
-            // there is no threshold here that would mean anything - see
-            // roadmap PROT-008.6.4.
+            // Reported raw. A verdict is now defensible - a healthy idle
+            // session reads 0 - but nothing acts on it yet; see roadmap
+            // PROT-008.6.4.
             device: DeviceHealth::Connected {
                 serial: None,
                 coros_version: None,
