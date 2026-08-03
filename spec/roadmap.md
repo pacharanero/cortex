@@ -279,7 +279,7 @@ The surface grew verb-first (`set-param`, `set-bypass`, `remove-block`) and shou
 
 ### CLI-004: Distribution
 
-- [ ] **CLI-004.1**: `s/version++` script - bump version across Cargo.toml in one release commit
+- [x] **CLI-004.1**: `s/version++` - bump the version, commit, and land it on `main`, choosing a direct push or a release PR by detecting branch protection. Adapted from the house-style example. Runs the full `s/lint` gate before the version moves, so a failed check leaves no half-bumped tree, and refuses on a dirty tree or off `main`. Does NOT tag: the workflow does that once the commit lands (CLI-004.2)
 - [ ] **CLI-004.2**: auto-tag workflow - version bump on main creates `v<x.y.z>` tag
 - [ ] **CLI-004.3**: crates.io publish workflow (PROT layers must be complete first)
 - [ ] **CLI-004.4**: cargo-dist release pipeline (archives + installers)

@@ -65,6 +65,20 @@ Regenerate `docs/cli-reference.md` from the CLI's own `--help`, so the reference
 
 - `s/docs-cli-reference`
 
+## `s/version++`
+
+Bump the version, commit, and land the release commit on `main`. **This pushes.**
+
+The landing *is* the release: the auto-tag workflow creates the tag once the commit reaches `main`. There is deliberately no `s/release` - a second script that also tagged was a source of divergence between repos.
+
+Runs the full `s/lint` gate before touching the version, so a failure leaves no half-bumped tree.
+
+- `s/version++` - patch bump (0.0.1 -> 0.0.2)
+- `s/version++ minor` / `s/version++ major`
+- `s/version++ --pr` - open a release PR instead of pushing to `main`
+
+Every crate takes `version.workspace = true`, so the single version in the root `Cargo.toml` is the only one to bump. When the Tauri app lands, its `package.json` and `tauri.conf.json` have to move in the same commit.
+
 ## `s/usb-trace`
 
 Record the USB traffic to and from the Quad Cortex, using `usbmon` on the Linux host.

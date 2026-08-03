@@ -1,0 +1,137 @@
+#!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Dr Marcus Baw
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# Bump the workspace version, commit, and land the release commit on main.
+#
+# The landing IS the release: the auto-tag workflow creates the tag once the
+# commit reaches main. There is deliberately no `s/release` - a second script
+# that also tagged and pushed was a source of divergence between repos.
+#
+# THIS PUSHES. On an unprotected repo it pushes to main directly; where branch
+# protection is detected it opens a release PR instead.
+#
+# Adapted from ~/code/house-style/examples/s/version++. Every crate in the
+# workspace takes `version.workspace = true`, so the single version in the root
+# Cargo.toml is the only one to bump. When the Tauri app lands, its
+# package.json and tauri.conf.json versions have to move in the same commit.
+
+set -euo pipefail
+cd "$(git rev-parse --show-toplevel)"
+
+bump="patch"
+mode="auto"
+
+usage() {
+	cat <<'EOF'
+Usage: s/version++ [patch|minor|major] [--direct|--pr]
+
+Creates chore(release): vX.Y.Z and lands it on main. This pushes.
+The auto-tag workflow creates the tag after the commit reaches main.
+
+  patch     0.0.1 -> 0.0.2   (default)
+  minor     0.0.1 -> 0.1.0
+  major     0.0.1 -> 1.0.0
+
+  --direct  push to main
+  --pr      open a release PR
+            (default: detect branch protection and choose)
+EOF
+}
+
+while (($#)); do
+	case "$1" in
+	patch | minor | major) bump="$1" ;;
+	--direct) mode="direct" ;;
+	--pr) mode="pr" ;;
+	-h | --help)
+		usage
+		exit 0
+		;;
+	*)
+		echo "Unknown argument: $1" >&2
+		usage >&2
+		exit 2
+		;;
+	esac
+	shift
+done
+
+# --- preflight ------------------------------------------------------------
+# Everything is checked before the version moves, so a failure leaves no
+# half-bumped tree to unpick.
+
+command -v cargo-set-version >/dev/null 2>&1 ||
+	{ echo "cargo-set-version is missing. Install it: cargo install cargo-edit" >&2; exit 1; }
+
+if [[ "$(git branch --show-current)" != "main" ]]; then
+	echo "Refusing to release: check out main first." >&2
+	exit 1
+fi
+if [[ -n "$(git status --porcelain)" ]]; then
+	echo "Refusing to release: the working tree is dirty." >&2
+	exit 1
+fi
+
+detect_landing_mode() {
+	if [[ "$mode" != "auto" ]]; then
+		echo "$mode"
+		return
+	fi
+	command -v gh >/dev/null 2>&1 || { echo "direct"; return; }
+	local repo
+	repo="$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || true)"
+	[[ -n "$repo" ]] || { echo "direct"; return; }
+	if gh api "repos/${repo}/branches/main/protection" >/dev/null 2>&1; then
+		echo "pr"
+	else
+		echo "direct"
+	fi
+}
+
+landing_mode="$(detect_landing_mode)"
+
+# The full local gate, not a subset. A release that skips a check the ordinary
+# workflow runs is how a repo ends up shipping something CI would have caught.
+echo "version++: running the full gate ..."
+s/lint
+
+# --- bump -----------------------------------------------------------------
+
+cargo set-version --bump "$bump"
+cargo generate-lockfile
+
+version="$(awk -F\" '/^version = / { print $2; exit }' Cargo.toml)"
+[[ -n "$version" ]] ||
+	{ echo "Could not read the version from Cargo.toml after the bump." >&2; exit 1; }
+
+# Only when the repo has adopted git-cliff; skipped silently otherwise so this
+# script works before that decision is made.
+if [[ -f cliff.toml ]]; then
+	git cliff --tag "v${version}" --output CHANGELOG.md
+fi
+
+if [[ "$landing_mode" == "pr" ]]; then
+	git switch -c "release/v${version}"
+fi
+
+git add Cargo.toml Cargo.lock
+[[ -f CHANGELOG.md ]] && git add CHANGELOG.md
+git commit -m "chore(release): v${version}"
+
+case "$landing_mode" in
+direct)
+	git push origin main
+	;;
+pr)
+	git push -u origin "release/v${version}"
+	gh pr create --base main --head "release/v${version}" \
+		--title "chore(release): v${version}" --body "Release v${version}."
+	;;
+*)
+	echo "Unknown landing mode: ${landing_mode}" >&2
+	exit 1
+	;;
+esac
+
+echo "version++: v${version} landed via ${landing_mode}. The workflow tags it."
