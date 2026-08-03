@@ -70,7 +70,7 @@ CORTEX="./target/release/cortex"
 	fail "no cortex binary built." "cargo build --release"
 
 FIELDS=(-T fields -e frame.time_relative -e usb.endpoint_address
-	-e usb.capdata -e usb.data_fragment)
+	-e usb.capdata -e usb.data_fragment -e usbhid.data)
 
 if [[ -n "$LIVE" ]]; then
 	LSUSB_LINE="$(lsusb -d "$VID_PID" 2>/dev/null | head -1 || true)"

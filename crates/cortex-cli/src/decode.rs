@@ -21,11 +21,13 @@ use cortex_rs::framing::{Frame, FrameReassembler};
 use cortex_rs::message::Message;
 use cortex_rs::proto::cortex_message_type::Enum as MessageType;
 
-/// Which way a report was travelling.
+/// One HID report: the report ID plus a 128-byte body.
 ///
-/// The two directions are reassembled separately. They interleave on the bus
-/// and share no sequence numbering, so a single reassembler would splice one
-/// side's FIRST onto the other's LAST and produce plausible nonsense.
+/// Fixed by the protocol, which is what lets a capture be cut into reports
+/// without trusting how the transfers were chopped up.
+const HID_REPORT_LEN: usize = 129;
+
+/// Which way a report was travelling.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Direction {
     /// Device to host: interrupt IN on endpoint 0x81.
@@ -43,6 +45,19 @@ impl Direction {
     }
 }
 
+/// Reassembly state for one direction.
+///
+/// The two directions are kept apart deliberately. They interleave on the bus
+/// and share no sequence numbering, so a single reassembler would splice one
+/// side's FIRST onto the other's LAST and produce plausible nonsense.
+#[derive(Default)]
+struct Stream {
+    /// Bytes seen but not yet consumed as whole reports.
+    buffer: Vec<u8>,
+    /// Reports fed into the current message, for the report count.
+    reports: usize,
+}
+
 /// Decode a stream of `tshark` field lines.
 ///
 /// Each line is tab-separated: relative time, endpoint address, then the two
@@ -57,12 +72,11 @@ impl Direction {
 /// skipped: a capture is a recording of reality, and reality includes noise
 /// from other devices and reports truncated by the end of the capture.
 pub fn decode_stream(reader: impl BufRead, quiet: bool) -> Result<()> {
-    let mut rx_in = FrameReassembler::new();
-    let mut rx_out = FrameReassembler::new();
-    let mut count_in = 0usize;
-    let mut count_out = 0usize;
+    let mut reassemblers = [FrameReassembler::new(), FrameReassembler::new()];
+    let mut streams = [Stream::default(), Stream::default()];
     let mut messages = 0usize;
     let mut skipped = 0usize;
+    let mut resyncs = 0usize;
 
     for line in reader.lines() {
         let line = line?;
@@ -71,14 +85,26 @@ pub fn decode_stream(reader: impl BufRead, quiet: bool) -> Result<()> {
             continue;
         };
         let endpoint = fields.next().unwrap_or_default();
-        let capdata = fields.next().unwrap_or_default();
-        let fragment = fields.next().unwrap_or_default();
 
-        let hex = if capdata.is_empty() {
-            fragment
-        } else {
-            capdata
-        };
+        // Three candidate payload fields, because which one holds the bytes
+        // depends on how much Wireshark worked out about the device:
+        //
+        // - `usb.data_fragment` for control transfers (the SET_REPORT writes)
+        // - `usbhid.data` once it has seen the descriptors and knows the
+        //   interface is HID, which it does when the capture includes the
+        //   device enumerating
+        // - `usb.capdata` when it does not, and the payload stays generic
+        //
+        // The same unit yields different fields in different captures, so
+        // taking whichever is populated is the only thing that reads both.
+        // Asking for one field and getting nothing is indistinguishable from
+        // a device that said nothing - which is exactly how a whole capture
+        // of the official client first appeared to be one-sided.
+        let hex = fields
+            .by_ref()
+            .take(3)
+            .find(|f| !f.is_empty())
+            .unwrap_or_default();
         if hex.is_empty() {
             continue;
         }
@@ -88,63 +114,86 @@ pub fn decode_stream(reader: impl BufRead, quiet: bool) -> Result<()> {
         };
 
         // Endpoint 0x81 is the interrupt IN the device pushes on; anything
-        // else here is our own control write.
+        // else here is a control write from the host.
         let direction = if endpoint.trim() == "0x81" {
             Direction::In
         } else {
             Direction::Out
         };
-        let (reassembler, count) = match direction {
-            Direction::In => (&mut rx_in, &mut count_in),
-            Direction::Out => (&mut rx_out, &mut count_out),
-        };
+        let index = usize::from(direction == Direction::Out);
+        let stream = &mut streams[index];
+        let reassembler = &mut reassemblers[index];
 
-        let Ok(frame) = Frame::parse(&bytes) else {
-            skipped += 1;
-            continue;
-        };
-        *count += 1;
+        stream.buffer.extend_from_slice(&bytes);
 
-        match reassembler.feed(&frame) {
-            Ok(Some(body)) => {
-                let reports = *count;
-                *count = 0;
-                match Message::decode(&body) {
-                    Ok((msg, gzipped)) => {
-                        messages += 1;
-                        if !quiet {
-                            println!(
-                                "  {:9.3}  {}  {:<24} {:>7} B{}  {} report{}",
-                                time,
-                                direction.label(),
-                                type_name(msg.message_type),
-                                msg.body.len(),
-                                if gzipped { "  gzip" } else { "      " },
-                                reports,
-                                if reports == 1 { "" } else { "s" }
-                            );
+        // Cut the stream into fixed-size reports rather than trusting one
+        // transfer to hold exactly one report.
+        //
+        // It does when the host owns the device directly, but not when the
+        // unit is passed through to a VM: QEMU splits every 129-byte report
+        // into a 128-byte transfer plus a 1-byte transfer, so a per-transfer
+        // parser sees a truncated report followed by a stray byte and
+        // reassembles nothing at all. Buffering makes the split invisible and
+        // handles both shapes without having to know which produced the
+        // capture.
+        while stream.buffer.len() >= HID_REPORT_LEN {
+            // Resync if the stream is not on a report boundary, which happens
+            // whenever a capture starts mid-report. Dropping a byte at a time
+            // recovers alignment; assuming alignment would yield frames that
+            // parse cleanly and mean something else entirely.
+            if !matches!(stream.buffer[0], 0x01 | 0x02) {
+                stream.buffer.remove(0);
+                resyncs += 1;
+                continue;
+            }
+            let report: Vec<u8> = stream.buffer.drain(..HID_REPORT_LEN).collect();
+
+            let Ok(frame) = Frame::parse(&report) else {
+                skipped += 1;
+                continue;
+            };
+            stream.reports += 1;
+
+            match reassembler.feed(&frame) {
+                Ok(Some(body)) => {
+                    let reports = std::mem::take(&mut stream.reports);
+                    match Message::decode(&body) {
+                        Ok((msg, gzipped)) => {
+                            messages += 1;
+                            if !quiet {
+                                println!(
+                                    "  {:9.3}  {}  {:<24} {:>7} B{}  {} report{}",
+                                    time,
+                                    direction.label(),
+                                    type_name(msg.message_type),
+                                    msg.body.len(),
+                                    if gzipped { "  gzip" } else { "      " },
+                                    reports,
+                                    if reports == 1 { "" } else { "s" }
+                                );
+                            }
                         }
-                    }
-                    Err(e) => {
-                        skipped += 1;
-                        if !quiet {
-                            println!("  {time:9.3}  {}  <undecodable: {e}>", direction.label());
+                        Err(e) => {
+                            skipped += 1;
+                            if !quiet {
+                                println!("  {time:9.3}  {}  <undecodable: {e}>", direction.label());
+                            }
                         }
                     }
                 }
-            }
-            Ok(None) => {}
-            Err(_) => {
-                // A partial message interrupted by the start of another. Most
-                // often the capture began mid-message.
-                reassembler.reset();
-                *count = 0;
-                skipped += 1;
+                Ok(None) => {}
+                Err(_) => {
+                    // A partial message interrupted by the start of another,
+                    // most often because the capture began mid-message.
+                    reassembler.reset();
+                    stream.reports = 0;
+                    skipped += 1;
+                }
             }
         }
     }
 
-    eprintln!("decoded {messages} messages ({skipped} reports skipped)");
+    eprintln!("decoded {messages} messages ({skipped} skipped, {resyncs} resync bytes)");
     Ok(())
 }
 
@@ -193,7 +242,7 @@ mod tests {
     #[test]
     fn odd_length_hex_is_rejected_rather_than_truncated() {
         // Truncating would silently shift every subsequent byte, producing a
-        // frame that parses but means something else entirely.
+        // frame that parses but means something else.
         assert_eq!(parse_hex("012"), None);
         assert_eq!(parse_hex(""), None);
     }
@@ -203,5 +252,29 @@ mod tests {
         // 9999 is not in the recovered schema. The number is the useful part
         // when reading a capture of a client we do not control.
         assert_eq!(type_name(9999), "<unknown 9999>");
+    }
+
+    #[test]
+    fn a_report_split_across_transfers_still_decodes() {
+        // The case that matters for a VM capture: QEMU delivers a 129-byte
+        // report as 128 bytes plus 1 byte. Split across lines, the decoder
+        // must still see one report.
+        let mut report = [0u8; HID_REPORT_LEN];
+        report[0] = 0x01; // report ID
+        report[2] = 0xC0; // FIRST | LAST
+        // Payload is an 8-byte trailer and no body, so the type tag is the
+        // two zero bytes at its start.
+        report[1] = 8;
+
+        let first = hex(&report[..128]);
+        let rest = hex(&report[128..]);
+        let input = format!("1.0\t0x81\t{first}\t\n1.1\t0x81\t{rest}\t\n");
+
+        // Decoding must not error, and must consume both halves as one report.
+        decode_stream(input.as_bytes(), true).unwrap();
+    }
+
+    fn hex(bytes: &[u8]) -> String {
+        bytes.iter().map(|b| format!("{b:02x}")).collect()
     }
 }
