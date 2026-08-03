@@ -81,7 +81,13 @@ command -v dumpcap >/dev/null 2>&1 ||
 	fail "dumpcap is not installed (it ships with the Wireshark CLI tools)." \
 		"sudo pacman -S wireshark-cli"
 
-if ! lsmod | grep -q '^usbmon'; then
+# Read /proc/modules directly rather than piping lsmod into grep.
+#
+# `lsmod | grep -q` is wrong under `set -o pipefail`: grep -q exits the moment
+# it matches, lsmod then dies of SIGPIPE and reports 141, pipefail promotes
+# that to the pipeline's status, and the test concludes "not loaded" BECAUSE
+# it matched. It fails only on success, which is the hardest way round.
+if ! grep -q '^usbmon ' /proc/modules; then
 	fail "the usbmon kernel module is not loaded." \
 		"sudo modprobe usbmon" \
 		"" \
@@ -116,14 +122,17 @@ if [[ ! -r "/dev/${IFACE}" ]]; then
 	# cap_net_raw and cap_net_admin say nothing about permission to open a
 	# root-owned character device. It needs a udev rule, or root.
 	fail "/dev/${IFACE} is not readable by $(whoami) (usbmon nodes are 0600 root:root)." \
-		"One-off, simplest:" \
+		"One-off:" \
 		"  sudo dumpcap -i ${IFACE} -w traces/trace.pcapng" \
 		"" \
-		"Persistent, so this script works unprivileged:" \
-		"  sudo tee /etc/udev/rules.d/99-usbmon.rules <<<'SUBSYSTEM==\"usbmon\", GROUP=\"wireshark\", MODE=\"0640\"'" \
-		"  sudo usermod -aG wireshark \$USER" \
+		"Persistent, so this script works unprivileged, and effective immediately:" \
+		"  sudo tee /etc/udev/rules.d/99-usbmon.rules <<<'SUBSYSTEM==\"usbmon\", GROUP=\"wheel\", MODE=\"0640\"'" \
 		"  sudo udevadm control --reload && sudo modprobe -r usbmon && sudo modprobe usbmon" \
-		"Then log out and back in for the group to take effect."
+		"" \
+		"Group 'wheel' rather than the conventional 'wireshark' on purpose:" \
+		"you are already in wheel, so it needs no re-login, and wheel already" \
+		"has sudo - it can read this traffic regardless. Use 'wireshark'" \
+		"instead if this account should NOT have blanket capture rights."
 fi
 
 # --- capture --------------------------------------------------------------
