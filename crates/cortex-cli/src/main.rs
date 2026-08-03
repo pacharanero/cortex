@@ -189,6 +189,12 @@ enum Command {
         #[arg(long, value_name = "SECONDS", default_value = "40")]
         timeout: u64,
     },
+    /// Show the unit's live DSP load.
+    ///
+    /// The device pushes this about once a second, but only to a client that
+    /// has subscribed - so this needs a running `cortex connect`. A one-shot
+    /// command uses a minimal handshake and never asks the device to push it.
+    Cpu,
     /// Decode a USB capture into Cortex Control messages.
     ///
     /// Reads `tshark` field output on standard input and prints one line per
@@ -485,6 +491,7 @@ fn run(cli: Cli) -> Result<()> {
         }) => cmd_recall(&slot, &setlist, factory, fmt),
         Some(Command::Scene { index }) => cmd_scene(index, fmt),
         Some(Command::Connect { status, stop }) => cmd_connect(status, stop, fmt),
+        Some(Command::Cpu) => cmd_cpu(fmt),
         Some(Command::DecodeTrace { quiet }) => {
             decode::decode_stream(std::io::stdin().lock(), quiet)
         }
@@ -1832,6 +1839,11 @@ fn cmd_connect(status: bool, stop: bool, fmt: Format) -> Result<()> {
             }
             if let Some(device) = v.get("device") {
                 println!("device: {}", device.get("state").unwrap_or(device));
+                for (label, key) in [("serial", "serial"), ("coros_version", "coros_version")] {
+                    if let Some(value) = device.get(key).and_then(serde_json::Value::as_str) {
+                        println!("{label}: {value}");
+                    }
+                }
                 if let Some(since) = device.get("last_message_seconds") {
                     println!("last_message_seconds: {since}");
                 }
@@ -1946,6 +1958,26 @@ mod tests {
 // serialising whatever the protobuf types happen to look like. A prost type
 // is a wire representation; this is an interface.
 // ---------------------------------------------------------------------------
+
+/// One grid column's share of the DSP load.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct CpuColumnOut {
+    /// Load for this column, as the device reports it.
+    load: f32,
+    /// Whether this column runs on the unit's second DSP core. The QC splits
+    /// the grid across two cores, and which core a block lands on is why an
+    /// apparently identical preset can fit or not.
+    on_core2: bool,
+}
+
+/// The unit's DSP load, total and broken down by chain and column.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct CpuLoadOut {
+    /// Total load across both cores, if the device reported one.
+    total: Option<f32>,
+    /// Per chain, then per column within that chain.
+    chains: Vec<Vec<CpuColumnOut>>,
+}
 
 /// Device firmware and identity, as reported by a `Version` READ.
 ///
@@ -2172,6 +2204,59 @@ struct CatalogSummaryOut {
 struct ActionOut {
     action: String,
     detail: String,
+}
+
+/// Reshape a `CPULoad` push into the documented output type.
+fn cpu_load(v: &cortex_rs::proto::CpuLoadMessage) -> CpuLoadOut {
+    CpuLoadOut {
+        total: v.cpu_total_load.as_ref().map(|t| {
+            let cortex_rs::proto::cpu_load_message::CpuTotalLoad::CpuTotalLoad(x) = t;
+            *x
+        }),
+        chains: v
+            .chains
+            .iter()
+            .map(|c| {
+                c.columns
+                    .iter()
+                    .map(|col| CpuColumnOut {
+                        load: col.cpu_load,
+                        on_core2: col.is_on_core2,
+                    })
+                    .collect()
+            })
+            .collect(),
+    }
+}
+
+/// Show the unit's live DSP load.
+fn cmd_cpu(fmt: Format) -> Result<()> {
+    let Some(result) = connect::request(&cortex_rs::Request::CpuLoad) else {
+        anyhow::bail!(
+            "no `cortex connect` session is running.\n\
+             The device only pushes CPU load to a subscribed client, so this \
+             needs a held session: start one with `cortex connect`."
+        );
+    };
+    let parsed: CpuLoadOut = serde_json::from_value(result?)?;
+    emit(&parsed, fmt, |c| {
+        if let Some(total) = c.total {
+            println!("total: {total:.1}%");
+        }
+        for (i, chain) in c.chains.iter().enumerate() {
+            if chain.is_empty() {
+                continue;
+            }
+            let cells: Vec<String> = chain
+                .iter()
+                .map(|col| format!("{:>5.1}{}", col.load, if col.on_core2 { "*" } else { " " }))
+                .collect();
+            println!("row {}: {}", i + 1, cells.join(" "));
+        }
+        if c.chains.iter().any(|ch| ch.iter().any(|c| c.on_core2)) {
+            println!("(* = second DSP core)");
+        }
+    })
 }
 
 /// Pull the informational fields out of a `VersionMessage`.

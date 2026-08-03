@@ -89,6 +89,11 @@ pub enum Request {
     },
     /// The device model catalog.
     Catalog,
+    /// The most recent CPU load pushed by the device.
+    ///
+    /// Only meaningful on a subscribed session, which is the daemon's: a
+    /// one-shot `Minimal` session never asks the device to push this.
+    CpuLoad,
     /// Ask the daemon to shut down, announcing the disconnect first.
     Shutdown,
 }

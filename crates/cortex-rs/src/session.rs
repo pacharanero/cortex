@@ -30,7 +30,8 @@ use crate::proto::cortex_message_type::Enum as MessageType;
 use crate::proto::message_action::Enum as MessageAction;
 use crate::proto::reset_comms_buffers_message::SessionId as RcbSessionId;
 use crate::proto::{
-    ConnectionMessage, KeepAliveMessage, ModelRepoMessage, ResetCommsBuffersMessage, VersionMessage,
+    ConnectionMessage, CpuLoadMessage, KeepAliveMessage, ModelRepoMessage,
+    ResetCommsBuffersMessage, VersionMessage,
 };
 use crate::transport::HID_REPORT_LEN;
 
@@ -168,6 +169,10 @@ macro_rules! trace {
 /// The 22 state types the device requires a READ for before it starts pushing.
 const SUBSCRIBE_TYPES: &[MessageType] = &[
     MessageType::ModuleStats,
+    // Cortex Control subscribes to this and we did not. It is what drives a
+    // live CPU% display: the device then pushes total load plus a per-column
+    // breakdown flagged by DSP core.
+    MessageType::CpuLoad,
     MessageType::License,
     MessageType::UndoRedo,
     MessageType::IoSettings,
@@ -297,6 +302,18 @@ struct Shared {
     /// settle can tell "still dumping state" from "quiet". For liveness the
     /// heartbeat is precisely the signal we want.
     last_any_inbound_ms: AtomicU64,
+    /// The most recent `CPULoad` push.
+    ///
+    /// Latest-wins rather than accumulated: this is a live gauge, and a
+    /// reading from ten seconds ago is not worth keeping.
+    cpu_load: Mutex<Option<CpuLoadMessage>>,
+    /// The device's own `Version`, read during the handshake.
+    ///
+    /// Cached because the handshake asks for it anyway, and because a caller
+    /// asking later would race the handshake's own announce: `Version` READ
+    /// replies carry no `request_id`, so there is no way to tell one from the
+    /// other on the wire.
+    device_version: Mutex<Option<VersionMessage>>,
     /// The `ModelRepo` payload, captured from whichever reply arrives first.
     ///
     /// The handshake asks for this anyway - it is load-bearing - so a caller
@@ -340,6 +357,8 @@ impl Session {
             last_inbound_ms: AtomicU64::new(0),
             last_any_inbound_ms: AtomicU64::new(0),
             started: Instant::now(),
+            cpu_load: Mutex::new(None),
+            device_version: Mutex::new(None),
             model_repo: Mutex::new(None),
         });
 
@@ -663,7 +682,41 @@ impl Session {
         let _ = self.request(MessageType::ResetCommsBuffers, &payload, rid, timeout)?;
         trace!("handshake 1/6: reply received");
 
-        // 2. Version UPDATE announcing cortex_control_version.
+        // 2. Version READ, before announcing our own.
+        //
+        // Cortex Control does this, and the ordering earns its keep twice
+        // over: it gets the device's identity into the session while nothing
+        // else is competing for the reply, and it removes the race that made
+        // a later `Version` READ unreliable - those replies carry no
+        // `request_id`, so our own announce is indistinguishable from a
+        // device reply to anyone waiting on the type alone.
+        //
+        // Costs about 0.7 s, measured against Cortex Control doing the same.
+        progress("reading device version");
+        trace!("handshake 2/7: Version READ");
+        let read = encode_read_message(MessageType::Version);
+        match self.await_broadcast(
+            MessageType::Version,
+            || {
+                let _ = self.send(MessageType::Version, &read);
+            },
+            timeout,
+            |m| !m.body.is_empty(),
+        ) {
+            Ok(reply) => match prost::Message::decode(reply.body.as_ref()) {
+                Ok(v) => {
+                    let v: VersionMessage = v;
+                    trace!("handshake 2/7: device version received");
+                    *self.shared.device_version.lock().unwrap() = Some(v);
+                }
+                Err(e) => trace!("handshake 2/7: version undecodable: {e}"),
+            },
+            // Not fatal. The identity is a convenience; the handshake's job
+            // is to get the device pushing, and it can do that without this.
+            Err(e) => trace!("handshake 2/7: no version reply ({e})"),
+        }
+
+        // 3. Version UPDATE announcing cortex_control_version.
         let version_msg = VersionMessage {
             action: MessageAction::Update as i32,
             cortex_control_version: Some(
@@ -803,6 +856,24 @@ impl Session {
     #[must_use]
     pub fn has_heard_from_device(&self) -> bool {
         self.shared.last_any_inbound_ms.load(Ordering::Relaxed) > 0
+    }
+
+    /// The most recent CPU load pushed by the device, if any has arrived.
+    ///
+    /// Only populated on a SUBSCRIBED session: the device pushes this because
+    /// the handshake asked it to, and a `Minimal` session never does.
+    #[must_use]
+    pub fn cpu_load(&self) -> Option<CpuLoadMessage> {
+        self.shared.cpu_load.lock().unwrap().clone()
+    }
+
+    /// The device's `Version` as read during the handshake, if it answered.
+    ///
+    /// `None` on a session that never handshook - `Version` is answered
+    /// without one, so those sessions exist - or if the device did not reply.
+    #[must_use]
+    pub fn device_version(&self) -> Option<VersionMessage> {
+        self.shared.device_version.lock().unwrap().clone()
     }
 
     /// The `ModelRepo` payload captured during this session, if one has
@@ -1072,6 +1143,14 @@ fn dispatch(msg: &InboundMessage, shared: &Shared) {
             }
         }
     }
+    // Keep the latest CPU load, so a caller can read it without waiting for
+    // the next push - which may be up to a second away.
+    if msg.message_type == MessageType::CpuLoad {
+        if let Ok(load) = prost::Message::decode(msg.body.as_ref()) {
+            let load: CpuLoadMessage = load;
+            *shared.cpu_load.lock().unwrap() = Some(load);
+        }
+    }
     // Liveness counts everything: a heartbeat is exactly what tells us the
     // link is still up.
     shared.last_any_inbound_ms.store(
@@ -1160,7 +1239,8 @@ fn dispatch(msg: &InboundMessage, shared: &Shared) {
     }
 }
 
-/// The background keepalive loop: send KeepAlive{UPDATE} every 5 seconds.
+/// The background keepalive loop: send KeepAlive{UPDATE} every
+/// [`DEFAULT_KEEPALIVE_INTERVAL`].
 fn keepalive_loop(device: Arc<Mutex<hidapi::HidDevice>>, shared: Arc<Shared>) {
     while shared.running.load(Ordering::Relaxed) {
         // Sleep in short slices rather than one 5 s block. `stop()` joins
@@ -1193,6 +1273,16 @@ fn keepalive_loop(device: Arc<Mutex<hidapi::HidDevice>>, shared: Arc<Shared>) {
         let payload = prost::Message::encode_to_vec(&msg);
         let reports = encode_message(MessageType::KeepAlive as u16, &payload);
         let _wlock = shared.write_lock.lock().unwrap();
+        // Announce the write like any other, so the RX loop stands aside.
+        //
+        // This loop takes the locks itself rather than going through
+        // `Session::send`, and so was left out when writer starvation was
+        // fixed everywhere else. The cost was quiet but real: keepalives
+        // configured at 1 s went out every ~2.3 s, because each one queued
+        // behind a reader that reacquires the device lock the instant it lets
+        // go. Keepalive spacing is not cosmetic - the device stops pushing
+        // state when they are too sparse.
+        let _intent = WriteIntent::new(&shared.writers_waiting);
         let device = device.lock().unwrap();
         for report in &reports {
             let _ = device.write(report);
@@ -1279,6 +1369,8 @@ mod correlation_tests {
             last_inbound_ms: AtomicU64::new(0),
             last_any_inbound_ms: AtomicU64::new(0),
             started: Instant::now(),
+            cpu_load: Mutex::new(None),
+            device_version: Mutex::new(None),
             model_repo: Mutex::new(None),
         }
     }

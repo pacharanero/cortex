@@ -274,6 +274,36 @@ Options:
           Print version
 ```
 
+### `cortex cpu`
+
+Show the unit's live DSP load.
+
+```text
+Show the unit's live DSP load.
+
+The device pushes this about once a second, but only to a client that has subscribed - so this needs a running `cortex connect`. A one-shot command uses a minimal handshake and never asks the device to push it.
+
+Usage: cortex cpu [OPTIONS]
+
+Options:
+      --format <FORMAT>
+          Output format. `text` is for humans; `json` is for scripts and agents, and is stable enough to parse.
+          
+          Only the RESULT changes format. Progress, warnings, and errors always go to stderr as plain text, so `cortex presets --format json | jq` gets clean JSON regardless.
+
+          Possible values:
+          - text: Human-readable, the default
+          - json: Machine-readable JSON
+          
+          [default: text]
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+  -V, --version
+          Print version
+```
+
 ### `cortex decode-trace`
 
 Decode a USB capture into Cortex Control messages.

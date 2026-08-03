@@ -81,12 +81,23 @@ impl Daemon {
             // Answer in the same shape the direct path emits, so a caller
             // cannot tell whether it went through the daemon. A `{:?}` dump
             // of the protobuf would have been a second, worse format.
-            Request::Version => self.respond(|c| {
-                c.version(REQUEST_TIMEOUT).and_then(|v| {
-                    serde_json::to_value(crate::device_version(&v))
-                        .map_err(|e| cortex_rs::Error::Decode(format!("DeviceVersion: {e}")))
-                })
-            }),
+            //
+            // Served from the handshake's own READ where possible. That is
+            // not merely faster: asking again would race the handshake's
+            // announce, because `Version` READ replies carry no `request_id`
+            // and a waiter matching on type alone cannot tell them apart.
+            Request::Version => match self.session.device_version() {
+                Some(v) => match serde_json::to_value(crate::device_version(&v)) {
+                    Ok(value) => Response::Ok { data: value },
+                    Err(e) => Response::error(format!("DeviceVersion: {e}")),
+                },
+                None => self.respond(|c| {
+                    c.version(REQUEST_TIMEOUT).and_then(|v| {
+                        serde_json::to_value(crate::device_version(&v))
+                            .map_err(|e| cortex_rs::Error::Decode(format!("DeviceVersion: {e}")))
+                    })
+                }),
+            },
             Request::ActiveScene => {
                 self.respond(|c| c.active_scene(REQUEST_TIMEOUT).map(serde_json::Value::from))
             }
@@ -137,6 +148,17 @@ impl Daemon {
                     })
                 })
             }),
+            Request::CpuLoad => match self.session.cpu_load() {
+                Some(load) => match serde_json::to_value(crate::cpu_load(&load)) {
+                    Ok(value) => Response::Ok { data: value },
+                    Err(e) => Response::error(format!("CpuLoad: {e}")),
+                },
+                None => Response::error(
+                    "no CPU load received yet - the device pushes it about once a second \
+                     after subscribing"
+                        .to_string(),
+                ),
+            },
             // Handled by the caller, which needs to stop the accept loop.
             Request::Shutdown => Response::ok(&serde_json::json!({ "stopping": true }))
                 .unwrap_or_else(|e| Response::error(format!("{e}"))),
@@ -156,6 +178,12 @@ impl Daemon {
     }
 
     fn status(&self) -> Status {
+        // From the handshake's Version READ. Absent only if the device did
+        // not answer it, which is not fatal - the session still works.
+        let identity = self
+            .session
+            .device_version()
+            .map(|v| crate::device_version(&v));
         Status {
             daemon_version: env!("CARGO_PKG_VERSION").to_string(),
             uptime_seconds: self.started.elapsed().as_secs(),
@@ -163,8 +191,8 @@ impl Daemon {
             // session reads 0 - but nothing acts on it yet; see roadmap
             // PROT-008.6.4.
             device: DeviceHealth::Connected {
-                serial: None,
-                coros_version: None,
+                serial: identity.as_ref().and_then(|d| d.serial_number.clone()),
+                coros_version: identity.as_ref().and_then(|d| d.coros_version.clone()),
                 last_message_seconds: self.session.seconds_since_last_message(),
             },
             cache: CacheStatus {
