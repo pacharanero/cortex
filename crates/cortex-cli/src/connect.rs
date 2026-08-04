@@ -229,6 +229,10 @@ impl Daemon {
                 c.save_current_preset(&setlist, &slot, name.as_deref(), REQUEST_TIMEOUT)
                     .map(|()| serde_json::json!({ "saved": slot }))
             }),
+            Request::DeletePreset { setlist, name } => self.respond(move |c| {
+                c.delete_preset(&setlist, &name, REQUEST_TIMEOUT)
+                    .map(|()| serde_json::json!({ "deleted": name }))
+            }),
             Request::CpuLoad => match self.session.cpu_load() {
                 Some(load) => match serde_json::to_value(crate::cpu_load(&load)) {
                     Ok(value) => Response::Ok { data: value },

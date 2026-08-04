@@ -707,8 +707,15 @@ impl QuadCortex {
     /// - `Some(name)` - save-as into an empty slot, or rename an occupied
     ///   one. The device does not distinguish those two.
     ///
+    /// **The device may not store the name you asked for.** On a collision
+    /// within the setlist it de-duplicates: the base is truncated and a
+    /// `_N` suffix appended, to 20 characters total. A unique name is stored
+    /// verbatim and is not length-limited. If the stored name matters, read
+    /// the slot back and use what the device reports.
+    ///
     /// Measured from a capture of Cortex Control on `CorOS` 4.0.1; see
-    /// `docs/protocol.md`.
+    /// `docs/protocol.md`. The rename-on-collision behaviour is corroborated
+    /// by `pyquadcortex` (MIT), which documents the same.
     ///
     /// # Errors
     ///
@@ -761,6 +768,65 @@ impl QuadCortex {
 
         // Wait for the acknowledging File reply rather than firing and
         // hoping. This is the one operation where "did it land" matters.
+        self.session.await_broadcast(
+            MessageType::File,
+            || {
+                let _ = self.session.send(MessageType::File, &payload);
+            },
+            timeout,
+            |m| !m.body.is_empty(),
+        )?;
+        Ok(())
+    }
+
+    /// Delete a preset from a setlist, by name.
+    ///
+    /// **Destructive and not undoable on the device.**
+    ///
+    /// Addressed by device FILE PATH, not by slot index - the opposite of
+    /// [`Self::save_current_preset`], which addresses its target by slot. The
+    /// path is the setlist key, the preset name, and a `.pb` extension. That
+    /// asymmetry is the device's, not ours, and getting it the wrong way
+    /// round silently does nothing.
+    ///
+    /// Because it is name-addressed, deleting depends on knowing the stored
+    /// name - which a save may have altered on collision. List the setlist
+    /// and use the name the device reports.
+    ///
+    /// Measured from a capture of Cortex Control on `CorOS` 4.0.1, and
+    /// corroborated by `pyquadcortex` (MIT), which documents the same shape.
+    ///
+    /// # Errors
+    ///
+    /// [`crate::Error::NotFound`] if `setlist` is the factory library, and
+    /// [`crate::Error::ReadTimeout`] if the device does not acknowledge.
+    pub fn delete_preset(&self, setlist: &str, name: &str, timeout: Duration) -> crate::Result<()> {
+        if is_factory_setlist(setlist) {
+            return Err(crate::Error::NotFound(format!(
+                "{setlist} is the factory library and is not writable"
+            )));
+        }
+
+        let entry = crate::proto::ProductData {
+            key: Some(crate::proto::product_data::Key::Key(format!(
+                "{setlist}/{name}.pb"
+            ))),
+            ..Default::default()
+        };
+        let folder = crate::proto::FolderInfo {
+            key: Some(crate::proto::folder_info::Key::Key(setlist.to_string())),
+            is_factory: Some(crate::proto::folder_info::IsFactory::IsFactory(false)),
+            files: vec![entry],
+            ..Default::default()
+        };
+        let request = FileMessage {
+            action: MessageAction::Delete as i32,
+            r#type: Some(crate::proto::file_message::Type::Type(0)),
+            folder: Some(crate::proto::file_message::Folder::Folder(folder)),
+            ..Default::default()
+        };
+        let payload = prost::Message::encode_to_vec(&request);
+
         self.session.await_broadcast(
             MessageType::File,
             || {

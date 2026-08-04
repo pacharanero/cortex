@@ -165,6 +165,13 @@ pub enum Request {
         /// New name, or `None` to keep the slot's existing one.
         name: Option<String>,
     },
+    /// Delete a preset by name. **Destructive.**
+    DeletePreset {
+        /// Absolute device path of the setlist.
+        setlist: String,
+        /// The preset's stored name, as the device reports it.
+        name: String,
+    },
     /// The most recent CPU load pushed by the device.
     ///
     /// Only meaningful on a subscribed session, which is the daemon's: a

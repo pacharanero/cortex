@@ -280,6 +280,24 @@ enum SessionCmd {
 /// Commands acting on presets.
 #[derive(Subcommand, Debug)]
 enum PresetCmd {
+    /// Delete a preset from a setlist, by name.
+    ///
+    /// WRITES TO THE UNIT, and there is no undo on the device.
+    ///
+    /// Addressed by NAME, not slot - the opposite of `save`. Use the name the
+    /// device reports in `cortex preset list`, which a save may have altered:
+    /// on a name collision the unit de-duplicates with a `_N` suffix.
+    ///
+    /// The factory library is refused.
+    #[command(after_help = "Examples:\n  cortex preset delete --name \"SCRATCH\"")]
+    Delete {
+        /// The preset's stored name, exactly as `cortex preset list` shows it.
+        #[arg(long, value_name = "NAME")]
+        name: String,
+        /// Absolute device path of the setlist.
+        #[arg(long, value_name = "PATH", default_value = cortex_rs::client::USER_SETLIST)]
+        setlist: String,
+    },
     /// Save the working grid into a slot.
     ///
     /// WRITES TO THE UNIT, and there is no undo on the device. It overwrites
@@ -669,6 +687,7 @@ fn run(cli: Cli) -> Result<()> {
             SessionCmd::Stop => cmd_connect(false, true, fmt),
         },
         Some(Command::Preset { command }) => match command {
+            PresetCmd::Delete { name, setlist } => cmd_preset_delete(&name, &setlist, fmt),
             PresetCmd::Save {
                 slot,
                 name,
@@ -1238,6 +1257,29 @@ fn cmd_preset_save(slot: &str, name: Option<&str>, setlist: &str, fmt: Format) -
     session.stop();
     result?;
     report_edit("save", detail, fmt)
+}
+
+/// Delete a preset by name.
+fn cmd_preset_delete(name: &str, setlist: &str, fmt: Format) -> Result<()> {
+    if cortex_rs::client::is_factory_setlist(setlist) {
+        anyhow::bail!("{setlist} is the factory library and is not writable");
+    }
+    let detail = format!("{name:?} from {setlist}");
+
+    if let Some(result) = connect::request(&cortex_rs::Request::DeletePreset {
+        setlist: setlist.to_string(),
+        name: name.to_string(),
+    }) {
+        result?;
+        return report_edit("delete", detail, fmt);
+    }
+
+    let (session, qc) = connected()?;
+    let result = qc.delete_preset(setlist, name, Duration::from_secs(20));
+    qc.disconnect();
+    session.stop();
+    result?;
+    report_edit("delete", detail, fmt)
 }
 
 /// Switch the active scene.
