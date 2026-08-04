@@ -215,6 +215,7 @@ Presets: list a setlist, show one, or load one onto the unit
 Usage: cortex preset [OPTIONS] <COMMAND>
 
 Commands:
+  save    Save the working grid into a slot
   list    List the presets in a setlist, in slot order
   show    Recall a slot and dump the preset it loads
   recall  Recall a preset by slot, making it the one loaded on the grid
@@ -242,6 +243,60 @@ Options:
 
   -V, --version
           Print version
+```
+
+#### `cortex preset save`
+
+Save the working grid into a slot.
+
+```text
+Save the working grid into a slot.
+
+WRITES TO THE UNIT, and there is no undo on the device. It overwrites whatever is in the slot.
+
+What gets saved is the working grid - whatever `cortex grid show` reports - not a preset you name. Omit --name to keep the slot's existing name; give one to save into an empty slot or rename an occupied one.
+
+The factory library is refused.
+
+Usage: cortex preset save [OPTIONS] --slot <BANK+LETTER>
+
+Options:
+      --slot <BANK+LETTER>
+          Target slot: bank number then letter, e.g. `2B`
+
+      --name <NAME>
+          Name to save under. Omit to keep the slot's existing name
+
+      --setlist <PATH>
+          Absolute device path of the setlist
+          
+          [default: "/media/p4/Presets/My Presets"]
+
+      --format <FORMAT>
+          Output format. `text` is for humans; `json` is for scripts and agents, and is stable enough to parse.
+          
+          Only the RESULT changes format. Progress, warnings, and errors always go to stderr as plain text, so `cortex preset list --format json | jq` gets clean JSON regardless.
+
+          Possible values:
+          - text: Human-readable, the default
+          - json: Machine-readable JSON
+          
+          [default: text]
+
+      --zero-based
+          Take `--row` as 0-3 rather than the 1-4 shown on the unit.
+          
+          The unit labels its rows 1-4 and the wire numbers them 0-3, so the default matches what a player sees. Scripts and agents generally have a zero-based index already, and converting it back by hand is exactly the sort of arithmetic that silently edits the wrong row.
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+  -V, --version
+          Print version
+
+Examples:
+  cortex preset save --slot 2B
+  cortex preset save --slot 2B --name "Lead Tone"
 ```
 
 #### `cortex preset list`

@@ -221,6 +221,14 @@ impl Daemon {
                 }
                 .map(|()| serde_json::json!({ "applied": true }))
             }),
+            Request::SavePreset {
+                setlist,
+                slot,
+                name,
+            } => self.respond(move |c| {
+                c.save_current_preset(&setlist, &slot, name.as_deref(), REQUEST_TIMEOUT)
+                    .map(|()| serde_json::json!({ "saved": slot }))
+            }),
             Request::CpuLoad => match self.session.cpu_load() {
                 Some(load) => match serde_json::to_value(crate::cpu_load(&load)) {
                     Ok(value) => Response::Ok { data: value },

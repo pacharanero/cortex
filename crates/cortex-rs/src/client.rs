@@ -66,6 +66,16 @@ pub const UNITY_LEVEL: f64 = 0.76923077;
 pub const BANKS: u32 = 32;
 /// 8 slots per bank (A through H).
 pub const SLOTS_PER_BANK: u32 = 8;
+/// Whether a setlist path is the read-only factory library.
+///
+/// Matched on the path rather than a caller-supplied flag, because a flag is
+/// something every surface has to remember to set, and this is the one place
+/// that must not be got wrong.
+#[must_use]
+pub fn is_factory_setlist(setlist: &str) -> bool {
+    setlist.starts_with("/opt/neuraldsp/")
+}
+
 /// Total slots per setlist (256).
 pub const SETLIST_SLOTS: u32 = BANKS * SLOTS_PER_BANK;
 
@@ -679,6 +689,87 @@ impl QuadCortex {
             ));
         };
         Ok(bytes)
+    }
+
+    /// Save the working grid into a slot.
+    ///
+    /// **Destructive.** This overwrites whatever is in the slot, and the
+    /// device offers no undo.
+    ///
+    /// Does NOT upload a preset: the message names a destination and the unit
+    /// commits whatever is in the working grid. What gets saved is what
+    /// `grid show` reports.
+    ///
+    /// `name` separates the three save-shaped operations Cortex Control
+    /// offers, which are one message on the wire:
+    ///
+    /// - `None` - save in place, keeping the slot's existing name.
+    /// - `Some(name)` - save-as into an empty slot, or rename an occupied
+    ///   one. The device does not distinguish those two.
+    ///
+    /// Measured from a capture of Cortex Control on `CorOS` 4.0.1; see
+    /// `docs/protocol.md`.
+    ///
+    /// # Errors
+    ///
+    /// [`crate::Error::InvalidSlot`] for a malformed slot,
+    /// [`crate::Error::NotFound`] if `setlist` is the factory library, and
+    /// [`crate::Error::ReadTimeout`] if the device does not acknowledge.
+    pub fn save_current_preset(
+        &self,
+        setlist: &str,
+        slot: &str,
+        name: Option<&str>,
+        timeout: Duration,
+    ) -> crate::Result<()> {
+        // Refused here rather than in each caller: the factory library is
+        // read-only on the unit, every surface would otherwise have to
+        // remember, and the cost of forgetting is someone's factory content.
+        if is_factory_setlist(setlist) {
+            return Err(crate::Error::NotFound(format!(
+                "{setlist} is the factory library and is not writable"
+            )));
+        }
+
+        let index = slot_to_position_checked(slot)
+            .ok_or_else(|| crate::Error::InvalidSlot(slot.to_string()))?;
+        let entry = crate::proto::ProductData {
+            index: Some(crate::proto::product_data::Index::Index(
+                i32::try_from(index).unwrap_or(i32::MAX),
+            )),
+            name: name.map(|n| crate::proto::product_data::Name::Name(n.to_string())),
+            // Carried because Cortex Control carries it. Its meaning is not
+            // established, so it is copied rather than reasoned about.
+            instrument: Some(crate::proto::product_data::Instrument::Instrument(1)),
+            ..Default::default()
+        };
+        let folder = crate::proto::FolderInfo {
+            key: Some(crate::proto::folder_info::Key::Key(setlist.to_string())),
+            is_factory: Some(crate::proto::folder_info::IsFactory::IsFactory(false)),
+            files: vec![entry],
+            ..Default::default()
+        };
+        let request = FileMessage {
+            // CREATE, not UPDATE, even when overwriting. Being 0, it does not
+            // appear on the wire at all.
+            action: MessageAction::Create as i32,
+            r#type: Some(crate::proto::file_message::Type::Type(0)),
+            folder: Some(crate::proto::file_message::Folder::Folder(folder)),
+            ..Default::default()
+        };
+        let payload = prost::Message::encode_to_vec(&request);
+
+        // Wait for the acknowledging File reply rather than firing and
+        // hoping. This is the one operation where "did it land" matters.
+        self.session.await_broadcast(
+            MessageType::File,
+            || {
+                let _ = self.session.send(MessageType::File, &payload);
+            },
+            timeout,
+            |m| !m.body.is_empty(),
+        )?;
+        Ok(())
     }
 
     /// Tell the device this client is going away. Sends
@@ -1410,5 +1501,64 @@ mod tests {
             ..Default::default()
         };
         assert!(!preset_has_block(&preset, 0, 0, 0));
+    }
+}
+
+#[cfg(test)]
+mod save_tests {
+    //! The guards on the one destructive operation.
+    //!
+    //! Both refusals happen before anything reaches the wire, so they can be
+    //! tested over a fake link - and they are worth testing precisely because
+    //! the failure mode is someone else's work being overwritten.
+
+    use super::*;
+    use crate::link::FakeLink;
+    use std::sync::{Arc, Mutex};
+
+    fn client() -> QuadCortex {
+        let device: Arc<Mutex<dyn crate::link::HidLink>> = Arc::new(Mutex::new(FakeLink::new()));
+        QuadCortex::new(Arc::new(
+            crate::Session::over(device).expect("session over a fake link"),
+        ))
+    }
+
+    #[test]
+    fn the_factory_library_is_recognised_by_path() {
+        assert!(is_factory_setlist("/opt/neuraldsp/Factory Library"));
+        assert!(!is_factory_setlist(USER_SETLIST));
+    }
+
+    #[test]
+    fn saving_to_the_factory_library_is_refused_before_it_reaches_the_wire() {
+        let qc = client();
+        let err = qc
+            .save_current_preset(
+                "/opt/neuraldsp/Factory Library",
+                "1A",
+                None,
+                Duration::from_millis(50),
+            )
+            .expect_err("the factory library must never be written to");
+        assert!(
+            matches!(err, crate::Error::NotFound(_)),
+            "expected a refusal naming the reason, got {err:?}"
+        );
+        qc.session.stop();
+    }
+
+    #[test]
+    fn a_malformed_slot_is_refused_rather_than_guessed_at() {
+        let qc = client();
+        // A wrong slot that was silently coerced would overwrite the wrong
+        // preset, which is the worst outcome this API has.
+        let err = qc
+            .save_current_preset(USER_SETLIST, "99Z", None, Duration::from_millis(50))
+            .expect_err("99Z is not a slot");
+        assert!(
+            matches!(err, crate::Error::InvalidSlot(_)),
+            "expected InvalidSlot, got {err:?}"
+        );
+        qc.session.stop();
     }
 }

@@ -213,6 +213,51 @@ pub fn decode_stream(reader: impl BufRead, quiet: bool, verbose: bool) -> Result
 /// Values are shown, not just counted, because the question this answers is
 /// usually "how does their request differ from ours".
 fn dump_fields(body: &[u8]) -> Vec<String> {
+    dump_fields_at(body, 0)
+}
+
+/// Whether a length-delimited value parses cleanly as a protobuf message.
+///
+/// A heuristic, and it has to be: the wire format does not distinguish a
+/// nested message from a string of the same bytes. Requiring a clean parse
+/// that consumes the whole value makes a false positive unlikely, and the
+/// cost of one is a confusing line rather than a wrong decode.
+fn looks_like_message(bytes: &[u8]) -> bool {
+    if bytes.is_empty() {
+        return false;
+    }
+    let mut i = 0usize;
+    while i < bytes.len() {
+        let Some((key, used)) = varint(&bytes[i..]) else {
+            return false;
+        };
+        i += used;
+        if key >> 3 == 0 {
+            return false; // field 0 is not valid
+        }
+        match key & 7 {
+            0 => match varint(&bytes[i..]) {
+                Some((_, used)) => i += used,
+                None => return false,
+            },
+            1 => i += 8,
+            2 => match varint(&bytes[i..]) {
+                Some((len, used)) => {
+                    i += used + usize::try_from(len).unwrap_or(usize::MAX);
+                }
+                None => return false,
+            },
+            5 => i += 4,
+            _ => return false,
+        }
+        if i > bytes.len() {
+            return false;
+        }
+    }
+    true
+}
+
+fn dump_fields_at(body: &[u8], depth: usize) -> Vec<String> {
     let mut out = Vec::new();
     let mut i = 0usize;
     while i < body.len() {
@@ -265,7 +310,17 @@ fn dump_fields(body: &[u8]) -> Vec<String> {
                     Ok(t) if t.chars().all(|c| !c.is_control()) && !t.is_empty() => {
                         out.push(format!("field {field}: \"{t}\""));
                     }
-                    _ => out.push(format!("field {field}: {len} bytes (nested or binary)")),
+                    // Recurse into anything that parses as a message. Nested
+                    // messages are where the answer usually is - a save names
+                    // its destination in a FolderInfo, and "47 bytes (nested)"
+                    // says nothing useful about which slot.
+                    _ if depth < 4 && looks_like_message(value) => {
+                        out.push(format!("field {field}: message ({len} bytes)"));
+                        for line in dump_fields_at(value, depth + 1) {
+                            out.push(format!("  {line}"));
+                        }
+                    }
+                    _ => out.push(format!("field {field}: {len} bytes (binary)")),
                 }
             }
             5 => {

@@ -172,6 +172,56 @@ Two traps in the capture itself, each of which makes a capture look one-sided ra
 
 Use the binary usbmon interface, via `dumpcap` or `tshark`. The text interface at `/sys/kernel/debug/usb/usbmon/<bus>u` truncates payload data, which drops bytes from the middle of a 128-byte body while still looking like a successful capture.
 
+## Saving, renaming and deleting a preset
+
+**Measured** from a capture of Cortex Control performing each operation, `CorOS` 4.0.1.
+
+All of them are `FileMessage` with a `FolderInfo` naming the setlist and a single `ProductData` naming the target. Two things are worth knowing before writing any of it:
+
+- **A save does not upload the preset.** It names a destination slot; the device commits whatever is in the working grid. Nothing carries `preset_payload`.
+- **Save uses `CREATE`, not `UPDATE`** - and the action field is *absent on the wire*, because `CREATE` is 0 and proto3 omits defaults. Saving over an existing preset is the same `CREATE`.
+
+### Save
+
+```text
+FileMessage {
+  action:  CREATE          // 0, so absent on the wire
+  type:    0
+  folder:  FolderInfo {
+    key:        "/media/p4/Presets/My Presets"
+    is_factory: false
+    files: [ ProductData {
+      index:      9        // linear slot, (bank - 1) * 8 + letter; 9 is 2B
+      name:       "SCRATCH"   // OMIT to keep the existing name
+      instrument: 1
+    } ]
+  }
+}
+```
+
+**Whether `name` is present is the whole difference between the three save-shaped operations.** Supplying it saves-as or renames; omitting it saves in place under the existing name. Cortex Control's "save", "save as" and "rename" all emit this message; only that field differs.
+
+### Delete
+
+```text
+FileMessage {
+  action: DELETE           // 2
+  type:   0
+  folder: FolderInfo {
+    key: "/media/p4/Presets/My Presets"
+    files: [ ProductData {
+      key: "/media/p4/Presets/My Presets/SCRATCH-RENAMED.pb"
+    } ]
+  }
+}
+```
+
+Delete addresses its target by **full path**, not by slot index - the opposite of save. A `.pb` extension is appended to the preset name.
+
+### Handling the reply
+
+Each of these is answered by a `File` reply, and a save is followed by a `RecallPreset` push carrying `reason: SAVE` (`RecallPresetReason.SAVE = 2`). That reason is the only thing distinguishing it from an ordinary recall, which matters for a client keeping a cache: a save changes the stored slot without the user having recalled anything.
+
 ## Correlation
 
 Replies are matched **by message type first**, with `request_id` as a consistency check:

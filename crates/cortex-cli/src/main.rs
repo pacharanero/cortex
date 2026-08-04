@@ -157,6 +157,7 @@ enum Command {
         #[command(subcommand)]
         command: DeviceCmd,
     },
+
     /// Switch the active scene.
     ///
     /// CHANGES WHAT IS HEARD. Nothing is saved.
@@ -279,6 +280,31 @@ enum SessionCmd {
 /// Commands acting on presets.
 #[derive(Subcommand, Debug)]
 enum PresetCmd {
+    /// Save the working grid into a slot.
+    ///
+    /// WRITES TO THE UNIT, and there is no undo on the device. It overwrites
+    /// whatever is in the slot.
+    ///
+    /// What gets saved is the working grid - whatever `cortex grid show`
+    /// reports - not a preset you name. Omit --name to keep the slot's
+    /// existing name; give one to save into an empty slot or rename an
+    /// occupied one.
+    ///
+    /// The factory library is refused.
+    #[command(
+        after_help = "Examples:\n  cortex preset save --slot 2B\n  cortex preset save --slot 2B --name \"Lead Tone\""
+    )]
+    Save {
+        /// Target slot: bank number then letter, e.g. `2B`.
+        #[arg(long, value_name = "BANK+LETTER")]
+        slot: String,
+        /// Name to save under. Omit to keep the slot's existing name.
+        #[arg(long, value_name = "NAME")]
+        name: Option<String>,
+        /// Absolute device path of the setlist.
+        #[arg(long, value_name = "PATH", default_value = cortex_rs::client::USER_SETLIST)]
+        setlist: String,
+    },
     /// List the presets in a setlist, in slot order.
     ///
     /// Read-only: this does NOT change what is loaded on the grid.
@@ -643,6 +669,11 @@ fn run(cli: Cli) -> Result<()> {
             SessionCmd::Stop => cmd_connect(false, true, fmt),
         },
         Some(Command::Preset { command }) => match command {
+            PresetCmd::Save {
+                slot,
+                name,
+                setlist,
+            } => cmd_preset_save(&slot, name.as_deref(), &setlist, fmt),
             PresetCmd::List {
                 setlist,
                 include_empty,
@@ -1170,6 +1201,43 @@ fn cmd_recall(slot: &str, setlist: &str, factory: bool, fmt: Format) -> Result<(
         detail: format!("{slot} in {setlist}"),
     };
     emit(&out, fmt, |o| println!("{}: {}", o.action, o.detail))
+}
+
+/// Save the working grid into a slot.
+fn cmd_preset_save(slot: &str, name: Option<&str>, setlist: &str, fmt: Format) -> Result<()> {
+    // Refused in the crate too, but saying so before opening a session gives
+    // a faster, clearer answer for the mistake most worth catching.
+    if cortex_rs::client::is_factory_setlist(setlist) {
+        anyhow::bail!("{setlist} is the factory library and is not writable");
+    }
+    // Validated before a session is opened. The crate refuses it too, but by
+    // then a typo has cost a handshake - and this is a destructive command,
+    // so the sooner a wrong slot is rejected the better.
+    if cortex_rs::client::slot_to_position_checked(slot).is_none() {
+        anyhow::bail!(
+            "{slot} is not a slot. Slots are a bank number 1-32 then a letter A-H, e.g. 2B"
+        );
+    }
+    let detail = match name {
+        Some(n) => format!("{slot} in {setlist} as {n:?}"),
+        None => format!("{slot} in {setlist}"),
+    };
+
+    if let Some(result) = connect::request(&cortex_rs::Request::SavePreset {
+        setlist: setlist.to_string(),
+        slot: slot.to_string(),
+        name: name.map(str::to_string),
+    }) {
+        result?;
+        return report_edit("save", detail, fmt);
+    }
+
+    let (session, qc) = connected()?;
+    let result = qc.save_current_preset(setlist, slot, name, Duration::from_secs(20));
+    qc.disconnect();
+    session.stop();
+    result?;
+    report_edit("save", detail, fmt)
 }
 
 /// Switch the active scene.

@@ -156,6 +156,15 @@ pub enum Request {
         /// The output port, if setting the output.
         output: Option<u32>,
     },
+    /// Save the working grid into a slot. **Destructive.**
+    SavePreset {
+        /// Absolute device path of the setlist.
+        setlist: String,
+        /// Target slot, e.g. `2B`.
+        slot: String,
+        /// New name, or `None` to keep the slot's existing one.
+        name: Option<String>,
+    },
     /// The most recent CPU load pushed by the device.
     ///
     /// Only meaningful on a subscribed session, which is the daemon's: a
