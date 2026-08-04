@@ -58,13 +58,23 @@ impl Daemon {
             started.elapsed().as_secs_f32()
         );
 
+        Ok(Self::over(session))
+    }
+
+    /// Build a daemon around an already-connected session.
+    ///
+    /// Separated from [`Self::connect`] so the request handling can be
+    /// exercised without a device: everything interesting here - the socket
+    /// protocol, the status shape, how a failed call is reported - is
+    /// independent of how the session was obtained.
+    fn over(session: Arc<Session>) -> Self {
         let client = QuadCortex::new(session.clone());
-        Ok(Self {
+        Self {
             session,
             client,
             started: Instant::now(),
             pushes: AtomicU64::new(0),
-        })
+        }
     }
 
     /// Handle one request.
@@ -379,7 +389,7 @@ pub fn run() -> Result<()> {
 }
 
 /// Whether the accept loop should continue.
-#[derive(PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 enum Control {
     Continue,
     Stop,
@@ -594,4 +604,141 @@ pub fn request(request: &Request) -> Option<Result<serde_json::Value>> {
             Response::Error { message } => anyhow::bail!("{message}"),
         }
     })())
+}
+
+#[cfg(test)]
+mod tests {
+    //! The daemon over a fake session.
+    //!
+    //! Everything here is independent of how the session was obtained: the
+    //! socket protocol, the shape of a status, and how a call that cannot be
+    //! answered is reported. Those were previously verified only by hand
+    //! against real hardware, which is why this file sat at 0% coverage
+    //! through several rewrites of its shutdown and readiness logic.
+    //!
+    //! Device-bound requests are deliberately absent: `REQUEST_TIMEOUT` is
+    //! 30 s, so a test that waited for one would trade half a minute for
+    //! nothing the fake can meaningfully assert.
+
+    use super::*;
+    use cortex_rs::link::{FakeLink, HidLink};
+    use std::net::Shutdown;
+
+    fn fake_daemon() -> Daemon {
+        let link = FakeLink::new();
+        let device: Arc<std::sync::Mutex<dyn HidLink>> = Arc::new(std::sync::Mutex::new(link));
+        Daemon::over(Arc::new(
+            Session::over(device).expect("session over a fake link"),
+        ))
+    }
+
+    /// A client sends a line; the daemon answers on the same connection.
+    fn round_trip(daemon: &Daemon, request: &Request) -> (Control, String) {
+        let (mut client, server) = UnixStream::pair().expect("socket pair");
+        let mut line = serde_json::to_string(request).expect("encode");
+        line.push('\n');
+        client.write_all(line.as_bytes()).expect("write");
+        client.shutdown(Shutdown::Write).expect("half close");
+
+        let control = serve(daemon, server);
+        let mut reply = String::new();
+        BufReader::new(client).read_line(&mut reply).expect("read");
+        (control, reply)
+    }
+
+    #[test]
+    fn status_is_answered_without_touching_the_device() {
+        let daemon = fake_daemon();
+        let Response::Ok { data } = daemon.handle(Request::Status) else {
+            panic!("status should always be answerable - it reads local state only");
+        };
+        assert!(data.get("daemon_version").is_some(), "status: {data}");
+        assert!(data.get("device").is_some(), "status: {data}");
+        assert!(data.get("cache").is_some(), "status: {data}");
+        daemon.session.stop();
+    }
+
+    #[test]
+    fn a_malformed_request_is_answered_rather_than_dropped() {
+        let daemon = fake_daemon();
+        let (mut client, server) = UnixStream::pair().expect("socket pair");
+        client.write_all(b"this is not json\n").expect("write");
+        client.shutdown(Shutdown::Write).expect("half close");
+
+        let control = serve(&daemon, server);
+        let mut reply = String::new();
+        BufReader::new(client).read_line(&mut reply).expect("read");
+
+        assert_eq!(
+            control,
+            Control::Continue,
+            "one bad client must not stop the daemon serving everyone else"
+        );
+        assert!(
+            reply.contains("error"),
+            "a bad request should get an error back, not silence: {reply}"
+        );
+        daemon.session.stop();
+    }
+
+    #[test]
+    fn a_shutdown_request_stops_the_accept_loop() {
+        let daemon = fake_daemon();
+        let (control, reply) = round_trip(&daemon, &Request::Shutdown);
+        assert_eq!(control, Control::Stop);
+        assert!(
+            reply.contains("stopping"),
+            "the client should be told it is stopping: {reply}"
+        );
+        daemon.session.stop();
+    }
+
+    #[test]
+    fn cpu_load_before_any_push_explains_itself() {
+        let daemon = fake_daemon();
+        let Response::Error { message } = daemon.handle(Request::CpuLoad) else {
+            panic!("a fake session has received no CPU load, so this cannot succeed");
+        };
+        // The first push lands about 8s after subscribing, so "nothing yet"
+        // is a normal state and has to read like one.
+        assert!(
+            message.contains("subscrib"),
+            "the error should say why there is nothing yet: {message}"
+        );
+        daemon.session.stop();
+    }
+
+    #[test]
+    fn one_connection_serves_several_requests() {
+        let daemon = fake_daemon();
+        let (mut client, server) = UnixStream::pair().expect("socket pair");
+        let mut line = serde_json::to_string(&Request::Status).expect("encode");
+        line.push('\n');
+        client.write_all(line.as_bytes()).expect("first");
+        client.write_all(line.as_bytes()).expect("second");
+        client.shutdown(Shutdown::Write).expect("half close");
+
+        serve(&daemon, server);
+
+        let reader = BufReader::new(client);
+        let replies = reader.lines().count();
+        assert_eq!(
+            replies, 2,
+            "a client may send several requests on one stream"
+        );
+        daemon.session.stop();
+    }
+
+    #[test]
+    fn a_blank_line_is_ignored_rather_than_answered() {
+        let daemon = fake_daemon();
+        let (mut client, server) = UnixStream::pair().expect("socket pair");
+        client.write_all(b"\n\n").expect("write");
+        client.shutdown(Shutdown::Write).expect("half close");
+
+        serve(&daemon, server);
+        let replies = BufReader::new(client).lines().count();
+        assert_eq!(replies, 0, "blank lines are keepalive noise, not requests");
+        daemon.session.stop();
+    }
 }
