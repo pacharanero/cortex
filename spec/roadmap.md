@@ -66,9 +66,7 @@ Complete. See [completed.md](completed.md).
 
 ### PROT-004: Domain model - core (zone 130)
 
-- [ ] **PROT-004.1**: `Preset` newtype wrapping `proto::BinaryPreset` with ergonomic field access
 - [~] **PROT-004.2**: `Grid`. The `Row` newtype exists (`from_wire` / `from_screen`, refusing screen row 0) and encodes the numbering trap. A read-side `Grid` view over a preset is still planned. NOTE: `grid.rs` is taken by the message builders, so the domain view needs another home
-- [ ] **PROT-004.3**: `Block` struct (row, column, model_id, params)
 - [ ] **PROT-004.4**: `Scene` struct (index, label, color, bypass state)
 - [~] **PROT-004.6**: Helpers. Done: `slot_to_position` (+ checked variant), `position_to_slot`, `input_level_db`, `db_to_input_level`, `preset_has_block`. Planned: `blocks()`, `splits()`, `free_rows()`, `row_status()`
 

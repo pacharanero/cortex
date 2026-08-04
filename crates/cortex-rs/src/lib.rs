@@ -61,6 +61,7 @@ pub mod framing;
 pub mod grid;
 pub mod link;
 pub mod message;
+pub mod view;
 
 #[cfg(feature = "hid")]
 pub mod catalog;

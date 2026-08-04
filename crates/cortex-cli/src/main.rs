@@ -17,6 +17,11 @@ use std::time::Duration;
 mod connect;
 mod decode;
 
+// The preset view types now live in the crate, so the GUI and the MCP server
+// get the same shapes rather than reimplementing them. Aliased to their old
+// names here to keep the printers below unchanged.
+use cortex_rs::view::{ParamValueKind, Preset as PresetOut};
+
 use anyhow::Result;
 use clap::{CommandFactory, Parser, Subcommand};
 use cortex_rs::proto::VersionMessage;
@@ -1211,7 +1216,7 @@ fn cmd_preset(slot: &str, setlist: &str, factory: bool, params: bool, fmt: Forma
     session.stop();
 
     let preset = result?;
-    let out = preset_out(&preset, catalog.as_ref(), slot, setlist, params);
+    let out = PresetOut::from_binary(&preset, catalog.as_ref(), slot, setlist, params);
     emit(&out, fmt, print_preset)
 }
 
@@ -1526,6 +1531,18 @@ fn wire_row(row: u32) -> Result<cortex_rs::Row> {
     Ok(cortex_rs::Row::from_screen(row)?)
 }
 
+/// Render a stored parameter value for a human.
+///
+/// The view keeps these as `f64` so an int value survives intact, but the
+/// exact decimal expansion of a float is noise to read - `0.14583329856395721`
+/// where `0.145833` says the same thing. JSON output is unaffected and keeps
+/// full precision.
+fn number(v: f64) -> String {
+    let s = format!("{v:.6}");
+    let s = s.trim_end_matches('0').trim_end_matches('.');
+    if s.is_empty() { "0".into() } else { s.into() }
+}
+
 /// Report a grid edit, in whichever format was asked for.
 fn report_edit(action: &str, detail: String, fmt: Format) -> Result<()> {
     let out = ActionOut {
@@ -1748,190 +1765,6 @@ fn cmd_remove_block(row: u32, column: u32, fmt: Format) -> Result<()> {
     report_edit("remove_block", detail, fmt)
 }
 
-/// Convert a preset into the output shape, naming blocks through the catalog.
-///
-/// Shared by `preset` (a STORED slot, which the device can only read by
-/// recalling it) and `grid` (the LIVE working copy, read with no side
-/// effects).
-fn preset_out(
-    preset: &cortex_rs::proto::BinaryPreset,
-    catalog: Option<&cortex_rs::Catalog>,
-    slot: &str,
-    setlist: &str,
-    with_params: bool,
-) -> PresetOut {
-    let name = preset
-        .name
-        .as_ref()
-        .map_or("<unnamed>", |n| {
-            let cortex_rs::proto::binary_preset::Name::Name(v) = n;
-            v.as_str()
-        })
-        .to_string();
-
-    let mut blocks = Vec::new();
-    for (row, chain) in preset.chains.iter().enumerate() {
-        for (column, model) in chain.models.iter().enumerate() {
-            // Every row reports 8 column slots; an empty one has no hash or a
-            // zero hash. Occupancy cannot be taken from models.len().
-            let Some(cortex_rs::proto::model::Hash::Hash(id)) = model.hash else {
-                continue;
-            };
-            if id == 0 {
-                continue;
-            }
-            let entry = catalog.and_then(|c| c.get(id));
-            blocks.push(BlockOut {
-                row,
-                // Rows are 0-based on the wire and 1-4 on screen; carrying
-                // both means a reader never has to remember which this is.
-                screen_row: row + 1,
-                column,
-                model_id: id,
-                name: entry.map(|m| m.name.clone()),
-                category: entry.map(|m| m.category.clone()),
-                based_on: entry.and_then(|m| m.based_on.clone()),
-                params: if with_params {
-                    block_params(model, entry)
-                } else {
-                    Vec::new()
-                },
-                bypass: cell_bypass(preset, row, column),
-            });
-        }
-    }
-
-    PresetOut {
-        slot: slot.to_string(),
-        setlist: setlist.to_string(),
-        name,
-        chains: preset.chains.len(),
-        rows: preset_rows(preset),
-        blocks,
-    }
-}
-
-/// Per-row routing and branch points.
-fn preset_rows(preset: &cortex_rs::proto::BinaryPreset) -> Vec<RowOut> {
-    use cortex_rs::proto::chain;
-    preset
-        .chains
-        .iter()
-        .enumerate()
-        .map(|(row, c)| {
-            // split_control_points has no protobuf presence, so read it
-            // directly. A split of -1 means "no branch"; a mix of -1 means a
-            // branch that never rejoins.
-            let split = c.split_control_points.first();
-            RowOut {
-                row,
-                screen_row: row + 1,
-                in_port: c.in_portid.as_ref().map(|p| {
-                    let chain::InPortid::InPortid(v) = p;
-                    *v
-                }),
-                out_port: c.out_portid.as_ref().map(|p| {
-                    let chain::OutPortid::OutPortid(v) = p;
-                    *v
-                }),
-                split_at: split.map(|s| s.split).filter(|v| *v >= 0),
-                mix_at: split.map(|s| s.mix).filter(|v| *v >= 0),
-            }
-        })
-        .collect()
-}
-
-/// The bypass entry for a cell, if the preset carries one.
-fn cell_bypass(
-    preset: &cortex_rs::proto::BinaryPreset,
-    row: usize,
-    column: usize,
-) -> Option<BypassOut> {
-    use cortex_rs::proto::{bypass, col_bypass};
-    for (bypass_index, entry) in preset.bypass.iter().enumerate() {
-        // Like models, row and column may arrive without presence, in which
-        // case position is the index.
-        let entry_row = entry.row.as_ref().map_or(bypass_index, |r| {
-            let bypass::Row::Row(v) = r;
-            *v as usize
-        });
-        if entry_row != row {
-            continue;
-        }
-        for (col_index, cb) in entry.col_bypass.iter().enumerate() {
-            let cb_col = cb.column.as_ref().map_or(col_index, |c| {
-                let col_bypass::Column::Column(v) = c;
-                *v as usize
-            });
-            if cb_col != column {
-                continue;
-            }
-            return Some(BypassOut {
-                row,
-                column,
-                scenes: cb.scene_bypass.iter().map(|sb| sb.bypass).collect(),
-                scene_mode: cb.scene_mode.as_ref().map(|m| {
-                    let col_bypass::SceneMode::SceneMode(v) = m;
-                    *v
-                }),
-            });
-        }
-    }
-    None
-}
-
-/// Read the stored parameter values off a block, naming them where the
-/// catalog can.
-///
-/// A stored preset omits the `index` on a parameter, in which case position
-/// in the repeated field IS the index - the same positional rule as the
-/// catalog. Only the first `param_values` entry is read: the device applies
-/// that one to the active scene and ignores any beyond it.
-fn block_params(
-    model: &cortex_rs::proto::Model,
-    catalog_entry: Option<&cortex_rs::Model>,
-) -> Vec<ParamValueOut> {
-    use cortex_rs::proto::{param, param_value};
-    let mut out = Vec::new();
-    for (position, p) in model.params.iter().enumerate() {
-        let index = p.index.as_ref().map_or_else(
-            || u32::try_from(position).unwrap_or_default(),
-            |i| {
-                let param::Index::Index(v) = i;
-                *v
-            },
-        );
-        let read = |pv: &cortex_rs::proto::ParamValue| match &pv.value {
-            Some(param_value::Value::FloatValue(v)) => Some(ParamValueKind::Number(*v)),
-            Some(param_value::Value::StringValue(v)) => Some(ParamValueKind::Text(v.clone())),
-            Some(param_value::Value::IntValue(v)) => {
-                Some(ParamValueKind::Number(f64::from(*v) as f32))
-            }
-            None => None,
-        };
-        let Some(value) = p.param_values.first().and_then(&read) else {
-            continue;
-        };
-        // A scene-following parameter stores one value per scene. Showing
-        // only the first hides exactly the difference a per-scene edit makes.
-        let per_scene: Vec<ParamValueKind> = if p.param_values.len() > 1 {
-            p.param_values.iter().filter_map(&read).collect()
-        } else {
-            Vec::new()
-        };
-        let name = catalog_entry
-            .and_then(|m| m.parameters.get(index as usize))
-            .map(|p| p.name.clone());
-        out.push(ParamValueOut {
-            index,
-            name,
-            value,
-            per_scene,
-        });
-    }
-    out
-}
-
 /// Human-readable rendering of a preset's grid.
 fn print_preset(o: &PresetOut) {
     println!("slot: {}", o.slot);
@@ -1992,7 +1825,9 @@ fn print_preset(o: &PresetOut) {
                     .clone()
                     .unwrap_or_else(|| format!("param {}", p.index));
                 match &p.value {
-                    ParamValueKind::Number(v) => print!("      {:>3}  {label:<18} {v}", p.index),
+                    ParamValueKind::Number(v) => {
+                        print!("      {:>3}  {label:<18} {}", p.index, number(*v));
+                    }
                     ParamValueKind::Text(v) => print!("      {:>3}  {label:<18} {v:?}", p.index),
                 }
                 if !p.per_scene.is_empty() {
@@ -2000,7 +1835,7 @@ fn print_preset(o: &PresetOut) {
                         .per_scene
                         .iter()
                         .map(|v| match v {
-                            ParamValueKind::Number(n) => format!("{n}"),
+                            ParamValueKind::Number(n) => number(*n),
                             ParamValueKind::Text(t) => format!("{t:?}"),
                         })
                         .collect();
@@ -2048,7 +1883,7 @@ fn cmd_grid(timeout: u64, params: bool, fmt: Format) -> Result<()> {
     session.stop();
 
     let preset = result?;
-    let out = preset_out(
+    let out = PresetOut::from_binary(
         &preset,
         catalog.as_ref(),
         "(live grid)",
@@ -2390,87 +2225,6 @@ struct DeviceVersion {
     is_ess: Option<bool>,
 }
 
-/// One block on the grid, resolved through the catalog where possible.
-#[derive(serde::Serialize)]
-struct BlockOut {
-    /// Zero-based wire row. The unit labels rows 1-4.
-    row: usize,
-    /// The row as the unit displays it.
-    screen_row: usize,
-    /// Zero-based column.
-    column: usize,
-    model_id: u32,
-    /// `None` when the catalog could not be fetched.
-    name: Option<String>,
-    category: Option<String>,
-    /// Neural DSP's own attribution, verbatim. Never paraphrase it.
-    based_on: Option<String>,
-    /// Parameter values as stored, when asked for. Empty otherwise.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    params: Vec<ParamValueOut>,
-    /// Bypass state, when the preset carried one for this cell.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    bypass: Option<BypassOut>,
-}
-
-/// One stored parameter value on a block.
-#[derive(serde::Serialize)]
-struct ParamValueOut {
-    /// The wire index, which is what `set-param --index` takes.
-    index: u32,
-    /// The parameter name, when the catalog could resolve it.
-    name: Option<String>,
-    /// The stored value. A parameter can hold a string rather than a number.
-    ///
-    /// For a scene-following parameter the device stores one value PER
-    /// SCENE, so see `per_scene` for the rest.
-    value: ParamValueKind,
-    /// Every stored value, when the parameter carries more than one - which
-    /// is how a scene-following parameter is represented. Empty otherwise.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    per_scene: Vec<ParamValueKind>,
-}
-
-/// What a stored parameter value actually is.
-#[derive(serde::Serialize)]
-#[serde(untagged)]
-enum ParamValueKind {
-    /// A normalised 0..1 float.
-    Number(f32),
-    /// A string, e.g. a microphone selection.
-    Text(String),
-}
-
-/// A preset and the blocks it holds.
-#[derive(serde::Serialize)]
-struct PresetOut {
-    slot: String,
-    setlist: String,
-    name: String,
-    chains: usize,
-    /// Per-row input/output routing and branch points.
-    rows: Vec<RowOut>,
-    blocks: Vec<BlockOut>,
-}
-
-/// One grid row's routing.
-#[derive(serde::Serialize)]
-struct RowOut {
-    /// Zero-based wire row.
-    row: usize,
-    /// The row as the unit displays it.
-    screen_row: usize,
-    /// Input port id feeding this row, if set.
-    in_port: Option<u32>,
-    /// Output port id this row feeds, if set. Values 16-18 are internal
-    /// row-to-row routing rather than jacks; 19 (MULTIPLE) is a real output.
-    out_port: Option<u32>,
-    /// Column at which the row branches, or None. Only rows 0 and 2 can.
-    split_at: Option<i32>,
-    /// Column at which a branch rejoins. None means it never does.
-    mix_at: Option<i32>,
-}
-
 /// The result of a `probe` run.
 #[derive(serde::Serialize)]
 struct ProbeOut {
@@ -2530,18 +2284,6 @@ struct ParameterOut {
     /// A meter is a live measurement, not a setting; writing to it is
     /// meaningless.
     read_only: bool,
-}
-
-/// A block's bypass state, per scene.
-#[derive(serde::Serialize)]
-struct BypassOut {
-    row: usize,
-    column: usize,
-    /// Bypass state for each stored scene slot, in order. A block that does
-    /// not follow scenes carries the same value in all eight.
-    scenes: Vec<bool>,
-    /// Whether the block follows scenes. Not host-writable.
-    scene_mode: Option<bool>,
 }
 
 impl From<&cortex_rs::Parameter> for ParameterOut {
