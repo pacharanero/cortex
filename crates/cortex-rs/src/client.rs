@@ -37,6 +37,7 @@ use std::time::Duration;
 
 #[cfg(feature = "hid")]
 use crate::DeviceKind;
+use crate::catalog::{Parameter, ParameterKind};
 use crate::grid::{Row, Value};
 use crate::proto::cortex_message_type::Enum as MessageType;
 use crate::proto::message_action::Enum as MessageAction;
@@ -264,6 +265,65 @@ fn normalised_value(value: f32) -> crate::Result<Value> {
         )));
     }
     Ok(Value::Normalised(value))
+}
+
+/// Resolve a named parameter's typed input into its wire value.
+fn parameter_value(parameter: &Parameter, input: ParameterInput) -> crate::Result<Value> {
+    match (parameter.kind, input) {
+        (ParameterKind::Str, ParameterInput::Text(value)) => Ok(Value::Text(value)),
+        (
+            ParameterKind::Float
+            | ParameterKind::Int
+            | ParameterKind::Switch
+            | ParameterKind::Fader,
+            ParameterInput::Normalised(value),
+        ) => normalised_value(value),
+        (
+            ParameterKind::Float
+            | ParameterKind::Int
+            | ParameterKind::Switch
+            | ParameterKind::Fader,
+            ParameterInput::Real(value),
+        ) => {
+            if !value.is_finite() {
+                return Err(crate::Error::InvalidParameter(format!(
+                    "real-unit values must be finite, got {value}"
+                )));
+            }
+            let normalised = parameter.to_normalised(value).ok_or_else(|| {
+                crate::Error::InvalidParameter(format!(
+                    "{} has a placeholder range ({}..{}); use a normalised value",
+                    parameter.name, parameter.min, parameter.max
+                ))
+            })?;
+            #[allow(clippy::cast_possible_truncation)]
+            normalised_value(normalised as f32)
+        }
+        (ParameterKind::Meter, _) => Err(crate::Error::InvalidParameter(format!(
+            "{} is a live meter, not a setting",
+            parameter.name
+        ))),
+        (ParameterKind::Str, _) => Err(crate::Error::InvalidParameter(format!(
+            "{} is a string parameter; use text input",
+            parameter.name
+        ))),
+        (
+            ParameterKind::Float
+            | ParameterKind::Int
+            | ParameterKind::Switch
+            | ParameterKind::Fader,
+            ParameterInput::Text(_),
+        ) => Err(crate::Error::InvalidParameter(format!(
+            "{} is a numeric parameter; use a normalised or real-unit value",
+            parameter.name
+        ))),
+        (ParameterKind::Empty | ParameterKind::Unknown, _) => {
+            Err(crate::Error::InvalidParameter(format!(
+                "{} has unsupported parameter type {:?}",
+                parameter.name, parameter.kind
+            )))
+        }
+    }
 }
 
 /// How a block placement was confirmed.
@@ -1190,32 +1250,7 @@ impl QuadCortex {
                         names.join(", ")
                     ))
                 })?;
-                if parameter.kind.is_read_only() {
-                    return Err(crate::Error::InvalidParameter(format!(
-                        "{}'s {} is a live meter, not a setting",
-                        model.name, parameter.name
-                    )));
-                }
-                let value = match input {
-                    ParameterInput::Normalised(value) => normalised_value(value)?,
-                    ParameterInput::Text(value) => Value::Text(value),
-                    ParameterInput::Real(value) => {
-                        if !value.is_finite() {
-                            return Err(crate::Error::InvalidParameter(format!(
-                                "real-unit values must be finite, got {value}"
-                            )));
-                        }
-                        let normalised = parameter.to_normalised(value).ok_or_else(|| {
-                            crate::Error::InvalidParameter(format!(
-                                "{}'s {} has a placeholder range ({}..{}); use a normalised value",
-                                model.name, parameter.name, parameter.min, parameter.max
-                            ))
-                        })?;
-                        #[allow(clippy::cast_possible_truncation)]
-                        let wire_value = normalised as f32;
-                        normalised_value(wire_value)?
-                    }
-                };
+                let value = parameter_value(parameter, input)?;
                 let index = u32::try_from(parameter.index).map_err(|_| {
                     crate::Error::InvalidParameter(format!(
                         "parameter index {} does not fit on the wire",
@@ -1560,6 +1595,65 @@ mod tests {
                 ),
                 "{invalid:?} should be refused"
             );
+        }
+    }
+
+    fn parameter(kind: ParameterKind) -> Parameter {
+        Parameter {
+            index: 0,
+            name: "TEST".into(),
+            kind,
+            min: 0.0,
+            max: 10.0,
+            default: 5.0,
+            units: String::new(),
+            step_names: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn named_parameter_values_match_the_catalog_type_before_the_wire() {
+        for kind in [
+            ParameterKind::Float,
+            ParameterKind::Int,
+            ParameterKind::Switch,
+            ParameterKind::Fader,
+        ] {
+            assert_eq!(
+                parameter_value(&parameter(kind), ParameterInput::Normalised(0.5)).unwrap(),
+                Value::Normalised(0.5)
+            );
+        }
+
+        let numeric = parameter(ParameterKind::Float);
+        assert_eq!(
+            parameter_value(&numeric, ParameterInput::Real(5.0)).unwrap(),
+            Value::Normalised(0.5)
+        );
+        assert!(matches!(
+            parameter_value(&numeric, ParameterInput::Text("wrong".into())),
+            Err(crate::Error::InvalidParameter(_))
+        ));
+
+        let text = parameter(ParameterKind::Str);
+        assert_eq!(
+            parameter_value(&text, ParameterInput::Text("right".into())).unwrap(),
+            Value::Text("right".into())
+        );
+        assert!(matches!(
+            parameter_value(&text, ParameterInput::Normalised(0.5)),
+            Err(crate::Error::InvalidParameter(_))
+        ));
+
+        for kind in [
+            ParameterKind::Meter,
+            ParameterKind::Empty,
+            ParameterKind::Unknown,
+        ] {
+            assert!(matches!(
+                parameter_value(&parameter(kind), ParameterInput::Normalised(0.5)),
+                Err(crate::Error::InvalidParameter(_))
+            ));
         }
     }
 
