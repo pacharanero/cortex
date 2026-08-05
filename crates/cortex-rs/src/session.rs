@@ -1217,8 +1217,12 @@ fn rx_loop(device: Arc<Mutex<dyn crate::link::HidLink>>, shared: Arc<Shared>) {
                 if let Err(e) = handle_message(&body, &shared) {
                     // Routine, not exceptional: the device pushes types we do
                     // not decode (License and CloudLogin carry non-protobuf
-                    // bodies). Tracing, not stderr noise.
+                    // bodies). An envelope decode failure is different: its
+                    // type is unrecoverable, so cache continuity is lost.
                     trace!("undecodable inbound message: {e}");
+                    shared
+                        .state
+                        .stream_gap(shared.generation, "malformed message envelope");
                 }
             }
             Ok(None) => {
@@ -1906,5 +1910,28 @@ mod link_tests {
             crate::CachePhase::Invalidated,
             "skipping an unknown report without invalidating would retain possibly stale state"
         );
+    }
+
+    #[test]
+    fn a_malformed_message_envelope_invalidates_cache_without_stopping_the_loop() {
+        let link = FakeLink::new();
+        let session = session_over(&link);
+
+        // Valid HID framing but no 8-byte envelope trailer.
+        link.push_inbound(vec![0x01, 3, 0xC0, 0x01, 0x02, 0x03]);
+        let got = session.await_broadcast(
+            MessageType::GlobalTempo,
+            || link.push_inbound(inbound(MessageType::GlobalTempo as u16, &[])),
+            Duration::from_secs(3),
+            |_| true,
+        );
+        let cache_phase = session.state_cache().status().phase;
+        session.stop();
+
+        assert!(
+            got.is_ok(),
+            "a bad envelope stopped the loop delivering good ones"
+        );
+        assert_eq!(cache_phase, crate::CachePhase::Invalidated);
     }
 }
