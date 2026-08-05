@@ -243,6 +243,161 @@ pub struct Bypass {
     pub scene_mode: Option<bool>,
 }
 
+/// Device firmware and identity, reshaped from the vendor's wire message.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct DeviceVersion {
+    /// `QC` or `ATMA` (the Nano Cortex codename).
+    pub device_type: Option<String>,
+    /// The name shown on the unit.
+    pub custom_name: Option<String>,
+    /// Device serial number.
+    pub serial_number: Option<String>,
+    /// The `CorOS` version. The vendor schema calls this field `zenos_git_hash`.
+    pub coros_version: Option<String>,
+    /// Main application firmware version.
+    pub app_firmware: Option<String>,
+    /// Main bootloader firmware version.
+    pub bootloader_firmware: Option<String>,
+    /// Footswitch/encoder controller application firmware.
+    pub zencoder_app: Option<String>,
+    /// Footswitch/encoder controller bootloader firmware.
+    pub zencoder_bootloader: Option<String>,
+    /// Wireless firmware build checksum. The vendor schema calls it a version.
+    pub wireless_firmware_checksum: Option<String>,
+    /// Linux kernel build string.
+    pub linux_kernel: Option<String>,
+    /// U-Boot version string.
+    pub uboot: Option<String>,
+    /// Device network MAC address.
+    pub mac_address: Option<String>,
+    /// Whether this unit uses the ESS codec variant.
+    pub is_ess: Option<bool>,
+}
+
+impl From<&crate::proto::VersionMessage> for DeviceVersion {
+    fn from(value: &crate::proto::VersionMessage) -> Self {
+        use crate::proto::version_message::{
+            AppFwVersion, BootloaderFwVersion, CustomName, DeviceSerialNumber, DeviceTypeOneOf,
+            IsEss, LinuxKernelVersion, MacAddress, UbootVersion, ZencoderFwApp,
+            ZencoderFwBootloader, ZenosGitHash, ZenwirelessFwVersion,
+        };
+
+        macro_rules! string_field {
+            ($field:expr, $variant:path) => {
+                $field.as_ref().map(|entry| {
+                    let $variant(inner) = entry;
+                    inner.clone()
+                })
+            };
+        }
+
+        Self {
+            device_type: value.device_type.as_ref().and_then(|entry| {
+                let DeviceTypeOneOf::DeviceType(id) = entry;
+                crate::proto::version_message::DeviceType::try_from(*id)
+                    .ok()
+                    .map(|kind| kind.as_str_name().to_string())
+            }),
+            custom_name: string_field!(value.custom_name, CustomName::CustomName),
+            serial_number: string_field!(
+                value.device_serial_number,
+                DeviceSerialNumber::DeviceSerialNumber
+            ),
+            coros_version: string_field!(value.zenos_git_hash, ZenosGitHash::ZenosGitHash),
+            app_firmware: string_field!(value.app_fw_version, AppFwVersion::AppFwVersion),
+            bootloader_firmware: string_field!(
+                value.bootloader_fw_version,
+                BootloaderFwVersion::BootloaderFwVersion
+            ),
+            zencoder_app: string_field!(value.zencoder_fw_app, ZencoderFwApp::ZencoderFwApp),
+            zencoder_bootloader: string_field!(
+                value.zencoder_fw_bootloader,
+                ZencoderFwBootloader::ZencoderFwBootloader
+            ),
+            wireless_firmware_checksum: string_field!(
+                value.zenwireless_fw_version,
+                ZenwirelessFwVersion::ZenwirelessFwVersion
+            )
+            .map(|text| text.trim().to_string()),
+            linux_kernel: string_field!(
+                value.linux_kernel_version,
+                LinuxKernelVersion::LinuxKernelVersion
+            ),
+            uboot: string_field!(value.uboot_version, UbootVersion::UbootVersion)
+                .map(|text| text.trim().to_string()),
+            mac_address: string_field!(value.mac_address, MacAddress::MacAddress),
+            is_ess: value.is_ess.as_ref().map(|entry| {
+                let IsEss::IsEss(enabled) = entry;
+                *enabled
+            }),
+        }
+    }
+}
+
+/// One grid column's share of the DSP load.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct CpuColumn {
+    /// Load for this column, as the device reports it.
+    pub load: f32,
+    /// Whether this column runs on the second DSP core.
+    pub on_core2: bool,
+}
+
+/// DSP load, total and broken down by chain and column.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct CpuLoad {
+    /// Total load across both cores, if the device reported one.
+    pub total: Option<f32>,
+    /// Per chain, then per column within that chain.
+    pub chains: Vec<Vec<CpuColumn>>,
+}
+
+impl From<&crate::proto::CpuLoadMessage> for CpuLoad {
+    fn from(value: &crate::proto::CpuLoadMessage) -> Self {
+        Self {
+            total: value.cpu_total_load.as_ref().map(|total| {
+                let crate::proto::cpu_load_message::CpuTotalLoad::CpuTotalLoad(load) = total;
+                *load
+            }),
+            chains: value
+                .chains
+                .iter()
+                .map(|chain| {
+                    chain
+                        .columns
+                        .iter()
+                        .map(|column| CpuColumn {
+                            load: column.cpu_load,
+                            on_core2: column.is_on_core2,
+                        })
+                        .collect()
+                })
+                .collect(),
+        }
+    }
+}
+
+/// A stable setlist-slot view for CLI, daemon, MCP, and GUI consumers.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct PresetSlot {
+    /// Linear slot index, 0-255.
+    pub index: u32,
+    /// Slot as displayed by the unit, e.g. `28C`.
+    pub slot: String,
+    /// Preset name, or an empty string for an unoccupied slot.
+    pub name: String,
+}
+
+impl From<&crate::client::PresetEntry> for PresetSlot {
+    fn from(value: &crate::client::PresetEntry) -> Self {
+        Self {
+            index: value.index,
+            slot: crate::client::position_to_slot(value.index),
+            name: value.name.clone(),
+        }
+    }
+}
+
 impl Preset {
     /// Convert a preset into the output shape, naming blocks through the catalog.
     ///
@@ -306,5 +461,79 @@ impl Preset {
             rows: preset_rows(preset),
             blocks,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn preset_view_keeps_row_conventions_routing_and_occupancy() {
+        use crate::proto::{BinaryPreset, Chain, Model, SplitControlPoints};
+        let preset = BinaryPreset {
+            name: Some(crate::proto::binary_preset::Name::Name(
+                "Fictional Rig".into(),
+            )),
+            chains: vec![Chain {
+                in_portid: Some(crate::proto::chain::InPortid::InPortid(1)),
+                out_portid: Some(crate::proto::chain::OutPortid::OutPortid(19)),
+                models: vec![
+                    Model::default(),
+                    Model {
+                        hash: Some(crate::proto::model::Hash::Hash(42)),
+                        ..Default::default()
+                    },
+                ],
+                split_control_points: vec![SplitControlPoints { split: 2, mix: 6 }],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+
+        let view = Preset::from_binary(&preset, None, "3C", "/fictional/setlist", false);
+        assert_eq!(view.name, "Fictional Rig");
+        assert_eq!(view.rows[0].row, 0);
+        assert_eq!(view.rows[0].screen_row, 1);
+        assert_eq!(view.rows[0].in_port, Some(1));
+        assert_eq!(view.rows[0].out_port, Some(19));
+        assert_eq!(view.rows[0].split_at, Some(2));
+        assert_eq!(view.rows[0].mix_at, Some(6));
+        assert_eq!(view.blocks.len(), 1, "the empty cell must stay absent");
+        assert_eq!(view.blocks[0].column, 1);
+        assert_eq!(view.blocks[0].model_id, 42);
+    }
+
+    #[test]
+    fn cpu_load_view_preserves_core_assignment() {
+        let message = crate::proto::CpuLoadMessage {
+            cpu_total_load: Some(crate::proto::cpu_load_message::CpuTotalLoad::CpuTotalLoad(
+                37.5,
+            )),
+            chains: vec![crate::proto::CpuChainLoad {
+                columns: vec![crate::proto::CpuColumnLoad {
+                    cpu_load: 12.5,
+                    is_on_core2: true,
+                }],
+            }],
+            ..Default::default()
+        };
+        let view = CpuLoad::from(&message);
+        assert!(view.total.is_some_and(|load| (load - 37.5).abs() < 0.001));
+        assert!((view.chains[0][0].load - 12.5).abs() < 0.001);
+        assert!(view.chains[0][0].on_core2);
+    }
+
+    #[test]
+    fn preset_slot_adds_the_units_display_name() {
+        let entry = crate::client::PresetEntry {
+            index: 18,
+            name: "Fictional Rig".into(),
+            key: None,
+            instrument: None,
+        };
+        let slot = PresetSlot::from(&entry);
+        assert_eq!(slot.slot, "3C");
+        assert_eq!(slot.name, "Fictional Rig");
     }
 }

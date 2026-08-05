@@ -7,7 +7,7 @@
 //! Sits between the transport (zone 100) and the client (zone 150). Owns a
 //! background RX thread that reads frames, reassembles them, decodes the
 //! protobuf message, and dispatches to waiters. Owns a keepalive thread that
-//! pokes the device every 5 seconds.
+//! pokes the device every second.
 //!
 //! The session uses std threads + `Arc<HidDevice>` (no async runtime) so the
 //! leaf crate stays embeddable. The session struct is `Send` but not `Clone`;
@@ -24,7 +24,9 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
+#[cfg(feature = "hid")]
 use crate::DeviceKind;
+use crate::framing::HID_REPORT_LEN;
 use crate::framing::{Frame, FrameReassembler, encode_message};
 use crate::proto::cortex_message_type::Enum as MessageType;
 use crate::proto::message_action::Enum as MessageAction;
@@ -33,7 +35,7 @@ use crate::proto::{
     ConnectionMessage, CpuLoadMessage, KeepAliveMessage, ModelRepoMessage,
     ResetCommsBuffersMessage, VersionMessage,
 };
-use crate::transport::HID_REPORT_LEN;
+use crate::state::DeviceStateCache;
 
 /// The Cortex Control version string the host announces to the device.
 /// The device gates state-push behaviour on receiving a valid CC version.
@@ -106,15 +108,15 @@ const MAX_MESSAGE_BODY: usize = 1 << 20; // 1 MiB
 /// one-shot synchronous read. They are different concerns:
 ///
 /// - `DEFAULT_READ_TIMEOUT` (2 s) is "how long to wait for an answer".
-/// - This (200 ms) is "how long the RX thread holds the device mutex before
-///   letting a writer in, and how quickly it notices `stop()`".
+/// - This (200 ms) is "how quickly the RX loop notices `stop()` and rechecks
+///   whether a writer is waiting".
 ///
 /// `hidapi::HidDevice` is `!Sync`, so reads and writes must share a mutex.
-/// The RX thread holds it across its blocking read, which means every
-/// `send()` waits for the current read to return. With a 2 s poll the
-/// handshake's 25-message burst could serialise into tens of seconds of
-/// contention; at 200 ms the worst case per send is bounded and small.
-/// pyquadcortex uses the same 200 ms for the same reason.
+/// The RX thread holds it across its blocking read, so a writer may wait for
+/// the current poll. The timeout alone does not bound writer latency: an
+/// unfair mutex let the reader reacquire repeatedly and starve writes for
+/// tens of seconds. The `writers_waiting` gate gives a declared writer
+/// priority; this short poll only bounds how soon the reader observes it.
 const RX_POLL_TIMEOUT: Duration = Duration::from_millis(200);
 
 /// How long the inbound stream must be silent before the connect handshake
@@ -306,24 +308,10 @@ struct Shared {
     /// settle can tell "still dumping state" from "quiet". For liveness the
     /// heartbeat is precisely the signal we want.
     last_any_inbound_ms: AtomicU64,
-    /// The most recent `CPULoad` push.
-    ///
-    /// Latest-wins rather than accumulated: this is a live gauge, and a
-    /// reading from ten seconds ago is not worth keeping.
-    cpu_load: Mutex<Option<CpuLoadMessage>>,
-    /// The device's own `Version`, read during the handshake.
-    ///
-    /// Cached because the handshake asks for it anyway, and because a caller
-    /// asking later would race the handshake's own announce: `Version` READ
-    /// replies carry no `request_id`, so there is no way to tell one from the
-    /// other on the wire.
-    device_version: Mutex<Option<VersionMessage>>,
-    /// The `ModelRepo` payload, captured from whichever reply arrives first.
-    ///
-    /// The handshake asks for this anyway - it is load-bearing - so a caller
-    /// wanting the catalog would otherwise make the device build and send
-    /// 46 KB a second time.
-    model_repo: Mutex<Option<Vec<u8>>>,
+    /// Non-consuming reducer fed before request/broadcast waiters.
+    state: DeviceStateCache,
+    /// Physical-session generation accepted by `state`.
+    generation: u64,
 }
 
 /// The session owns a shared HID device handle, the background RX thread, the
@@ -346,11 +334,25 @@ impl Session {
     ///
     /// Returns [`crate::Error::DeviceNotFound`] if no matching device is on
     /// the bus, or [`crate::Error::Hid`] if `hidapi` fails to open the device.
+    #[cfg(feature = "hid")]
     pub fn open(kind: DeviceKind) -> crate::Result<Self> {
+        Self::open_with_state(kind, DeviceStateCache::new())
+    }
+
+    /// Open a transport while retaining a caller-owned cache handle.
+    ///
+    /// This is the reconnect seam: a host can invalidate one stable cache,
+    /// replace the physical session, and keep existing observers attached.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::open`].
+    #[cfg(feature = "hid")]
+    pub fn open_with_state(kind: DeviceKind, state: DeviceStateCache) -> crate::Result<Self> {
         let transport = crate::Transport::open(kind)?;
         let device: Arc<Mutex<dyn crate::link::HidLink>> =
             Arc::new(Mutex::new(transport.into_device()));
-        Self::over(device)
+        Self::over_with_state(device, state)
     }
 
     /// Start a session over any [`HidLink`](crate::link::HidLink).
@@ -364,6 +366,20 @@ impl Session {
     ///
     /// Returns [`crate::Error::Hid`] if a background thread cannot be spawned.
     pub fn over(device: Arc<Mutex<dyn crate::link::HidLink>>) -> crate::Result<Self> {
+        Self::over_with_state(device, DeviceStateCache::new())
+    }
+
+    /// Start a session over a substitutable link and a retained cache handle.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`crate::Error::Session`] if a background thread cannot be
+    /// spawned.
+    pub fn over_with_state(
+        device: Arc<Mutex<dyn crate::link::HidLink>>,
+        state: DeviceStateCache,
+    ) -> crate::Result<Self> {
+        let generation = state.begin_generation();
         let shared = Arc::new(Shared {
             pending: Mutex::new(HashMap::new()),
             type_waiters: Mutex::new(Vec::new()),
@@ -376,9 +392,8 @@ impl Session {
             heard_anything: AtomicBool::new(false),
             last_any_inbound_ms: AtomicU64::new(0),
             started: Instant::now(),
-            cpu_load: Mutex::new(None),
-            device_version: Mutex::new(None),
-            model_repo: Mutex::new(None),
+            state,
+            generation,
         });
 
         // RX thread: gets its own clone of the Arc<HidDevice>.
@@ -387,7 +402,7 @@ impl Session {
         let rx_handle = thread::Builder::new()
             .name("cortex-rx".into())
             .spawn(move || rx_loop(rx_device, rx_shared))
-            .map_err(|e| crate::Error::Hid(format!("failed to spawn RX thread: {e}")))?;
+            .map_err(|e| crate::Error::Session(format!("failed to spawn RX thread: {e}")))?;
 
         // Keepalive thread: also gets a clone for writing.
         let ka_device = Arc::clone(&device);
@@ -395,7 +410,7 @@ impl Session {
         let keepalive_handle = thread::Builder::new()
             .name("cortex-keepalive".into())
             .spawn(move || keepalive_loop(ka_device, ka_shared))
-            .map_err(|e| crate::Error::Hid(format!("failed to spawn keepalive thread: {e}")))?;
+            .map_err(|e| crate::Error::Session(format!("failed to spawn keepalive thread: {e}")))?;
 
         Ok(Self {
             device,
@@ -687,7 +702,7 @@ impl Session {
         // device reply to anyone waiting on the type alone.
         //
         // Costs about 0.7 s, measured against Cortex Control doing the same.
-        trace!("handshake 2/7: Version READ");
+        trace!("handshake 2/8: Version READ");
         let read = encode_read_message(MessageType::Version);
         match self.await_broadcast(
             MessageType::Version,
@@ -700,14 +715,14 @@ impl Session {
             Ok(reply) => match prost::Message::decode(reply.body.as_ref()) {
                 Ok(v) => {
                     let v: VersionMessage = v;
-                    trace!("handshake 2/7: device version received");
-                    *self.shared.device_version.lock().unwrap() = Some(v);
+                    trace!("handshake 2/8: device version received");
+                    let _ = v;
                 }
-                Err(e) => trace!("handshake 2/7: version undecodable: {e}"),
+                Err(e) => trace!("handshake 2/8: version undecodable: {e}"),
             },
             // Not fatal. The identity is a convenience; the handshake's job
             // is to get the device pushing, and it can do that without this.
-            Err(e) => trace!("handshake 2/7: no version reply ({e})"),
+            Err(e) => trace!("handshake 2/8: no version reply ({e})"),
         }
     }
 
@@ -769,9 +784,9 @@ impl Session {
         };
         let payload = prost::Message::encode_to_vec(&msg);
         progress("resetting comms buffers");
-        trace!("handshake 1/6: ResetCommsBuffers (rid={rid})");
+        trace!("handshake 1/8: ResetCommsBuffers (rid={rid})");
         let _ = self.request(MessageType::ResetCommsBuffers, &payload, rid, timeout)?;
-        trace!("handshake 1/6: reply received");
+        trace!("handshake 1/8: reply received");
 
         progress("reading device version");
         self.read_device_version(timeout);
@@ -788,10 +803,10 @@ impl Session {
         };
         let payload = prost::Message::encode_to_vec(&version_msg);
         progress("announcing client version");
-        trace!("handshake 2/6: Version UPDATE announce");
+        trace!("handshake 3/8: Version UPDATE announce");
         self.send(MessageType::Version, &payload)?;
 
-        // 3. ModelRepo READ.
+        // 4. ModelRepo READ.
         let repo_msg = ModelRepoMessage {
             action: MessageAction::Read as i32,
             ..Default::default()
@@ -804,23 +819,25 @@ impl Session {
         // failed - active_scene, read_current_preset and list_presets all
         // timed out. The device gates its push behaviour on this request.
         //
-        // The cost is the device's, not ours: the RX loop reassembles at
-        // 1500+ reports/sec, while this one message trickles in at 82
-        // reports/sec because the unit builds the catalog on demand.
+        // Earlier this was blamed on the device building the catalog. A wire
+        // trace disproved that: our reader starved our writer, and flooding
+        // the handshake queued requests against this transfer. With writer
+        // priority and pacing, Cortex Control and this client both receive the
+        // catalog in about 0.65 s.
         progress("requesting model catalog");
         self.fetch_catalog(&payload, timeout);
 
-        // 4. Connection{connected: true}.
+        // 5. Connection{connected: true}.
         let conn_msg = ConnectionMessage {
             request_id: None,
             connected: Some(crate::proto::connection_message::Connected::Connected(true)),
         };
         let payload = prost::Message::encode_to_vec(&conn_msg);
         progress("announcing connection");
-        trace!("handshake 4/6: Connection connected=true");
+        trace!("handshake 5/8: Connection connected=true");
         self.send(MessageType::Connection, &payload)?;
 
-        // 5. 22 subscribe READs.
+        // 6. 22 subscribe READs.
         if mode == ConnectMode::Minimal {
             // Stop here. The subscription is what provokes the state dump,
             // and a command-only session has nothing to do with it.
@@ -828,8 +845,9 @@ impl Session {
             return Ok(());
         }
 
+        self.shared.state.begin_subscription(self.shared.generation);
         progress("subscribing to device state");
-        trace!("handshake 5/6: {} subscribe READs", SUBSCRIBE_TYPES.len());
+        trace!("handshake 6/8: {} subscribe READs", SUBSCRIBE_TYPES.len());
         for mt in SUBSCRIBE_TYPES {
             trace!("  subscribe {mt:?}");
             let payload = encode_read_message(*mt);
@@ -854,19 +872,17 @@ impl Session {
             request_id: Some(crate::proto::cpu_load_message::RequestId::RequestId(rid)),
             ..Default::default()
         };
-        trace!("handshake 5/7: CpuLoad CREATE (rid={rid})");
+        trace!("handshake 7/8: CpuLoad CREATE (rid={rid})");
         let payload = prost::Message::encode_to_vec(&cpu);
         self.send(MessageType::CpuLoad, &payload)?;
 
-        // 6. Settle until the device stops talking.
+        // 8. Settle until the device stops talking.
         //
-        // A fixed sleep is the wrong shape here. The device services the
-        // subscription burst LAZILY and in bulk - measured on CorOS 4.0.1,
-        // a 46 KB ModelRepo and a 22 KB ModuleStats can begin arriving more
-        // than ten seconds after the burst is sent. A caller that issues a
-        // read as soon as a fixed settle expires finds its reply queued
-        // behind tens of kilobytes of pushes and times out, which looks
-        // exactly like a broken handshake.
+        // A fixed sleep is the wrong shape here. Subscription replies and
+        // state pushes arrive asynchronously, and a caller that reads before
+        // that burst settles can queue its reply behind them. The large
+        // ModelRepo transfer is not part of this burst: step 4 already waited
+        // for it before the subscriptions were sent.
         //
         // So wait for QUIET instead: the burst is done when nothing has
         // arrived for `SETTLE_QUIET_PERIOD`. `settle` becomes the floor (we
@@ -890,7 +906,10 @@ impl Session {
             }
             thread::sleep(Duration::from_millis(100));
         }
-        trace!("handshake 6/6: device quiet, handshake complete");
+        trace!("handshake 8/8: device quiet, handshake complete");
+        self.shared
+            .state
+            .finish_subscription(self.shared.generation);
 
         Ok(())
     }
@@ -939,13 +958,23 @@ impl Session {
         self.shared.heard_anything.load(Ordering::Relaxed)
     }
 
+    /// Whether the device has spoken recently enough for cached state to be
+    /// served as live.
+    ///
+    /// Uses the same measured threshold as request fail-fast. A cache hit must
+    /// not hide an unplug merely because it needs no wire round trip.
+    #[must_use]
+    pub fn is_responsive(&self) -> bool {
+        self.has_heard_from_device() && self.seconds_since_last_message() < SILENCE_LIMIT.as_secs()
+    }
+
     /// The most recent CPU load pushed by the device, if any has arrived.
     ///
     /// Only populated on a SUBSCRIBED session: the device pushes this because
     /// the handshake asked it to, and a `Minimal` session never does.
     #[must_use]
     pub fn cpu_load(&self) -> Option<CpuLoadMessage> {
-        self.shared.cpu_load.lock().unwrap().clone()
+        self.shared.state.cpu_load().map(|cached| cached.value)
     }
 
     /// The device's `Version` as read during the handshake, if it answered.
@@ -954,7 +983,10 @@ impl Session {
     /// without one, so those sessions exist - or if the device did not reply.
     #[must_use]
     pub fn device_version(&self) -> Option<VersionMessage> {
-        self.shared.device_version.lock().unwrap().clone()
+        self.shared
+            .state
+            .device_version()
+            .map(|cached| cached.value)
     }
 
     /// The `ModelRepo` payload captured during this session, if one has
@@ -962,10 +994,16 @@ impl Session {
     ///
     /// The handshake requests it, so by the time a caller wants the catalog
     /// it has usually already been received. Returning it here avoids a
-    /// second 46 KB transfer that the device builds from scratch.
+    /// second transfer of the same 46 KB payload.
     #[must_use]
     pub fn captured_model_repo(&self) -> Option<Vec<u8>> {
-        self.shared.model_repo.lock().unwrap().clone()
+        self.shared.state.model_repo().map(|cached| cached.value)
+    }
+
+    /// Clone the non-consuming subscribed-state cache handle.
+    #[must_use]
+    pub fn state_cache(&self) -> DeviceStateCache {
+        self.shared.state.clone()
     }
 
     /// Signal the background threads to exit and join them.
@@ -1119,6 +1157,9 @@ fn rx_loop(device: Arc<Mutex<dyn crate::link::HidLink>>, shared: Arc<Shared>) {
             } else {
                 reassembler.reset();
                 report_count = 0;
+                shared
+                    .state
+                    .stream_gap(shared.generation, "device read failed");
                 thread::sleep(Duration::from_millis(10));
                 continue;
             }
@@ -1144,6 +1185,9 @@ fn rx_loop(device: Arc<Mutex<dyn crate::link::HidLink>>, shared: Arc<Shared>) {
         let Ok(frame) = Frame::parse(&report) else {
             reassembler.reset();
             report_count = 0;
+            shared
+                .state
+                .stream_gap(shared.generation, "malformed HID report");
             continue;
         };
 
@@ -1151,6 +1195,10 @@ fn rx_loop(device: Arc<Mutex<dyn crate::link::HidLink>>, shared: Arc<Shared>) {
         if frame.flags.is_first() && report_count > 0 {
             reassembler.reset();
             report_count = 0;
+            shared.state.stream_gap(
+                shared.generation,
+                "new FIRST frame abandoned an incomplete message",
+            );
         }
 
         match reassembler.feed(&frame) {
@@ -1181,11 +1229,17 @@ fn rx_loop(device: Arc<Mutex<dyn crate::link::HidLink>>, shared: Arc<Shared>) {
                 if report_count > MAX_MESSAGE_BODY / crate::framing::CHUNK_SIZE {
                     reassembler.reset();
                     report_count = 0;
+                    shared
+                        .state
+                        .stream_gap(shared.generation, "reassembled message exceeded cap");
                 }
             }
             Err(_) => {
                 reassembler.reset();
                 report_count = 0;
+                shared
+                    .state
+                    .stream_gap(shared.generation, "invalid frame sequence");
             }
         }
     }
@@ -1212,26 +1266,6 @@ fn handle_message(body: &[u8], shared: &Shared) -> crate::Result<()> {
 
 /// Route an inbound message to any matching waiters, type waiters, and collectors.
 fn dispatch(msg: &InboundMessage, shared: &Shared) {
-    // Keep the first ModelRepo payload we see. The handshake asks for one
-    // anyway, so a later catalog request can be answered without making the
-    // device build and send 46 KB again.
-    if msg.message_type == MessageType::ModelRepo {
-        if let Some(payload) = extract_model_repo_payload(&msg.body) {
-            let mut slot = shared.model_repo.lock().unwrap();
-            if slot.is_none() {
-                trace!("captured ModelRepo payload ({} bytes)", payload.len());
-                *slot = Some(payload);
-            }
-        }
-    }
-    // Keep the latest CPU load, so a caller can read it without waiting for
-    // the next push - which may be up to a second away.
-    if msg.message_type == MessageType::CpuLoad {
-        if let Ok(load) = prost::Message::decode(msg.body.as_ref()) {
-            let load: CpuLoadMessage = load;
-            *shared.cpu_load.lock().unwrap() = Some(load);
-        }
-    }
     // Liveness counts everything: a heartbeat is exactly what tells us the
     // link is still up.
     shared.heard_anything.store(true, Ordering::Relaxed);
@@ -1253,6 +1287,11 @@ fn dispatch(msg: &InboundMessage, shared: &Shared) {
         msg.body.len(),
         msg.request_id
     );
+    // State observes before any waiter can consume and return from this
+    // message. A successful explicit read therefore also repairs the cache.
+    shared
+        .state
+        .observe(shared.generation, msg.message_type, &msg.body);
     // Collectors observe rather than consume, so they are fed FIRST - before
     // any of the early returns below. A message claimed by a waiter still
     // reaches every matching collector.
@@ -1440,6 +1479,8 @@ mod correlation_tests {
     use super::*;
 
     fn shared() -> Shared {
+        let state = DeviceStateCache::new();
+        let generation = state.begin_generation();
         Shared {
             pending: Mutex::new(HashMap::new()),
             type_waiters: Mutex::new(Vec::new()),
@@ -1452,9 +1493,8 @@ mod correlation_tests {
             heard_anything: AtomicBool::new(false),
             last_any_inbound_ms: AtomicU64::new(0),
             started: Instant::now(),
-            cpu_load: Mutex::new(None),
-            device_version: Mutex::new(None),
-            model_repo: Mutex::new(None),
+            state,
+            generation,
         }
     }
 
@@ -1687,6 +1727,28 @@ mod correlation_tests {
         assert_eq!(b.bucket.lock().unwrap().len(), 1);
     }
 
+    #[test]
+    fn a_waiter_and_the_state_cache_both_observe_the_same_message() {
+        let s = shared();
+        let waiter = expect(&s, 7, MessageType::Scene);
+        let scene = crate::proto::SceneMessage {
+            action: MessageAction::Update as i32,
+            request_id: Some(crate::proto::scene_message::RequestId::RequestId(7)),
+            selected_scene: Some(crate::proto::scene_message::SelectedScene::SelectedScene(3)),
+        };
+        dispatch(
+            &InboundMessage {
+                message_type: MessageType::Scene,
+                body: bytes::Bytes::from(prost::Message::encode_to_vec(&scene)),
+                request_id: Some(7),
+            },
+            &s,
+        );
+
+        assert_eq!(delivered(&waiter), Some(MessageType::Scene));
+        assert_eq!(s.state.active_scene().unwrap().value, 3);
+    }
+
     // -- liveness ----------------------------------------------------------
 
     #[test]
@@ -1703,20 +1765,6 @@ mod correlation_tests {
             "connect() would never see the device go quiet"
         );
     }
-}
-
-/// Pull the payload out of a `ModelRepo` message body, if it carries one.
-///
-/// The device also sends payload-less `ModelRepo` messages, which are not
-/// the catalog.
-fn extract_model_repo_payload(body: &[u8]) -> Option<Vec<u8>> {
-    use crate::proto::{ModelRepoMessage, model_repo_message as mrm};
-    let decoded: ModelRepoMessage = prost::Message::decode(body).ok()?;
-    let mrm::ModelRepoPayload::ModelRepoPayload(payload) = decoded.model_repo_payload?;
-    if payload.is_empty() {
-        return None;
-    }
-    Some(payload)
 }
 
 #[cfg(test)]
@@ -1847,10 +1895,16 @@ mod link_tests {
             Duration::from_secs(3),
             |_| true,
         );
+        let cache_phase = session.state_cache().status().phase;
         session.stop();
         assert!(
             got.is_ok(),
             "a bad report stopped the loop delivering good ones"
+        );
+        assert_eq!(
+            cache_phase,
+            crate::CachePhase::Invalidated,
+            "skipping an unknown report without invalidating would retain possibly stale state"
         );
     }
 }

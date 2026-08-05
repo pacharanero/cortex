@@ -10,7 +10,7 @@ authors.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
-description = "Command-line surface for the Neural DSP Quad Cortex (and Nano Cortex) over USB HID."
+description = "Command-line surface for the Neural DSP Quad Cortex over USB HID; Nano Cortex support is planned."
 
 [[bin]]
 name = "cortex"

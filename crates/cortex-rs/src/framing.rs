@@ -23,6 +23,12 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Quad Cortex HID body length in bytes, excluding the report-id byte.
+pub const HID_BODY_LEN: usize = 128;
+
+/// Total Quad Cortex report length at the hidapi boundary.
+pub const HID_REPORT_LEN: usize = HID_BODY_LEN + 1;
+
 /// HID report ID. Input is `0x01` (device-to-host), output is `0x02`
 /// (host-to-device, sent via `SET_REPORT` on the control pipe).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -217,7 +223,7 @@ impl FrameReassembler {
 
 /// Per-report data capacity: the 128-byte body minus the `[len][flags]`
 /// prefix, i.e. 126 bytes of payload per report.
-pub const CHUNK_SIZE: usize = crate::transport::HID_BODY_LEN - 2;
+pub const CHUNK_SIZE: usize = HID_BODY_LEN - 2;
 
 /// Encode a logical message (protobuf payload + message-type tag) into one or
 /// more 129-byte HID output reports ready for `hidapi::HidDevice::write`.
@@ -251,7 +257,7 @@ pub fn encode_message(message_type: u16, payload: &[u8]) -> Vec<Vec<u8>> {
             Flags::MIDDLE
         };
 
-        let mut report = vec![0u8; crate::transport::HID_REPORT_LEN];
+        let mut report = vec![0u8; HID_REPORT_LEN];
         report[0] = ReportId::Output as u8;
         #[allow(clippy::cast_possible_truncation)]
         let len = chunk.len() as u8; // chunk.len() <= CHUNK_SIZE = 126 < 256

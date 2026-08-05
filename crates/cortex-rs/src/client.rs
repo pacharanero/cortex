@@ -35,6 +35,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+#[cfg(feature = "hid")]
 use crate::DeviceKind;
 use crate::grid::{Row, Value};
 use crate::proto::cortex_message_type::Enum as MessageType;
@@ -214,18 +215,103 @@ fn folder_key(info: &crate::proto::FolderInfo) -> Option<&str> {
     Some(key.trim_end_matches('/'))
 }
 
+/// Convert one complete folder listing into the stable preset-entry view.
+fn preset_entries(folder: &crate::proto::FolderInfo, include_empty: bool) -> Vec<PresetEntry> {
+    let mut entries: Vec<PresetEntry> = folder
+        .files
+        .iter()
+        .filter_map(PresetEntry::from_proto)
+        .collect();
+    entries.sort_by_key(|entry| entry.index);
+    if include_empty {
+        let occupied: std::collections::HashMap<u32, PresetEntry> = entries
+            .into_iter()
+            .map(|entry| (entry.index, entry))
+            .collect();
+        let total = u32::try_from(folder.files.len()).unwrap_or(SETLIST_SLOTS);
+        entries = (0..total)
+            .map(|index| {
+                occupied
+                    .get(&index)
+                    .cloned()
+                    .unwrap_or_else(|| PresetEntry {
+                        index,
+                        name: String::new(),
+                        key: None,
+                        instrument: None,
+                    })
+            })
+            .collect();
+    }
+    entries
+}
+
+/// The model id at a grid cell, if the cell is occupied.
+fn model_id_at(preset: &BinaryPreset, row: Row, column: u32) -> Option<u32> {
+    let chain = preset.chains.get(row.wire() as usize)?;
+    let model = chain.models.get(column as usize)?;
+    match model.hash {
+        Some(crate::proto::model::Hash::Hash(id)) if id != 0 => Some(id),
+        _ => None,
+    }
+}
+
+/// Validate a caller-provided wire value before the device can store it.
+fn normalised_value(value: f32) -> crate::Result<Value> {
+    if !value.is_finite() || !(0.0..=1.0).contains(&value) {
+        return Err(crate::Error::InvalidParameter(format!(
+            "normalised values are 0.0-1.0, got {value}"
+        )));
+    }
+    Ok(Value::Normalised(value))
+}
+
 /// How a block placement was confirmed.
 ///
 /// Worth distinguishing, because the two carry different confidence: an echo
 /// is the device telling us it accepted the cell, while a read-back is us
 /// observing the grid afterwards. Both mean the block is there; only the
 /// second survives a slow device.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Placement {
     /// The device echoed a `Grid` broadcast naming the cell.
     EchoConfirmed,
     /// No echo arrived in time, but a read-back found the block in place.
     ReadBackConfirmed,
+    /// The write was sent without waiting for confirmation.
+    Unverified,
+}
+
+/// How a caller addresses a block parameter.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "by", content = "value", rename_all = "snake_case")]
+pub enum ParameterTarget {
+    /// Raw positional wire index.
+    Index(u32),
+    /// Display name, resolved case-insensitively through the device catalog.
+    Name(String),
+}
+
+/// A parameter value before any catalog conversion.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "kind", content = "value", rename_all = "snake_case")]
+pub enum ParameterInput {
+    /// The wire's normalised 0..1 representation.
+    Normalised(f32),
+    /// A value in the parameter's displayed units, resolved through the catalog.
+    Real(f64),
+    /// A string value such as a microphone or capture selection.
+    Text(String),
+}
+
+/// The concrete wire parameter write after name and unit resolution.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct ParameterWrite {
+    /// Positional wire index that was written.
+    pub index: u32,
+    /// Wire value after conversion.
+    pub value: Value,
 }
 
 /// The `QuadCortex` client: an ergonomic API over the session layer.
@@ -245,6 +331,12 @@ impl QuadCortex {
         Self { session }
     }
 
+    /// Clone this client's non-consuming device-state cache handle.
+    #[must_use]
+    pub fn state_cache(&self) -> crate::DeviceStateCache {
+        self.session.state_cache()
+    }
+
     /// Open a transport, start the session, run the connect handshake, and
     /// return a ready-to-use `QuadCortex`. This is the Rust equivalent of
     /// `pyquadcortex.connect()`.
@@ -254,6 +346,7 @@ impl QuadCortex {
     /// Returns [`crate::Error::DeviceNotFound`] if no matching device is on
     /// the bus, or [`crate::Error::ReadTimeout`] if the handshake reply does
     /// not arrive within `timeout`.
+    #[cfg(feature = "hid")]
     pub fn connect(kind: DeviceKind, timeout: Duration, settle: Duration) -> crate::Result<Self> {
         let session = Arc::new(Session::open(kind)?);
         session.connect(timeout, settle)?;
@@ -384,8 +477,7 @@ impl QuadCortex {
     /// one recall when a prior push is still in flight. So this tags the
     /// recall with a fresh id and accepts only the push echoing it.
     ///
-    /// The device services the push lazily (10-25 s observed), hence the
-    /// generous timeout callers should pass.
+    /// The push is asynchronous, so callers provide the wait timeout.
     ///
     /// # Errors
     ///
@@ -467,9 +559,10 @@ impl QuadCortex {
     /// folder's listing key WITHOUT one. Keys are compared with trailing
     /// slashes normalised away.
     ///
-    /// A listing that arrives is COMPLETE, but a READ does not reliably
-    /// produce one promptly - delivery is lazy. Treat a timeout as "ask
-    /// again", not as an answer about the setlist's contents.
+    /// A listing that arrives is complete. A targeted listing still transfers
+    /// all 256 slots and takes about five seconds on the observed unit, so use
+    /// a realistic timeout; a timeout is not an answer about the setlist's
+    /// contents.
     ///
     /// # Errors
     ///
@@ -531,33 +624,19 @@ impl QuadCortex {
         // reports a setlist's full complement of 256 slots, most of which are
         // typically empty, so filtering here IS the `include_empty == false`
         // path; there is nothing to return for an empty slot but its index.
-        let mut entries: Vec<PresetEntry> = folder
-            .files
-            .iter()
-            .filter_map(PresetEntry::from_proto)
-            .collect();
-        entries.sort_by_key(|e| e.index);
-        if include_empty {
-            // Re-expand to the full slot map, filling gaps with blank entries,
-            // so a caller looking for a free slot can see one.
-            let occupied: std::collections::HashMap<u32, PresetEntry> =
-                entries.into_iter().map(|e| (e.index, e)).collect();
-            let total = u32::try_from(folder.files.len()).unwrap_or(SETLIST_SLOTS);
-            entries = (0..total)
-                .map(|index| {
-                    occupied
-                        .get(&index)
-                        .cloned()
-                        .unwrap_or_else(|| PresetEntry {
-                            index,
-                            name: String::new(),
-                            key: None,
-                            instrument: None,
-                        })
-                })
-                .collect();
-        }
-        Ok(entries)
+        Ok(preset_entries(&folder, include_empty))
+    }
+
+    /// Return a setlist already announced to the subscribed state cache.
+    ///
+    /// Performs no device I/O. `None` means no complete listing for this key
+    /// is currently trustworthy; callers may fall back to [`Self::list_presets`].
+    #[must_use]
+    pub fn cached_presets(&self, setlist: &str, include_empty: bool) -> Option<Vec<PresetEntry>> {
+        self.session
+            .state_cache()
+            .folder(setlist)
+            .map(|folder| preset_entries(&folder.value, include_empty))
     }
 
     /// Look a preset up by the name shown on the unit.
@@ -651,9 +730,9 @@ impl QuadCortex {
     pub fn fetch_model_repo(&self, timeout: Duration) -> crate::Result<Vec<u8>> {
         use crate::proto::{ModelRepoMessage, model_repo_message as mrm};
 
-        // The handshake already asked for this, so the payload has usually
-        // arrived by now. Asking again makes the device rebuild and resend
-        // 46 KB, which it does at roughly 82 reports per second.
+        // The paced handshake already asked for and waited for this payload,
+        // so serve that copy rather than requesting and transferring the same
+        // 46 KB again.
         if let Some(captured) = self.session.captured_model_repo() {
             return Ok(captured);
         }
@@ -949,7 +1028,7 @@ pub fn db_to_input_level(db: f64) -> crate::Result<f64> {
 // message shape; if a trap is encoded in a builder it stays encoded.
 //
 // Every edit below changes the WORKING COPY on the grid. Nothing is persisted
-// until a save, which this crate does not yet implement.
+// until [`QuadCortex::save_current_preset`] commits the working grid.
 // ---------------------------------------------------------------------------
 
 impl QuadCortex {
@@ -991,6 +1070,162 @@ impl QuadCortex {
         value: Value,
     ) -> crate::Result<()> {
         self.send_grid(&crate::grid::set_param(row, column, param_index, value))
+    }
+
+    /// Resolve and write a parameter using either its wire index or display name.
+    ///
+    /// This is the host-facing parameter API. Name lookup, read-only-meter
+    /// refusal, real-unit conversion, and the scene-write sequence live here
+    /// so the CLI, daemon, MCP server, and GUI cannot implement them
+    /// differently.
+    ///
+    /// Addressing by name reads the live grid to identify the model in the
+    /// cell, then resolves that model through the catalog captured by the
+    /// handshake. A real-unit value therefore requires a named target; a raw
+    /// index has no range metadata to convert against.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`crate::Error::InvalidParameter`] for malformed selectors,
+    /// out-of-range normalised values, read-only meters, or real-unit writes
+    /// without a named parameter. Returns [`crate::Error::NotFound`] when the
+    /// cell is empty or the model/parameter is absent from the catalog.
+    #[allow(clippy::too_many_arguments)]
+    pub fn set_parameter(
+        &self,
+        row: Row,
+        column: u32,
+        target: ParameterTarget,
+        input: ParameterInput,
+        scene: Option<u32>,
+        promote: bool,
+        timeout: Duration,
+    ) -> crate::Result<ParameterWrite> {
+        if row.wire() > 3 {
+            return Err(crate::Error::InvalidRow(format!(
+                "wire rows are 0-3, got {}",
+                row.wire()
+            )));
+        }
+        if column > 7 {
+            return Err(crate::Error::InvalidParameter(format!(
+                "grid columns are 0-7, got {column}"
+            )));
+        }
+        if let Some(scene) = scene {
+            if scene > 7 {
+                return Err(crate::Error::InvalidParameter(format!(
+                    "scenes are 0-7, got {scene}"
+                )));
+            }
+        }
+
+        let ParameterWrite { index, value } =
+            self.resolve_parameter(row, column, target, input, timeout)?;
+
+        if let Some(scene) = scene {
+            self.set_param_in_scene(row, column, index, value.clone(), scene, promote)?;
+        } else {
+            if promote {
+                self.set_param_scene_mode(row, column, index, true)?;
+            }
+            self.set_param(row, column, index, value.clone())?;
+        }
+
+        Ok(ParameterWrite { index, value })
+    }
+
+    /// Resolve a host-facing selector and input to the wire write.
+    fn resolve_parameter(
+        &self,
+        row: Row,
+        column: u32,
+        target: ParameterTarget,
+        input: ParameterInput,
+        timeout: Duration,
+    ) -> crate::Result<ParameterWrite> {
+        let (index, value) = match target {
+            ParameterTarget::Index(index) => {
+                let value = match input {
+                    ParameterInput::Normalised(value) => normalised_value(value)?,
+                    ParameterInput::Text(value) => Value::Text(value),
+                    ParameterInput::Real(_) => {
+                        return Err(crate::Error::InvalidParameter(
+                            "a real-unit value requires a parameter name so its range is known"
+                                .into(),
+                        ));
+                    }
+                };
+                (index, value)
+            }
+            ParameterTarget::Name(name) => {
+                if name.trim().is_empty() {
+                    return Err(crate::Error::InvalidParameter(
+                        "parameter name cannot be empty".into(),
+                    ));
+                }
+                let preset = self.read_current_preset(timeout)?;
+                let model_id = model_id_at(&preset, row, column).ok_or_else(|| {
+                    crate::Error::NotFound(format!(
+                        "screen row {} column {column} is empty",
+                        row.screen()
+                    ))
+                })?;
+                let payload = match self.session.captured_model_repo() {
+                    Some(payload) => payload,
+                    None => self.fetch_model_repo(timeout)?,
+                };
+                let catalog = crate::Catalog::parse(&payload)?;
+                let model = catalog.get(model_id).ok_or_else(|| {
+                    crate::Error::NotFound(format!(
+                        "model {model_id} is not in this unit's catalog"
+                    ))
+                })?;
+                let parameter = model.parameter(&name).ok_or_else(|| {
+                    let names: Vec<&str> =
+                        model.parameters.iter().map(|p| p.name.as_str()).collect();
+                    crate::Error::NotFound(format!(
+                        "{} has no parameter {name:?}. It has: {}",
+                        model.name,
+                        names.join(", ")
+                    ))
+                })?;
+                if parameter.kind.is_read_only() {
+                    return Err(crate::Error::InvalidParameter(format!(
+                        "{}'s {} is a live meter, not a setting",
+                        model.name, parameter.name
+                    )));
+                }
+                let value = match input {
+                    ParameterInput::Normalised(value) => normalised_value(value)?,
+                    ParameterInput::Text(value) => Value::Text(value),
+                    ParameterInput::Real(value) => {
+                        if !value.is_finite() {
+                            return Err(crate::Error::InvalidParameter(format!(
+                                "real-unit values must be finite, got {value}"
+                            )));
+                        }
+                        let normalised = parameter.to_normalised(value).ok_or_else(|| {
+                            crate::Error::InvalidParameter(format!(
+                                "{}'s {} has a placeholder range ({}..{}); use a normalised value",
+                                model.name, parameter.name, parameter.min, parameter.max
+                            ))
+                        })?;
+                        #[allow(clippy::cast_possible_truncation)]
+                        let wire_value = normalised as f32;
+                        normalised_value(wire_value)?
+                    }
+                };
+                let index = u32::try_from(parameter.index).map_err(|_| {
+                    crate::Error::InvalidParameter(format!(
+                        "parameter index {} does not fit on the wire",
+                        parameter.index
+                    ))
+                })?;
+                (index, value)
+            }
+        };
+        Ok(ParameterWrite { index, value })
     }
 
     /// Make a block parameter follow scenes, or stop it following them.
@@ -1311,6 +1546,21 @@ mod tests {
     fn db_to_input_level_rejects_out_of_range() {
         assert!(db_to_input_level(-13.0).is_err());
         assert!(db_to_input_level(61.0).is_err());
+    }
+
+    #[test]
+    fn normalised_parameter_values_are_checked_before_the_wire() {
+        assert_eq!(normalised_value(0.0).unwrap(), Value::Normalised(0.0));
+        assert_eq!(normalised_value(1.0).unwrap(), Value::Normalised(1.0));
+        for invalid in [-0.01, 1.01, f32::NAN, f32::INFINITY] {
+            assert!(
+                matches!(
+                    normalised_value(invalid),
+                    Err(crate::Error::InvalidParameter(_))
+                ),
+                "{invalid:?} should be refused"
+            );
+        }
     }
 
     // -- listing decode ----------------------------------------------------

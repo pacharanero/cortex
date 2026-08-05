@@ -3,9 +3,10 @@
 
 //! # cortex-rs
 //!
-//! Low-level Rust crate for the Neural DSP **Quad Cortex** (and, in time, the
-//! **Nano Cortex**) over the Cortex Control USB HID protocol. A port of the
-//! protocol behaviour established by the MIT-licensed
+//! Low-level Rust crate for the Neural DSP **Quad Cortex** over the Cortex
+//! Control USB HID protocol. **Nano Cortex** support is planned, but its
+//! transport compatibility is unverified. A port of the protocol behaviour
+//! established by the MIT-licensed
 //! [`stokes-audio/pyquadcortex`](https://github.com/stokes-audio/pyquadcortex)
 //! Python library, re-verified against a real Quad Cortex on Linux.
 //!
@@ -25,15 +26,16 @@
 //! - a Tauri desktop GUI backend (planned, see `gui/`),
 //! - and any third-party consumer via crates.io.
 //!
-//! Building with `default-features = false` drops the `hidapi` transport,
-//! leaving only the protocol/domain decode surface - useful for tests,
-//! analysis tools, and schema introspection without a device present.
+//! Building with `default-features = false` drops the `hidapi` transport and
+//! device-open entry points while retaining framing, domain, session, fake-link,
+//! and client surfaces - useful for tests, mock-first hosts, analysis tools,
+//! and schema introspection without a device present.
 //!
 //! ## Feature flags
 //!
 //! - `default = ["hid"]` builds the USB HID transport.
-//! - `default-features = false` builds only the protocol/domain surface (no
-//!   `hidapi`, no device access).
+//! - `default-features = false` builds every device-independent surface (no
+//!   `hidapi`, no device-open entry points).
 //!
 //! ## Protocol invariants
 //!
@@ -61,12 +63,12 @@ pub mod framing;
 pub mod grid;
 pub mod link;
 pub mod message;
+pub mod safety;
+pub mod state;
 pub mod view;
 
-#[cfg(feature = "hid")]
 pub mod catalog;
 pub mod client;
-#[cfg(feature = "hid")]
 pub mod session;
 #[cfg(feature = "hid")]
 pub mod transport;
@@ -81,17 +83,22 @@ pub mod proto {
     include!(concat!(env!("OUT_DIR"), "/cortex_protobuf_v2.rs"));
 }
 
-#[cfg(feature = "hid")]
 pub use catalog::{Catalog, Model, Parameter, ParameterKind};
-pub use client::{Placement, QuadCortex};
+pub use client::{ParameterInput, ParameterTarget, ParameterWrite, Placement, QuadCortex};
 pub use daemon::{Request, Response};
 pub use device::DeviceKind;
 pub use framing::{Flags, Frame, FrameReassembler, ReportId};
 pub use grid::{Row, Value};
 pub use message::Message;
+pub use safety::{
+    RecallConsent, SaveConfirmation, SavePolicy, SavePreparation, SavePreparationView, SaveReceipt,
+    SaveTarget, ScratchOverride, ScratchRange,
+};
 pub use session::ConnectMode;
-#[cfg(feature = "hid")]
 pub use session::{InboundMessage, Session};
+pub use state::{
+    CacheCounters, CachePhase, Cached, DeviceStateCache, DeviceStateStatus, PresetLocation,
+};
 #[cfg(feature = "hid")]
 pub use transport::Transport;
 
@@ -141,6 +148,10 @@ pub enum Error {
     #[error("device silent for {0}s (a kept-alive session is never quiet)")]
     DeviceSilent(u64),
 
+    /// The session could not create or manage one of its background workers.
+    #[error("session error: {0}")]
+    Session(String),
+
     /// A slot name was malformed. Slots are a bank number 1-32 followed by
     /// a letter A-H, e.g. `"28C"`.
     #[error("invalid slot name: {0}")]
@@ -170,6 +181,14 @@ pub enum Error {
     /// row for a splitter, or screen row 0, which does not exist.
     #[error("invalid row: {0}")]
     InvalidRow(String),
+
+    /// A parameter selector or value was invalid for the requested write.
+    #[error("invalid parameter write: {0}")]
+    InvalidParameter(String),
+
+    /// A destructive save did not satisfy the shared safety policy.
+    #[error("unsafe save refused: {0}")]
+    UnsafeSave(String),
 
     /// The device was not found on the USB bus. On Linux, check the udev
     /// rule and that the device is powered on (see README -> Setup).

@@ -20,22 +20,18 @@ mod decode;
 // The preset view types now live in the crate, so the GUI and the MCP server
 // get the same shapes rather than reimplementing them. Aliased to their old
 // names here to keep the printers below unchanged.
-use cortex_rs::view::{ParamValueKind, Preset as PresetOut};
+use cortex_rs::view::{CpuLoad, DeviceVersion, ParamValueKind, Preset as PresetOut, PresetSlot};
 
 use anyhow::Result;
 use clap::{CommandFactory, Parser, Subcommand};
 use cortex_rs::proto::VersionMessage;
 use cortex_rs::proto::cortex_message_type::Enum as MessageType;
 use cortex_rs::proto::message_action::Enum as MessageAction;
-use cortex_rs::proto::version_message::{
-    AppFwVersion, BootloaderFwVersion, CustomName, DeviceSerialNumber, DeviceTypeOneOf, IsEss,
-    LinuxKernelVersion, MacAddress, UbootVersion, ZencoderFwApp, ZencoderFwBootloader,
-    ZenosGitHash, ZenwirelessFwVersion,
-};
 use cortex_rs::{DeviceKind, Transport};
 
 /// The `cortex` CLI: an unofficial, Linux-first command-line surface for the
-/// Neural DSP Quad Cortex (and Nano Cortex) over USB HID.
+/// Neural DSP Quad Cortex over USB HID. Nano Cortex support is planned but its
+/// transport compatibility is unverified.
 ///
 /// Not affiliated with or endorsed by Neural DSP. "Neural DSP", "Quad Cortex",
 /// and "Nano Cortex" are trademarks of Neural DSP Technologies. See the README
@@ -335,8 +331,8 @@ enum PresetCmd {
         /// Include empty slots, so a free slot can be found.
         #[arg(long)]
         include_empty: bool,
-        /// Seconds to wait for the listing. Delivery is lazy; a timeout means
-        /// "ask again", not "the setlist is empty".
+        /// Seconds to wait for the complete 256-slot listing. A timeout means
+        /// no answer arrived, not that the setlist is empty.
         #[arg(long, value_name = "SECONDS", default_value = "25")]
         timeout: u64,
     },
@@ -344,7 +340,7 @@ enum PresetCmd {
     ///
     /// CHANGES WHAT IS HEARD: there is no side-effect-free way to read a
     /// STORED preset - the device only emits a preset when it recalls one.
-    /// Use `cortex probe` if you want the live grid without recalling.
+    /// Use `cortex grid show` if you want the live grid without recalling.
     #[command(
         after_help = "Examples:\n  cortex preset show --slot 1B\n  cortex preset show --slot 1B --params"
     )]
@@ -414,7 +410,7 @@ enum GridCmd {
     /// Show the LIVE grid: what is loaded right now, unsaved edits included.
     ///
     /// Read-only and side-effect free. This is the command to use while
-    /// editing: `cortex preset --slot X` reads a STORED slot and can only do
+    /// editing: `cortex preset show --slot X` reads a STORED slot and can only do
     /// so by recalling it, which discards unsaved edits and resets the
     /// active scene.
     #[command(after_help = "Examples:\n  cortex grid show\n  cortex grid show --params")]
@@ -435,11 +431,10 @@ enum BlockCmd {
     /// Set a block parameter on the grid.
     ///
     /// CHANGES THE WORKING GRID. Nothing is saved: the edit lives on the
-    /// grid until you save the preset (not yet implemented) or recall
-    /// another, which discards it.
+    /// grid until you save the preset or recall another, which discards it.
     ///
     /// Rows are given as the unit LABELS them, 1-4, not the zero-based wire
-    /// index. Use `cortex preset --slot <slot>` to see what is where.
+    /// index. Use `cortex grid show` to see what is where.
     #[command(
         after_help = "Examples:\n  cortex block param --row 1 --column 2 --param GAIN --real 7.5\n  cortex block param --row 1 --column 2 --index 0 --value 0.75\n  cortex block param --row 1 --column 2 --param GAIN --value 0.9 --scene 2"
     )]
@@ -450,8 +445,8 @@ enum BlockCmd {
         /// Grid column, 0-7, left to right.
         #[arg(long, value_name = "0-7")]
         column: u32,
-        /// Parameter by NAME, e.g. `GAIN`. Resolved through the device
-        /// catalog, so it needs --model or a block already in the cell.
+        /// Parameter by NAME, e.g. `GAIN`. The model is read from the cell
+        /// and resolved through the device catalog.
         /// Safer than --index: indices are positional and not every one is
         /// a visible knob.
         #[arg(long, value_name = "NAME", conflicts_with = "index")]
@@ -498,7 +493,8 @@ enum BlockCmd {
     ///
     /// Verifies the device accepted it: a placement refused for want of DSP
     /// capacity is accepted on the wire and simply absent afterwards, with
-    /// no error, so this waits for the device's echo naming the cell.
+    /// no error, so this waits for the device's echo and falls back to a live
+    /// grid read-back when the echo is late.
     #[command(
         after_help = "Examples:\n  cortex block set --row 1 --column 2 --model 1001   # find ids with: cortex catalog --search"
     )]
@@ -795,16 +791,32 @@ fn run(cli: Cli) -> Result<()> {
 /// Exercises the session's `collect` primitive: one READ provokes many pushes
 /// rather than one reply, so a single-shot waiter would see only the first.
 fn cmd_folders(window: u64, show_empty: bool, fmt: Format) -> Result<()> {
+    eprintln!("gathering folder announcements for {window}s ...");
+    if let Some(result) = connect::request(&cortex_rs::Request::ListFolders {
+        window_seconds: window,
+    }) {
+        let folders: Vec<cortex_rs::client::Folder> = serde_json::from_value(result?)?;
+        return emit_folders(folders, show_empty, fmt);
+    }
+
     let session = open_device()?;
     session.connect(Duration::from_secs(10), Duration::from_secs(2))?;
     let qc = cortex_rs::QuadCortex::new(session.clone());
 
-    eprintln!("gathering folder announcements for {window}s ...");
     let folders = qc.list_folders(Duration::from_secs(window))?;
 
     qc.disconnect();
     session.stop();
 
+    emit_folders(folders, show_empty, fmt)
+}
+
+/// Filter and render folder announcements identically on direct and daemon paths.
+fn emit_folders(
+    folders: Vec<cortex_rs::client::Folder>,
+    show_empty: bool,
+    fmt: Format,
+) -> Result<()> {
     // Hide the empty ones unless asked. The device reports 399 folders and
     // all but a handful hold nothing, so the default listing was mostly
     // noise obscuring its own useful lines.
@@ -867,8 +879,7 @@ fn cmd_probe(listen: u64, fmt: Format) -> Result<()> {
 
     let qc = cortex_rs::QuadCortex::new(session.clone());
 
-    // Settle: the device services pushes lazily, so give it a window before
-    // asking for state.
+    // Keep listening for an explicit observation window when requested.
     if listen > 0 {
         step!("listening {listen}s for pushes");
         std::thread::sleep(Duration::from_secs(listen));
@@ -932,7 +943,7 @@ fn cmd_probe(listen: u64, fmt: Format) -> Result<()> {
         Ok(entries) => {
             eprintln!("ok ({} occupied)", entries.len());
             out.preset_count = Some(entries.len());
-            out.presets = entries.iter().map(PresetEntryOut::from).collect();
+            out.presets = entries.iter().map(PresetSlot::from).collect();
         }
         Err(e) => {
             eprintln!("FAILED: {e}");
@@ -991,7 +1002,7 @@ fn cmd_version_via_session(fmt: Format) -> Result<()> {
     // closed while the RX thread is still inside read().
     session.stop();
 
-    emit(&device_version(&result?), fmt, print_device_version)
+    emit(&DeviceVersion::from(&result?), fmt, print_device_version)
 }
 
 fn cmd_version(fmt: Format) -> Result<()> {
@@ -1030,7 +1041,7 @@ fn cmd_version(fmt: Format) -> Result<()> {
     let version: VersionMessage = prost::Message::decode(reply.body.as_ref())
         .map_err(|e| anyhow::anyhow!("protobuf decode error: {e}"))?;
 
-    emit(&device_version(&version), fmt, print_device_version)
+    emit(&DeviceVersion::from(&version), fmt, print_device_version)
 }
 
 /// Reset SIGPIPE to SIG_DFL so output pipes into `head`/`less` without a
@@ -1054,8 +1065,9 @@ fn cmd_presets(setlist: &str, include_empty: bool, timeout: u64, fmt: Format) ->
     if let Some(result) = connect::request(&cortex_rs::Request::ListPresets {
         setlist: setlist.to_string(),
         include_empty,
+        timeout_seconds: timeout,
     }) {
-        let entries: Vec<PresetEntryOut> = serde_json::from_value(result?)?;
+        let entries: Vec<PresetSlot> = serde_json::from_value(result?)?;
         return emit(&entries, fmt, print_preset_entries);
     }
 
@@ -1068,13 +1080,13 @@ fn cmd_presets(setlist: &str, include_empty: bool, timeout: u64, fmt: Format) ->
     qc.disconnect();
     session.stop();
 
-    let entries: Vec<PresetEntryOut> = result?.iter().map(PresetEntryOut::from).collect();
+    let entries: Vec<PresetSlot> = result?.iter().map(PresetSlot::from).collect();
     emit(&entries, fmt, print_preset_entries)
 }
 
 /// Print a setlist listing. Shared so the routed and direct paths cannot
 /// drift into two formats.
-fn print_preset_entries(entries: &Vec<PresetEntryOut>) {
+fn print_preset_entries(entries: &Vec<PresetSlot>) {
     for e in entries {
         println!(
             "{:>4}  {}",
@@ -1307,6 +1319,17 @@ fn cmd_scene(index: u32, fmt: Format) -> Result<()> {
 
 /// Recall a slot and dump the preset it loads, naming each block.
 fn cmd_preset(slot: &str, setlist: &str, factory: bool, params: bool, fmt: Format) -> Result<()> {
+    if let Some(result) = connect::request(&cortex_rs::Request::ReadPreset {
+        setlist: setlist.to_string(),
+        slot: slot.to_string(),
+        factory,
+        with_params: params,
+        timeout_seconds: 40,
+    }) {
+        let preset: PresetOut = serde_json::from_value(result?)?;
+        return emit(&preset, fmt, print_preset);
+    }
+
     let (session, qc) = connected()?;
 
     // Fetch the catalog in the same session: without it a block is just an
@@ -1343,7 +1366,9 @@ fn cmd_catalog(
     // the device, and without a 2 s handshake per iteration.
     let payload = if let Some(path) = from_file {
         std::fs::read(path)?
-    } else if let Some(result) = connect::request(&cortex_rs::Request::Catalog) {
+    } else if let Some(result) = connect::request(&cortex_rs::Request::Catalog {
+        timeout_seconds: timeout,
+    }) {
         // The daemon already holds this from its handshake, so this is a
         // socket read rather than another 46 KB transfer off the device.
         let value = result?;
@@ -1636,7 +1661,7 @@ fn wire_row(row: u32) -> Result<cortex_rs::Row> {
         if row > 3 {
             anyhow::bail!("row {row} is out of range: --zero-based rows are 0-3");
         }
-        return Ok(cortex_rs::Row::from_wire(row));
+        return Ok(cortex_rs::Row::try_from_wire(row)?);
     }
     Ok(cortex_rs::Row::from_screen(row)?)
 }
@@ -1676,117 +1701,79 @@ fn cmd_set_param(
     fmt: Format,
 ) -> Result<()> {
     let row = wire_row(row)?;
-    let (session, qc) = connected()?;
-
-    // Resolving a name, or converting a real-world value, needs the catalog
-    // and the id of whatever is actually in the cell. Both come from the
-    // device, so read the grid rather than making the user tell us.
-    let needs_catalog = param.is_some() || real.is_some();
-    let resolved = if needs_catalog {
-        resolve_param(&qc, row, column, param, real)
+    let target = if let Some(name) = param {
+        cortex_rs::ParameterTarget::Name(name.to_string())
     } else {
-        Ok((index.unwrap_or_default(), None))
+        cortex_rs::ParameterTarget::Index(index.unwrap_or_default())
     };
-
-    let outcome = (|| -> Result<String> {
-        let (param_index, converted) = resolved?;
-        let value = match (value, converted, text) {
-            (_, _, Some(t)) => cortex_rs::Value::Text(t.to_string()),
-            (Some(v), _, None) => cortex_rs::Value::Normalised(v),
-            (None, Some(v), None) => cortex_rs::Value::Normalised(v),
-            (None, None, None) => {
-                anyhow::bail!("give a value: --value (0.0-1.0), --real (own units), or --text")
-            }
-        };
-        let shown = format!("{value:?}");
-        match scene {
-            Some(scene) => {
-                qc.set_param_in_scene(row, column, param_index, value, scene, true)?;
-                Ok(format!(
-                    "row {} column {column} param {param_index} = {shown} on scene {scene}                      (the unit is now sitting on that scene)",
-                    row.screen()
-                ))
-            }
-            None => {
-                qc.set_param(row, column, param_index, value)?;
-                Ok(format!(
-                    "row {} column {column} param {param_index} = {shown} on the active scene",
-                    row.screen()
-                ))
-            }
+    let input = match (value, real, text) {
+        (Some(value), None, None) => cortex_rs::ParameterInput::Normalised(value),
+        (None, Some(value), None) => cortex_rs::ParameterInput::Real(value),
+        (None, None, Some(value)) => cortex_rs::ParameterInput::Text(value.to_string()),
+        (None, None, None) => {
+            anyhow::bail!("give a value: --value (0.0-1.0), --real (own units), or --text")
         }
-    })();
-
-    qc.disconnect();
-    session.stop();
-    report_edit("set_param", outcome?, fmt)
-}
-
-/// Work out a parameter index from a name, and convert a real-world value,
-/// using the catalog and whatever model occupies the cell.
-fn resolve_param(
-    qc: &cortex_rs::QuadCortex,
-    row: cortex_rs::Row,
-    column: u32,
-    param: Option<&str>,
-    real: Option<f64>,
-) -> Result<(u32, Option<f32>)> {
-    let preset = qc.read_current_preset(Duration::from_secs(15))?;
-    let model_id = block_at(&preset, row.wire(), column).ok_or_else(|| {
-        anyhow::anyhow!(
-            "row {} column {column} is empty, so there is no parameter to name;              place a block first or use --index",
-            row.screen()
-        )
-    })?;
-
-    let payload = qc.fetch_model_repo(Duration::from_secs(40))?;
-    let catalog = cortex_rs::Catalog::parse(&payload)?;
-    let model = catalog
-        .get(model_id)
-        .ok_or_else(|| anyhow::anyhow!("model {model_id} is not in this unit's catalog"))?;
-
-    let Some(name) = param else {
-        anyhow::bail!("--real needs --param so the parameter's range is known");
+        _ => unreachable!("clap prevents more than one parameter value"),
     };
-    let spec = model.parameter(name).ok_or_else(|| {
-        let names: Vec<&str> = model.parameters.iter().map(|p| p.name.as_str()).collect();
-        anyhow::anyhow!(
-            "{} has no parameter {name:?}. It has: {}",
-            model.name,
-            names.join(", ")
-        )
-    })?;
 
-    if spec.kind.is_read_only() {
-        anyhow::bail!(
-            "{}'s {} is a live meter, not a setting; writing to it does nothing",
-            model.name,
-            spec.name
+    if let Some(result) = connect::request(&cortex_rs::Request::SetParam {
+        row: row.wire(),
+        column,
+        target: target.clone(),
+        input: input.clone(),
+        scene,
+        promote: scene.is_some(),
+        timeout_seconds: 40,
+    }) {
+        let applied: cortex_rs::ParameterWrite = serde_json::from_value(result?)?;
+        return report_edit(
+            "set_param",
+            parameter_detail(row, column, &applied, scene),
+            fmt,
         );
     }
 
-    let converted = match real {
-        Some(r) => Some(spec.to_normalised(r).ok_or_else(|| {
-            anyhow::anyhow!(
-                "{}'s {} has a placeholder range ({}..{}), so a real-world value                  cannot be converted; use --value with a 0.0-1.0 float",
-                model.name,
-                spec.name,
-                spec.min,
-                spec.max
-            )
-        })? as f32),
-        None => None,
-    };
-    Ok((u32::try_from(spec.index).unwrap_or_default(), converted))
+    let (session, qc) = connected()?;
+    let outcome = qc.set_parameter(
+        row,
+        column,
+        target,
+        input,
+        scene,
+        scene.is_some(),
+        Duration::from_secs(40),
+    );
+
+    qc.disconnect();
+    session.stop();
+    let applied = outcome?;
+    report_edit(
+        "set_param",
+        parameter_detail(row, column, &applied, scene),
+        fmt,
+    )
 }
 
-/// The model id at a grid cell, if the cell is occupied.
-fn block_at(preset: &cortex_rs::proto::BinaryPreset, row: u32, column: u32) -> Option<u32> {
-    let chain = preset.chains.get(row as usize)?;
-    let model = chain.models.get(column as usize)?;
-    match model.hash {
-        Some(cortex_rs::proto::model::Hash::Hash(id)) if id != 0 => Some(id),
-        _ => None,
+/// Describe the resolved parameter write identically on direct and daemon paths.
+fn parameter_detail(
+    row: cortex_rs::Row,
+    column: u32,
+    applied: &cortex_rs::ParameterWrite,
+    scene: Option<u32>,
+) -> String {
+    let shown = format!("{:?}", applied.value);
+    match scene {
+        Some(scene) => format!(
+            "row {} column {column} param {} = {shown} on scene {scene} \
+             (the unit is now sitting on that scene)",
+            row.screen(),
+            applied.index
+        ),
+        None => format!(
+            "row {} column {column} param {} = {shown} on the active scene",
+            row.screen(),
+            applied.index
+        ),
     }
 }
 
@@ -1826,26 +1813,46 @@ fn cmd_set_block(
     fmt: Format,
 ) -> Result<()> {
     let row = wire_row(row)?;
+    if let Some(result) = connect::request(&cortex_rs::Request::SetBlock {
+        row: row.wire(),
+        column,
+        model,
+        verify: !no_verify,
+        timeout_seconds: timeout,
+    }) {
+        let placement: cortex_rs::Placement = serde_json::from_value(result?)?;
+        return report_block_placement(row, column, model, placement, fmt);
+    }
+
     let (session, qc) = connected()?;
     let result = if no_verify {
-        qc.set_block_unverified(row, column, model).map(|()| None)
+        qc.set_block_unverified(row, column, model)
+            .map(|()| cortex_rs::Placement::Unverified)
     } else {
         qc.set_block(row, column, model, Duration::from_secs(timeout))
-            .map(Some)
     };
     qc.disconnect();
     session.stop();
-    let placement = result?;
+    report_block_placement(row, column, model, result?, fmt)
+}
 
+/// Report how a block placement was confirmed.
+fn report_block_placement(
+    row: cortex_rs::Row,
+    column: u32,
+    model: u32,
+    placement: cortex_rs::Placement,
+    fmt: Format,
+) -> Result<()> {
     // Say which check actually confirmed it. Reporting "echo confirmed" when
     // the echo timed out and a read-back rescued it would be a small lie
     // about how much the device actually told us.
     let how = match placement {
-        Some(cortex_rs::Placement::EchoConfirmed) => " (echo confirmed)",
-        Some(cortex_rs::Placement::ReadBackConfirmed) => {
+        cortex_rs::Placement::EchoConfirmed => " (echo confirmed)",
+        cortex_rs::Placement::ReadBackConfirmed => {
             " (no echo in time; confirmed by reading the grid back)"
         }
-        None => " (unverified)",
+        cortex_rs::Placement::Unverified => " (unverified)",
     };
     report_edit(
         "set_block",
@@ -1963,21 +1970,15 @@ fn print_preset(o: &PresetOut) {
 /// stored slot, which the device can only do by recalling it. This is the
 /// command to use while editing.
 fn cmd_grid(timeout: u64, params: bool, fmt: Format) -> Result<()> {
-    // The daemon's view is the LIVE grid, kept current by device pushes -
-    // including edits made on the hardware - so it is not merely faster, it
-    // can be fresher than a value we would read for ourselves.
-    if !params {
-        if let Some(result) = connect::request(&cortex_rs::Request::CurrentPreset) {
-            let value = result?;
-            return emit(&value, fmt, |v| {
-                if let Some(name) = v.get("name") {
-                    println!("name: {}", name.as_str().unwrap_or("<unnamed>"));
-                }
-                if let Some(chains) = v.get("chains") {
-                    println!("chains: {chains}");
-                }
-            });
-        }
+    // Use the held session when one exists. This still performs a
+    // side-effect-free live-grid read; the subscribed push-maintained cache
+    // is separate work tracked by PROT-008.6.5.
+    if let Some(result) = connect::request(&cortex_rs::Request::CurrentPreset {
+        with_params: params,
+        timeout_seconds: timeout,
+    }) {
+        let preset: PresetOut = serde_json::from_value(result?)?;
+        return emit(&preset, fmt, print_preset);
     }
 
     let (session, qc) = connected()?;
@@ -2093,9 +2094,38 @@ fn cmd_connect(status: bool, stop: bool, fmt: Format) -> Result<()> {
                 if let Some(since) = device.get("last_message_seconds") {
                     println!("last_message_seconds: {since}");
                 }
+                if let Some(attempts) = device.get("attempts") {
+                    println!("reconnect_attempts: {attempts}");
+                }
+                if let Some(error) = device.get("last_error").or_else(|| device.get("error")) {
+                    println!("device_error: {error}");
+                }
             }
             if let Some(cache) = v.get("cache") {
-                println!("cached_catalog: {}", cache.get("catalog").unwrap_or(cache));
+                for (label, key) in [
+                    ("cache_phase", "phase"),
+                    ("cache_generation", "generation"),
+                    ("cache_revision", "revision"),
+                    ("cache_storage_revision", "storage_revision"),
+                    ("cached_catalog", "catalog"),
+                    ("cached_current_preset", "current_preset"),
+                    ("cached_active_scene", "active_scene"),
+                    ("cached_preset_dirty", "preset_dirty"),
+                    ("cached_preset_location", "preset_location"),
+                    ("cache_messages_seen", "messages_seen"),
+                    ("cache_messages_applied", "pushes_applied"),
+                    ("cache_messages_rejected", "messages_rejected"),
+                    ("cache_stream_gaps", "stream_gaps"),
+                ] {
+                    if let Some(value) = cache.get(key) {
+                        println!("{label}: {value}");
+                    }
+                }
+                if let Some(error) = cache.get("last_rejection") {
+                    if !error.is_null() {
+                        println!("cache_last_rejection: {error}");
+                    }
+                }
             }
         });
     }
@@ -2285,56 +2315,6 @@ mod tests {
 // is a wire representation; this is an interface.
 // ---------------------------------------------------------------------------
 
-/// One grid column's share of the DSP load.
-#[derive(serde::Serialize, serde::Deserialize)]
-struct CpuColumnOut {
-    /// Load for this column, as the device reports it.
-    load: f32,
-    /// Whether this column runs on the unit's second DSP core. The QC splits
-    /// the grid across two cores, and which core a block lands on is why an
-    /// apparently identical preset can fit or not.
-    on_core2: bool,
-}
-
-/// The unit's DSP load, total and broken down by chain and column.
-#[derive(serde::Serialize, serde::Deserialize)]
-struct CpuLoadOut {
-    /// Total load across both cores, if the device reported one.
-    total: Option<f32>,
-    /// Per chain, then per column within that chain.
-    chains: Vec<Vec<CpuColumnOut>>,
-}
-
-/// Device firmware and identity, as reported by a `Version` READ.
-///
-/// Deserialisable as well as serialisable because the daemon answers a
-/// `Version` request in exactly this shape and the client parses it back -
-/// the "stable, documented shape" above is a contract between two of our own
-/// processes, not only an output format.
-#[derive(serde::Serialize, serde::Deserialize)]
-struct DeviceVersion {
-    /// `QC` or `ATMA` (the Nano Cortex codename).
-    device_type: Option<String>,
-    /// The name shown on the unit.
-    custom_name: Option<String>,
-    serial_number: Option<String>,
-    /// The CorOS version. Carried in a field the vendor's schema calls
-    /// `zenos_git_hash`, which is NOT what it holds - see
-    /// spec/150-client/spec.md.
-    coros_version: Option<String>,
-    app_firmware: Option<String>,
-    bootloader_firmware: Option<String>,
-    zencoder_app: Option<String>,
-    zencoder_bootloader: Option<String>,
-    /// A 32-hex checksum identifying the wireless firmware build. The
-    /// vendor's schema calls this a "version".
-    wireless_firmware_checksum: Option<String>,
-    linux_kernel: Option<String>,
-    uboot: Option<String>,
-    mac_address: Option<String>,
-    is_ess: Option<bool>,
-}
-
 /// The result of a `probe` run.
 #[derive(serde::Serialize)]
 struct ProbeOut {
@@ -2343,29 +2323,9 @@ struct ProbeOut {
     current_preset: Option<String>,
     current_preset_chains: Option<usize>,
     preset_count: Option<usize>,
-    presets: Vec<PresetEntryOut>,
+    presets: Vec<PresetSlot>,
     /// Read paths that failed, with the reason. Empty on a clean run.
     failures: Vec<String>,
-}
-
-/// A setlist listing entry.
-#[derive(serde::Serialize, serde::Deserialize)]
-struct PresetEntryOut {
-    /// Linear slot index, 0-255.
-    index: u32,
-    /// The slot as the unit displays it, e.g. `28C`.
-    slot: String,
-    name: String,
-}
-
-impl From<&cortex_rs::client::PresetEntry> for PresetEntryOut {
-    fn from(e: &cortex_rs::client::PresetEntry) -> Self {
-        Self {
-            index: e.index,
-            slot: cortex_rs::client::position_to_slot(e.index),
-            name: e.name.clone(),
-        }
-    }
 }
 
 /// A model catalog entry.
@@ -2439,29 +2399,6 @@ struct ActionOut {
     detail: String,
 }
 
-/// Reshape a `CPULoad` push into the documented output type.
-fn cpu_load(v: &cortex_rs::proto::CpuLoadMessage) -> CpuLoadOut {
-    CpuLoadOut {
-        total: v.cpu_total_load.as_ref().map(|t| {
-            let cortex_rs::proto::cpu_load_message::CpuTotalLoad::CpuTotalLoad(x) = t;
-            *x
-        }),
-        chains: v
-            .chains
-            .iter()
-            .map(|c| {
-                c.columns
-                    .iter()
-                    .map(|col| CpuColumnOut {
-                        load: col.cpu_load,
-                        on_core2: col.is_on_core2,
-                    })
-                    .collect()
-            })
-            .collect(),
-    }
-}
-
 /// Show the unit's live DSP load.
 fn cmd_cpu(fmt: Format) -> Result<()> {
     let Some(result) = connect::request(&cortex_rs::Request::CpuLoad) else {
@@ -2471,7 +2408,7 @@ fn cmd_cpu(fmt: Format) -> Result<()> {
              needs a held session: start one with `cortex session start`."
         );
     };
-    let parsed: CpuLoadOut = serde_json::from_value(result?)?;
+    let parsed: CpuLoad = serde_json::from_value(result?)?;
     emit(&parsed, fmt, |c| {
         if let Some(total) = c.total {
             println!("total: {total:.1}%");
@@ -2490,61 +2427,6 @@ fn cmd_cpu(fmt: Format) -> Result<()> {
             println!("(* = second DSP core)");
         }
     })
-}
-
-/// Pull the informational fields out of a `VersionMessage`.
-///
-/// Two field names in the vendor's schema do not describe their contents;
-/// they are renamed here to what they actually hold, with the original noted
-/// in the struct's docs.
-fn device_version(v: &VersionMessage) -> DeviceVersion {
-    macro_rules! s {
-        ($field:expr, $variant:path) => {
-            $field.as_ref().map(|x| {
-                let $variant(inner) = x;
-                inner.clone()
-            })
-        };
-    }
-    DeviceVersion {
-        device_type: v.device_type.as_ref().and_then(|d| {
-            let DeviceTypeOneOf::DeviceType(id) = d;
-            cortex_rs::proto::version_message::DeviceType::try_from(*id)
-                .ok()
-                .map(|t| t.as_str_name().to_string())
-        }),
-        custom_name: s!(v.custom_name, CustomName::CustomName),
-        serial_number: s!(
-            v.device_serial_number,
-            DeviceSerialNumber::DeviceSerialNumber
-        ),
-        coros_version: s!(v.zenos_git_hash, ZenosGitHash::ZenosGitHash),
-        app_firmware: s!(v.app_fw_version, AppFwVersion::AppFwVersion),
-        bootloader_firmware: s!(
-            v.bootloader_fw_version,
-            BootloaderFwVersion::BootloaderFwVersion
-        ),
-        zencoder_app: s!(v.zencoder_fw_app, ZencoderFwApp::ZencoderFwApp),
-        zencoder_bootloader: s!(
-            v.zencoder_fw_bootloader,
-            ZencoderFwBootloader::ZencoderFwBootloader
-        ),
-        wireless_firmware_checksum: s!(
-            v.zenwireless_fw_version,
-            ZenwirelessFwVersion::ZenwirelessFwVersion
-        )
-        .map(|x| x.trim().to_string()),
-        linux_kernel: s!(
-            v.linux_kernel_version,
-            LinuxKernelVersion::LinuxKernelVersion
-        ),
-        uboot: s!(v.uboot_version, UbootVersion::UbootVersion).map(|x| x.trim().to_string()),
-        mac_address: s!(v.mac_address, MacAddress::MacAddress),
-        is_ess: v.is_ess.as_ref().map(|e| {
-            let IsEss::IsEss(b) = e;
-            *b
-        }),
-    }
 }
 
 /// Human-readable rendering of the device version.

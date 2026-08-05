@@ -11,8 +11,8 @@
 
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
@@ -25,15 +25,42 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 /// How long teardown gets before the process exits regardless.
 const SHUTDOWN_GRACE: Duration = Duration::from_secs(3);
 
+/// How often the held session's measured liveness is checked.
+const HEALTH_POLL: Duration = Duration::from_secs(1);
+
+/// Reconnect starts quickly, then backs off to this ceiling while unplugged.
+const MAX_RECONNECT_BACKOFF: Duration = Duration::from_secs(30);
+
+#[derive(Clone, Copy)]
+struct ReconnectTimings {
+    poll: Duration,
+    initial_backoff: Duration,
+    max_backoff: Duration,
+}
+
+const RECONNECT_TIMINGS: ReconnectTimings = ReconnectTimings {
+    poll: HEALTH_POLL,
+    initial_backoff: Duration::from_secs(1),
+    max_backoff: MAX_RECONNECT_BACKOFF,
+};
+
+#[derive(Clone)]
+enum RuntimeHealth {
+    Connected,
+    Reconnecting { attempts: u32, last_error: String },
+    Failed { error: String },
+}
+
 /// State the daemon holds for the life of its session.
 struct Daemon {
-    session: Arc<Session>,
-    client: QuadCortex,
+    /// Swapped atomically at the host layer after a successful reconnect.
+    session: Arc<Mutex<Arc<Session>>>,
+    state: cortex_rs::DeviceStateCache,
+    /// Parsed lazily and keyed by the cached payload's generation/revision.
+    catalog: Mutex<Option<(u64, u64, cortex_rs::Catalog)>>,
+    health: Arc<Mutex<RuntimeHealth>>,
+    stopping: Arc<AtomicBool>,
     started: Instant,
-    /// Device pushes seen since connecting. Surfaced by `status`, because a
-    /// cache kept current by pushes is only as trustworthy as the stream
-    /// feeding it, and a stalled stream should be visible.
-    pushes: AtomicU64,
 }
 
 impl Daemon {
@@ -58,7 +85,9 @@ impl Daemon {
             started.elapsed().as_secs_f32()
         );
 
-        Ok(Self::over(session))
+        let daemon = Self::over(session);
+        daemon.seed_live_state();
+        Ok(daemon)
     }
 
     /// Build a daemon around an already-connected session.
@@ -68,12 +97,72 @@ impl Daemon {
     /// protocol, the status shape, how a failed call is reported - is
     /// independent of how the session was obtained.
     fn over(session: Arc<Session>) -> Self {
-        let client = QuadCortex::new(session.clone());
+        let state = session.state_cache();
         Self {
-            session,
-            client,
+            session: Arc::new(Mutex::new(session)),
+            state,
+            catalog: Mutex::new(None),
+            health: Arc::new(Mutex::new(RuntimeHealth::Connected)),
+            stopping: Arc::new(AtomicBool::new(false)),
             started: Instant::now(),
-            pushes: AtomicU64::new(0),
+        }
+    }
+
+    fn session(&self) -> Arc<Session> {
+        self.session.lock().unwrap().clone()
+    }
+
+    fn client(&self) -> QuadCortex {
+        QuadCortex::new(self.session())
+    }
+
+    /// Repair fields absent from the initial subscription dump before the
+    /// background start command reports ready. Each explicit read is also
+    /// observed by the non-consuming reducer before its waiter returns.
+    fn seed_live_state(&self) {
+        seed_session(&self.session(), &self.state);
+    }
+
+    /// Parsed model catalog matching the cache's exact payload revision.
+    fn catalog(&self) -> Option<cortex_rs::Catalog> {
+        let payload = self.state.model_repo()?;
+        let mut parsed = self.catalog.lock().unwrap();
+        if let Some((generation, revision, catalog)) = parsed.as_ref() {
+            if *generation == payload.generation && *revision == payload.revision {
+                return Some(catalog.clone());
+            }
+        }
+        let catalog = cortex_rs::Catalog::parse(&payload.value).ok()?;
+        *parsed = Some((payload.generation, payload.revision, catalog.clone()));
+        Some(catalog)
+    }
+
+    /// Cache hits must not conceal a device that has stopped talking.
+    fn cache_is_usable(&self) -> bool {
+        self.session().is_responsive() && self.state.status().phase == cortex_rs::CachePhase::Live
+    }
+
+    /// A structural sparse push intentionally invalidates the live preset.
+    /// Repair it with the side-effect-free read, never by guessing defaults.
+    fn repair_live_preset(&self, timeout: Duration) {
+        if self.state.current_preset().is_none() {
+            if let Err(error) = self.client().read_current_preset(timeout) {
+                eprintln!("cortex session: warning: live-grid cache refresh failed ({error})");
+            }
+        }
+    }
+
+    /// Explain why a device request cannot currently run.
+    fn unavailable(&self) -> Option<String> {
+        match self.health.lock().unwrap().clone() {
+            RuntimeHealth::Connected => None,
+            RuntimeHealth::Reconnecting {
+                attempts,
+                last_error,
+            } => Some(format!(
+                "device reconnecting (attempt {attempts}): {last_error}"
+            )),
+            RuntimeHealth::Failed { error } => Some(format!("device connection failed: {error}")),
         }
     }
 
@@ -83,6 +172,11 @@ impl Daemon {
     /// failed request must not take the daemon down with it - the session is
     /// shared by every other client.
     fn handle(&self, request: Request) -> Response {
+        if !matches!(&request, Request::Status | Request::Shutdown) {
+            if let Some(message) = self.unavailable() {
+                return Response::error(message);
+            }
+        }
         match request {
             Request::Status => match Response::ok(&self.status()) {
                 Ok(r) => r,
@@ -96,33 +190,86 @@ impl Daemon {
             // not merely faster: asking again would race the handshake's
             // announce, because `Version` READ replies carry no `request_id`
             // and a waiter matching on type alone cannot tell them apart.
-            Request::Version => match self.session.device_version() {
-                Some(v) => match serde_json::to_value(crate::device_version(&v)) {
-                    Ok(value) => Response::Ok { data: value },
-                    Err(e) => Response::error(format!("DeviceVersion: {e}")),
-                },
+            Request::Version => match self.session().device_version() {
+                Some(v) => Response::ok(&cortex_rs::view::DeviceVersion::from(&v))
+                    .unwrap_or_else(|e| Response::error(format!("DeviceVersion: {e}"))),
                 None => self.respond(|c| {
-                    c.version(REQUEST_TIMEOUT).and_then(|v| {
-                        serde_json::to_value(crate::device_version(&v))
-                            .map_err(|e| cortex_rs::Error::Decode(format!("DeviceVersion: {e}")))
-                    })
+                    c.version(REQUEST_TIMEOUT)
+                        .map(|v| cortex_rs::view::DeviceVersion::from(&v))
                 }),
             },
             Request::ActiveScene => {
-                self.respond(|c| c.active_scene(REQUEST_TIMEOUT).map(serde_json::Value::from))
+                if self.cache_is_usable() {
+                    if let Some(scene) = self.state.active_scene() {
+                        return Response::ok(&scene.value).unwrap_or_else(|e| {
+                            Response::error(format!("serialising active scene: {e}"))
+                        });
+                    }
+                }
+                self.respond(|c| c.active_scene(REQUEST_TIMEOUT))
             }
             Request::SwitchScene { scene } => self.respond(|c| {
                 c.switch_scene(scene)
                     .map(|()| serde_json::json!({ "scene": scene }))
             }),
-            Request::CurrentPreset => self.respond(|c| {
-                c.read_current_preset(REQUEST_TIMEOUT).map(|p| {
-                    serde_json::json!({
-                        "name": preset_name(&p),
-                        "chains": p.chains.len(),
+            Request::CurrentPreset {
+                with_params,
+                timeout_seconds,
+            } => {
+                let catalog = self.catalog();
+                if self.cache_is_usable() {
+                    if let Some(preset) = self.state.current_preset() {
+                        let view = cortex_rs::view::Preset::from_binary(
+                            &preset.value,
+                            catalog.as_ref(),
+                            "(live grid)",
+                            "(live grid)",
+                            with_params,
+                        );
+                        return Response::ok(&view).unwrap_or_else(|e| {
+                            Response::error(format!("serialising live preset: {e}"))
+                        });
+                    }
+                }
+                self.respond(|c| {
+                    c.read_current_preset(Duration::from_secs(timeout_seconds))
+                        .map(|preset| {
+                            cortex_rs::view::Preset::from_binary(
+                                &preset,
+                                catalog.as_ref(),
+                                "(live grid)",
+                                "(live grid)",
+                                with_params,
+                            )
+                        })
+                })
+            }
+            Request::ReadPreset {
+                setlist,
+                slot,
+                factory,
+                with_params,
+                timeout_seconds,
+            } => {
+                let catalog = self.catalog();
+                self.respond(move |c| {
+                    c.read_preset(
+                        &setlist,
+                        &slot,
+                        factory,
+                        Duration::from_secs(timeout_seconds),
+                    )
+                    .map(|preset| {
+                        cortex_rs::view::Preset::from_binary(
+                            &preset,
+                            catalog.as_ref(),
+                            &slot,
+                            &setlist,
+                            with_params,
+                        )
                     })
                 })
-            }),
+            }
             Request::RecallPreset {
                 setlist,
                 slot,
@@ -134,29 +281,44 @@ impl Daemon {
             Request::ListPresets {
                 setlist,
                 include_empty,
-            } => self.respond(move |c| {
-                c.list_presets(&setlist, REQUEST_TIMEOUT, include_empty)
+                timeout_seconds,
+            } => {
+                if self.cache_is_usable() {
+                    if let Some(entries) = self.client().cached_presets(&setlist, include_empty) {
+                        let slots: Vec<_> = entries
+                            .iter()
+                            .map(cortex_rs::view::PresetSlot::from)
+                            .collect();
+                        return Response::ok(&slots).unwrap_or_else(|e| {
+                            Response::error(format!("serialising preset listing: {e}"))
+                        });
+                    }
+                }
+                self.respond(move |c| {
+                    c.list_presets(
+                        &setlist,
+                        Duration::from_secs(timeout_seconds),
+                        include_empty,
+                    )
                     .map(|entries| {
-                        serde_json::json!(
-                            entries
-                                .iter()
-                                .map(|e| serde_json::json!({
-                                    "index": e.index,
-                                    "slot": cortex_rs::client::position_to_slot(e.index),
-                                    "name": e.name,
-                                }))
-                                .collect::<Vec<_>>()
-                        )
+                        entries
+                            .iter()
+                            .map(cortex_rs::view::PresetSlot::from)
+                            .collect::<Vec<_>>()
                     })
-            }),
+                })
+            }
+            Request::ListFolders { window_seconds } => {
+                self.respond(|c| c.list_folders(Duration::from_secs(window_seconds)))
+            }
             // Return the raw payload, not a summary. The caller parses it
             // with the same code the direct path uses, so the two cannot
             // render different catalogs.
             //
-            // Served from the handshake's own copy: the device builds this
-            // on request, and asking twice costs another 46 KB transfer.
-            Request::Catalog => {
-                let cached = self.session.captured_model_repo();
+            // Served from the handshake's own copy; asking twice needlessly
+            // transfers the same 46 KB payload again.
+            Request::Catalog { timeout_seconds } => {
+                let cached = self.state.model_repo().map(|payload| payload.value);
                 match cached {
                     Some(payload) => match serde_json::to_value(payload) {
                         Ok(v) => Response::Ok {
@@ -165,7 +327,7 @@ impl Daemon {
                         Err(e) => Response::error(format!("catalog payload: {e}")),
                     },
                     None => self.respond(|c| {
-                        c.fetch_model_repo(REQUEST_TIMEOUT)
+                        c.fetch_model_repo(Duration::from_secs(timeout_seconds))
                             .map(|payload| serde_json::json!({ "payload": payload }))
                     }),
                 }
@@ -175,43 +337,79 @@ impl Daemon {
             Request::SetParam {
                 row,
                 column,
-                param_index,
-                value,
+                target,
+                input,
                 scene,
                 promote,
-            } => self.respond(move |c| {
-                let row = cortex_rs::Row::from_wire(row);
-                match scene {
-                    Some(scene) => {
-                        c.set_param_in_scene(row, column, param_index, value, scene, promote)
+                timeout_seconds,
+            } => {
+                let client = self.client();
+                let result = (|| {
+                    client.set_parameter(
+                        cortex_rs::Row::try_from_wire(row)?,
+                        column,
+                        target,
+                        input,
+                        scene,
+                        promote,
+                        Duration::from_secs(timeout_seconds),
+                    )
+                })();
+                match result {
+                    Ok(applied) => {
+                        self.repair_live_preset(Duration::from_secs(timeout_seconds));
+                        Response::ok(&applied).unwrap_or_else(|e| {
+                            Response::error(format!("serialising parameter write: {e}"))
+                        })
                     }
-                    None => {
-                        if promote {
-                            c.set_param_scene_mode(row, column, param_index, true)?;
-                        }
-                        c.set_param(row, column, param_index, value)
-                    }
+                    Err(error) => Response::error(error.to_string()),
                 }
-                .map(|()| serde_json::json!({ "applied": true }))
-            }),
+            }
+            Request::SetBlock {
+                row,
+                column,
+                model,
+                verify,
+                timeout_seconds,
+            } => {
+                let client = self.client();
+                let result = (|| {
+                    let row = cortex_rs::Row::try_from_wire(row)?;
+                    if verify {
+                        client.set_block(row, column, model, Duration::from_secs(timeout_seconds))
+                    } else {
+                        client.set_block_unverified(row, column, model)?;
+                        Ok(cortex_rs::Placement::Unverified)
+                    }
+                })();
+                match result {
+                    Ok(placement) => {
+                        self.repair_live_preset(Duration::from_secs(timeout_seconds.max(1)));
+                        Response::ok(&placement).unwrap_or_else(|e| {
+                            Response::error(format!("serialising block placement: {e}"))
+                        })
+                    }
+                    Err(error) => Response::error(error.to_string()),
+                }
+            }
             Request::SetBypass {
                 row,
                 column,
                 bypass,
             } => self.respond(move |c| {
-                c.set_bypass(cortex_rs::Row::from_wire(row), column, bypass)
+                c.set_bypass(cortex_rs::Row::try_from_wire(row)?, column, bypass)
                     .map(|()| serde_json::json!({ "applied": true }))
             }),
             Request::RemoveBlock { row, column } => self.respond(move |c| {
-                c.remove_block(cortex_rs::Row::from_wire(row), column)
+                c.remove_block(cortex_rs::Row::try_from_wire(row)?, column)
                     .map(|()| serde_json::json!({ "applied": true }))
             }),
             Request::SetSplit { row, split, mix } => self.respond(move |c| {
-                c.set_split(cortex_rs::Row::from_wire(row), split, mix)
+                c.set_split(cortex_rs::Row::try_from_wire(row)?, split, mix)
                     .map(|()| serde_json::json!({ "applied": true }))
             }),
             Request::SetRouting { row, input, output } => self.respond(move |c| {
-                let row = cortex_rs::Row::from_wire(row);
+                let row = cortex_rs::Row::try_from_wire(row)?;
                 match (input, output) {
                     (Some(port), None) => c.set_chain_input(row, port),
                     (None, Some(port)) => c.set_chain_output(row, port),
@@ -233,16 +431,17 @@ impl Daemon {
                 c.delete_preset(&setlist, &name, REQUEST_TIMEOUT)
                     .map(|()| serde_json::json!({ "deleted": name }))
             }),
-            Request::CpuLoad => match self.session.cpu_load() {
-                Some(load) => match serde_json::to_value(crate::cpu_load(&load)) {
-                    Ok(value) => Response::Ok { data: value },
-                    Err(e) => Response::error(format!("CpuLoad: {e}")),
-                },
+            Request::CpuLoad => match self.state.cpu_load() {
+                Some(load) if self.cache_is_usable() => {
+                    Response::ok(&cortex_rs::view::CpuLoad::from(&load.value))
+                        .unwrap_or_else(|e| Response::error(format!("CpuLoad: {e}")))
+                }
                 None => Response::error(
                     "no CPU load received yet - the device pushes it about once a second \
                      after subscribing"
                         .to_string(),
                 ),
+                Some(_) => Response::error("the device is not currently responsive"),
             },
             // Handled by the caller, which needs to stop the accept loop.
             Request::Shutdown => Response::ok(&serde_json::json!({ "stopping": true }))
@@ -252,12 +451,14 @@ impl Daemon {
 
     /// Run a client call, turning any error into a `Response` rather than
     /// letting it escape.
-    fn respond<F>(&self, call: F) -> Response
+    fn respond<T, F>(&self, call: F) -> Response
     where
-        F: FnOnce(&QuadCortex) -> cortex_rs::Result<serde_json::Value>,
+        T: serde::Serialize,
+        F: FnOnce(&QuadCortex) -> cortex_rs::Result<T>,
     {
-        match call(&self.client) {
-            Ok(value) => Response::Ok { data: value },
+        match call(&self.client()) {
+            Ok(value) => Response::ok(&value)
+                .unwrap_or_else(|e| Response::error(format!("serialising response: {e}"))),
             Err(e) => Response::error(e.to_string()),
         }
     }
@@ -265,41 +466,212 @@ impl Daemon {
     fn status(&self) -> Status {
         // From the handshake's Version READ. Absent only if the device did
         // not answer it, which is not fatal - the session still works.
-        let identity = self
-            .session
+        let session = self.session();
+        let identity = session
             .device_version()
-            .map(|v| crate::device_version(&v));
+            .map(|v| cortex_rs::view::DeviceVersion::from(&v));
+        let state = self.state.status();
+        let runtime_health = self.health.lock().unwrap().clone();
+        let device = match runtime_health {
+            RuntimeHealth::Connected if session.is_responsive() => DeviceHealth::Connected {
+                serial: identity.as_ref().and_then(|d| d.serial_number.clone()),
+                coros_version: identity.as_ref().and_then(|d| d.coros_version.clone()),
+                last_message_seconds: session.seconds_since_last_message(),
+            },
+            RuntimeHealth::Connected => DeviceHealth::Reconnecting {
+                attempts: 0,
+                last_error: format!(
+                    "device silent for {}s; reconnect pending",
+                    session.seconds_since_last_message()
+                ),
+            },
+            RuntimeHealth::Reconnecting {
+                attempts,
+                last_error,
+            } => DeviceHealth::Reconnecting {
+                attempts,
+                last_error,
+            },
+            RuntimeHealth::Failed { error } => DeviceHealth::Failed { error },
+        };
         Status {
             daemon_version: env!("CARGO_PKG_VERSION").to_string(),
             uptime_seconds: self.started.elapsed().as_secs(),
-            // Reported raw. A verdict is now defensible - a healthy idle
-            // session reads 0 - but nothing acts on it yet; see roadmap
-            // PROT-008.6.4.
-            device: DeviceHealth::Connected {
-                serial: identity.as_ref().and_then(|d| d.serial_number.clone()),
-                coros_version: identity.as_ref().and_then(|d| d.coros_version.clone()),
-                last_message_seconds: self.session.seconds_since_last_message(),
-            },
+            device,
             cache: CacheStatus {
-                catalog: self.session.captured_model_repo().is_some(),
-                current_preset: false,
-                listed_setlists: Vec::new(),
-                pushes_applied: self.pushes.load(Ordering::Relaxed),
+                generation: state.generation,
+                revision: state.revision,
+                storage_revision: state.storage_revision,
+                phase: state.phase,
+                catalog: state.catalog,
+                current_preset: state.current_preset,
+                active_scene: state.active_scene,
+                preset_dirty: state.preset_dirty,
+                preset_location: state.preset_location,
+                listed_setlists: state.listed_setlists,
+                pushes_applied: state.counters.applied,
+                messages_seen: state.counters.seen,
+                messages_rejected: state.counters.rejected,
+                stream_gaps: state.counters.stream_gaps,
+                last_rejection: state.last_rejection,
             },
+        }
+    }
+
+    /// Watch liveness independently of requests and replace a silent session.
+    fn start_reconnect_monitor(&self) {
+        let session = self.session.clone();
+        let state = self.state.clone();
+        let health = self.health.clone();
+        let stopping = self.stopping.clone();
+        let result = std::thread::Builder::new()
+            .name("cortex-reconnect".into())
+            .spawn(move || {
+                reconnect_loop(
+                    session,
+                    state,
+                    health.clone(),
+                    stopping,
+                    RECONNECT_TIMINGS,
+                    open_replacement,
+                );
+            });
+        if let Err(error) = result {
+            *self.health.lock().unwrap() = RuntimeHealth::Failed {
+                error: format!("could not start reconnect monitor: {error}"),
+            };
+        }
+    }
+
+    fn shutdown(&self) {
+        self.stopping.store(true, Ordering::Relaxed);
+        let session = self.session();
+        session.disconnect();
+        session.stop();
+    }
+}
+
+/// Explicitly read any state the subscription seed did not provide.
+fn seed_session(session: &Arc<Session>, state: &cortex_rs::DeviceStateCache) {
+    let client = QuadCortex::new(session.clone());
+    if state.current_preset().is_none() {
+        if let Err(error) = client.read_current_preset(Duration::from_secs(15)) {
+            eprintln!("cortex session: warning: live-grid cache not seeded ({error})");
+        }
+    }
+    if state.active_scene().is_none() {
+        if let Err(error) = client.active_scene(Duration::from_secs(10)) {
+            eprintln!("cortex session: warning: scene cache not seeded ({error})");
         }
     }
 }
 
-/// The preset's name, or a placeholder.
-fn preset_name(preset: &cortex_rs::proto::BinaryPreset) -> String {
-    preset
-        .name
-        .as_ref()
-        .map_or("<unnamed>", |n| {
-            let cortex_rs::proto::binary_preset::Name::Name(v) = n;
-            v.as_str()
-        })
-        .to_string()
+/// Open and fully handshake one replacement session over a retained cache.
+fn open_replacement(state: &cortex_rs::DeviceStateCache) -> Result<Arc<Session>> {
+    let session = Arc::new(Session::open_with_state(
+        DeviceKind::QuadCortex,
+        state.clone(),
+    )?);
+    let connected = session.connect_with_progress(
+        cortex_rs::ConnectMode::Subscribed,
+        Duration::from_secs(15),
+        Duration::from_secs(2),
+        |step| eprintln!("cortex session: reconnect: {step} ..."),
+    );
+    if let Err(error) = connected {
+        session.stop();
+        return Err(error.into());
+    }
+    seed_session(&session, state);
+    Ok(session)
+}
+
+/// Sleep in slices so shutdown does not wait out a 30-second backoff.
+fn backoff(stopping: &AtomicBool, duration: Duration) -> bool {
+    let deadline = Instant::now() + duration;
+    while Instant::now() < deadline {
+        if stopping.load(Ordering::Relaxed) {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    true
+}
+
+fn reconnect_loop<F>(
+    session_slot: Arc<Mutex<Arc<Session>>>,
+    state: cortex_rs::DeviceStateCache,
+    health: Arc<Mutex<RuntimeHealth>>,
+    stopping: Arc<AtomicBool>,
+    timings: ReconnectTimings,
+    connect: F,
+) where
+    F: Fn(&cortex_rs::DeviceStateCache) -> Result<Arc<Session>>,
+{
+    while backoff(&stopping, timings.poll) {
+        let current = session_slot.lock().unwrap().clone();
+        if current.is_responsive() {
+            continue;
+        }
+
+        let silent_for = current.seconds_since_last_message();
+        let mut attempts = 0_u32;
+        let mut delay = timings.initial_backoff;
+        let mut last_error = format!("device silent for {silent_for}s");
+        state.invalidate(last_error.clone());
+        *health.lock().unwrap() = RuntimeHealth::Reconnecting {
+            attempts,
+            last_error: last_error.clone(),
+        };
+        eprintln!("cortex session: {last_error}; reconnecting");
+
+        // The old handle must be gone before opening another. Concurrent HID
+        // ownership is accepted initially and wedges the next request.
+        current.disconnect();
+        current.stop();
+
+        loop {
+            if stopping.load(Ordering::Relaxed) {
+                return;
+            }
+            attempts = attempts.saturating_add(1);
+            *health.lock().unwrap() = RuntimeHealth::Reconnecting {
+                attempts,
+                last_error: last_error.clone(),
+            };
+            eprintln!("cortex session: reconnect attempt {attempts}");
+
+            match connect(&state) {
+                Ok(replacement) => {
+                    if stopping.load(Ordering::Relaxed) {
+                        replacement.disconnect();
+                        replacement.stop();
+                        return;
+                    }
+                    *session_slot.lock().unwrap() = replacement;
+                    *health.lock().unwrap() = RuntimeHealth::Connected;
+                    eprintln!("cortex session: reconnected on attempt {attempts}");
+                    break;
+                }
+                Err(error) => {
+                    last_error = error.to_string();
+                    *health.lock().unwrap() = RuntimeHealth::Reconnecting {
+                        attempts,
+                        last_error: last_error.clone(),
+                    };
+                    eprintln!(
+                        "cortex session: reconnect attempt {attempts} failed ({last_error}); \
+                         retrying in {}s",
+                        delay.as_secs()
+                    );
+                    if !backoff(&stopping, delay) {
+                        return;
+                    }
+                    delay = (delay * 2).min(timings.max_backoff);
+                }
+            }
+        }
+    }
 }
 
 /// Run the daemon until told to stop.
@@ -358,6 +730,7 @@ pub fn run() -> Result<()> {
 
     eprintln!("cortex session: listening on {}", path.display());
     eprintln!("cortex session: stop with `cortex session stop`, or Ctrl-C if attached");
+    daemon.start_reconnect_monitor();
 
     for stream in listener.incoming() {
         let stream = match stream {
@@ -390,8 +763,7 @@ pub fn run() -> Result<()> {
         std::process::exit(0);
     });
 
-    daemon.client.disconnect();
-    daemon.session.stop();
+    daemon.shutdown();
     // Last, so the socket never outlives our claim on the device: while it
     // answers, other commands correctly refuse to open the device for
     // themselves. A file left behind by a forced exit is inert - nothing is
@@ -635,6 +1007,7 @@ mod tests {
     use super::*;
     use cortex_rs::link::{FakeLink, HidLink};
     use std::net::Shutdown;
+    use std::sync::atomic::AtomicUsize;
 
     fn fake_daemon() -> Daemon {
         let link = FakeLink::new();
@@ -642,6 +1015,15 @@ mod tests {
         Daemon::over(Arc::new(
             Session::over(device).expect("session over a fake link"),
         ))
+    }
+
+    fn inbound(message_type: u16, body: &[u8]) -> Vec<u8> {
+        let mut message = body.to_vec();
+        message.extend_from_slice(&message_type.to_le_bytes());
+        message.extend_from_slice(&[0_u8; 6]);
+        let mut report = vec![0x01, u8::try_from(message.len()).unwrap(), 0xC0];
+        report.extend_from_slice(&message);
+        report
     }
 
     /// A client sends a line; the daemon answers on the same connection.
@@ -667,7 +1049,7 @@ mod tests {
         assert!(data.get("daemon_version").is_some(), "status: {data}");
         assert!(data.get("device").is_some(), "status: {data}");
         assert!(data.get("cache").is_some(), "status: {data}");
-        daemon.session.stop();
+        daemon.shutdown();
     }
 
     #[test]
@@ -690,7 +1072,7 @@ mod tests {
             reply.contains("error"),
             "a bad request should get an error back, not silence: {reply}"
         );
-        daemon.session.stop();
+        daemon.shutdown();
     }
 
     #[test]
@@ -702,7 +1084,7 @@ mod tests {
             reply.contains("stopping"),
             "the client should be told it is stopping: {reply}"
         );
-        daemon.session.stop();
+        daemon.shutdown();
     }
 
     #[test]
@@ -717,7 +1099,124 @@ mod tests {
             message.contains("subscrib"),
             "the error should say why there is nothing yet: {message}"
         );
-        daemon.session.stop();
+        daemon.shutdown();
+    }
+
+    #[test]
+    fn requests_fail_fast_while_reconnecting() {
+        let daemon = fake_daemon();
+        *daemon.health.lock().unwrap() = RuntimeHealth::Reconnecting {
+            attempts: 3,
+            last_error: "device unplugged".into(),
+        };
+        let Response::Error { message } = daemon.handle(Request::ActiveScene) else {
+            panic!("a request must not wait on a session being replaced");
+        };
+        assert!(message.contains("attempt 3"), "unexpected error: {message}");
+        let Response::Ok { data } = daemon.handle(Request::Status) else {
+            panic!("status must remain available while reconnecting");
+        };
+        assert_eq!(data["device"]["state"], "reconnecting");
+        daemon.shutdown();
+    }
+
+    #[test]
+    fn reconnect_retries_then_swaps_in_a_new_generation() {
+        let state = cortex_rs::DeviceStateCache::new();
+        let initial_link = FakeLink::new();
+        let initial_device: Arc<Mutex<dyn HidLink>> = Arc::new(Mutex::new(initial_link));
+        let initial = Arc::new(
+            Session::over_with_state(initial_device, state.clone()).expect("initial fake session"),
+        );
+        let slot = Arc::new(Mutex::new(initial));
+        let health = Arc::new(Mutex::new(RuntimeHealth::Connected));
+        let stopping = Arc::new(AtomicBool::new(false));
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let connector_attempts = attempts.clone();
+        let worker_slot = slot.clone();
+        let worker_state = state.clone();
+        let worker_health = health.clone();
+        let worker_stopping = stopping.clone();
+
+        let worker = std::thread::spawn(move || {
+            reconnect_loop(
+                worker_slot,
+                worker_state,
+                worker_health,
+                worker_stopping,
+                ReconnectTimings {
+                    poll: Duration::from_millis(1),
+                    initial_backoff: Duration::from_millis(1),
+                    max_backoff: Duration::from_millis(2),
+                },
+                move |state| {
+                    let attempt = connector_attempts.fetch_add(1, Ordering::Relaxed) + 1;
+                    if attempt == 1 {
+                        anyhow::bail!("fictional first-open failure");
+                    }
+                    let link = FakeLink::new();
+                    let device: Arc<Mutex<dyn HidLink>> = Arc::new(Mutex::new(link.clone()));
+                    let session = Arc::new(Session::over_with_state(device, state.clone())?);
+                    link.push_inbound(inbound(
+                        cortex_rs::proto::cortex_message_type::Enum::GlobalTempo as u16,
+                        &[],
+                    ));
+                    let deadline = Instant::now() + Duration::from_secs(1);
+                    while Instant::now() < deadline && !session.has_heard_from_device() {
+                        std::thread::sleep(Duration::from_millis(1));
+                    }
+                    Ok(session)
+                },
+            );
+        });
+
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while Instant::now() < deadline
+            && (attempts.load(Ordering::Relaxed) < 2 || !slot.lock().unwrap().is_responsive())
+        {
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        stopping.store(true, Ordering::Relaxed);
+        worker.join().unwrap();
+
+        assert_eq!(attempts.load(Ordering::Relaxed), 2);
+        assert!(matches!(*health.lock().unwrap(), RuntimeHealth::Connected));
+        assert_eq!(state.status().generation, 2);
+        slot.lock().unwrap().stop();
+    }
+
+    #[test]
+    fn untrusted_socket_rows_are_rejected_before_device_io() {
+        let daemon = fake_daemon();
+        let Response::Error { message } = daemon.handle(Request::SetBlock {
+            row: 4,
+            column: 0,
+            model: 42,
+            verify: false,
+            timeout_seconds: 0,
+        }) else {
+            panic!("an out-of-range socket row must be rejected");
+        };
+        assert!(message.contains("0-3"), "unexpected error: {message}");
+        daemon.shutdown();
+    }
+
+    #[test]
+    fn invalid_parameter_values_are_rejected_before_device_io() {
+        let daemon = fake_daemon();
+        let Response::Error { message } = daemon.handle(Request::SetParam {
+            row: 0,
+            column: 0,
+            target: cortex_rs::ParameterTarget::Index(0),
+            input: cortex_rs::ParameterInput::Normalised(1.5),
+            scene: None,
+            promote: false,
+            timeout_seconds: 0,
+        }) else {
+            panic!("an out-of-range parameter value must be rejected");
+        };
+        assert!(message.contains("0.0-1.0"), "unexpected error: {message}");
+        daemon.shutdown();
     }
 
     #[test]
@@ -738,7 +1237,7 @@ mod tests {
             replies, 2,
             "a client may send several requests on one stream"
         );
-        daemon.session.stop();
+        daemon.shutdown();
     }
 
     #[test]
@@ -751,6 +1250,6 @@ mod tests {
         serve(&daemon, server);
         let replies = BufReader::new(client).lines().count();
         assert_eq!(replies, 0, "blank lines are keepalive noise, not requests");
-        daemon.session.stop();
+        daemon.shutdown();
     }
 }

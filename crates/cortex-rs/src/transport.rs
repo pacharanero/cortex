@@ -1,7 +1,10 @@
 // SPDX-FileCopyrightText: 2026 Dr Marcus Baw
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-//! The USB HID transport for the Quad Cortex (and Nano Cortex).
+//! The hardware-verified USB HID transport for the Quad Cortex.
+//!
+//! Nano Cortex compatibility is unestablished; do not reuse these report sizes
+//! or handshake assumptions for it without hardware evidence.
 //!
 //! Encapsulates the two non-obvious behaviours documented in
 //! `quad-cortex-linux-editor-and-protocol.md`:
@@ -23,13 +26,7 @@ use std::time::Duration;
 
 use crate::device::DeviceKind;
 use crate::framing::{Flags, ReportId};
-
-/// HID body length, in bytes. The hidapi boundary sees this + the report-ID
-/// byte = 129 bytes per report.
-pub const HID_BODY_LEN: usize = 128;
-
-/// Total hidapi report length (body + report-ID byte).
-pub const HID_REPORT_LEN: usize = HID_BODY_LEN + 1;
+pub use crate::framing::{HID_BODY_LEN, HID_REPORT_LEN};
 
 /// Default read timeout. The write STALL means this - not a write error -
 /// is the signal of a dead or unresponsive device.

@@ -10,7 +10,7 @@ authors.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
-description = "Low-level Rust crate for the Neural DSP Quad Cortex and Nano Cortex: the Cortex Control USB HID protocol and a typed domain model. Leaf crate - no host app, no async runtime."
+description = "Low-level Cortex Control USB HID crate and typed domain model for the Neural DSP Quad Cortex; Nano support is planned."
 
 [lib]
 name = "cortex_rs"

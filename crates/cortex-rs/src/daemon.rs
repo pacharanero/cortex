@@ -82,7 +82,25 @@ pub enum Request {
         scene: u32,
     },
     /// The live grid, including unsaved edits.
-    CurrentPreset,
+    CurrentPreset {
+        /// Include each block's stored parameter values.
+        with_params: bool,
+        /// Maximum wait for the live preset push.
+        timeout_seconds: u64,
+    },
+    /// Recall and read a stored preset. Changes what is heard.
+    ReadPreset {
+        /// Absolute device path of the setlist.
+        setlist: String,
+        /// Slot name, e.g. `28C`.
+        slot: String,
+        /// Whether the setlist is the read-only factory library.
+        factory: bool,
+        /// Include each block's stored parameter values.
+        with_params: bool,
+        /// Maximum wait for the preset push.
+        timeout_seconds: u64,
+    },
     /// Recall a stored preset. Changes what is heard.
     RecallPreset {
         /// Absolute device path of the setlist.
@@ -98,9 +116,19 @@ pub enum Request {
         setlist: String,
         /// Include empty slots, so a free one can be found.
         include_empty: bool,
+        /// Maximum wait for the requested listing.
+        timeout_seconds: u64,
+    },
+    /// Enumerate every folder announced by the device.
+    ListFolders {
+        /// Collection window; folder announcements arrive as a flood.
+        window_seconds: u64,
     },
     /// The device model catalog.
-    Catalog,
+    Catalog {
+        /// Maximum wait when the handshake did not cache the catalog.
+        timeout_seconds: u64,
+    },
     /// Write a parameter value.
     ///
     /// Rows travel as a plain zero-based WIRE index, not a [`crate::Row`].
@@ -113,14 +141,29 @@ pub enum Request {
         row: u32,
         /// Zero-based column.
         column: u32,
-        /// Parameter index within the block.
-        param_index: u32,
-        /// The value to write.
-        value: crate::grid::Value,
+        /// Parameter index or display name.
+        target: crate::client::ParameterTarget,
+        /// Normalised, real-unit, or string input.
+        input: crate::client::ParameterInput,
         /// Write into this scene rather than the active one.
         scene: Option<u32>,
         /// Make the parameter follow scenes first.
         promote: bool,
+        /// Maximum wait for any grid/catalog reads needed for resolution.
+        timeout_seconds: u64,
+    },
+    /// Place or replace a block in one grid cell.
+    SetBlock {
+        /// Zero-based wire row.
+        row: u32,
+        /// Zero-based column.
+        column: u32,
+        /// Model catalog id.
+        model: u32,
+        /// Verify the placement by echo or read-back.
+        verify: bool,
+        /// Maximum wait for confirmation.
+        timeout_seconds: u64,
     },
     /// Bypass or enable a block.
     SetBypass {
@@ -274,17 +317,40 @@ pub enum DeviceHealth {
 
 /// What the daemon holds, and whether it can be trusted.
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[allow(clippy::struct_excessive_bools)]
 pub struct CacheStatus {
+    /// Physical-session generation that owns the values.
+    pub generation: u64,
+    /// Monotonic state revision for coalescing updates.
+    pub revision: u64,
+    /// Stored-preset mutation epoch in this generation.
+    pub storage_revision: u64,
+    /// Overall cache readiness.
+    pub phase: crate::CachePhase,
     /// Whether the model catalog is held.
     pub catalog: bool,
     /// Whether a live grid is held.
     pub current_preset: bool,
+    /// Whether the active scene is held.
+    pub active_scene: bool,
+    /// Whether working-copy dirty state is held.
+    pub preset_dirty: bool,
+    /// Whether the selected setlist and slot are held.
+    pub preset_location: bool,
     /// Setlists whose listing is held.
     pub listed_setlists: Vec<String>,
     /// How many device pushes have been applied since connecting. A cache
     /// kept current by pushes is only as trustworthy as the push stream, so
     /// this is worth surfacing.
     pub pushes_applied: u64,
+    /// State-bearing messages observed in this generation.
+    pub messages_seen: u64,
+    /// Messages rejected because applying them would require guessing.
+    pub messages_rejected: u64,
+    /// Broken frame sequences that invalidated continuity.
+    pub stream_gaps: u64,
+    /// Why the most recent state message was rejected.
+    pub last_rejection: Option<String>,
 }
 
 #[cfg(test)]
@@ -332,6 +398,33 @@ mod tests {
         };
         let text = serde_json::to_string(&request).unwrap();
         assert!(!text.contains('\n'), "a request must serialise to one line");
+    }
+
+    #[test]
+    fn a_high_level_parameter_request_round_trips() {
+        let request = Request::SetParam {
+            row: 1,
+            column: 2,
+            target: crate::ParameterTarget::Name("GAIN".into()),
+            input: crate::ParameterInput::Real(7.5),
+            scene: Some(3),
+            promote: true,
+            timeout_seconds: 15,
+        };
+        let text = serde_json::to_string(&request).unwrap();
+        let back: Request = serde_json::from_str(&text).unwrap();
+        assert!(matches!(
+            back,
+            Request::SetParam {
+                row: 1,
+                column: 2,
+                target: crate::ParameterTarget::Name(name),
+                input: crate::ParameterInput::Real(7.5),
+                scene: Some(3),
+                promote: true,
+                timeout_seconds: 15,
+            } if name == "GAIN"
+        ));
     }
 
     #[test]

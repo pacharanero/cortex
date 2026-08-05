@@ -10,7 +10,7 @@ authors.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
-description = "MCP server exposing the Neural DSP Quad Cortex (and Nano Cortex) to agentic patch editing."
+description = "MCP server exposing the Neural DSP Quad Cortex to agentic patch editing; Nano Cortex support is planned."
 
 [[bin]]
 name = "cortex-mcp"

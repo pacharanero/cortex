@@ -1,8 +1,9 @@
 // SPDX-FileCopyrightText: 2026 Dr Marcus Baw
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-//! The `cortex-mcp` MCP server: an agentic surface over the Quad Cortex (and
-//! Nano Cortex) for patch editing.
+//! The `cortex-mcp` MCP server: an agentic surface over the Quad Cortex for
+//! patch editing. Nano Cortex support is planned after its transport is
+//! established on hardware.
 //!
 //! **Greenfield.** No MCP server for any Neural DSP hardware exists. The
 //! design that matters is the **safety surface**, not the tool list:

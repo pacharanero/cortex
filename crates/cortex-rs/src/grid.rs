@@ -52,18 +52,36 @@ impl Row {
         Self(row)
     }
 
+    /// From an untrusted zero-based wire index.
+    ///
+    /// Use this for CLI, socket, or other external input. [`Row::from_wire`]
+    /// remains the infallible constructor for indices already obtained from a
+    /// decoded four-row preset.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`crate::Error::InvalidRow`] unless `row` is 0-3.
+    pub fn try_from_wire(row: u32) -> crate::Result<Self> {
+        if row > 3 {
+            return Err(crate::Error::InvalidRow(format!(
+                "wire rows are numbered 0-3, got {row}"
+            )));
+        }
+        Ok(Self(row))
+    }
+
     /// From the 1-4 label shown on the unit.
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::InvalidRow`] for 0, since screen rows start at
-    /// 1 - passing 0 here almost certainly means a wire index was passed to
-    /// the wrong constructor.
+    /// Returns [`crate::Error::InvalidRow`] unless `row` is 1-4. Passing 0
+    /// here almost certainly means a wire index was passed to the wrong
+    /// constructor.
     pub fn from_screen(row: u32) -> crate::Result<Self> {
-        if row == 0 {
-            return Err(crate::Error::InvalidRow(
-                "screen rows are numbered from 1; row 0 suggests a wire index".into(),
-            ));
+        if !(1..=4).contains(&row) {
+            return Err(crate::Error::InvalidRow(format!(
+                "screen rows are numbered 1-4, got {row}"
+            )));
         }
         Ok(Self(row - 1))
     }
@@ -367,12 +385,20 @@ mod tests {
     }
 
     #[test]
-    fn screen_row_zero_is_refused() {
+    fn out_of_range_rows_are_refused() {
         // Screen rows start at 1, so 0 almost certainly means someone passed
-        // a wire index to the wrong constructor. Better to reject than to
-        // silently edit the row above the one intended.
+        // a wire index to the wrong constructor. Values above the physical
+        // four rows must not become valid merely because Row stores a u32.
         assert!(matches!(
             Row::from_screen(0),
+            Err(crate::Error::InvalidRow(_))
+        ));
+        assert!(matches!(
+            Row::from_screen(5),
+            Err(crate::Error::InvalidRow(_))
+        ));
+        assert!(matches!(
+            Row::try_from_wire(4),
             Err(crate::Error::InvalidRow(_))
         ));
     }
