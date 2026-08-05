@@ -33,6 +33,16 @@
 
 use std::path::PathBuf;
 
+use crate::{RecallConsent, ScratchOverride};
+
+/// The daemon socket protocol version, checked by clients to detect skew
+/// after an upgrade leaves an old daemon running.
+///
+/// Bump this whenever a `Request` variant changes shape or a new variant is
+/// added. A client that sees a mismatch refuses with an actionable message
+/// rather than sending a request the daemon will misparse.
+pub const DAEMON_PROTOCOL_VERSION: u32 = 2;
+
 /// Where the daemon listens.
 ///
 /// `$XDG_RUNTIME_DIR` is the right home: it is user-owned, `0700`, and
@@ -199,14 +209,39 @@ pub enum Request {
         /// The output port, if setting the output.
         output: Option<u32>,
     },
-    /// Save the working grid into a slot. **Destructive.**
-    SavePreset {
+    /// Prepare a save destination before editing. **Not destructive.**
+    ///
+    /// The daemon holds the resulting `SavePreparation` under an opaque token
+    /// and returns a `SavePreparationView`. The raw backup blob never crosses
+    /// the socket.
+    PrepareSave {
         /// Absolute device path of the setlist.
         setlist: String,
         /// Target slot, e.g. `2B`.
         slot: String,
-        /// New name, or `None` to keep the slot's existing one.
+        /// The host's save policy, configured by the user.
+        policy: SavePolicySpec,
+        /// Whether to allow a save outside the configured scratch range.
+        override_scratch: ScratchOverride,
+        /// Whether the host accepts discarding the current working grid to
+        /// back up an occupied (or apparently-empty) target.
+        recall_consent: RecallConsent,
+        /// Maximum wait for listing and recall, in seconds.
+        timeout_seconds: u64,
+    },
+    /// Commit a previously prepared save. **Destructive.**
+    ///
+    /// Consumes the preparation token; a token cannot be used twice. Requires
+    /// explicit confirmation.
+    CommitSave {
+        /// Opaque token returned by `PrepareSave`.
+        token: String,
+        /// Explicit confirmation from the host. Must be `true`.
+        confirmed: bool,
+        /// New name, or `None` to keep the slot's existing name.
         name: Option<String>,
+        /// Maximum wait for the re-list and save, in seconds.
+        timeout_seconds: u64,
     },
     /// Delete a preset by name. **Destructive.**
     DeletePreset {
@@ -222,6 +257,39 @@ pub enum Request {
     CpuLoad,
     /// Ask the daemon to shut down, announcing the disconnect first.
     Shutdown,
+}
+
+/// A serialisable save policy specification, sent by the client and converted
+/// to a [`crate::safety::SavePolicy`] by the daemon. This exists because
+/// `SavePolicy` does not derive `Deserialize` - it validates at construction
+/// time, and a socket value should not bypass that.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SavePolicySpec {
+    /// The setlist configured as scratch space.
+    pub scratch_setlist: String,
+    /// Inclusive slot ranges within that setlist.
+    pub scratch_ranges: Vec<crate::safety::ScratchRange>,
+}
+
+impl SavePolicySpec {
+    /// Convert to a validated `SavePolicy`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`crate::Error::UnsafeSave`] if the spec is invalid.
+    pub fn to_policy(&self) -> crate::Result<crate::safety::SavePolicy> {
+        crate::safety::SavePolicy::new(&self.scratch_setlist, self.scratch_ranges.clone())
+    }
+}
+
+/// The result of a `PrepareSave` request: an opaque token and a safe view.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct PrepareSaveResult {
+    /// Opaque token; pass to `CommitSave` to commit. The daemon holds the
+    /// actual `SavePreparation` under this key.
+    pub token: String,
+    /// Safe serialisable view of the preparation.
+    pub view: crate::safety::SavePreparationView,
 }
 
 /// A response from the daemon.

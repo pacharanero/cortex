@@ -318,6 +318,25 @@ enum PresetCmd {
         /// Absolute device path of the setlist.
         #[arg(long, value_name = "PATH", default_value = cortex_rs::client::USER_SETLIST)]
         setlist: String,
+        /// Scratch setlist path (the setlist whose ranges are safe to
+        /// overwrite). Defaults to --setlist. Must be a USER setlist, never
+        /// the factory library.
+        #[arg(long, value_name = "PATH")]
+        scratch_setlist: Option<String>,
+        /// Inclusive scratch slot range, e.g. `31A-32H`. Repeat for multiple
+        /// ranges. Required: the crate supplies no default because only you
+        /// know which of your 256 USER slots are disposable.
+        #[arg(long, value_name = "START-END", num_args = 1..)]
+        scratch_range: Vec<String>,
+        /// Allow saving to a USER slot outside the configured scratch range.
+        /// Never permits the factory library. Use when you deliberately want
+        /// to overwrite a non-scratch slot.
+        #[arg(long)]
+        allow_outside_scratch: bool,
+        /// Confirm the save without prompting. Without this flag, the command
+        /// prompts on a TTY and refuses on a pipe.
+        #[arg(long)]
+        yes: bool,
     },
     /// List the presets in a setlist, in slot order.
     ///
@@ -688,7 +707,20 @@ fn run(cli: Cli) -> Result<()> {
                 slot,
                 name,
                 setlist,
-            } => cmd_preset_save(&slot, name.as_deref(), &setlist, fmt),
+                scratch_setlist,
+                scratch_range,
+                allow_outside_scratch,
+                yes,
+            } => cmd_preset_save(
+                &slot,
+                name.as_deref(),
+                &setlist,
+                scratch_setlist.as_deref(),
+                &scratch_range,
+                allow_outside_scratch,
+                yes,
+                fmt,
+            ),
             PresetCmd::List {
                 setlist,
                 include_empty,
@@ -1235,40 +1267,176 @@ fn cmd_recall(slot: &str, setlist: &str, factory: bool, fmt: Format) -> Result<(
 }
 
 /// Save the working grid into a slot.
-fn cmd_preset_save(slot: &str, name: Option<&str>, setlist: &str, fmt: Format) -> Result<()> {
-    // Refused in the crate too, but saying so before opening a session gives
-    // a faster, clearer answer for the mistake most worth catching.
+#[allow(clippy::too_many_arguments)]
+fn cmd_preset_save(
+    slot: &str,
+    name: Option<&str>,
+    setlist: &str,
+    scratch_setlist: Option<&str>,
+    scratch_ranges: &[String],
+    allow_outside_scratch: bool,
+    yes: bool,
+    fmt: Format,
+) -> Result<()> {
     if cortex_rs::client::is_factory_setlist(setlist) {
         anyhow::bail!("{setlist} is the factory library and is not writable");
     }
-    // Validated before a session is opened. The crate refuses it too, but by
-    // then a typo has cost a handshake - and this is a destructive command,
-    // so the sooner a wrong slot is rejected the better.
     if cortex_rs::client::slot_to_position_checked(slot).is_none() {
         anyhow::bail!(
             "{slot} is not a slot. Slots are a bank number 1-32 then a letter A-H, e.g. 2B"
         );
     }
+    if scratch_ranges.is_empty() {
+        anyhow::bail!(
+            "saving requires a scratch range. Use --scratch-range START-END to declare which \
+             USER slots are disposable, e.g. --scratch-range 31A-32H. The crate supplies no \
+             default because only you know which of your 256 slots are disposable."
+        );
+    }
+    let scratch_setlist = scratch_setlist.unwrap_or(setlist);
+    let ranges: Vec<cortex_rs::ScratchRange> = scratch_ranges
+        .iter()
+        .map(|r| {
+            let parts: Vec<&str> = r.splitn(2, '-').collect();
+            if parts.len() != 2 {
+                anyhow::bail!("--scratch-range expects START-END, e.g. 31A-32H; got {r:?}");
+            }
+            cortex_rs::ScratchRange::new(parts[0], parts[1]).map_err(|e| anyhow::anyhow!("{e}"))
+        })
+        .collect::<Result<_>>()?;
+    let policy = cortex_rs::daemon::SavePolicySpec {
+        scratch_setlist: scratch_setlist.to_string(),
+        scratch_ranges: ranges.clone(),
+    };
+    let override_scratch = if allow_outside_scratch {
+        cortex_rs::ScratchOverride::AllowOutsideScratch
+    } else {
+        cortex_rs::ScratchOverride::ScratchOnly
+    };
+
+    // Prepare phase: the daemon (or direct session) reads the target, backs
+    // it up, and holds the preparation. This is done before any confirmation
+    // prompt, so the user sees exactly what would be overwritten.
+    let prepare_result: cortex_rs::daemon::PrepareSaveResult = if let Some(result) =
+        connect::request(&cortex_rs::Request::PrepareSave {
+            setlist: setlist.to_string(),
+            slot: slot.to_string(),
+            policy,
+            override_scratch,
+            recall_consent: cortex_rs::RecallConsent::DiscardWorkingCopy,
+            timeout_seconds: 40,
+        }) {
+        serde_json::from_value(result?)?
+    } else {
+        // Direct path (no daemon): prepare in-process.
+        let (session, qc) = connected()?;
+        let validated_policy = cortex_rs::SavePolicy::new(scratch_setlist, ranges)?;
+        let preparation = qc.prepare_save_before_editing(
+            &validated_policy,
+            setlist,
+            slot,
+            override_scratch,
+            cortex_rs::RecallConsent::DiscardWorkingCopy,
+            Duration::from_secs(40),
+        )?;
+        let view = preparation.view();
+        // For the direct path we commit immediately after confirmation,
+        // so the token is a placeholder.
+        let _ = view;
+        // Fall through to direct commit below.
+        if !confirm_save(&view, yes)? {
+            qc.disconnect();
+            session.stop();
+            return Ok(());
+        }
+        let _receipt = qc.save_prepared(
+            &validated_policy,
+            preparation,
+            cortex_rs::SaveConfirmation::explicit(true)?,
+            name,
+            Duration::from_secs(40),
+        )?;
+        qc.disconnect();
+        session.stop();
+        let detail = match name {
+            Some(n) => format!("{slot} in {setlist} as {n:?}"),
+            None => format!("{slot} in {setlist}"),
+        };
+        return report_edit("save", detail, fmt);
+    };
+
+    // Daemon path: show what would be overwritten, then confirm.
+    if !confirm_save(&prepare_result.view, yes)? {
+        return Ok(());
+    }
+    let commit_result = connect::request(&cortex_rs::Request::CommitSave {
+        token: prepare_result.token,
+        confirmed: true,
+        name: name.map(str::to_string),
+        timeout_seconds: 40,
+    });
+    match commit_result {
+        Some(result) => {
+            result?;
+        }
+        None => {
+            // Daemon disappeared between prepare and commit. The preparation
+            // is lost with it.
+            anyhow::bail!(
+                "the daemon disappeared between prepare and commit; the preparation is lost. \
+                 Run `cortex session start` and retry."
+            );
+        }
+    }
     let detail = match name {
         Some(n) => format!("{slot} in {setlist} as {n:?}"),
         None => format!("{slot} in {setlist}"),
     };
-
-    if let Some(result) = connect::request(&cortex_rs::Request::SavePreset {
-        setlist: setlist.to_string(),
-        slot: slot.to_string(),
-        name: name.map(str::to_string),
-    }) {
-        result?;
-        return report_edit("save", detail, fmt);
-    }
-
-    let (session, qc) = connected()?;
-    let result = qc.save_current_preset(setlist, slot, name, Duration::from_secs(20));
-    qc.disconnect();
-    session.stop();
-    result?;
     report_edit("save", detail, fmt)
+}
+
+/// Show what would be overwritten and ask for confirmation.
+///
+/// Returns `true` if the user confirmed, `false` if they declined. Refuses
+/// on a non-TTY unless `--yes` was given, so a script cannot be silently
+/// destructive but also cannot hang.
+fn confirm_save(view: &cortex_rs::SavePreparationView, yes: bool) -> Result<bool> {
+    if let Some(ref name) = view.previous_name {
+        eprintln!("  target: {} in {}", view.target.slot, view.target.setlist);
+        eprintln!("  overwrites: {name:?}");
+    } else {
+        eprintln!(
+            "  target: {} in {} (empty slot)",
+            view.target.slot, view.target.setlist
+        );
+    }
+    if view.backup_retained {
+        eprintln!("  backup retained: yes");
+    } else {
+        eprintln!("  backup retained: no");
+    }
+    if yes {
+        eprintln!("  confirmed by --yes");
+        return Ok(true);
+    }
+    // Prompt on a TTY, refuse on a pipe.
+    use std::io::IsTerminal;
+    if !std::io::stdin().is_terminal() {
+        anyhow::bail!(
+            "saving requires --yes in non-interactive mode. Without a TTY, the command \
+             refuses rather than hanging or being silently destructive."
+        );
+    }
+    eprint!("  type 'yes' to confirm: ");
+    std::io::Write::flush(&mut std::io::stderr())?;
+    let mut input = String::new();
+    std::io::stdin().read_line(&mut input)?;
+    if input.trim() == "yes" {
+        Ok(true)
+    } else {
+        eprintln!("  declined.");
+        Ok(false)
+    }
 }
 
 /// Delete a preset by name.

@@ -29,7 +29,10 @@ fn is_user_setlist(setlist: &str) -> bool {
     let Some(name) = normalized.strip_prefix(&format!("{USER_SETLIST_ROOT}/")) else {
         return false;
     };
-    !name.is_empty() && !name.contains('/')
+    // Reject `.` and `..`, which would escape the USER root if the device
+    // normalises filesystem paths. A direct child has a real name and no
+    // slash; a dot component is neither.
+    !name.is_empty() && !name.contains('/') && name != "." && name != ".."
 }
 
 /// One inclusive range of save-safe USER slots.
@@ -41,6 +44,43 @@ pub struct ScratchRange {
     pub end: String,
     start_position: u32,
     end_position: u32,
+}
+
+impl ScratchRange {
+    /// Reconstruct from serialised `start`/`end` fields, validating as
+    /// [`ScratchRange::new`] does. Used by `serde::Deserialize`.
+    fn try_from_fields(start: &str, end: &str) -> crate::Result<Self> {
+        let start_position = slot_to_position_checked(start)
+            .ok_or_else(|| crate::Error::InvalidSlot(start.to_string()))?;
+        let end_position = slot_to_position_checked(end)
+            .ok_or_else(|| crate::Error::InvalidSlot(end.to_string()))?;
+        if start_position > end_position {
+            return Err(crate::Error::InvalidSlot(format!(
+                "scratch range {start}-{end} is reversed"
+            )));
+        }
+        Ok(Self {
+            start: start.to_ascii_uppercase(),
+            end: end.to_ascii_uppercase(),
+            start_position,
+            end_position,
+        })
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for ScratchRange {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(serde::Deserialize)]
+        struct Fields {
+            start: String,
+            end: String,
+        }
+        let f = Fields::deserialize(deserializer)?;
+        ScratchRange::try_from_fields(&f.start, &f.end).map_err(serde::de::Error::custom)
+    }
 }
 
 impl ScratchRange {
@@ -233,11 +273,15 @@ impl SaveTarget {
 pub struct SavePreparationView {
     /// Prepared destination.
     pub target: SaveTarget,
-    /// Whether the listing proved the destination empty.
+    /// Whether the listing reported the destination empty. This is the
+    /// listing's view, not a proof: file listings are eventually consistent,
+    /// so a stale listing can say empty when the slot is occupied. The backup
+    /// is always attempted regardless.
     pub target_was_empty: bool,
-    /// Previous stored name, when occupied.
+    /// Previous stored name, when the listing reported the slot occupied.
     pub previous_name: Option<String>,
-    /// Whether a full stored preset is retained in memory.
+    /// Whether a full stored preset is retained in memory. Always true after
+    /// preparation, because the backup read is always attempted.
     pub backup_retained: bool,
 }
 
@@ -330,22 +374,30 @@ impl SaveReceipt {
 impl QuadCortex {
     /// Prepare one save destination before making working-copy edits.
     ///
-    /// A listing-confirmed empty target needs no recall. An occupied target is
-    /// recalled and retained as a full `BinaryPreset`, which replaces the
-    /// current working grid. That is why this method is named and ordered
-    /// "before editing".
+    /// The target is always recalled and read, regardless of what the listing
+    /// says. This is because file listings are eventually consistent
+    /// (`docs/protocol.md`): a slot filled moments earlier can still appear
+    /// empty in a fresh listing. Using "the listing says empty" as the reason
+    /// to skip the backup would overwrite a real preset with no backup in
+    /// exactly the case the backup exists for. So the backup decision comes
+    /// from the read, never from the listing.
     ///
-    /// If the subscribed cache reports the current grid dirty, or cannot
-    /// establish that it is clean, an occupied target requires
-    /// [`RecallConsent::DiscardWorkingCopy`]. This prevents a host from
-    /// presenting backup as safety while silently losing the work being
-    /// saved.
+    /// The listing still determines `previous_name` (for the host's UI), but
+    /// the backup is attempted unconditionally. If the slot is genuinely
+    /// empty, the read returns an empty preset and no backup is retained.
+    ///
+    /// Because recalling the target replaces the current working grid, this
+    /// method is named and ordered "before editing". If the subscribed cache
+    /// reports the current grid dirty, or cannot establish that it is clean,
+    /// [`RecallConsent::DiscardWorkingCopy`] is required - regardless of
+    /// whether the target appears empty. This prevents a host from presenting
+    /// backup as safety while silently losing the work being saved.
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::UnsafeSave`] for a disallowed target or an
-    /// occupied-target recall without the required consent. Propagates listing
-    /// and recall errors.
+    /// Returns [`crate::Error::UnsafeSave`] for a disallowed target or a
+    /// recall without the required consent. Propagates listing and recall
+    /// errors.
     pub fn prepare_save_before_editing(
         &self,
         policy: &SavePolicy,
@@ -368,19 +420,13 @@ impl QuadCortex {
                 ))
             })?;
 
-        if entry.name.is_empty() {
-            let status = self.state_cache().status();
-            return Ok(SavePreparation {
-                target,
-                expected_entry: entry,
-                generation: status.generation,
-                storage_revision: status.storage_revision,
-                previous_name: None,
-                backup: None,
-                override_scratch,
-            });
-        }
-
+        // The consent gate applies to every target, not only occupied ones.
+        // A listing that says "empty" cannot be trusted to prove it: file
+        // listings are eventually consistent, so a slot filled moments ago
+        // can still read empty. If we skipped the consent check for
+        // apparently-empty targets, a stale listing would let us recall and
+        // destroy a dirty working grid without the host having said that was
+        // acceptable.
         if recall_consent == RecallConsent::RequireClean {
             let state = self.state_cache();
             let status = state.status();
@@ -388,17 +434,29 @@ impl QuadCortex {
                 && state.preset_dirty().is_some_and(|dirty| !dirty.value);
             if !clean {
                 return Err(crate::Error::UnsafeSave(
-                    "the target is occupied, and backing it up recalls it. The live working grid is dirty or its dirty state is unknown; choose an empty target or explicitly allow discarding the working copy before editing"
+                    "backing up the target recalls it, which replaces the working grid. \
+                     The live grid is dirty or its dirty state is unknown; \
+                     choose a target before editing, or explicitly allow discarding the \
+                     working copy"
                         .into(),
                 ));
             }
         }
 
+        // Always attempt the backup read. If the slot is genuinely empty the
+        // device pushes an empty four-row preset; if the listing was stale and
+        // the slot is occupied, we get the real preset as the backup we would
+        // otherwise have skipped.
         let backup = self.read_preset(setlist, slot, false, timeout)?;
+        let previous_name = if entry.name.is_empty() {
+            None
+        } else {
+            Some(entry.name.clone())
+        };
         let status = self.state_cache().status();
         Ok(SavePreparation {
             target,
-            previous_name: Some(entry.name.clone()),
+            previous_name,
             expected_entry: entry,
             generation: status.generation,
             storage_revision: status.storage_revision,
@@ -583,6 +641,8 @@ mod tests {
         for setlist in [
             "/media/p4/Captures",
             "/media/p4/Presets/My Presets/Nested Folder",
+            "/media/p4/Presets/.",
+            "/media/p4/Presets/..",
             "/tmp/fictional-setlist",
         ] {
             let target = SaveTarget::new(setlist, "1A").unwrap();
@@ -663,15 +723,36 @@ mod tests {
     }
 
     #[test]
-    fn an_empty_target_is_rechecked_and_saved_without_being_recalled() {
+    fn an_empty_target_is_recalled_to_prove_emptiness_and_saved() {
+        // PROT-009.4: a listing that says "empty" is not trusted to skip the
+        // backup, because file listings are eventually consistent. The target
+        // is always recalled. If the slot is genuinely empty, the device
+        // pushes an empty four-row preset and no backup is retained.
         let (qc, session, link) = client();
         let fake = link.clone();
         let responder = std::thread::spawn(move || {
+            // 1. prepare: list
             wait_for_write(&fake, 0);
             push_message(&fake, cortex_message_type::Enum::File, &listing(None));
-            wait_for_write(&fake, 1);
-            push_message(&fake, cortex_message_type::Enum::File, &listing(None));
+            // 2. prepare: recall (always attempted now)
+            let recall = wait_for_write(&fake, 1);
+            let request_id = request_id(&recall);
+            push_message(
+                &fake,
+                cortex_message_type::Enum::RecallPreset,
+                &RecallPresetMessage {
+                    request_id: Some(recall_preset_message::RequestId::RequestId(request_id)),
+                    preset: Some(recall_preset_message::Preset::Preset(
+                        BinaryPreset::default(),
+                    )),
+                    ..Default::default()
+                },
+            );
+            // 3. commit: re-list
             wait_for_write(&fake, 2);
+            push_message(&fake, cortex_message_type::Enum::File, &listing(None));
+            // 4. commit: save
+            wait_for_write(&fake, 3);
             push_message(
                 &fake,
                 cortex_message_type::Enum::File,
@@ -696,11 +777,16 @@ mod tests {
                 USER,
                 "1A",
                 ScratchOverride::ScratchOnly,
-                RecallConsent::RequireClean,
+                RecallConsent::DiscardWorkingCopy,
                 Duration::from_secs(1),
             )
             .unwrap();
+        // The listing said empty, so previous_name is None. The backup is
+        // retained regardless (an empty preset if the slot was genuinely
+        // empty), because the read - not the listing - decides whether to
+        // back up.
         assert!(preparation.view().target_was_empty);
+        assert!(preparation.backup().is_some());
         let receipt = qc
             .save_prepared(
                 &policy,
@@ -710,9 +796,9 @@ mod tests {
                 Duration::from_secs(1),
             )
             .unwrap();
-        assert!(receipt.backup().is_none());
+        assert!(receipt.backup().is_some());
         responder.join().unwrap();
-        assert_eq!(link.write_count(), 3, "two listings and one save only");
+        assert_eq!(link.write_count(), 4, "list, recall, re-list, save");
         session.stop();
     }
 
@@ -787,6 +873,54 @@ mod tests {
         assert!(matches!(error, crate::Error::UnsafeSave(_)));
         responder.join().unwrap();
         assert_eq!(link.write_count(), 1, "the occupied target was only listed");
+        session.stop();
+    }
+
+    #[test]
+    fn a_stale_listing_saying_empty_still_backs_up_the_real_preset() {
+        // PROT-009.4: the listing says the slot is empty, but the recall
+        // reveals it is occupied. The backup is retained because the read,
+        // not the listing, decides whether to back up.
+        let (qc, session, link) = client();
+        let fake = link.clone();
+        let responder = std::thread::spawn(move || {
+            // Listing says empty (stale).
+            wait_for_write(&fake, 0);
+            push_message(&fake, cortex_message_type::Enum::File, &listing(None));
+            // But the recall reveals a real preset.
+            let recall = wait_for_write(&fake, 1);
+            let request_id = request_id(&recall);
+            push_message(
+                &fake,
+                cortex_message_type::Enum::RecallPreset,
+                &RecallPresetMessage {
+                    request_id: Some(recall_preset_message::RequestId::RequestId(request_id)),
+                    preset: Some(recall_preset_message::Preset::Preset(BinaryPreset {
+                        chains: vec![crate::proto::Chain::default(); 4],
+                        ..Default::default()
+                    })),
+                    ..Default::default()
+                },
+            );
+        });
+        let policy = SavePolicy::new(USER, vec![ScratchRange::new("1A", "1A").unwrap()]).unwrap();
+        let preparation = qc
+            .prepare_save_before_editing(
+                &policy,
+                USER,
+                "1A",
+                ScratchOverride::ScratchOnly,
+                RecallConsent::DiscardWorkingCopy,
+                Duration::from_secs(1),
+            )
+            .unwrap();
+        // The listing said empty, but the read proved occupied: the backup
+        // is retained even though the listing said otherwise.
+        assert!(
+            preparation.backup().is_some(),
+            "a stale listing must not cause the backup to be skipped"
+        );
+        responder.join().unwrap();
         session.stop();
     }
 }

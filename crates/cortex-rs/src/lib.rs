@@ -85,7 +85,7 @@ pub mod proto {
 
 pub use catalog::{Catalog, Model, Parameter, ParameterKind};
 pub use client::{ParameterInput, ParameterTarget, ParameterWrite, Placement, QuadCortex};
-pub use daemon::{Request, Response};
+pub use daemon::{DAEMON_PROTOCOL_VERSION, PrepareSaveResult, Request, Response, SavePolicySpec};
 pub use device::DeviceKind;
 pub use framing::{Flags, Frame, FrameReassembler, ReportId};
 pub use grid::{Row, Value};

@@ -9,9 +9,10 @@
 //! @see spec/roadmap.md PROT-008.6
 //! @see spec/140-session/spec.md
 
+use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -58,6 +59,21 @@ struct Daemon {
     state: cortex_rs::DeviceStateCache,
     /// Parsed lazily and keyed by the cached payload's generation/revision.
     catalog: Mutex<Option<(u64, u64, cortex_rs::Catalog)>>,
+    /// Prepared-save tokens, held server-side so the raw backup never
+    /// crosses the socket. A token is consumed by `CommitSave`. Each entry
+    /// carries the policy that was validated at prepare time, so the commit
+    /// can re-authorize without the client resending it.
+    preparations: Mutex<
+        HashMap<
+            String,
+            (
+                cortex_rs::safety::SavePolicy,
+                cortex_rs::safety::SavePreparation,
+            ),
+        >,
+    >,
+    /// Next preparation token id.
+    next_token: AtomicU64,
     health: Arc<Mutex<RuntimeHealth>>,
     stopping: Arc<AtomicBool>,
     started: Instant,
@@ -102,6 +118,8 @@ impl Daemon {
             session: Arc::new(Mutex::new(session)),
             state,
             catalog: Mutex::new(None),
+            preparations: Mutex::new(HashMap::new()),
+            next_token: AtomicU64::new(1),
             health: Arc::new(Mutex::new(RuntimeHealth::Connected)),
             stopping: Arc::new(AtomicBool::new(false)),
             started: Instant::now(),
@@ -419,14 +437,83 @@ impl Daemon {
                 }
                 .map(|()| serde_json::json!({ "applied": true }))
             }),
-            Request::SavePreset {
+            Request::PrepareSave {
                 setlist,
                 slot,
+                policy,
+                override_scratch,
+                recall_consent,
+                timeout_seconds,
+            } => {
+                let validated_policy = match policy.to_policy() {
+                    Ok(p) => p,
+                    Err(e) => return Response::error(e.to_string()),
+                };
+                let client = self.client();
+                let result = client.prepare_save_before_editing(
+                    &validated_policy,
+                    &setlist,
+                    &slot,
+                    override_scratch,
+                    recall_consent,
+                    Duration::from_secs(timeout_seconds),
+                );
+                match result {
+                    Ok(preparation) => {
+                        let view = preparation.view();
+                        let token =
+                            format!("save-{}", self.next_token.fetch_add(1, Ordering::Relaxed));
+                        self.preparations
+                            .lock()
+                            .unwrap()
+                            .insert(token.clone(), (validated_policy, preparation));
+                        let result = cortex_rs::daemon::PrepareSaveResult { token, view };
+                        Response::ok(&result).unwrap_or_else(|e| {
+                            Response::error(format!("serialising preparation: {e}"))
+                        })
+                    }
+                    Err(error) => Response::error(error.to_string()),
+                }
+            }
+            Request::CommitSave {
+                token,
+                confirmed,
                 name,
-            } => self.respond(move |c| {
-                c.save_current_preset(&setlist, &slot, name.as_deref(), REQUEST_TIMEOUT)
-                    .map(|()| serde_json::json!({ "saved": slot }))
-            }),
+                timeout_seconds,
+            } => {
+                let entry = self
+                    .preparations
+                    .lock()
+                    .unwrap()
+                    .remove(&token)
+                    .ok_or_else(|| {
+                        cortex_rs::Error::UnsafeSave(format!(
+                            "unknown or already-used preparation token: {token}"
+                        ))
+                    });
+                let (policy, preparation) = match entry {
+                    Ok(pair) => pair,
+                    Err(e) => return Response::error(e.to_string()),
+                };
+                let confirmation = match cortex_rs::safety::SaveConfirmation::explicit(confirmed) {
+                    Ok(c) => c,
+                    Err(e) => return Response::error(e.to_string()),
+                };
+                let client = self.client();
+                let result = client.save_prepared(
+                    &policy,
+                    preparation,
+                    confirmation,
+                    name.as_deref(),
+                    Duration::from_secs(timeout_seconds),
+                );
+                match result {
+                    Ok(receipt) => Response::ok(&receipt.view()).unwrap_or_else(|e| {
+                        Response::error(format!("serialising save receipt: {e}"))
+                    }),
+                    Err(error) => Response::error(error.to_string()),
+                }
+            }
             Request::DeletePreset { setlist, name } => self.respond(move |c| {
                 c.delete_preset(&setlist, &name, REQUEST_TIMEOUT)
                     .map(|()| serde_json::json!({ "deleted": name }))
@@ -495,7 +582,7 @@ impl Daemon {
             RuntimeHealth::Failed { error } => DeviceHealth::Failed { error },
         };
         Status {
-            daemon_version: env!("CARGO_PKG_VERSION").to_string(),
+            daemon_version: cortex_rs::daemon::DAEMON_PROTOCOL_VERSION.to_string(),
             uptime_seconds: self.started.elapsed().as_secs(),
             device,
             cache: CacheStatus {
@@ -970,19 +1057,59 @@ fn answers_status(timeout: Duration) -> bool {
 ///
 /// Returns `None` when no daemon is listening, so the caller can fall back to
 /// a direct session rather than failing.
+///
+/// Checks the daemon's protocol version before sending the request. A
+/// mismatch (e.g. an old daemon survived an upgrade) produces an error naming
+/// the fix rather than a cryptic parse failure.
 pub fn request(request: &Request) -> Option<Result<serde_json::Value>> {
     let path = socket_path();
     let stream = UnixStream::connect(&path).ok()?;
 
     Some((|| {
         let mut writer = stream.try_clone()?;
+
+        // Version gate: check the daemon's protocol version before sending
+        // a request it might not understand. An old daemon that survived an
+        // upgrade would otherwise misparse a new request shape.
+        let version_line = serde_json::to_string(&Request::Status)?;
+        let mut vl = version_line.clone();
+        vl.push('\n');
+        writer.write_all(vl.as_bytes())?;
+        writer.flush()?;
+        let mut status_reply = String::new();
+        BufReader::new(stream.try_clone()?).read_line(&mut status_reply)?;
+        let status: Response = serde_json::from_str(&status_reply)?;
+        let status_data = match status {
+            Response::Ok { data } => data,
+            Response::Error { message } => anyhow::bail!("{message}"),
+        };
+        let daemon_version: u32 = status_data
+            .get("daemon_version")
+            .and_then(|v| v.as_str())
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0);
+        if daemon_version != cortex_rs::daemon::DAEMON_PROTOCOL_VERSION {
+            anyhow::bail!(
+                "daemon protocol version mismatch: client expects {}, daemon reports {}. \
+                 The daemon is older or newer than this CLI. \
+                 Run `cortex session stop` to stop the old daemon, then retry.",
+                cortex_rs::daemon::DAEMON_PROTOCOL_VERSION,
+                daemon_version
+            );
+        }
+
+        // Now send the actual request on a fresh connection (the status
+        // connection's reader has consumed the reply).
+        let path = socket_path();
+        let stream2 = UnixStream::connect(&path)?;
+        let mut writer2 = stream2.try_clone()?;
         let mut line = serde_json::to_string(request)?;
         line.push('\n');
-        writer.write_all(line.as_bytes())?;
-        writer.flush()?;
+        writer2.write_all(line.as_bytes())?;
+        writer2.flush()?;
 
         let mut reply = String::new();
-        BufReader::new(stream).read_line(&mut reply)?;
+        BufReader::new(stream2).read_line(&mut reply)?;
         match serde_json::from_str::<Response>(&reply)? {
             Response::Ok { data } => Ok(data),
             Response::Error { message } => anyhow::bail!("{message}"),
