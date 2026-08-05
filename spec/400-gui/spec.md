@@ -30,7 +30,7 @@ The GUI is the interactive surface for a player who wants a desktop editor for t
 
 The live read/edit and shared save-safety foundations are now present: typed serialisable views and parameter inputs live in `cortex-rs`, every ordinary CLI operation routes through one held session, subscribed state is reduced into generation/revision snapshots, health/reconnect invalidates stale state, and `safety.rs` supplies validated scratch policy plus opaque prepared-save tokens. The GUI can now scaffold read, edit, and save flows without inventing protocol or policy in TypeScript. Save controls must remain provisional until the prepared-save sequence is hardware-smoked and the GUI has a user-facing scratch-range configuration mechanism.
 
-**`safety.rs` is not yet enforced by any shipping surface.** The CLI and the daemon still call `save_current_preset` directly, so the prepared-save sequence - target backup, scratch policy, revalidation before commit - is currently exercised only by its own tests. The GUI must call the prepared-save API itself and must not assume the layer beneath it is enforcing that policy.
+**`safety.rs` is now enforced by the daemon.** The CLI and daemon route through `PrepareSave`/`CommitSave` with server-held preparations and opaque tokens (fixed in `743692a`, PROT-009.2). The GUI must call the same prepared-save API and must not assume the layer beneath it is enforcing that policy.
 
 ## Stack (planned, per house-style tauri-gui.md)
 

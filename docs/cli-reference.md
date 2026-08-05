@@ -323,6 +323,18 @@ Options:
           
           [default: "/media/p4/Presets/My Presets"]
 
+      --scratch-setlist <PATH>
+          Scratch setlist path (the setlist whose ranges are safe to overwrite). Defaults to --setlist. Must be a USER setlist, never the factory library
+
+      --scratch-range <START-END>...
+          Inclusive scratch slot range, e.g. `31A-32H`. Repeat for multiple ranges. Required: the crate supplies no default because only you know which of your 256 USER slots are disposable
+
+      --allow-outside-scratch
+          Allow saving to a USER slot outside the configured scratch range. Never permits the factory library. Use when you deliberately want to overwrite a non-scratch slot
+
+      --yes
+          Confirm the save without prompting. Without this flag, the command prompts on a TTY and refuses on a pipe
+
       --format <FORMAT>
           Output format. `text` is for humans; `json` is for scripts and agents, and is stable enough to parse.
           
