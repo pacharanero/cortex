@@ -2,6 +2,8 @@
 
 CI has no Quad Cortex, so anything touching the wire is unverified until a human runs this against a real unit. Run it before a release, and after any change to the transport, session, or grid layers.
 
+Sections 1 and 3-10 below are also scripted, with read-back assertions instead of a checklist: `s/hardware-smoke --scratch-bank N --restore-slot SLOT --discard-working-copy` (ENG-006). It needs one designated scratch bank (all 8 slots disposable), the slot to restore when it exits, and an explicit acknowledgement that the starting working-grid edit will be discarded when the scratch slot is recalled. The script starts editing from that scratch bank rather than the preset originally loaded, so every later working-grid change remains within declared disposable content. It is the faster way to run this repeatedly - after a CorOS update, for instance, where it also diffs the result against the last run on a different version. This page stays the source of truth for WHY each step is safe and for section 11 (the held session, cache, and reconnect), which the script does not yet cover.
+
 Record the CorOS version, firmware, and serial from step 1 alongside the result: a pass on `d14e` says nothing about `d15x`.
 
 ## Before you start

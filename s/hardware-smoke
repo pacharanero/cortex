@@ -1,0 +1,476 @@
+#!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Dr Marcus Baw
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# Scripted hardware smoke test against a real Quad Cortex.
+#
+# CI has no Quad Cortex (docs/runbook-hardware-smoke.md), so this is not a CI
+# script: run it by hand before a release, and after any change to the
+# transport, session, grid, or safety layers. It automates the same ground
+# the runbook covers by hand, plus the thing that manual testing tends to
+# skip under time pressure - reading every write back through a DIFFERENT
+# command than the one that made it, and comparing the actual value rather
+# than trusting a non-error exit code. Most of the bugs recorded in this
+# project's history (spec/roadmap.md PROT-009, spec/completed.md) were
+# exactly this shape: a write that reported success while doing the wrong
+# thing, or a read that was stale.
+#
+# Every write here targets ONE scratch bank (8 slots, A-H) that you name and
+# that you have designated fully disposable - never the factory library, and
+# never a slot outside that bank. This mirrors safety.rs's own posture: the
+# crate supplies no default scratch range, because only you know which of
+# your 256 USER slots are disposable, and neither does this script.
+#
+#   s/hardware-smoke --scratch-bank 31 --restore-slot 1A --discard-working-copy
+#   s/hardware-smoke --scratch-bank 31 --restore-slot 1A --discard-working-copy
+#   s/hardware-smoke --scratch-bank 31 --restore-slot 1A --discard-working-copy --setlist "/media/p4/Presets/My Presets"
+#
+# A failed check is logged and the run continues, so one bad step does not
+# hide the others - see the summary at the end for a full tally.
+#
+# Scope, deliberately: read-only checks, plus write/read-back inside the
+# scratch bank. Does not script `cortex session start`/reconnect (the daemon
+# lifecycle and a physical unplug/replug need their own pass - runbook
+# section 11 stays manual) and does not attempt an IR/capture round trip
+# (PROT-007 is unimplemented). Physical unplug/replug is not scripted at
+# all: this project has already recorded a case (OpenCortex, spec/prior-art.md)
+# of a USB link dying under repeated large writes and needing a power cycle,
+# and that risk is not worth taking for a scripted check.
+#
+# Results are written to smoke-fixtures/<coros_version>.json (gitignored: it
+# contains local firmware information). Each successful full run also updates
+# smoke-fixtures/latest.json, and the next run against a DIFFERENT CorOS
+# version diffs against it - which is the concrete answer to "how much did
+# this firmware update change", rather than an inferred one.
+
+set -uo pipefail
+
+ROOT="$(git rev-parse --show-toplevel)"
+BIN="${CORTEX_BIN:-cortex}"
+SETLIST="/media/p4/Presets/My Presets"
+SCRATCH_BANK=""
+RESTORE_SLOT=""
+DISCARD_WORKING_COPY=false
+MODEL_ID="1001"
+FIXTURES_DIR="$ROOT/smoke-fixtures"
+
+usage() {
+  cat <<'USAGE'
+Usage: s/hardware-smoke --scratch-bank N [OPTIONS]
+
+Required:
+  --scratch-bank N        Bank 1-32, all 8 slots (A-H) treated as disposable.
+                           Slot N-A is used for the save/delete/recall round trip.
+  --restore-slot SLOT     Recall this slot when the run finishes and on Ctrl-C.
+                           Required: edits begin from the scratch slot, never
+                           from the preset that was loaded when the run started.
+  --discard-working-copy  Confirm that recalling the scratch slot may discard
+                           the currently unsaved working-grid edit.
+
+Options:
+  --setlist PATH           Setlist holding the scratch bank
+                            [default: /media/p4/Presets/My Presets]
+  --model-id N              Numeric model id for the grid-edit checks
+                            [default: 1001, the built-in Brit 2203]. The model
+                            must expose a writable GAIN parameter.
+  --bin PATH                cortex binary to exercise [default: cortex on PATH]
+  -h, --help                This message
+USAGE
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --discard-working-copy) DISCARD_WORKING_COPY=true; shift ;;
+    --scratch-bank|--setlist|--restore-slot|--model-id|--bin)
+      if [[ $# -lt 2 ]]; then
+        echo "error: $1 needs a value" >&2
+        exit 2
+      fi
+      case "$1" in
+        --scratch-bank) SCRATCH_BANK="$2" ;;
+        --setlist) SETLIST="$2" ;;
+        --restore-slot) RESTORE_SLOT="$2" ;;
+        --model-id) MODEL_ID="$2" ;;
+        --bin) BIN="$2" ;;
+      esac
+      shift 2
+      ;;
+    -h|--help) usage; exit 0 ;;
+    *) echo "unknown argument: $1" >&2; usage >&2; exit 2 ;;
+  esac
+done
+
+if [[ -z "$SCRATCH_BANK" ]]; then
+  echo "error: --scratch-bank is required. This script refuses to guess" \
+       "which of your 256 USER slots are disposable." >&2
+  exit 2
+fi
+if [[ -z "$RESTORE_SLOT" ]]; then
+  echo "error: --restore-slot is required so the test can leave the unit on its starting preset." >&2
+  exit 2
+fi
+if [[ "$DISCARD_WORKING_COPY" != true ]]; then
+  echo "error: --discard-working-copy is required because the test first recalls ${SCRATCH_BANK}A." >&2
+  exit 2
+fi
+if ! [[ "$SCRATCH_BANK" =~ ^([1-9]|[12][0-9]|3[0-2])$ ]]; then
+  echo "error: --scratch-bank must be 1-32, got '$SCRATCH_BANK'" >&2
+  exit 2
+fi
+if ! [[ "$RESTORE_SLOT" =~ ^([1-9]|[12][0-9]|3[0-2])[A-H]$ ]]; then
+  echo "error: --restore-slot must be a slot such as 1A, got '$RESTORE_SLOT'" >&2
+  exit 2
+fi
+if ! [[ "$MODEL_ID" =~ ^[1-9][0-9]*$ ]]; then
+  echo "error: --model-id must be a positive integer, got '$MODEL_ID'" >&2
+  exit 2
+fi
+
+SAVE_SLOT="${SCRATCH_BANK}A"
+SCRATCH_RANGE="${SCRATCH_BANK}A-${SCRATCH_BANK}H"
+
+if ! command -v "$BIN" >/dev/null 2>&1; then
+  echo "error: '$BIN' not found on PATH. Build and install it first (s/install)," \
+       "or pass --bin /path/to/cortex." >&2
+  exit 2
+fi
+if ! command -v jq >/dev/null 2>&1; then
+  echo "error: jq is required" >&2
+  exit 2
+fi
+
+if ! mkdir -p "$FIXTURES_DIR"; then
+  echo "error: could not create $FIXTURES_DIR" >&2
+  exit 1
+fi
+
+TOTAL=0
+PASSED=0
+declare -a FAILURES=()
+
+log_pass() {
+  TOTAL=$((TOTAL + 1))
+  PASSED=$((PASSED + 1))
+  echo "[PASS] $1" >&2
+}
+
+log_fail() {
+  TOTAL=$((TOTAL + 1))
+  echo "[FAIL] $1 -- $2" >&2
+  FAILURES+=("$1 -- $2")
+}
+
+# Runs the CLI with --format json, capturing stdout (JSON only, since
+# progress/warnings go to stderr by design - CLI-002.4) and the exit code
+# into LAST_OUT / LAST_CODE. stderr is passed through so a hang is visible.
+LAST_OUT=""
+LAST_CODE=0
+run_cli() {
+  LAST_OUT="$("$BIN" "$@" --format json)"
+  LAST_CODE=$?
+}
+
+expect_ok() {
+  local name="$1"; shift
+  run_cli "$@"
+  if [[ "$LAST_CODE" -eq 0 ]]; then
+    log_pass "$name"
+  else
+    log_fail "$name" "exit $LAST_CODE"
+  fi
+}
+
+expect_fail() {
+  local name="$1"; shift
+  run_cli "$@"
+  if [[ "$LAST_CODE" -ne 0 ]]; then
+    log_pass "$name"
+  else
+    log_fail "$name" "expected a refusal, got exit 0: $LAST_OUT"
+  fi
+}
+
+jq_check() {
+  local name="$1" json="$2" filter="$3"
+  if jq -e "$filter" >/dev/null 2>&1 <<<"$json"; then
+    log_pass "$name"
+  else
+    log_fail "$name" "jq filter failed: $filter"
+  fi
+}
+
+restore_and_report() {
+  local exit_code=$?
+  if [[ -n "$RESTORE_SLOT" ]]; then
+    echo "Restoring $RESTORE_SLOT ..." >&2
+    "$BIN" preset recall --slot "$RESTORE_SLOT" --format json >/dev/null 2>&1 || \
+      echo "warning: restore recall of $RESTORE_SLOT failed" >&2
+  fi
+
+  echo >&2
+  echo "== $PASSED/$TOTAL checks passed ==" >&2
+  if [[ ${#FAILURES[@]} -gt 0 ]]; then
+    echo "Failures:" >&2
+    for f in "${FAILURES[@]}"; do
+      echo "  - $f" >&2
+    done
+  fi
+  exit "$exit_code"
+}
+trap restore_and_report EXIT INT TERM
+
+# --- 1. Device reachable (no handshake) -------------------------------
+run_cli device version
+DIRECT_VERSION="$LAST_OUT"
+if [[ "$LAST_CODE" -eq 0 ]]; then
+  log_pass "device version (direct)"
+else
+  log_fail "device version (direct)" "exit $LAST_CODE"
+fi
+jq_check "device version reports identity" "$DIRECT_VERSION" \
+  '.coros_version and .serial_number and .device_type'
+COROS_VERSION="$(jq -r '.coros_version // "unknown"' <<<"$DIRECT_VERSION")"
+APP_FIRMWARE="$(jq -r '.app_firmware // "unknown"' <<<"$DIRECT_VERSION")"
+
+# --- 2. Session layer answers identically -------------------------------
+run_cli device version --session
+if jq -e --argjson direct "$DIRECT_VERSION" '. == $direct' >/dev/null 2>&1 <<<"$LAST_OUT"; then
+  log_pass "session-path version matches direct path"
+else
+  log_fail "session-path version matches direct path" "outputs differ"
+fi
+
+# --- 3. Handshake and read paths -----------------------------------------
+run_cli device probe
+if [[ "$LAST_CODE" -eq 0 ]]; then
+  log_pass "device probe (handshake)"
+else
+  log_fail "device probe (handshake)" "exit $LAST_CODE"
+fi
+jq_check "device probe returns active scene" "$LAST_OUT" \
+  '.active_scene | type == "number"'
+
+# --- 4. Enumeration --------------------------------------------------------
+run_cli preset list --setlist "$SETLIST"
+PRESET_LIST="$LAST_OUT"
+if [[ "$LAST_CODE" -eq 0 ]]; then
+  log_pass "preset list"
+else
+  log_fail "preset list" "exit $LAST_CODE"
+fi
+jq_check "preset list entries carry index/slot/name" "$PRESET_LIST" \
+  'type=="array" and length > 0 and all(.[]; has("index") and has("slot") and has("name"))'
+
+run_cli setlist list
+if [[ "$LAST_CODE" -eq 0 ]]; then
+  log_pass "setlist list"
+else
+  log_fail "setlist list" "exit $LAST_CODE"
+fi
+if grep -qF "$SETLIST" <<<"$LAST_OUT"; then
+  log_pass "setlist list includes the configured setlist"
+else
+  log_fail "setlist list includes the configured setlist" "'$SETLIST' not found in output"
+fi
+
+# --- 5. Catalog -------------------------------------------------------------
+run_cli catalog --search marshall
+if [[ "$LAST_CODE" -eq 0 ]]; then
+  log_pass "catalog search"
+else
+  log_fail "catalog search" "exit $LAST_CODE"
+fi
+if [[ -n "$LAST_OUT" ]] && jq -e 'type=="array" and length > 0' >/dev/null 2>&1 <<<"$LAST_OUT"; then
+  log_pass "catalog search returns matches"
+else
+  log_fail "catalog search returns matches" "empty or malformed result"
+fi
+run_cli catalog --model "$MODEL_ID"
+MODEL="$LAST_OUT"
+if [[ "$LAST_CODE" -eq 0 ]]; then
+  log_pass "grid-test model $MODEL_ID is in the catalog"
+else
+  log_fail "grid-test model $MODEL_ID is in the catalog" "exit $LAST_CODE"
+fi
+jq_check "grid-test model has a writable GAIN parameter" "$MODEL" \
+  '.parameters | any(.[]; .name == "GAIN" and (.read_only | not))'
+if [[ "$LAST_CODE" -ne 0 ]] || ! jq -e \
+  '.parameters | any(.[]; .name == "GAIN" and (.read_only | not))' \
+  >/dev/null 2>&1 <<<"$MODEL"; then
+  echo "error: the grid-test model must be present and expose a writable GAIN parameter; refusing to edit." >&2
+  exit 1
+fi
+
+# --- 6. Grid editing --------------------------------------------------------
+# Begin from a declared disposable slot. This keeps working-grid changes out
+# of the preset that was loaded when the test started, even if a later check
+# fails.
+run_cli preset recall --slot "$SAVE_SLOT" --setlist "$SETLIST"
+if [[ "$LAST_CODE" -eq 0 ]]; then
+  log_pass "recall scratch slot before editing ($SAVE_SLOT)"
+else
+  log_fail "recall scratch slot before editing ($SAVE_SLOT)" "exit $LAST_CODE"
+  echo "error: could not establish the declared scratch working copy; refusing to edit." >&2
+  exit 1
+fi
+
+run_cli grid show --params
+BASELINE_GRID="$LAST_OUT"
+if [[ "$LAST_CODE" -eq 0 ]]; then
+  log_pass "grid show (baseline)"
+else
+  log_fail "grid show (baseline)" "exit $LAST_CODE"
+fi
+
+FREE_ROW=""
+FREE_COL=""
+for r in 1 2 3 4; do
+  for c in 0 1 2 3 4 5 6 7; do
+    if ! jq -e --argjson r "$r" --argjson c "$c" \
+      '.blocks | any(.screen_row == $r and .column == $c)' \
+      >/dev/null 2>&1 <<<"$BASELINE_GRID"; then
+      FREE_ROW="$r"; FREE_COL="$c"
+      break 2
+    fi
+  done
+done
+
+if [[ -z "$FREE_ROW" ]]; then
+  log_fail "find a free grid cell" "all 32 cells occupied; skipping grid-edit checks"
+else
+  expect_ok "block set (place model $MODEL_ID at $FREE_ROW,$FREE_COL)" \
+    block set --row "$FREE_ROW" --column "$FREE_COL" --model "$MODEL_ID"
+
+  run_cli grid show --params
+  jq_check "block set lands at the requested cell" "$LAST_OUT" \
+    ".blocks | any(.screen_row == $FREE_ROW and .column == $FREE_COL and .model_id == $MODEL_ID)"
+
+  expect_ok "block param (GAIN = 0.42)" \
+    block param --row "$FREE_ROW" --column "$FREE_COL" --param GAIN --value 0.42
+
+  run_cli grid show --params
+  jq_check "GAIN reads back as written" "$LAST_OUT" \
+    ".blocks[] | select(.screen_row == $FREE_ROW and .column == $FREE_COL) | .params[] | select(.name == \"GAIN\") | (.value - 0.42 | . * . < 0.0001)"
+
+  expect_fail "block param refuses an unknown parameter name" \
+    block param --row "$FREE_ROW" --column "$FREE_COL" --param WOBBLE --value 0.5
+
+  # --- 7. File ops: save / recall / stored read / delete, all inside the
+  # designated scratch bank ---------------------------------------------
+  SAVE_NAME="cortex-smoke-test"
+  expect_ok "preset save (scratch slot $SAVE_SLOT)" \
+    preset save --slot "$SAVE_SLOT" --name "$SAVE_NAME" \
+      --setlist "$SETLIST" --scratch-setlist "$SETLIST" \
+      --scratch-range "$SCRATCH_RANGE" --yes
+
+  # File mutations are eventually consistent. The device can acknowledge a
+  # save or delete before a folder listing reflects it, so poll state rather
+  # than turning a timing race into a false failure.
+  STORED_NAME=""
+  for _ in {1..10}; do
+    run_cli preset list --setlist "$SETLIST" --include-empty
+    STORED_NAME="$(jq -r --arg slot "$SAVE_SLOT" \
+      '.[] | select(.slot == $slot) | .name' <<<"$LAST_OUT" 2>/dev/null || true)"
+    [[ -n "$STORED_NAME" ]] && break
+    sleep 1
+  done
+  # The device may rename on a name collision (truncate + _N, 20 chars) -
+  # documented in spec/prior-art.md. Read back what was actually stored
+  # rather than assuming our requested name landed unchanged.
+  if [[ -n "$STORED_NAME" ]]; then
+    log_pass "save landed in $SAVE_SLOT (stored as '$STORED_NAME')"
+  else
+    log_fail "save landed in $SAVE_SLOT" "slot reads empty after save"
+  fi
+
+  run_cli grid show
+  jq_check "save preserved the edited working grid" "$LAST_OUT" \
+    ".blocks | any(.screen_row == $FREE_ROW and .column == $FREE_COL and .model_id == $MODEL_ID)"
+
+  expect_ok "preset recall ($SAVE_SLOT)" preset recall --slot "$SAVE_SLOT" --setlist "$SETLIST"
+
+  run_cli grid show
+  jq_check "recall replaced the live grid with the saved content" "$LAST_OUT" \
+    ".blocks | any(.screen_row == $FREE_ROW and .column == $FREE_COL and .model_id == $MODEL_ID)"
+
+  expect_ok "scene switch (index 1)" scene --index 1
+  run_cli device probe
+  jq_check "scene switch took effect" "$LAST_OUT" '.active_scene == 1'
+
+  # preset show recalls AND resets the active scene to the preset default -
+  # the documented trap (runbook section 7, PROT-006.16 "Trap 14").
+  expect_ok "preset show ($SAVE_SLOT, exercises the recall-resets-scene trap)" \
+    preset show --slot "$SAVE_SLOT" --setlist "$SETLIST" --params
+  run_cli device probe
+  jq_check "scene reset to the preset default after preset show" "$LAST_OUT" \
+    '.active_scene == 0'
+
+  expect_ok "block remove (cleanup, $FREE_ROW,$FREE_COL)" \
+    block remove --row "$FREE_ROW" --column "$FREE_COL"
+  run_cli grid show
+  jq_check "cell is empty after remove" "$LAST_OUT" \
+    ".blocks | any(.screen_row == $FREE_ROW and .column == $FREE_COL) | not"
+
+  if [[ -n "$STORED_NAME" ]]; then
+    expect_ok "preset delete (cleanup, '$STORED_NAME')" \
+      preset delete --name "$STORED_NAME" --setlist "$SETLIST"
+    SLOT_EMPTY=false
+    for _ in {1..10}; do
+      run_cli preset list --setlist "$SETLIST" --include-empty
+      if jq -e --arg slot "$SAVE_SLOT" \
+        'any(.[]; .slot == $slot and .name == "")' >/dev/null 2>&1 <<<"$LAST_OUT"; then
+        SLOT_EMPTY=true
+        break
+      fi
+      sleep 1
+    done
+    if [[ "$SLOT_EMPTY" == true ]]; then
+      log_pass "$SAVE_SLOT is empty after delete"
+    else
+      log_fail "$SAVE_SLOT is empty after delete" "slot remained occupied after 10 seconds"
+    fi
+  else
+    log_fail "preset delete (cleanup)" "no stored name captured; scratch slot $SAVE_SLOT may still hold test content"
+  fi
+fi
+
+# --- 8. Output contract -----------------------------------------------------
+if "$BIN" preset list --setlist "$SETLIST" --format json 2>/dev/null | jq empty 2>/dev/null; then
+  log_pass "preset list --format json is valid JSON on stdout alone"
+else
+  log_fail "preset list --format json is valid JSON on stdout alone" "jq could not parse stdout"
+fi
+
+# --- Fixture: record this run, and diff against the last different version -
+RUN_JSON="$(jq -n \
+  --arg timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  --arg coros_version "$COROS_VERSION" \
+  --arg app_firmware "$APP_FIRMWARE" \
+  --argjson total "$TOTAL" \
+  --argjson passed "$PASSED" \
+  '{timestamp: $timestamp, coros_version: $coros_version, app_firmware: $app_firmware,
+     total: $total, passed: $passed}')"
+
+FIXTURE_FILE="$FIXTURES_DIR/${COROS_VERSION}.json"
+echo "$RUN_JSON" > "$FIXTURE_FILE"
+echo "Wrote $FIXTURE_FILE" >&2
+
+LATEST_FILE="$FIXTURES_DIR/latest.json"
+if [[ -f "$LATEST_FILE" ]]; then
+  PREV_VERSION="$(jq -r '.coros_version // "unknown"' "$LATEST_FILE")"
+  if [[ "$PREV_VERSION" != "$COROS_VERSION" && "$PREV_VERSION" != "unknown" ]]; then
+    echo >&2
+    echo "== CorOS changed: $PREV_VERSION -> $COROS_VERSION ==" >&2
+    diff <(jq -S . "$LATEST_FILE") <(jq -S . <<<"$RUN_JSON") >&2 || true
+  fi
+fi
+if [[ ${#FAILURES[@]} -eq 0 ]]; then
+  cp "$FIXTURE_FILE" "$LATEST_FILE"
+else
+  echo "note: not updating latest.json - this run had failures" >&2
+fi
+
+if [[ ${#FAILURES[@]} -gt 0 ]]; then
+  exit 1
+fi
+exit 0

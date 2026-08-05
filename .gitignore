@@ -33,3 +33,9 @@
 # written up in our own words; the bytes stay local. See AGENTS.md, "Legal
 # hygiene".
 /traces
+
+# Hardware smoke-test fixtures from `s/hardware-smoke`.
+#
+# MUST NOT be committed - each one records local firmware details from a
+# hardware test run.
+/smoke-fixtures

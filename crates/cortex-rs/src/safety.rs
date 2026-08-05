@@ -477,8 +477,8 @@ impl QuadCortex {
     /// # Errors
     ///
     /// Revalidates policy, refuses stale preparations with
-    /// [`crate::Error::UnsafeSave`], and propagates listing and
-    /// [`Self::save_current_preset`] errors.
+    /// [`crate::Error::UnsafeSave`], requires a name for an empty target, and
+    /// propagates listing and [`Self::save_current_preset`] errors.
     pub fn save_prepared(
         &self,
         policy: &SavePolicy,
@@ -488,6 +488,12 @@ impl QuadCortex {
         timeout: Duration,
     ) -> crate::Result<SaveReceipt> {
         policy.authorize(&preparation.target, preparation.override_scratch)?;
+        if preparation.previous_name.is_none() && name.is_none() {
+            return Err(crate::Error::UnsafeSave(format!(
+                "{} is empty and needs --name before it can be saved",
+                preparation.target.slot
+            )));
+        }
         let current_entry = self
             .list_presets(&preparation.target.setlist, timeout, true)?
             .into_iter()
@@ -720,6 +726,43 @@ mod tests {
             ..entry
         };
         assert!(preparation.validate_current(&status, &occupied).is_err());
+    }
+
+    #[test]
+    fn an_empty_prepared_target_requires_a_name_before_device_io() {
+        let (qc, session, link) = client();
+        let preparation = SavePreparation {
+            target: SaveTarget::new(USER, "31A").unwrap(),
+            expected_entry: PresetEntry {
+                index: slot_to_position_checked("31A").unwrap(),
+                name: String::new(),
+                key: None,
+                instrument: None,
+            },
+            generation: 1,
+            storage_revision: 0,
+            previous_name: None,
+            backup: Some(BinaryPreset::default()),
+            override_scratch: ScratchOverride::ScratchOnly,
+        };
+
+        let Err(error) = qc.save_prepared(
+            &policy(),
+            preparation,
+            SaveConfirmation::explicit(true).unwrap(),
+            None,
+            Duration::from_secs(1),
+        ) else {
+            panic!("an empty target must require a name");
+        };
+
+        assert!(matches!(error, crate::Error::UnsafeSave(_)));
+        assert_eq!(
+            link.write_count(),
+            0,
+            "an invalid save must not reach the device"
+        );
+        session.stop();
     }
 
     #[test]

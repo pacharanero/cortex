@@ -113,3 +113,10 @@ Drives `tshark` and pipes it into `cortex decode-trace`, which reassembles using
 `--live` is the development monitor. Run it in a second terminal and every message to and from the unit appears as it goes past, whoever sent it - our client, Cortex Control in the VM, or the unit's own front panel. Wireshark's GUI can watch the same traffic but knows nothing of our framing, so it shows 129-byte blobs where this shows messages.
 
 It was a capture of our *own* client that found the writer starvation in `session.rs`, which had been costing up to 100 seconds a handshake and had been misattributed to the device for a full day. Reach for this earlier than feels necessary.
+
+## `s/hardware-smoke`
+
+Run deterministic end-to-end CLI checks against a real Quad Cortex. It reads every write back through a separate command, saves only within one explicitly disposable scratch bank, and restores the named starting slot even after a failed check or Ctrl-C.
+
+- `s/hardware-smoke --scratch-bank 31 --restore-slot 1A --discard-working-copy`
+- `s/hardware-smoke --scratch-bank 31 --restore-slot 1A --discard-working-copy --setlist "/media/p4/Presets/My Presets"`
