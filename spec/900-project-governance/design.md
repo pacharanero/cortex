@@ -59,8 +59,8 @@ The prior-art licensing table in `AGENTS.md` is the source of truth for what may
 | `pyquadcortex` (stokes-audio) | MIT | **Port freely with attribution.** Recovered `.proto` vendored; framing, write-STALL, trailer envelope derived. |
 | `deskop-nano-cortex` (rixrix) | Apache-2.0 | **Adapt with attribution.** Architectural precedent for the Tauri app. No code copied yet. |
 | `qc-stomp-tools` (VanIseghemThomas) | MIT | Adapt with attribution. On-device ioctls; relevant only if we target on-device builds. |
-| `OpenCortex` (VanIseghemThomas) | None declared | **Reference only.** Do not copy. |
-| `qc-extras` (roelj) | None declared | **Reference only.** Do not copy. |
+| `OpenCortex` (VanIseghemThomas) | No repository-wide licence; mixed file-level notices | **Reference only.** Do not copy. |
+| `qc-extras` (roelj) | No repository-wide licence; GPL-3.0-or-later source headers | **Reference only until scope is clarified.** Do not copy. |
 | `quad-cortex-usb-re-notes` (hsaastamoinen) | None declared | **Reference only.** Do not copy. |
 | `toneparse` (vian21) | None declared | **Reference only.** Do not copy. |
 
@@ -70,7 +70,7 @@ The MIT and Apache-2.0 licenses are compatible with AGPL-3.0-or-later. Material 
 
 ### Design choice: reference-only repos are never committed
 
-The four unlicensed repos (`OpenCortex`, `qc-extras`, `quad-cortex-usb-re-notes`, `toneparse`) have no license file (GitHub reports `license: null`), so all rights are reserved. No code, scripts, or prose from them is committed into this repo's tree. Findings are cited in our own words in `quad-cortex-linux-editor-and-protocol.md` (at the parent workspace root) and link out. This is the AGENTS.md rule: "Do not commit vendored reference-repo content into this repo's tree."
+The four reference-only repos (`OpenCortex`, `qc-extras`, `quad-cortex-usb-re-notes`, `toneparse`) lack a clear repository-wide licence. `OpenCortex` mixes unlicensed material with file-level GPL notices; `qc-extras` has GPL-3.0-or-later source headers but no root licence defining scope; the other two declare none. No code, scripts, data, or prose from them is committed into this repo's tree. Findings are cited in our own words and link out. This is the AGENTS.md rule: "Do not commit vendored reference-repo content into this repo's tree."
 
 ### Design choice: `NOTICE` is the summary; `THIRD-PARTY-NOTICES.md` is the full text
 
@@ -79,7 +79,7 @@ The four unlicensed repos (`OpenCortex`, `qc-extras`, `quad-cortex-usb-re-notes`
 ### Alternatives considered
 
 - **Relicense the vendored .proto as AGPL.** Rejected: the MIT license's distribution terms require retaining the upstream copyright and MIT notice. Relicensing would violate those terms. The .proto files keep their MIT header.
-- **Copy reference-only repo content with a citation.** Rejected: no license means no permission. Citation is not a license.
+- **Copy reference-only repository content with a citation.** Rejected: those repositories lack a clear repository-wide grant; file-level notices do not license unrelated files. Citation is not permission.
 - **A single `NOTICE` file with everything.** Rejected: `THIRD-PARTY-NOTICES.md` is the conventional place for full license texts; `NOTICE` is the summary. Splitting them keeps `NOTICE` scannable.
 
 ## [DES-REUSE] REUSE compliance

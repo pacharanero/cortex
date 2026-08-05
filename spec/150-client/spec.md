@@ -19,7 +19,7 @@ tags: ["client", "api", "quad-cortex", "presets", "grid", "scenes", "provisional
 - **Transport (lower layer)**: [`../100-transport/spec.md`](../100-transport/spec.md) - the send path (fire-and-forget)
 - **Domain model**: [`../130-domain-model/spec.md`](../130-domain-model/spec.md) - `BinaryPreset`, `Block`, `Split`, `Folder` types
 - **Protobuf schema**: [`../120-proto-schema/spec.md`](../120-proto-schema/spec.md) - generated `ProductionAutomation` types
-- **Research note**: [`../../quad-cortex-linux-editor-and-protocol.md`](../../quad-cortex-linux-editor-and-protocol.md) - authoritative protocol facts
+- **Public protocol reference**: [`../../docs/protocol.md`](../../docs/protocol.md) - authoritative protocol facts
 - **Prior art (MIT, ported)**: `pyquadcortex/pyquadcortex/client.py` - the `QuadCortex` class this is a port of; `pyquadcortex/pyquadcortex/catalog.py` - the model catalog parser
 
 ---
@@ -42,7 +42,7 @@ The protocol facts this zone encodes are hardware-verified via `pyquadcortex` ag
 
 | ID    | Requirement                                                                                                       | Priority    |
 | ----- | ----------------------------------------------------------------------------------------------------------------- | ----------- |
-| FR-1  | `QuadCortex::new(session)` constructs the client around a `Session`. Lazily fetches the catalog on first use. | Must Have   |
+| FR-1  | `QuadCortex::new(session)` constructs the client around a `Session`. | Must Have   |
 | FR-2  | `connect(timeout, settle)` is a convenience that opens the transport, starts the session, runs the handshake, and returns a `QuadCortex`. The Rust equivalent of `pyquadcortex.connect()`. | Must Have   |
 | FR-3  | `disconnect()` sends `Connection{connected: false}` (delegates to `Session::disconnect`). | Must Have   |
 | FR-4  | `close()` tears down in reverse order: disconnect, stop session, close transport. Safe to call more than once. | Must Have   |
@@ -53,7 +53,7 @@ The protocol facts this zone encodes are hardware-verified via `pyquadcortex` ag
 
 | ID    | Requirement                                                                                                       | Priority    |
 | ----- | ----------------------------------------------------------------------------------------------------------------- | ----------- |
-| FR-7  | `catalog()` lazily fetches and caches the `ModelCatalog` (a ~47 KB transfer from the device, via `ModelRepo` READ + `await_broadcast`). Covers installed plugins and the player's own Neural Captures. | Must Have   |
+| FR-7  | `fetch_model_repo(timeout)` returns the catalog payload captured by the handshake, or performs `ModelRepo` READ + `await_broadcast` when no captured copy exists. `Catalog::parse` turns that device-specific payload into model and parameter metadata. | Must Have   |
 
 #### Read operations
 
@@ -95,7 +95,7 @@ The protocol facts this zone encodes are hardware-verified via `pyquadcortex` ag
 | FR-31 | `write_preset(p)` sends `Grid{UPDATE, preset: p}`. A recalled preset carries NO explicit `row`, so writing it back wholesale does nothing - use the keyed wrappers. | Must Have   |
 | FR-32 | `set_chain_input(row, in_portid)` re-points a row's input (row-keyed update). The ONLY shape that actually moves an input. | Must Have   |
 | FR-33 | `set_chain_output(row, out_portid)` re-points a row's output (row-keyed update). | Must Have   |
-| FR-34 | `set_param(row, column, param_index, value, scene, param, model, real, promote, text)` sets one block parameter. With `scene=`: promotes scene_mode, switches scene, then writes (3 messages - the flag and a value cannot travel together). `text=` for string-valued params; `real=` converts via the catalog range (needs `param` + `model`). | Must Have   |
+| FR-34 | `set_param(row, column, param_index, value)` is the low-level wire-index write. `set_parameter(row, column, target, input, scene, promote, timeout)` is the shared host-facing API: it validates rows/columns/scenes and normalised values, reads the cell's model when addressed by name, resolves through the device catalog, refuses meters, converts real units, and performs the 3-message scene sequence when requested. | Must Have   |
 | FR-35 | `set_param_scene_mode(row, column, param_index, enabled)` sets the scene-following flag (must travel ALONE). | Must Have   |
 | FR-36 | `set_bypass(row, column, bypassed, scene)` bypasses/enables a block. With `scene=`: switches scene first (visible side effect). | Must Have   |
 | FR-37 | `set_block(row, column, model, verify, timeout)` places a model in a cell. With `verify=true` (default): waits for the `Grid` echo naming the cell; raises `BlockRefused` if no echo (DSP capacity). | Must Have   |
@@ -219,7 +219,7 @@ The protocol facts this zone encodes are hardware-verified via `pyquadcortex` ag
 - The session layer (zone 140): connect handshake, keepalive, correlation. This zone consumes `Session`.
 - USB HID transport (zone 100), framing (zone 110), protobuf schema (zone 120).
 - The typed domain model (zone 130): `BinaryPreset`, `Block`, `Split` definitions. This zone imports them.
-- MCP safety surface (zone 300): save confirmation, scratch-slot policy, backup-before-overwrite. This zone provides the methods; the MCP server wraps them in safety.
+- MCP/GUI host integration (zones 300/400): token registries, scratch-range configuration, confirmation UI, and safety-event logging. The shared policy and prepared-save implementation live in `cortex-rs::safety`; hosts must use it rather than wrapping `save_current_preset` independently.
 - CLI surface (zone 200): `clap` commands, output formatting. This zone is the engine the CLI calls.
 - Tauri backend (zone 400): Tauri commands. This zone is the engine the backend calls.
 

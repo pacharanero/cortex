@@ -31,7 +31,7 @@ Full attribution is in [`NOTICE`](https://github.com/pacharanero/cortex/blob/mai
 
 ### Reference-only projects
 
-These informed our understanding but **declare no licence**, so all rights are reserved and none of their content appears in this repository: [`OpenCortex`](https://github.com/VanIseghemThomas/OpenCortex), [`roelj/qc-extras`](https://github.com/roelj/qc-extras), [`hsaastamoinen/quad-cortex-usb-re-notes`](https://github.com/hsaastamoinen/quad-cortex-usb-re-notes), [`vian21/toneparse`](https://github.com/vian21/toneparse).
+These informed our understanding but lack a clear repository-wide licence, so none of their code, scripts, data, or prose appears here: [`OpenCortex`](https://github.com/VanIseghemThomas/OpenCortex) has no root licence and mixes unlicensed material with file-level GPL notices; [`roelj/qc-extras`](https://github.com/roelj/qc-extras) has GPL-3.0-or-later source headers but no root licence defining the repository-wide scope; [`hsaastamoinen/quad-cortex-usb-re-notes`](https://github.com/hsaastamoinen/quad-cortex-usb-re-notes) and [`vian21/toneparse`](https://github.com/vian21/toneparse) declare no licence. Findings are cited in our own words and linked to their source.
 
 ## Reverse engineering for interoperability
 

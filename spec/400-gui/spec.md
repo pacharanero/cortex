@@ -1,17 +1,17 @@
 ---
 afx: true
 type: SPEC
-status: Deferred
+status: Living
 owner: "@pacharanero"
 version: "0.1"
 created_at: "2026-08-01T17:30:00.000Z"
 updated_at: "2026-08-01T17:30:00.000Z"
-tags: ["gui", "tauri", "react", "mantine", "vite", "deferred"]
+tags: ["gui", "tauri", "react", "mantine", "vite", "planned", "accessible"]
 ---
 
-# 400 GUI - Spec (deferred stub)
+# 400 GUI - Spec (planned)
 
-> The Tauri 2 desktop app: a consumer of the `cortex-rs` crate, not a second implementation of the product. **Deferred** until the crate (zones 100-150), the CLI (200), and the MCP server (300) are complete. This is a stub spec; no `design.md` yet.
+> The Tauri 2 desktop app: a consumer of the `cortex-rs` crate, not a second implementation of the product. The core read/edit, live-state, reconnect, and shared save-safety prerequisites now exist, so this zone is ready for design and scaffolding. No GUI or `design.md` exists yet.
 
 ## References
 
@@ -28,7 +28,9 @@ tags: ["gui", "tauri", "react", "mantine", "vite", "deferred"]
 
 The GUI is the interactive surface for a player who wants a desktop editor for the Quad Cortex on Linux (where Neural DSP ships no official editor). It is a consumer of the `cortex-rs` crate: the Rust backend calls the crate's `QuadCortex` client and returns typed serialisable data to the frontend; the React webview renders it and owns view state, forms, layout, and keyboard interaction.
 
-The GUI is deferred until the crate and the thinner surfaces (CLI, MCP) are complete. Starting it now would mean the GUI reimplementation of protocol/domain logic drifting from the crate, or blocking on crate APIs that do not yet exist. The deferred status is deliberate.
+The live read/edit and shared save-safety foundations are now present: typed serialisable views and parameter inputs live in `cortex-rs`, every ordinary CLI operation routes through one held session, subscribed state is reduced into generation/revision snapshots, health/reconnect invalidates stale state, and `safety.rs` supplies validated scratch policy plus opaque prepared-save tokens. The GUI can now scaffold read, edit, and save flows without inventing protocol or policy in TypeScript. Save controls must remain provisional until the prepared-save sequence is hardware-smoked and the GUI has a user-facing scratch-range configuration mechanism.
+
+**`safety.rs` is not yet enforced by any shipping surface.** The CLI and the daemon still call `save_current_preset` directly, so the prepared-save sequence - target backup, scratch policy, revalidation before commit - is currently exercised only by its own tests. The GUI must call the prepared-save API itself and must not assume the layer beneath it is enforcing that policy.
 
 ## Stack (planned, per house-style tauri-gui.md)
 
@@ -84,7 +86,8 @@ When this zone is unblocked, the spec will own:
 - **Wrapper panels for common workflows.** Patch browser, block palette, parameter inspector, scene manager, and IR/capture loader sit alongside the hardware view as tabs or sidebars.
 - **Mode-aware footswitch labels.** The virtual footswitches reflect the current device mode and label themselves accordingly.
 - **Honest verified-vs-provisional labelling.** The GUI labels hardware-verified behaviour vs provisional surfaces (Nano Cortex specifics, unknown message types) in the UI, following the `deskop-nano-cortex` discipline.
-- **Safety surface reuse.** The GUI reuses the same safety rules as the MCP server (factory-setlist refusal, scratch range, slot backup, trap-surfacing). A save action in the GUI is gated the same way a `save_preset` tool call is gated.
+- **Live state comes from the reducer.** The Rust backend owns one subscribed session and exposes typed cache snapshots plus generation/revision changes. The frontend does not pollute its interaction state with optimistic device state and never renders a pre-reconnect generation as current.
+- **Safety surface reuse.** The GUI reuses the same rules as the MCP server: absolute factory refusal, a user-configured scratch range, pre-edit preparation/backup for an occupied target, explicit confirmation, and trap-surfacing. If an occupied target was not prepared before the grid became dirty, the GUI offers an empty scratch slot rather than recalling the target and destroying the edits.
 - **`s/gui-dev`** runs the Tauri dev server from any working directory (house-style tauri-gui.md).
 - **Versioning with the repo.** `gui/package.json` and `tauri.conf.json` versions move with the canonical version via `s/version++`.
 - **Same terminology as `CONTEXT.md` and docs.** The UI uses the same terms as the CLI, MCP server, and docs (house-style tauri-gui.md).
@@ -94,19 +97,20 @@ When this zone is unblocked, the spec will own:
 - [ ] `gui/` exists with the Tauri 2 + React + Mantine + Vite stack.
 - [ ] `s/gui-dev` runs the Tauri dev server from any working directory.
 - [ ] Tauri commands call `cortex-rs` and return typed serialisable data; no protocol/domain logic in TypeScript.
+- [ ] One managed Rust connection exposes `DeviceStateCache` snapshots and revision changes; reconnecting/failed status is visible and old generations are never rendered as live.
 - [ ] The default view is a hardware-faithful rendering of the Quad Cortex front panel (10 footswitch/encoders, OLED grid, scene LEDs, context strip).
 - [ ] Footswitch/encoders are interactive: click-to-press (toggle/recall/navigate), drag-to-turn (adjust parameter), with keyboard equivalents.
 - [ ] The virtual panel reflects the current device mode and labels footswitches accordingly.
 - [ ] Wrapper panels (patch browser, block palette, parameter inspector, scene manager, IR/capture loader) are accessible as tabs or sidebars.
 - [ ] The GUI labels hardware-verified vs provisional surfaces in the UI.
-- [ ] A save action in the GUI reuses the safety surface (factory refusal, scratch range, slot backup).
+- [ ] A save action reuses the shared prepared-save surface (factory refusal, configured scratch range, pre-edit backup or empty-target proof, explicit confirmation).
 - [ ] `gui/package.json` and `tauri.conf.json` versions move with `s/version++`.
 - [ ] `docs/gui/` explains how to use and run the GUI.
 
 ## Non-Goals
 
 - **Protocol or domain logic.** Owned by the crate (zones 100-150). The GUI is a consumer.
-- **Starting the GUI before the crate and CLI are complete.** The deferred status is deliberate; starting now would block on APIs that do not yet exist.
+- **Bypassing the prepared-save contract.** The shared API now exists; the Tauri backend retains `SavePreparation` and exposes only `SavePreparationView`. The frontend must never call `save_current_preset` directly or serialise the raw backup.
 - **A second implementation of the safety surface.** The safety rules belong in a shared module the CLI, MCP server, and GUI all reuse.
 - **Mobile breakpoints.** The GUI is a desktop app; test the supported minimum, default, and large window sizes (house-style tauri-gui.md).
 
@@ -124,7 +128,7 @@ When this zone is unblocked, the spec will own:
 
 ## Future
 
-- **`design.md`.** Written when this zone is unblocked. Progress is tracked in [roadmap.md](../roadmap.md) under GUI-00x.
+- **`design.md`.** Write this before scaffolding, now that the core prerequisites are in place. Progress is tracked in [roadmap.md](../roadmap.md) under GUI-00x.
 - **`docs/gui/`.** How to use and run the GUI.
 - **E2E tests.** GUI smoke tests focused on the user workflows that prove the Rust/frontend boundary is wired (house-style tauri-gui.md). Avoid brittle visual snapshots.
 - **Nano Cortex specifics.** Provisional until verified against real hardware; the GUI labels them.
@@ -133,10 +137,10 @@ When this zone is unblocked, the spec will own:
 
 | Term | Definition |
 | --- | --- |
-| Deferred | This zone is not started; the spec is a stub. The crate, CLI, and MCP server come first. |
+| Planned | This zone is not started; its core prerequisites exist and its design is the next step. |
 | Tauri command | A Rust function exposed to the webview; calls `cortex-rs` and returns typed serialisable data |
 | `s/gui-dev` | Repo script that runs the Tauri dev server from any working directory |
-| Safety surface reuse | The GUI gates saves the same way the MCP server does (factory refusal, scratch range, slot backup) |
+| Safety surface reuse | The GUI gates saves through the same prepared-target contract as the MCP server (factory refusal, configured scratch range, pre-edit backup or empty-target proof) |
 ## Related roadmap items
 
 - **[DOCS-002](../roadmap.md)** - the factory preset reference (what each factory preset evokes, and how to set it up) is aimed at agents driving the MCP server, but the GUI wants the same data to annotate the patch browser. Build it as a shared, generated artefact rather than duplicating it per surface.

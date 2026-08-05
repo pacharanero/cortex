@@ -160,7 +160,7 @@ The read methods fall into two correlation patterns:
 
 **Pattern A: `request()` (prompt same-type echo with `request_id`)** - used by `version()`, `active_scene()`, `read_current_preset()`. These send a READ with a `request_id` and match the reply on type + id.
 
-**Pattern B: `await_broadcast()` (lazy push)** - used by `read_preset()`, `list_presets()`, `list_irs()`, `favorites()`. These send a trigger (a recall or a READ) and wait for an unsolicited push, filtered by a `match` predicate. `read_preset` is the canonical case: the recall's `request_id` is echoed on the push; the seed push (no id) is skipped.
+**Pattern B: `await_broadcast()` (asynchronous push)** - used by `read_preset()`, `list_presets()`, `list_irs()`, `favorites()`. These send a trigger (a recall or a READ) and wait for an unsolicited push, filtered by a `match` predicate. `read_preset` is the canonical case: the recall's `request_id` is echoed on the push; the seed push (no id) is skipped.
 
 **Pattern C: `collect()` (fan-out)** - used by `list_folders()`. A single `File` READ produces a flood of folder listings over 10-20 s; `collect` gathers them all.
 
@@ -229,9 +229,9 @@ Addressing rules (traps #9, #10, #11):
 
 ## [DES-CLI-CATALOG] Catalog
 
-`catalog()` lazily fetches the `ModelCatalog` from the device via `ModelRepo` READ + `await_broadcast`. The catalog turns integer model ids into names, categories, and parameter lists in wire-index order. It covers installed plugins and the player's own Neural Captures, which no hard-coded table could know. Fetched once (~47 KB) and cached for the session.
+`fetch_model_repo()` returns the payload captured by the paced handshake, avoiding a second 46 KB transfer; without that captured copy it performs `ModelRepo` READ + `await_broadcast`. `Catalog::parse` turns integer model ids into names, categories, and parameter lists in wire-index order. It covers installed plugins and the player's own Neural Captures, which no hard-coded table could know. The persistent daemon parses its captured copy once.
 
-Name resolution: `set_param(param="THRESHOLD", model=comp)` resolves the wire index through the catalog. `real=` conversion needs `param` + `model` so the range is known (`spec.to_normalized(real)`).
+Name resolution belongs to `QuadCortex::set_parameter`, not a host surface. It reads the live cell to discover the model, resolves the named parameter through the catalog, and converts a real-unit value through that parameter's declared range. The CLI, daemon, MCP server and GUI therefore share one implementation and never ask callers to repeat a model id already present on the grid.
 
 ---
 
@@ -282,12 +282,12 @@ Name resolution: `set_param(param="THRESHOLD", model=comp)` resolves the wire in
 
 The `QuadCortex` client is a port of `pyquadcortex/pyquadcortex/client.py` (MIT, (c) 2026 Stokes). The ~60 methods, the helper functions, the value objects, the constants, and the domain-trap documentation all originate there, confirmed against real hardware. The `ModelCatalog` parser is ported from `pyquadcortex/pyquadcortex/catalog.py`. See `THIRD-PARTY-NOTICES.md` for the MIT attribution.
 
-No code is copied from the unlicensed reference repos. The protocol facts are re-expressed in this project's own words and Rust idioms.
+No code is copied from the reference-only repositories without a clear repository-wide licence. Their findings are re-expressed in this project's own words.
 ## [DES-CLI-DIVERGENCE] Divergences from the original plan
 
 ### One `client.rs`, not a `client/` module tree
 
-Same rationale as [140-session/design.md](../140-session/design.md#des-ses-divergence): at this size the split would fragment more than it clarifies. Grid-edit message construction IS a separate module (`grid.rs`), because those builders are pure and benefit from being testable in isolation from the client that sends them.
+Same rationale as [140-session/design.md](../140-session/design.md): at this size the split would fragment more than it clarifies. Grid-edit message construction IS a separate module (`grid.rs`), because those builders are pure and benefit from being testable in isolation from the client that sends them.
 
 ### What is covered without hardware
 

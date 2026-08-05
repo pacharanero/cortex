@@ -13,7 +13,7 @@ Record the CorOS version, firmware, and serial from step 1 alongside the result:
 
 !!! info "Why this is safe"
 
-    Saving is not implemented. Every grid edit lives on the working grid until a recall discards it, so nothing in this runbook can modify a stored preset. That changes the day `save_preset` lands, and this runbook will need a scratch-slot discipline then.
+    Save and delete exist. The CLI grid edits below stay in the working copy until a recall discards them. Step 11 separately asks the tester to save an unchanged USER preset, but only in a slot they have explicitly designated disposable; no step deletes content or writes to the factory library.
 
 ## 1. Device is reachable
 
@@ -46,7 +46,7 @@ cortex device probe
 - [ ] `active_scene`, `read_current_preset`, `list_presets` all report `ok`
 - [ ] Record the handshake duration
 
-A cold device can take ~35 s; a warm one ~2 s. Both are normal. Reads timing out **after** a successful handshake is the failure to look for - it means the settle returned before the device finished its state dump.
+A healthy handshake is consistently a few seconds. Record a large or variable delay as a failure and trace it: the previously accepted 2-35 second spread was caused by our RX loop starving the writer and by firing the request burst without pacing, not by a cold device building the catalog. Reads timing out after a successful handshake are also a failure.
 
 ## 4. Enumeration
 
@@ -155,8 +155,46 @@ cortex preset list --format json | jq -r '.[] | .slot'
 
 - [ ] Valid JSON on stdout despite progress lines on stderr
 
+## 11. Held session, cache, and reconnect
+
+```sh
+cortex session start
+cortex session status --format json | jq '.device, .cache'
+cortex grid show --params
+cortex preset list
+cortex device cpu
+```
+
+- [ ] Status reports `device.state: connected`, `cache.phase: live`, and cached preset, scene, catalog, and setlist data
+- [ ] `messages_seen` and `pushes_applied` increase while the session runs
+- [ ] Grid, preset listing, and CPU commands answer through the held session without another handshake
+
+Turn one block knob on the unit and then return it to its original value. Run `cortex grid show --params` after each movement.
+
+- [ ] Both hardware-originated values appear without recalling the preset
+- [ ] A knob burst advances the cache revision without making the session unresponsive
+
+Record `cache.storage_revision`, then use the unit itself to save an unchanged USER preset in a slot the tester has explicitly designated disposable. Never use the factory library for this check.
+
+- [ ] The save advances `storage_revision`; an ordinary recall or working-grid edit does not
+- [ ] The session remains responsive and the target's refreshed listing agrees with the unit
+
+Record the cache generation, unplug the USB cable, wait for `cortex session status` to report `reconnecting`, then reconnect it.
+
+- [ ] Cached state is invalidated immediately while disconnected
+- [ ] Status reports reconnect attempts and the latest error rather than claiming `connected`
+- [ ] The full subscribed handshake succeeds after reconnect
+- [ ] The cache generation increases and returns to `live`
+- [ ] `cortex grid show` agrees with the unit after reconnect rather than showing pre-disconnect state
+
+```sh
+cortex session stop
+```
+
+- [ ] The session exits and releases the HID interface
+
 ## Known gaps
 
-Not covered by this runbook, because nothing exercises them yet:
+Not covered by this runbook:
 
 - Everything on the Nano Cortex.

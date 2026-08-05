@@ -18,11 +18,11 @@ spec: spec.md
 
 - [spec.md](spec.md) - the requirements this design satisfies.
 - [AGENTS.md](../../AGENTS.md) - the MCP safety surface design (the source of truth).
-- [Protocol research note](../../quad-cortex-linux-editor-and-protocol.md) - the proposed tool surface (at the parent workspace root).
+- [Public protocol reference](../../docs/protocol.md) - the wire invariants the tool surface must preserve.
 - [001-overview design](../001-overview/design.md) [DES-ARCH] - the flow map this surface sits at (`[Flow.MCP]`).
 - [100-transport design](../100-transport/design.md) [DES-EXCLUSIVE] - the exclusive-HID-access invariant.
 - [150-client design](../150-client/design.md) - the `QuadCortex` API the tools delegate to.
-- Owned source: `crates/cortex-mcp/src/main.rs`.
+- Owned source: `crates/cortex-mcp/src/main.rs`; shared safety implementation: `crates/cortex-rs/src/safety.rs`.
 
 ## [DES-SAFETY] The Safety Surface
 
@@ -34,7 +34,7 @@ The five invariants (from AGENTS.md and the protocol research note):
 
 1. **Read and recall are free; saving is always explicitly confirmed.**
 2. **Never write to the factory setlist; restrict saves to a designated scratch range of USER slots unless overridden.**
-3. **Back up the target slot (`read_preset`) before overwriting, and keep the blob.**
+3. **Prepare and back up an occupied target before editing, and keep the blob.** A target first chosen after unsaved edits exist must be empty, because reading an occupied target recalls it and discards those edits.
 4. **Surface the row-numbering trap (0-based in the API, 1-4 on screen; a wrong-row edit succeeds silently) in tool descriptions.**
 5. **Single owning process for the USB interface.**
 
@@ -47,7 +47,7 @@ The proposed tool surface has four tiers, each with a different safety posture:
 | Read | `list_presets`, `read_preset`, `list_blocks`, `get_device_version`, `read_current_preset`, `list_folders` | Unrestricted. (But note: `read_preset` has a recall side effect - surface it in the description.) |
 | Transient write | `recall_preset`, `switch_scene` | Free. Changes what is heard; nothing persistent is lost. |
 | Working-copy write | `set_block`, `set_param`, `set_routing` | Free. Edits the recalled preset in device RAM; persists only on save. Surface the traps (`set_block` DSP refusal, `set_param(scene=)` 3-message rule, row numbering). |
-| Destructive | `save_preset` | **Gated.** Require explicit slot, refuse FACTORY setlist, require confirmation, back up target first. |
+| Destructive | `save_preset` | **Gated.** Require explicit slot, refuse FACTORY, require confirmation, and consume a matching pre-edit backup or empty-target preparation. |
 
 This tiering is the design that matters. The tool list is a thin wrapper over the client layer; the tiering is what stops an agent from destroying a patch.
 
@@ -61,11 +61,21 @@ This tiering is the design that matters. The tool list is a thin wrapper over th
 
 ### Design choice: scratch range with explicit override
 
-The default scratch range for saves is a configurable set of USER slots (e.g. slots 900-999 in the USER setlist). Saving outside the scratch range requires an explicit, logged override. This keeps an agent's default behaviour inside a safe sandbox while allowing a knowledgeable user to direct it elsewhere.
+The scratch range is a host-configured set of valid USER slots within the unit's actual 1A-32H range. The shared library deliberately has no built-in default: only the user knows which slots are disposable. Saving outside the configured range requires an explicit, logged override.
 
 ### Design choice: backup before overwrite
 
-`save_preset` calls `read_preset` on the target slot before overwriting and retains the blob (in memory for the session, or to a configurable backup path for cross-session rollback). A bad save can be rolled back by restoring the blob. The backup is logged to stderr.
+The old wording called `read_preset` immediately before the overwrite. That cannot work: `read_preset` recalls the target, replacing the unsaved working grid that `save_current_preset` was about to commit. The ordering is load-bearing.
+
+The safe workflow has a preparation phase before editing starts:
+
+1. List the target setlist and bind the preparation to its exact setlist, slot, listing entry, physical-session generation, and stored-preset mutation epoch.
+2. If the target is empty, record an empty-target preparation without recalling anything.
+3. If occupied, read it now, while replacing the working grid is still acceptable, and retain the returned `BinaryPreset`. A host that needs immediately restorable backups may additionally copy it to a configured empty backup slot.
+4. Recall/build the intended source and perform working-copy edits.
+5. `save_preset` re-lists the target, rejects any reconnect, stored-preset mutation, invalidated stream, or changed listing entry, then consumes the matching preparation plus an explicit confirmation. A stale preparation, a preparation for another slot, or no preparation for an occupied target is refused.
+
+If the user chooses an occupied target only after the grid is dirty, the safe choices are to select an empty scratch slot or abandon/replay the edits after preparing that target. Silently recalling it to make a backup is not a safety feature; it loses the work being saved.
 
 ### Design choice: surface traps in tool descriptions
 
@@ -105,13 +115,13 @@ The `Transport`, `Session`, and `QuadCortex` are all held by the server for its 
 
 ### Design choice: no per-tool-call reconnect
 
-If the device glitches (read timeout), the server does not silently reconnect. It surfaces the error to the agent and offers a `reconnect` tool (or a manual restart). Silent reconnect hides a flaky device and can race against a concurrently-running CLI.
+The shared `cortex session` owner now reconnects with a surfaced health state, generation invalidation, and bounded backoff. An MCP server may use that daemon contract or apply the same manager around its one owned session; it must not reopen per tool call. Tool calls made while replacement is in progress receive the reconnect attempt and last error rather than racing another HID owner.
 
 ### Alternatives considered
 
 - **Pool of transports.** Rejected: the HID interface does not multiplex. A pool of one is a held transport.
 - **Reopen per tool call.** Rejected: deadlocks against a concurrently-running CLI or against the server's own prior tool calls.
-- **Lockfile-based exclusive lock.** Not needed: `hidapi` open already takes the interface; a second open fails. We rely on that.
+- **Rely on `hidapi` open to enforce ownership.** Rejected by hardware: a second process opens without error and wedges the held session on its next request. The owner claims its socket before opening the interface and every other surface routes through it or refuses.
 
 ## [DES-TOOLS] Tool Model
 
@@ -136,7 +146,7 @@ The tool list mirrors the client API (zone 150), grouped by the destructive tier
 | `set_block` | `QuadCortex::set_block` | Working-copy write |
 | `set_param` | `QuadCortex::set_param` | Working-copy write |
 | `set_routing` | `QuadCortex::set_chain_input` / `set_chain_output` | Working-copy write |
-| `save_preset` | `QuadCortex::save_current_preset` (gated) | Destructive |
+| `save_preset` | `QuadCortex::prepare_save_before_editing` + `QuadCortex::save_prepared` | Destructive |
 
 ### Design choice: `inputSchema` matches CLI `--schema`
 
@@ -173,8 +183,9 @@ The server uses the `rmcp` crate (workspace dependency, `server` + `transport-io
 ## [DES-LIMITS] Known Limitations
 
 - **Everything in this zone is provisional.** The server is scaffolded (prints "not yet implemented"); no tools are wired. The safety surface is designed but not yet enforced.
-- **Blocked on the client layer (150).** The tools delegate to `QuadCortex`; until 150 lands, the server has nothing to call.
-- **No configurable scratch range yet.** The design assumes a configurable default; the config mechanism (env var, config file, MCP tool) is undecided.
-- **No backup retention.** The in-memory backup design is session-scoped; cross-session rollback via a backup path is a future option.
-- **No `reconnect` tool.** Device-glitch recovery is manual (restart the server) for now.
-- **No shared safety module.** The safety rules live in the server for now; a shared module the CLI and GUI can reuse is a future extraction.
+- **The client and persistent-session foundations now exist.** Tool wiring remains unimplemented, but it is no longer blocked on zone 150.
+- **No scratch-range host configuration mechanism yet.** `SavePolicy` validates host-supplied 1A-32H ranges without guessing a default; the MCP process still needs to obtain that policy from the user.
+- **Prepared-save token and backup retention are implemented in the shared crate.** The MCP server still needs an opaque token registry so it can retain `SavePreparation` between tool calls without serialising raw backups.
+- **Automatic restoration is not implemented.** The retained `BinaryPreset` can be persisted, but the device ignores an unkeyed whole-preset grid write. Restoration needs a separately verified device-side copy, import, or keyed replay path; hosts must not present the retained blob as one-click rollback yet.
+- **Reconnect policy for the MCP host is not selected.** The CLI daemon now has the correct generation-invalidating manager; the MCP process can reuse its socket contract or own one equivalent session, never both.
+- **Safety hardware smoke remains outstanding.** Fake-session tests pin empty-target, occupied-target, explicit-discard, confirmation, stale-generation, mutation-epoch, and changed-entry behaviour, but the save reason and listing refresh must still be observed on the unit.

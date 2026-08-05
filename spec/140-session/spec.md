@@ -5,8 +5,8 @@ status: Living
 owner: "@pacharanero"
 version: "0.1"
 created_at: "2026-08-01T17:30:00.000Z"
-updated_at: "2026-08-01T17:30:00.000Z"
-tags: ["session", "connect", "keepalive", "correlation", "broadcast", "provisional"]
+updated_at: "2026-08-05T05:01:48.000Z"
+tags: ["session", "connect", "keepalive", "correlation", "broadcast"]
 ---
 
 # 140 Session - Spec
@@ -19,7 +19,7 @@ tags: ["session", "connect", "keepalive", "correlation", "broadcast", "provision
 - **Framing (lower layer)**: [`../110-framing/spec.md`](../110-framing/spec.md) - flag-driven reassembly, trailer-tagged envelope
 - **Protobuf schema**: [`../120-proto-schema/spec.md`](../120-proto-schema/spec.md) - `CortexMessageType` registry, `MessageAction`, `request_id` field semantics
 - **Client (upper layer, consumer)**: [`../150-client/spec.md`](../150-client/spec.md) - the ergonomic `QuadCortex` API this handshake enables
-- **Research note**: [`../../quad-cortex-linux-editor-and-protocol.md`](../../quad-cortex-linux-editor-and-protocol.md) - authoritative protocol facts
+- **Public protocol reference**: [`../../docs/protocol.md`](../../docs/protocol.md) - authoritative protocol facts
 - **Prior art (MIT, ported)**: `pyquadcortex/pyquadcortex/transport.py` - the `Transport` class this is a port of; `pyquadcortex/pyquadcortex/client.py::_hello` - the handshake sequence
 
 ---
@@ -30,7 +30,7 @@ The Quad Cortex will not push state to a client that has merely opened the USB p
 
 This zone does NOT own the ergonomic API (zone 150), the HID device handle (zone 100), or the framing/decode layer (zones 110/120). It consumes a transport-like trait that exposes `send`, `request`, and the reassembled-message stream, and it provides the correlated request/response and broadcast-wait primitives the client is built on.
 
-The protocol facts this zone encodes are hardware-verified via `pyquadcortex` against CorOS 4.0.1 and re-verified on this project's machine. The Rust implementation is provisional until the full session has been exercised against a real Quad Cortex from this crate.
+The protocol facts and this Rust session implementation are hardware-verified against a real Quad Cortex running CorOS 4.0.1. The verification includes the paced handshake, one-second keepalive, correlation, broadcast waiting, CPU-load subscription, clean shutdown, and a held idle session.
 
 ---
 
@@ -40,11 +40,11 @@ The protocol facts this zone encodes are hardware-verified via `pyquadcortex` ag
 
 | ID    | Requirement                                                                                                                                                                                                                     | Priority    |
 | ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- |
-| FR-1  | `Session::connect(timeout, settle)` performs the full connect handshake and returns a ready session. Steps: (a) `ResetCommsBuffers` with a fresh `session_id` (UUID hex), sent as a correlated request; (b) `Version` UPDATE announcing `cortex_control_version: "4.0.1"` (device gates push behaviour on a valid CC version); (c) `ModelRepo` READ (fetches the catalog); (d) `Connection{connected: true}`; (e) 22 subscribe READs (see FR-3); (f) settle for `settle` seconds (default 2.0). | Must Have   |
+| FR-1  | `Session::connect(timeout, settle)` performs the paced subscribed handshake and returns a ready session: (a) correlated `ResetCommsBuffers` with a fresh UUID hex `session_id`; (b) best-effort `Version` READ and cache; (c) `Version` UPDATE announcing `cortex_control_version: "4.0.1"`; (d) `ModelRepo` READ, waiting for the catalog before continuing; (e) `Connection{connected: true}`; (f) the 22 subscribe READs from FR-3; (g) `CPULoad{CREATE}` with a request id; (h) settle until the non-heartbeat stream is quiet, bounded by a floor and ceiling. `connect_minimal` stops after step (e). | Must Have   |
 | FR-2  | `ResetCommsBuffers` carries a fresh 32-hex `session_id` (a UUID4 `.hex()` string). The device echoes it in the reply; correlate the reply by `request_id`. | Must Have   |
-| FR-3  | The 22 subscribe READs, in order: `ModuleStats`, `License`, `UndoRedo`, `IOSettings`, `GeneralSettings`, `ShowGigView`, `Mode`, `GlobalEQ`, `MasterVolume`, `File`, `RecentsFavorites`, `CompilerInhibitedModules`, `RecallPreset`, `NewModels`, `PinnedModels`, `DefaultParameters`, `GlobalTempo`, `SetlistPosition`, `PresetDirty`, `Scene`, `BulkOperation`, `Updater`. Each is a fire-and-forget `send` of `<Type>Message{action: READ}`. | Must Have   |
+| FR-3  | The 22 ordinary subscriptions, in order: `ModuleStats`, `License`, `UndoRedo`, `IOSettings`, `GeneralSettings`, `ShowGigView`, `Mode`, `GlobalEQ`, `MasterVolume`, `File`, `RecentsFavorites`, `CompilerInhibitedModules`, `RecallPreset`, `NewModels`, `PinnedModels`, `DefaultParameters`, `GlobalTempo`, `SetlistPosition`, `PresetDirty`, `Scene`, `BulkOperation`, `Updater`. Each is a fire-and-forget `<Type>Message{action: READ}`. `CPULoad` is the exception: subscribe with `CREATE` and a request id; a READ is silently ignored. | Must Have   |
 | FR-4  | `Session::disconnect()` sends `Connection{connected: false}` (best effort; write errors are swallowed per the benign STALL). | Must Have   |
-| FR-5  | A background keepalive task sends `KeepAlive{UPDATE}` every 5 seconds (default). Send failures are swallowed; the keepalive thread never dies. A dead device surfaces as read timeouts on the next request, not as a keepalive failure. | Must Have   |
+| FR-5  | A background keepalive task sends `KeepAlive{UPDATE}` every second. Send failures are swallowed; the keepalive thread never dies. A five-second interval makes device pushes stop silently after about forty seconds, so this timing is a liveness requirement rather than a tuning choice. A dead device surfaces through read silence and request failure, not as a keepalive write error. | Must Have   |
 | FR-6  | `request(message, timeout)` assigns a fresh monotonic `request_id`, registers a waiter BEFORE writing (so a fast reply cannot race the registration), sends, and blocks for the correlated reply up to `timeout`. Raises `Timeout` if no reply arrives. | Must Have   |
 | FR-7  | Correlation is BY MESSAGE TYPE first, `request_id` as a consistency check. READ replies (e.g. `Version`) carry NO `request_id` echo; a state-changing request triggers a cascade of OTHER-type messages that all echo the request's id (recalling a preset emits `UndoRedo`/`Grid`/`Scene`/... all carrying the same `request_id` before the `SetlistPosition` echo). The reply is the first inbound message whose TYPE matches the request's, and whose `request_id` (if present on both sides) matches too. | Must Have   |
 | FR-8  | When a READ reply carries no `request_id`, the first same-type pending waiter is satisfied (lowest `request_id` first). This covers the common case where the device answers a READ with a bare same-type message. | Must Have   |
@@ -59,26 +59,32 @@ The protocol facts this zone encodes are hardware-verified via `pyquadcortex` ag
 | FR-17 | After a `request` wait() times out, a reply can still land in the race window between the timeout and removing the pending entry. Whoever pops the entry "wins": if the RX thread already popped it, it is committed to delivering, so wait a short grace (0.5 s) for that to complete rather than dropping a reply that actually arrived. | Should Have |
 | FR-18 | `Session::stop()` signals the background RX and keepalive threads to exit and joins them (bounded) so the caller can safely close the HID handle. Idempotent. Joining matters: closing the hidapi handle while the RX thread is still inside `read()` can crash. | Must Have   |
 | FR-19 | The session holds the exclusive HID ownership for its lifetime (one owning process per device). The MCP server especially must hold a single session. | Must Have   |
-| FR-20 | No version field on the wire: a CorOS update can silently break the handshake. Surface a `version()` probe (a `Version` READ, which works without the full handshake) as the pre-handshake sanity check, not a hard-coded assumption. | Should Have |
+| FR-20 | No protocol-version field exists on the wire: a CorOS update can silently break the handshake. Read and cache the device `Version` before announcing the client version, while no other same-type request can race its id-less reply, and surface that cached identity to callers. | Should Have |
+| FR-21 | `DeviceStateCache` observes each state-bearing inbound message before collectors or waiters. Observation is non-consuming: the same message both updates the cache and satisfies normal correlation. | Must Have |
+| FR-22 | A complete four-row `RecallPreset` replaces the live-preset baseline. Sparse keyed `Grid` messages merge only for established routing, split, parameter, bypass, scene-mode promotion, and removal shapes; an ambiguous or unsupported delta invalidates the live preset rather than guessing. | Must Have |
+| FR-23 | Cache values carry a physical-session generation and cache revision. `wait_for_change(after, timeout)` returns only a latest revision token, so a knob burst coalesces instead of accumulating an unbounded raw-message queue. | Must Have |
+| FR-24 | A malformed report, abandoned partial message, reassembly error, cap breach, or host-detected disconnect invalidates cached state. A replacement session starts a new generation and old-generation delivery is ignored. | Must Have |
+| FR-25 | `Session::open_with_state` / `over_with_state` attach a replacement physical session to one stable cache handle. `Session::is_responsive` uses the same measured ten-second silence limit as request fail-fast so a cache hit cannot conceal an unplug. | Must Have |
 
 ### Non-Functional Requirements
 
 | ID    | Requirement                                                                                                                                                                                                                              | Target                  |
 | ----- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------- |
 | NFR-1 | The session layer adds no async runtime dependency; it uses std threads + channels so the leaf crate stays embeddable in the CLI, MCP server, and Tauri backend without dragging in tokio. | Architectural invariant |
-| NFR-2 | The connect handshake completes within `timeout` (default 5 s) for the `ResetCommsBuffers` reply, plus the `settle` delay (default 2 s). Total wall-clock < 10 s on a healthy device. | Hardware-observed       |
-| NFR-3 | The keepalive interval (5 s) is chosen to be comfortably inside the device's session timeout (observed to tolerate far longer gaps, but Cortex Control pings every ~5 s). | Hardware-observed       |
+| NFR-2 | A healthy subscribed handshake completes in 3.8-3.9 s and remains below 10 s. Each awaited reply is bounded by `timeout`; the adaptive settle has a 2 s floor and 30 s ceiling. | Hardware-observed       |
+| NFR-3 | The keepalive interval is 1 s, matching Cortex Control's measured 1.04 s cadence. At 1 s a held session remained continuously live for 90 s; at 5 s pushes stopped silently after about 40 s. | Hardware-observed       |
 | NFR-4 | Pending waiters (`request_id -> (Event, slot, expected_type)`) and the type-waiter/collector lists are guarded by a single `Mutex`; no lock is held across blocking device I/O or channel waits. | Code invariant          |
 | NFR-5 | Unit tests for correlation logic (type-first matching, the id-less READ-reply fallback, the race-window grace, the stale-seed-push skip) run in CI without hardware. | CI-enforced             |
 | NFR-6 | The session struct is `Send` but not `Clone`; it owns the transport and the background threads. Callers hold it by reference or behind an `Arc<Mutex<Session>>` at the host layer. | Code invariant          |
+| NFR-7 | The RX thread is the sole cache writer. It never invokes caller callbacks and never performs a refresh read while reducing; snapshots use a mutex and revision waiters use a condition variable. | Code invariant |
 
 ---
 
 ## Acceptance Criteria
 
-- [ ] `Session::connect()` performs the 6-step handshake and the device begins pushing state (a `RecallPreset` seed push arrives after settle).
+- [ ] `Session::connect()` performs the paced 8-step subscribed handshake and the device begins pushing state (a `RecallPreset` seed push arrives after settle).
 - [ ] `Session::disconnect()` sends `Connection{connected: false}` and swallows the expected write STALL.
-- [ ] Keepalive sends `KeepAlive{UPDATE}` every 5 s and survives a send failure (thread stays alive).
+- [ ] Keepalive sends `KeepAlive{UPDATE}` about once a second and survives a send failure (thread stays alive).
 - [ ] `request()` correlates a `Version` READ reply (no `request_id` echo) by type alone.
 - [ ] `request()` correlates a `SetlistPosition` UPDATE echo by type AND `request_id`.
 - [ ] `await_broadcast()` skips a stale/seed `RecallPreset` push (no `request_id`) and accepts only the push echoing the recall's `request_id`.
@@ -87,7 +93,9 @@ The protocol facts this zone encodes are hardware-verified via `pyquadcortex` ag
 - [ ] A FIRST-flagged report arriving mid-reassembly drops the stale partial and starts clean.
 - [ ] `Session::stop()` joins the RX and keepalive threads within the join timeout.
 - [ ] Unit tests for correlation, the race-window grace, and the stale-seed skip pass under `cargo test` (no hardware required).
-- [ ] Full handshake verified against a real Quad Cortex (CorOS 4.0.1) - hardware-only.
+- [x] Cache reduction is non-consuming, sparse updates apply transactionally, ambiguous updates invalidate, old generations cannot repopulate new state, and a 135-update burst retains only the latest value.
+- [x] The fake-link RX test proves a malformed report invalidates continuity without killing later message delivery.
+- [x] Full handshake and a 90-second held idle session verified against a real Quad Cortex (CorOS 4.0.1).
 
 ---
 
@@ -121,22 +129,25 @@ The "device gates push behaviour on a valid `cortex_control_version`" finding an
 ### Connect handshake detail (from pyquadcortex, confirmed by capture)
 
 1. `ResetCommsBuffers` with a fresh `session_id` (UUID hex). Device echoes it; correlate by `request_id`.
-2. `Version` UPDATE announcing `cortex_control_version: "4.0.1"`. The device gates state PUSH behaviour on receiving a valid CC version. Do NOT also issue a `Version` READ here: the device sends its own `Version` READ to the host, and a redundant host READ would race with a caller's later `version()` request (READ replies carry no `request_id` to disambiguate).
-3. `ModelRepo` READ - fetches the catalog (~47 KB gzipped, spanning ~371 reports).
-4. `Connection{connected: true}`.
-5. 22 subscribe READs (FR-3). This is the subscription that makes the device start pushing each state type.
-6. ~2 s settle. The device needs a moment after the burst before it treats the client as connected; a command sent too soon gets no push (observed as flaky `read_preset` timeouts).
+2. `Version` READ, best effort, before announcing. Cache the non-empty reply while no later `version()` caller can race the device's own id-less `Version` READ.
+3. `Version` UPDATE announcing `cortex_control_version: "4.0.1"`. The device gates state PUSH behaviour on receiving a valid CC version.
+4. `ModelRepo` READ - fetch and wait for the catalog (~47 KB gzipped, spanning ~371 reports) before sending the rest. The READ is load-bearing and pacing prevents the client from queueing its own transfer behind the subscription burst.
+5. `Connection{connected: true}`.
+6. 22 subscribe READs (FR-3). This is the subscription that makes the device start pushing each ordinary state type.
+7. `CPULoad{CREATE}` with a request id. A `CPULoad` READ is ignored without an error.
+8. Settle until non-heartbeat inbound traffic is quiet, with the caller's `settle` as a floor and a hard ceiling.
 
 ### Correlation rules (from pyquadcortex, confirmed on hardware)
 
 - Correlation is BY MESSAGE TYPE first, `request_id` as a consistency check.
 - READ replies (e.g. `Version`) carry NO `request_id` echo.
 - A state-changing request triggers a cascade of OTHER-type messages that all echo the request's `request_id` (recalling a preset emits `UndoRedo`/`Grid`/`Scene`/... all carrying the same id before the `SetlistPosition` echo).
-- `RecallPreset` pushes a host recall triggers ECHO that recall's `request_id`; the unsolicited seed push (hello's subscription grid state) carries NONE. Without matching on the id, the waiter returns whatever `RecallPreset` arrives first - which lags by one recall when a prior push is still in flight (the seed seeds the lag).
+- A `RecallPreset` push triggered by a host recall echoes that recall's `request_id`; the unsolicited seed push carries none. Without matching on the id, the waiter returns whichever `RecallPreset` arrives first, which can lag by one recall when a prior push remains in flight.
 
-### Provisional labelling
+### Verification status
 
-The protocol facts above are hardware-verified via `pyquadcortex`. The Rust implementation in this crate is **provisional** until the full session (handshake + keepalive + correlation + broadcast wait) has been exercised against a real Quad Cortex from this crate's own code. Label the session as "provisional" in docs and release notes until that hardware smoke run passes.
+The Rust implementation has passed the full hardware smoke: handshake, paced catalog transfer, subscriptions, one-second keepalive, correlation, broadcast waits, CPU-load pushes, and clean shutdown against CorOS 4.0.1. Re-run that smoke after a firmware update because the wire carries no protocol-version field.
+
 ### Hardware findings (2026-08-02, CorOS 4.0.1 / firmware d14e / QA00AB123)
 
 First contact between this crate's session layer and a real Quad Cortex. Captured with `CORTEX_TRACE=1 cortex device version --session`.
@@ -156,95 +167,44 @@ The 2-byte message is `VersionMessage{action: READ}` and decodes as a structural
 
 Mitigations, in preference order:
 
-1. Do not issue a redundant host `Version` READ during the handshake (already the case - [FR-1] step (b) sends an UPDATE announcing `cortex_control_version`, never a READ, precisely for this reason).
-2. Do not run concurrent `version()` calls on one session.
-3. A future hardening: have the id-less fallback reject a candidate whose `action` is READ, since a genuine reply is an UPDATE. Not yet implemented - see the tasks file.
+1. Issue the handshake's best-effort `Version` READ before the UPDATE and cache its non-empty reply, while no other same-type waiter exists.
+2. Serve later version queries from that cache rather than issuing concurrent id-less READs.
+3. Keep the broadcast predicate that rejects the device's empty `Version{READ}` request.
 
-**Lock-contention fix validated.** Before this run the RX thread held the device mutex across a 2 s blocking read, so every `send()` waited for the current read to return. The RX poll is now a separate 200 ms `RX_POLL_TIMEOUT` (matching pyquadcortex), bounding the wait a writer can experience. The single-request path above completed with no perceptible delay.
+**Lock-contention diagnosis corrected.** Reducing the RX poll from 2 seconds to 200 ms limited one read but did not prevent the unfair mutex from immediately handing the device back to the reader. The definitive fix is the `writers_waiting` gate: once a writer declares intent, the RX loop stands aside until that write completes. This removed the 47-second idle gaps visible on the wire.
 
-### Why the handshake sometimes takes 35 seconds (2026-08-02)
+### Handshake performance: client bugs corrected (2026-08-02)
 
-Reported as "the handshake appears to hang". It does not hang; it waits, and how long depends on how warm the device is.
+The `ModelRepo` READ is load-bearing. Removing it shortened the handshake and then made every later read time out, so the device gates push behaviour on that request. What was wrong was the explanation for its variable cost: a wire trace disproved the earlier claim that the unit lazily built and cached the catalog.
 
-**The `ModelRepo` READ at step (c) is load-bearing.** It looks like a gratuitous 46 KB fetch in the middle of a handshake and is the obvious thing to optimise away. Removing it was measured: the handshake dropped from ~35 s to **4.2 s**, and then **every read failed** - `active_scene`, `read_current_preset`, and `list_presets` all timed out. The device gates its push behaviour on this request. It is retained deliberately and the code says so.
+Two client-side faults caused the 2-102 second spread:
 
-**The cost is the device's, not the client's.** Report-reassembly throughput was measured during the same run:
+- The RX loop repeatedly reacquired an unfair device mutex and starved the writer. On the wire, the device answered each write in microseconds while the client left the bus idle for up to 47 seconds. A waiting-writer gate removed the starvation; handshake variance collapsed to a stable few seconds and preset-list variance collapsed with it.
+- The client fired `ModelRepo`, `Connection`, and the subscribe burst together. That queued roughly 24 requests against the 46 KB catalog transfer and inserted a 4.4-second gap. Waiting for the catalog first reduced request-to-last-report from 5.06 seconds to 0.67 seconds, matching Cortex Control's 0.65 seconds.
 
-| Message | Reports | Time | Rate |
-| --- | --- | --- | --- |
-| `ModelRepo` | 371 | 4551 ms | 82/sec |
-| `ModuleStats` | 179 | 119 ms | 1504/sec |
-| others | 2-72 | ~1 ms | 1500-3000/sec |
-
-The RX loop sustains 1500+ reports/sec. `ModelRepo` alone trickles at 82/sec because the unit builds the catalog on demand. Everything after it arrives at full speed.
-
-**Cold versus warm.** Two runs of identical code: 37.2 s on a cold device, 2.2 s minutes later on a warm one. The unit evidently caches the built catalog. Both runs produced working reads.
-
-**Therefore the settle is adaptive rather than fixed** ([FR-1] step (f)). A fixed sleep cannot serve both cases: short enough for the warm path leaves the cold path issuing reads into a 46 KB backlog, where replies queue behind the pushes and time out - which is exactly what "the handshake is broken" looked like. `connect` now waits for the inbound stream to fall silent for `SETTLE_QUIET_PERIOD` (1.5 s), with the caller's `settle` as a floor and `SETTLE_MAX` (30 s) as a ceiling so a permanently chatty device cannot stall the handshake.
-
-**And it reports progress.** `connect_with_progress` emits a label per step. Several seconds of silence reads as a hang regardless of whether it is one, so the CLI surfaces these on stderr without needing `CORTEX_TRACE`.
-
-**Open: an interrupted session is not announced.** Ctrl-C during a handshake never sends `Connection{connected: false}`, so the device keeps pushing to a client that has gone. The next session then contends with that backlog, which is why the first reproduction of this report stalled where an instrumented rerun did not. `ResetCommsBuffers` exists to recover from precisely this and appears to, but a signal handler that announces the disconnect would be better. Not yet implemented.
+`connect_with_progress` reports each step, waits for the catalog before continuing, and gives a waiting writer priority over the reader. The adaptive settle remains bounded by the caller's floor and `SETTLE_MAX`; heartbeat messages do not keep it artificially open.
 
 ### Why commands were slow, and what fixed it (2026-08-02)
 
-Reported as "several minutes"; Cortex Control is near-instant by comparison. Measured rather than guessed, and the cause was almost entirely self-inflicted.
+The writer-starvation and handshake-pacing fixes removed the wild variance, but a one-shot command still paid a correct multi-second handshake for milliseconds of work. The structural fix is `cortex session start`: one subscribed owner pays that handshake once and serves later commands over a Unix socket.
 
-**The baseline.** `cortex device version`, which needs no handshake, took 0.77 s. `cortex scene`, which does one 9 ms write, took **32.4 s**. So essentially all of it was handshake and teardown, not work.
+Measured through the held session, `scene` takes about 0.07 seconds, `grid` 0.14 seconds, status 0.005 seconds, and the already-fetched catalog 0.02 seconds. This is also the correct architecture for the MCP server and GUI because the HID interface permits only one effective owner.
 
-| Command | Before | After |
-| --- | --- | --- |
-| `version` (no handshake) | 0.77 s | 0.80 s |
-| `scene` (one write) | 32.4 s | ~3 s |
-| `grid` | 13.9 s | ~2.7 s |
-| `catalog` | 26.4 s | ~1.4 s |
-| `presets` | 50.6 s | 5-19 s |
+`ConnectMode::Minimal` remains available for a one-shot path that needs no subscriptions; `ConnectMode::Subscribed` is correct for the held session because the pushes keep its cache current. The `ModelRepo` READ remains mandatory in both modes.
 
-**The subscribe burst was the main cost, and was not needed.** The handshake subscribes to 22 state types, and subscribing is what makes the device dump everything it has - over 600 KB of folder listings on the unit measured. That dump is what a long-lived editor wants, because it then receives state changes unsolicited. A one-shot command does not: it sends its own targeted READ, which the device answers regardless.
+### Heartbeat and liveness (2026-08-02)
 
-Verified by removing it: `presets` went from 50.6 s to 9.4 s returning the same listing, and every read path still worked. Hence `ConnectMode::Minimal` (the default) and `ConnectMode::Subscribed` (which only `probe` uses, since it exists to exercise the full handshake).
+`GlobalTempo` arrives continuously in pairs: roughly 0.03 seconds within a pair and 0.5-0.8 seconds between pairs. It is a tempo/metronome heartbeat rather than state, so `HEARTBEAT_TYPES` excludes it and `IoMeter` from the adaptive-settle stamp while dispatching both normally.
 
-This refines the earlier finding rather than contradicting it. The **`ModelRepo` READ** at step (c) is still load-bearing - removing that one breaks every read. It is the 22 **subscribe** READs at step (e) that are optional for targeted reads.
+The apparently contradictory minute-long silences were caused by this client's old five-second keepalive. At that cadence the device stops pushing after about forty seconds without an error. Cortex Control sends every 1.04 seconds; with this project at one second, a held 90-second session remained continuously live. Silence is therefore a useful failure signal only after the device has first spoken and with the correct keepalive running; request waits use a conservative ten-second threshold because the post-handshake lull reaches 4-5 seconds.
 
-**A bare `File` READ enumerates everything.** `list_presets` sent one and discarded all but the folder it wanted - 399 folders' worth. Naming the folder in the request narrows what the device sends: 14.1 s versus 5.3 s for the same listing. `list_folders` still sends the bare form, because enumerating everything is what it wants.
+On-unit scene, bypass, and knob edits all push to a subscribed client, as detailed below. A held session can therefore keep a live cache current; reconnect must still invalidate it because edits made while disconnected are unknowable.
 
-**The catalog was fetched twice.** The handshake requests `ModelRepo` (load-bearing), and `fetch_model_repo` then requested it again, making the device rebuild and resend 46 KB at 82 reports/sec. The session now captures the first payload it sees and serves it from there: 26.4 s to 1.4 s.
+### Exclusive ownership, not cumulative degradation
 
-**The keepalive slept uninterruptibly.** A plain 5 s sleep, joined by `stop()`, so every command paid up to 5 s on teardown. Now sliced.
+Repeated connect/disconnect cycles do not degrade the unit. The actual collision is concurrent ownership: a second process can open the HID interface without error, after which the held session fails on its next request. Claim the socket or lock before beginning the handshake, and route every command through the held owner.
 
-**What remains, and is the device's.** `presets` still varies from 5 s to 49 s across consecutive identical runs, always returning correct data. `pyquadcortex` documents the same: a `File` READ "does not reliably produce one promptly, delivery being lazy", and treats a timeout as "ask again" rather than as an answer. A polling retry (their `wait_for_listing`) is the documented mitigation and is not yet implemented here.
-
-**The structural difference from Cortex Control remains.** It opens ONE session and keeps it, paying the handshake once; we open and tear down a session per command. A persistent session would remove the remaining per-command cost, and is the right shape for the MCP server, which must hold a single connection anyway.
-
-### The device is sometimes never quiet, and sometimes silent for a minute (2026-08-02)
-
-**`GlobalTempo` behaved as a continuous heartbeat.** Observed arriving roughly every 0.8 s, indefinitely, in pairs. It is the tempo and metronome clock, not state.
-
-This broke the adaptive settle outright. Waiting for 1.5 s of inbound silence can never succeed against a 0.8 s heartbeat, so every subscribed handshake ran to `SETTLE_MAX` - a 30 s wait on a command doing 9 ms of work. `HEARTBEAT_TYPES` now excludes `GlobalTempo` and `IoMeter` from the liveness stamp; they are still dispatched normally, they just do not count as the device having more to say.
-
-**Later the same day, the opposite was measured, and the contradiction is unresolved.** Sampling a held session's time-since-last-message twice a second on an idle unit: traffic for roughly the first 10 s after the handshake, then nothing at all for 17 s in one run and 80+ s in another. Repeated on a fresh daemon with nothing else touching the device, same shape.
-
-Both observations are real and neither has been retracted. What differs between "never quiet" and "quiet for a minute" has not been identified - candidates include whether the metronome or tempo is actually running on the unit, the screen or UI state, and what the player last touched. Nobody should build on either reading until that is settled.
-
-The practical consequence is recorded in roadmap PROT-008.6.4: a fail-fast that abandoned a request after 5 s of silence was implemented on the strength of the first observation and had to be withdrawn, because it refused work on a perfectly healthy idle session. **Inbound traffic is not a clock.** Treat time-since-last-message as something to display, not something to decide on.
-
-**On-unit changes DO push.** Changing scene on the hardware produced `Scene` and `RecallPreset` pushes to a subscribed client. So a cached view of device state CAN be kept current, which is what makes a persistent connection worth building rather than merely faster.
-
-Not yet established: whether turning a knob on the unit produces a `Grid` push. No `Grid` was observed, but no knob turn was confirmed within the window either. Verify before caching parameter values.
-
-### Congestion: cause corrected
-
-An earlier note here claimed that repeated connect/disconnect cycles degrade the device. **That was wrong**, and `pyquadcortex` had already tested it: they opened and abandoned twelve sessions with no goodbye and measured no degradation - the seed push still arrived, subscriptions still fired, and `read_preset` was unchanged (9.04 s to 8.77 s).
-
-The real cause is narrower: **a SUBSCRIBED handshake makes the device dump over 600 KB, and that leaves it busy for whatever comes next.** Measured in sequence: two subscribed `probe` runs at 24 s and 39 s, then a minimal `scene` at 44.6 s inheriting the backlog, then 2.8 s and 4.9 s once it cleared.
-
-So:
-
-- A minimal handshake costs 3-5 s and does not congest the device.
-- A subscribed handshake costs tens of seconds and taxes the next command too.
-- `pyquadcortex` reports 2.03-3.80 s handshakes, and ~9 s for `read_preset`, so the device being slow at some operations is normal rather than a fault of ours.
-
-**This is the argument for a persistent connection, stated precisely.** The subscription is not wasteful in itself - it is what makes the device report on-unit edits, and therefore what makes a cache trustworthy. It is wasteful *per command*. Pay it once in a held session and both problems disappear: no repeated dumps, and a cache that stays correct.
+The subscription is not wasteful in itself - it is what makes the device report on-unit edits, and therefore what makes a cache trustworthy. Paying it once in a held session avoids repeated handshakes and preserves the single-owner invariant.
 
 ### On-unit edits push, including knob turns (2026-08-02)
 
@@ -265,8 +225,4 @@ All `Grid` traffic arrived well after the initial subscription dump had finished
 
 It also settles the design tension recorded above. The 22-type subscription is expensive per command and is exactly right per session: it is the mechanism by which the cache stays true.
 
-Caveats to carry into the implementation:
-
-- `PresetDirty` marks the grid as having unsaved changes. It is the signal that a cached preset no longer matches the stored slot.
-- A knob sweep produces a BURST of `Grid` messages (135 for a handful of knobs). The cache should apply them, not queue work per message.
-- Nothing here says what happens across a RECONNECT. If the connection drops, edits made while away are invisible, so a reconnect must invalidate the cache wholesale rather than resume.
+The implementation carries those caveats directly. `PresetDirty` is cached as its own value, including `false` (a proto3 scalar with no presence). A knob sweep is reduced synchronously into one latest snapshot and consumers wait on a revision rather than a message queue. Reconnect invalidates wholesale before backoff and starts a new generation, because edits made while disconnected are unknowable.

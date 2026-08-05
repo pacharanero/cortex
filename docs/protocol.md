@@ -18,6 +18,8 @@ Almost all of this was established by [`stokes-audio/pyquadcortex`](https://gith
 
 **Measured here:** of the unit's six USB interfaces, **0 to 4 are USB Audio class and only interface 5 is HID**. ALSA enumerates the device as an ordinary sound card at the same time as we hold the HID interface, which is why an audio-analysis feature could run alongside this crate without contending for the connection.
 
+Independent USB reconstruction in [`quad-cortex-usb-re-notes`](https://github.com/hsaastamoinen/quad-cortex-usb-re-notes) records the complete host write setup packet: request type `0x21`, request `0x09` (`SET_REPORT`), value `0x0202` (output report 2), interface index `0x0005`, and length 129. It also publishes a decoded HID report descriptor matching the report geometry above. This project has independently confirmed the resulting transfers, not those setup fields below `hidapi`.
+
 ### The benign write STALL
 
 The single most important gotcha, and the one that would cost days to work out independently.
@@ -33,6 +35,12 @@ The device grants the HID interface to one process at a time. Quit Cortex Contro
 **Nothing enforces this, and violating it fails silently.** On Linux a second process opens the device without error. The held session then stops working - every subsequent read on it times out - while the offending command appears to succeed. Nothing errors at the moment of collision; the damage shows on the *next* request.
 
 A client should therefore refuse to open the device when it can tell another owner exists, rather than relying on the OS. A daemon holding a session should take its ownership claim (lock file, socket) **before** the handshake: the handshake is seconds long, and a claim registered afterwards leaves that window unguarded.
+
+### Nano Cortex compatibility is unestablished
+
+The recovered schema contains `DeviceType.ATMA`, the Nano Cortex codename, but that enum value does **not** establish transport compatibility. Third-party macOS observation in [`deskop-nano-cortex`](https://github.com/rixrix/deskop-nano-cortex) records provisional VID:PID `152A:88E7` and 65-byte HID reports (one report-ID byte plus 64 payload bytes), rather than the Quad Cortex's 129. Its HID interface opened but produced no passive input reports; an unknown handshake may still exist.
+
+This project has not tested a Nano Cortex, and nobody has shown one exchanging this protobuf-plus-trailer protocol over HID. Do not apply the Quad Cortex's report size, framing, handshake, or message semantics to a Nano until hardware establishes each of them.
 
 ## Framing
 
@@ -72,13 +80,13 @@ Steps 5 to 7 are fire-and-forget: the device answers them as pushes rather than 
 
 ### The ModelRepo READ is load-bearing
 
-**Measured here.** Step 3 looks like a gratuitous 46 KB fetch in the middle of a handshake, and is the obvious thing to optimise away. We removed it: the handshake dropped from ~35 s to **4.2 s**, and then *every* read failed - `active_scene`, `read_current_preset`, and `list_presets` all timed out. The device gates its push behaviour on that request.
+**Measured here.** Step 4 looks like a gratuitous 46 KB fetch in the middle of a handshake, and is the obvious thing to optimise away. We removed it: the handshake dropped from ~35 s to **4.2 s**, and then *every* read failed - `active_scene`, `read_current_preset`, and `list_presets` all timed out. The device gates its push behaviour on that request.
 
 ### Handshake cost
 
-A cold connect completes in **2-3 seconds**, for `cortex` and for Cortex Control alike, measured on `CorOS` 4.0.1.
+A subscribed `cortex` connect completes consistently in **3.8-3.9 seconds**, measured on `CorOS` 4.0.1 after adding the Version READ and pacing the ModelRepo transfer.
 
-Longer than that, or varying between identical runs, indicates a client-side problem. The device answers control transfers in about 220 microseconds and does not throttle a handshake.
+Large delays or meaningful variance between identical runs indicate a client-side problem. The device answers control transfers in about 220 microseconds and does not throttle a handshake; a healthy subscribed connect remains below 10 seconds.
 
 ### Do not let a read loop starve your writer
 
@@ -161,6 +169,8 @@ The first push arrives roughly **8 seconds** after the request, not immediately 
 
 Whether other message types share this convention is not established. If a subscribe of yours is being ignored, this is the first thing to try.
 
+The action cannot be inferred from ordinary CRUD semantics elsewhere either. `pyquadcortex` reports that pinning a model appends with no action field, unpinning uses `DELETE`, and adding a favourite uses `CREATE`. Treat the captured action as part of each message's wire contract, not as boilerplate a generic builder can choose.
+
 ## Observing the wire
 
 On Linux, `usbmon` captures everything, and **it works even when the unit is passed through to a VM** - QEMU's passthrough goes out through the host's own USB stack, so the host sees the official client's traffic without installing anything inside Windows. Every Cortex Control figure on this page was obtained that way.
@@ -222,6 +232,18 @@ Delete addresses its target by **full path**, not by slot index - the opposite o
 
 Each of these is answered by a `File` reply, and a save is followed by a `RecallPreset` push carrying `reason: SAVE` (`RecallPresetReason.SAVE = 2`). That reason is the only thing distinguishing it from an ordinary recall, which matters for a client keeping a cache: a save changes the stored slot without the user having recalled anything.
 
+File mutations are **eventually consistent**. `pyquadcortex` observed eleven successful deletes still present in a listing five seconds later; a fresh listing eventually reflected all of them. Do not use a fixed post-write sleep as verification. Poll until the expected listing state appears or a real deadline expires. The device may also de-duplicate a colliding name by truncating it and appending `_N`, so read the stored name back before issuing a later name-addressed delete.
+
+## Capture and IR transfer (provisional)
+
+The file category is known: `FileMessage.type` is 0 for presets, 1 for IRs, and 2 for captures. That selects a library; it does not reveal the capture payload format.
+
+`pyquadcortex` has hardware-verified valid-reference shapes for capture and IR grid blocks: a capture is selected with a string formed from its content hash and display name, while an IR uses its library key. For IRs, the device stores a nonsensical reference byte-for-byte and only renders a warning on the unit, so a successful read-back does not prove the referenced IR exists. Invalid-capture-reference behaviour is unestablished.
+
+IR import is narrowed but unsolved. A candidate `File{CREATE, type: 1, total_bulk_create_count: 1, folder, ir_payload}` request does nothing if `total_bulk_create_count` is absent. Writes spanning 26 HID reports round-tripped exactly, proving the outbound fragmentation path; several candidate payload encodings still produced no imported IR. Repeated multi-kilobyte attempts coincided with the USB link dying until the unit was power-cycled, so destructive probes should be spaced out and run only with recoverable user data.
+
+A separate reference-only project without a repository-wide licence, [`OpenCortex`](https://github.com/VanIseghemThomas/OpenCortex), reports in pre-CorOS-3 material that capture files are encrypted protobufs and locally created captures are keyed using the unit serial. That is a provisional lead to test against current hardware, not an established property of the current wire format. If it still holds, cross-unit import may require a portable re-encoding rather than replaying an exported blob.
+
 ## Correlation
 
 Replies are matched **by message type first**, with `request_id` as a consistency check:
@@ -280,8 +302,11 @@ A preset freshly read from a recall carries **no** explicit row, so writing one 
 | Splitter or mixer on an odd row | No such collection; the write does nothing |
 | MIDI out via `Grid` | Ignored. Use `MIDISettings` |
 | A block exceeding the DSP budget | Accepted on the wire, absent afterwards, no error |
+| Load a capture, then expect the block's old parameters | Upstream reports capture selection resets the block to the capture defaults; select it before writing the remaining parameters |
+| Place a block into a previously used empty cell | The separate bypass table persists for empty cells, so the new block inherits that cell's old bypass state |
+| Add a block while diffing unrelated rows | Combo-box selectors that enumerate blocks keep their selected index but are renormalised when the preset's block count changes |
 
-That last one is why `set_block` verifies. **Measured here**, and it corrected a bug worth describing.
+The DSP-budget trap is why `set_block` verifies. **Measured here**, and it corrected a bug worth describing.
 
 The device echoes a `Grid` broadcast naming a cell it accepted, so the obvious check is to wait for that echo and treat its absence as refusal. That is wrong: echo latency varies with how busy the unit is, and straight after a recall it exceeds a 5 s timeout. Placing six expensive blocks in a row, the first three reported "refused" and a read-back showed **all of them present**.
 
@@ -298,6 +323,14 @@ There is no side-effect-free way to read a *stored* preset: the device only emit
 **Measured here**, and it demonstrated itself unprompted: we set scene 1, called `read_preset`, and the scene returned to 0 *by itself* because the recall reset it to the preset's default. A scene-targeted write issued after a `read_preset` therefore lands on the default scene rather than the one you selected.
 
 Use `read_current_preset` (`cortex grid show`) to inspect while editing.
+
+## Settings writes are not uniformly sparse
+
+Top-level settings fields behave like sparse updates, but a nested submessage can replace the whole nested value. For structures such as `master_volume_assignment`, read the current value, merge the intended field, and write the complete submessage; sending one flag can silently clear its siblings.
+
+Some I/O fields must travel in a message by themselves. `pyquadcortex` reports output mute and input impedance mode being silently dropped when another field shared the same port entry, and USB dry/wet being dropped when packed with level. Use one-field messages for those controls and verify by read-back.
+
+An accepted and stored value is not proof that the device supports it. One mode-cycle value observed upstream reads back successfully but leaves the footswitches inoperative; a typed client should refuse that value even though the protobuf accepts it.
 
 ## Version field names {#version-field-names}
 

@@ -15,7 +15,7 @@ tags: ["framing", "hid", "report", "frame", "reassembler", "encode", "quad-corte
 
 ## References
 
-- [Protocol research note](../../quad-cortex-linux-editor-and-protocol.md) (at the parent workspace root) - the authoritative protocol facts.
+- [Public protocol reference](../../docs/protocol.md) - the authoritative, repository-local protocol facts.
 - [pyquadcortex `framing.py`](https://github.com/stokes-audio/pyquadcortex/blob/main/pyquadcortex/framing.py) - the MIT-licensed Python reference this module is ported from (c) 2026 Stokes.
 - [pyquadcortex protocol docs](https://github.com/stokes-audio/pyquadcortex/blob/main/docs/protocol.md) - the wire format reference.
 - [001-overview spec](../001-overview/spec.md) - governing spec, traceability contract, routing index entry for this zone.
@@ -145,7 +145,7 @@ The transport layer (`100`), the message/domain layers (`120`/`130`), the CLI (`
 - **Field-level gzip (inside protobuf `bytes` fields).** Owned by the domain layer (`130`).
 - **`request_id` correlation and unsolicited-push dispatch.** Owned by the planned session layer (`140-session`).
 - **Background RX thread.** A future concern for the session layer; the reassembler is a synchronous state machine a caller drives.
-- **Nano Cortex-specific framing differences (if any).** The protocol shape is shared; Nano-specific behaviour is provisional until verified against real hardware.
+- **Nano Cortex framing.** No shared shape has been demonstrated. Third-party observation reports 65-byte Nano HID reports rather than the Quad Cortex's 129; define Nano framing only after a real exchange is captured.
 
 ## Dependencies
 

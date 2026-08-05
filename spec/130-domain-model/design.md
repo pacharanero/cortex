@@ -31,7 +31,7 @@ The design principle is: never let a caller touch a raw `oneof` accessor without
 
 ## [DES-DEVICE] DeviceKind Design
 
-`DeviceKind` is a two-variant enum with a `vid_pid()` method. The design choice is an enum, not a struct, because the device kind is a closed set for this protocol: the schema's `VersionMessage.DeviceType` only has `QC=0` and `ATMA=1`. Adding a third device would be a schema event (zone 120) and an enum-variant addition here, not a runtime lookup.
+`DeviceKind` is a two-variant enum with a `vid_pid()` method. The variants express the project's current hardware targets, not a claim that both use one protocol: the recovered schema names `QC=0` and `ATMA=1`, while Nano transport compatibility remains unestablished. Adding another supported device would require an enum variant and transport evidence; it need not first appear in this recovered Quad Cortex schema.
 
 ```rust
 pub enum DeviceKind {
@@ -40,7 +40,7 @@ pub enum DeviceKind {
 }
 ```
 
-`NanoCortex` is labelled provisional in its doc-comment: the protocol shape is shared, but Nano-specific messages and BLE behaviour are not hardware-verified. The placeholder product ID `0xFFFF` is a sentinel that will never match a real device, so a `NanoCortex` open will fail loudly until the real PID is recorded.
+`NanoCortex` is labelled provisional in its doc-comment because transport compatibility itself is unverified. Third-party observation reports VID:PID `152A:88E7` and 65-byte HID reports, but no protobuf/trailer exchange. The placeholder product ID `0xFFFF` is a sentinel that will never match a real device, so a `NanoCortex` open fails closed until this project verifies the transport and deliberately replaces it.
 
 The `vid_pid()` method is `const fn` so it can be used in `const` contexts (e.g. a static lookup table in the transport layer).
 

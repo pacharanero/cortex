@@ -150,7 +150,7 @@ Completions are generated from `Cli::command()` - the same tree clap parses agai
 
 ### Design choice: print to stdout, not install
 
-The current interface is `completions <shell>` (print to stdout), which is the stable interface for package managers and scripting. The house-style ideal adds `completions install [--shell <shell>] [--dir <path>]` as the human interface. That is a planned follow-up (see [Future](#future) in spec.md).
+The current interface is `completions <shell>` (print to stdout), which is the stable interface for package managers and scripting. The house-style ideal adds `completions install [--shell <shell>] [--dir <path>]` as the human interface. That is a planned follow-up (see [Future](spec.md#future)).
 
 ## [DES-SIGPIPE] SIGPIPE reset
 

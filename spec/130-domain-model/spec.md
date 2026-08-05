@@ -18,7 +18,7 @@ tags: ["domain-model", "device", "message", "preset", "grid", "block", "scene", 
 - [001-overview/spec.md](../001-overview/spec.md) - taxonomy, traceability rules, routing index.
 - [120-proto-schema/spec.md](../120-proto-schema/spec.md) - the generated `cortex_protobuf_v2` types this layer wraps.
 - [110-framing/spec.md](../110-framing/spec.md) - the reassembled-message envelope this layer's `Message::parse` consumes.
-- [Protocol research note](../../../quad-cortex-linux-editor-and-protocol.md) (parent workspace root) - authoritative protocol facts, including the row-numbering trap.
+- [Public protocol reference](../../docs/protocol.md) - authoritative protocol facts, including the row-numbering trap.
 - [pyquadcortex](https://github.com/stokes-audio/pyquadcortex) - the MIT-licensed reference implementation whose domain helpers (`blocks`, `splits`, `slot_to_position`, `position_to_slot`) we port.
 - [AGENTS.md](../../AGENTS.md) - protocol invariants, the row-numbering trap, the MCP safety surface.
 

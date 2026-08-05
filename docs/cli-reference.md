@@ -371,7 +371,7 @@ Options:
           Include empty slots, so a free slot can be found
 
       --timeout <SECONDS>
-          Seconds to wait for the listing. Delivery is lazy; a timeout means "ask again", not "the setlist is empty"
+          Seconds to wait for the complete 256-slot listing. A timeout means no answer arrived, not that the setlist is empty
           
           [default: 25]
 
@@ -409,7 +409,7 @@ Recall a slot and dump the preset it loads.
 ```text
 Recall a slot and dump the preset it loads.
 
-CHANGES WHAT IS HEARD: there is no side-effect-free way to read a STORED preset - the device only emits a preset when it recalls one. Use `cortex probe` if you want the live grid without recalling.
+CHANGES WHAT IS HEARD: there is no side-effect-free way to read a STORED preset - the device only emits a preset when it recalls one. Use `cortex grid show` if you want the live grid without recalling.
 
 Usage: cortex preset show [OPTIONS] --slot <BANK+LETTER>
 
@@ -636,7 +636,7 @@ Show the LIVE grid: what is loaded right now, unsaved edits included.
 ```text
 Show the LIVE grid: what is loaded right now, unsaved edits included.
 
-Read-only and side-effect free. This is the command to use while editing: `cortex preset --slot X` reads a STORED slot and can only do so by recalling it, which discards unsaved edits and resets the active scene.
+Read-only and side-effect free. This is the command to use while editing: `cortex preset show --slot X` reads a STORED slot and can only do so by recalling it, which discards unsaved edits and resets the active scene.
 
 Usage: cortex grid show [OPTIONS]
 
@@ -723,9 +723,9 @@ Set a block parameter on the grid.
 ```text
 Set a block parameter on the grid.
 
-CHANGES THE WORKING GRID. Nothing is saved: the edit lives on the grid until you save the preset (not yet implemented) or recall another, which discards it.
+CHANGES THE WORKING GRID. Nothing is saved: the edit lives on the grid until you save the preset or recall another, which discards it.
 
-Rows are given as the unit LABELS them, 1-4, not the zero-based wire index. Use `cortex preset --slot <slot>` to see what is where.
+Rows are given as the unit LABELS them, 1-4, not the zero-based wire index. Use `cortex grid show` to see what is where.
 
 Usage: cortex block param [OPTIONS] --row <1-4> --column <0-7>
 
@@ -737,7 +737,7 @@ Options:
           Grid column, 0-7, left to right
 
       --param <NAME>
-          Parameter by NAME, e.g. `GAIN`. Resolved through the device catalog, so it needs --model or a block already in the cell. Safer than --index: indices are positional and not every one is a visible knob
+          Parameter by NAME, e.g. `GAIN`. The model is read from the cell and resolved through the device catalog. Safer than --index: indices are positional and not every one is a visible knob
 
       --index <N>
           Parameter by raw wire index. Prefer --param
@@ -839,7 +839,7 @@ Place a model in a grid cell, creating or replacing a block.
 
 CHANGES THE WORKING GRID. Nothing is saved.
 
-Verifies the device accepted it: a placement refused for want of DSP capacity is accepted on the wire and simply absent afterwards, with no error, so this waits for the device's echo naming the cell.
+Verifies the device accepted it: a placement refused for want of DSP capacity is accepted on the wire and simply absent afterwards, with no error, so this waits for the device's echo and falls back to a live grid read-back when the echo is late.
 
 Usage: cortex block set [OPTIONS] --row <1-4> --column <0-7> --model <ID>
 

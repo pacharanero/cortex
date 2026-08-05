@@ -65,9 +65,9 @@ preset_count: 11
 
 !!! tip "If the handshake seems to hang"
 
-    It is waiting, not hung, and it can legitimately take **35 seconds on a cold device**. The handshake must request the model catalog, which the unit builds on demand at roughly 82 HID reports per second; everything after that arrives at 1500+. Once the unit has built it, reconnecting takes about 2 seconds.
+    A healthy handshake is consistently a few seconds. A large or variable delay is a client-side fault until a wire trace proves otherwise; the two known causes were the RX loop starving its own writer and an unpaced request burst queueing work against the catalog transfer.
 
-    `cortex` waits for the device to fall silent rather than sleeping a fixed period, so it takes exactly as long as it needs to. Progress is printed at each step so you can see it moving.
+    `cortex` waits for the catalog before subscribing, then waits for the non-heartbeat push burst to settle. Progress is printed at each step. If it pauses for tens of seconds, trace our client with `s/usb-trace` rather than treating that as normal device behaviour.
 
 ## Browse presets
 

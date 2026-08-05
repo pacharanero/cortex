@@ -1,11 +1,12 @@
 # cortex-rs
 
-An unofficial, Linux-first toolkit for the Neural DSP **Quad Cortex** (and, in
-time, the **Nano Cortex**) over the Cortex Control USB HID protocol. The core
-deliverable is a low-level Rust crate (`cortex-rs`) that speaks the protocol
-and exposes a typed domain model - presets, scenes, grid, blocks. On top of
-the crate sit a CLI (`cortex`), an MCP server (`cortex-mcp`) for agentic
-patch editing, and a planned Tauri desktop GUI.
+An unofficial, Linux-first toolkit for the Neural DSP **Quad Cortex** over the
+Cortex Control USB HID protocol. **Nano Cortex** support is planned, but its
+transport compatibility is not yet established. The core deliverable is a
+low-level Rust crate (`cortex-rs`) that speaks the protocol and exposes a typed
+domain model - presets, scenes, grid, blocks. On top of the crate sit a CLI
+(`cortex`), an MCP server (`cortex-mcp`) for agentic patch editing, and a
+planned Tauri desktop GUI.
 
 > **Unofficial.** This project is not affiliated with, endorsed by, or
 > sponsored by Neural DSP Technologies. "Neural DSP", "Quad Cortex", "Nano
@@ -17,21 +18,24 @@ patch editing, and a planned Tauri desktop GUI.
 
 ## Status
 
-Pre-alpha scaffold. The transport, framing, and message-envelope modules are
-in place; the protobuf schema is vendored and built via `prost`; the
-`cortex device version` command and the GUI/MCP tool surfaces are stubbed. See
-`AGENTS.md` for the roadmap and protocol invariants.
+Pre-alpha, with the Quad Cortex core and CLI usable on Linux. Transport,
+framing, session/correlation, the typed client, live subscribed state,
+reconnecting session daemon, CLI read/edit operations, and shared prepared-save
+safety are implemented. The MCP binary remains a scaffold and the Tauri GUI
+has not started. See `AGENTS.md` for the current architecture and
+`spec/roadmap.md` for outstanding work.
 
 ## What it is
 
-- `cortex-rs` - a leaf Rust crate: USB HID transport, the Cortex Control
-  framing/reassembly, the trailer-tagged protobuf envelope, and a typed
-  domain model. Designed to drive the CLI, the MCP server, the Tauri
-  backend, and any third-party consumer via crates.io.
-- `cortex-cli` - a thin CLI surface over the crate.
-- `cortex-mcp` - an MCP server for agentic patch editing. The safety surface
-  (gated saves, factory-setlist protection, slot backups, the row-numbering
-  trap) is designed in from the start; see `AGENTS.md`.
+- `cortex-rs` - a leaf Rust crate: USB HID transport, Cortex Control framing and
+  protobuf envelope, session/correlation, typed domain and client APIs,
+  subscribed state reduction, and shared prepared-save safety. Designed to
+  drive every host surface without depending on one.
+- `cortex-cli` - a thin CLI over the crate, including a persistent daemon that
+  owns the one device connection and reconnects without serving stale state.
+- `cortex-mcp` - an MCP server for agentic patch editing. The shared save policy
+  exists in `cortex-rs`; MCP tools and their opaque preparation-token registry
+  are not wired yet.
 - `gui/` (planned) - a Tauri 2 desktop app, a consumer of the crate.
 
 ## What it is not
@@ -64,27 +68,26 @@ on the interface-5 node.
 
 ```sh
 cargo build              # default: includes the hidapi transport
-cargo build --no-default-features   # leaf protocol/domain surface only
+cargo build --no-default-features   # every device-independent surface; no hidapi/open
 ```
 
 ### 3. Run
 
 ```sh
-cargo run -p cortex-cli -- version
+cargo run -p cortex-cli -- device version
 ```
 
 ## Project layout
 
 ```text
 crates/
-  cortex-rs/    The leaf crate (USB HID transport, framing, message envelope,
-                typed domain model, vendored protobuf schema).
+  cortex-rs/    The leaf crate (transport, framing, session, client, live state,
+                save safety, typed domain model, vendored protobuf schema).
   cortex-cli/   The `cortex` CLI - a thin surface over the crate.
-  cortex-mcp/   The `cortex-mcp` MCP server (scaffold; safety surface designed
-                in, see AGENTS.md).
+  cortex-mcp/   The `cortex-mcp` MCP server (tool wiring scaffold).
 gui/           Planned: Tauri 2 desktop app (React + Mantine + Vite).
 docs/          Protocol notes, runbooks, GUI docs.
-spec/          AFX-style spec/design/tasks per zone.
+spec/          Living spec/design per zone; roadmap and completed work ledgers.
 s/             Repo scripts: s/test, s/lint, s/gui-dev, s/version++ ...
 ```
 

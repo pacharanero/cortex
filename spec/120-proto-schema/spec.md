@@ -16,7 +16,7 @@ tags: ["proto-schema", "protobuf", "prost", "build-script", "cortex-rs", "quad-c
 ## References
 
 - [001-overview/spec.md](../001-overview/spec.md) - taxonomy, traceability rules, routing index.
-- [Protocol research note](../../../quad-cortex-linux-editor-and-protocol.md) (parent workspace root) - authoritative protocol facts.
+- [Public protocol reference](../../docs/protocol.md) - authoritative protocol facts.
 - [pyquadcortex](https://github.com/stokes-audio/pyquadcortex) - the MIT-licensed Python reference implementation whose recovered `.proto` files are vendored here.
 - [NOTICE](../../NOTICE) and [THIRD-PARTY-NOTICES.md](../../THIRD-PARTY-NOTICES.md) - attribution for the MIT-licensed schema.
 - [prost-build docs](https://docs.rs/prost-build) - the build-time code generator.
@@ -142,7 +142,7 @@ CREATE=0  UPDATE=1  DELETE=2  READ=3  MOVE=4  COPY=5  UPLOAD=6  DOWNLOAD=7  SWAP
 
 ```text
 QC=0      Quad Cortex (primary verification target, CorOS 4.0.1 / firmware d14e)
-ATMA=1    Nano Cortex (internal codename; protocol shape shared, specifics provisional)
+ATMA=1    ATMA variant (identified by prior art as the Nano codename; proves only that this schema names it)
 ```
 
 ### Routing Index entry

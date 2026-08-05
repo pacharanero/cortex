@@ -39,7 +39,7 @@ The interesting requirements are not "parse args and print" but the house-style 
 | `cortex completions <shell>` prints to stdout for bash, zsh, fish, powershell, elvish | Implemented | `clap_complete::generate` from the live `Cli::command()` |
 | SIGPIPE reset on Unix | Implemented | `libc_sigpipe_reset()` in `main()` before `Cli::parse()` |
 | `arg_required_else_help = true` | Implemented | Bare `cortex` prints help and exits successfully |
-| Planned commands (`recall`, `scene`, `dump-preset`, `list-presets`, `list-folders`) | Provisional | Not yet implemented; depend on the client layer (150) |
+| Noun-then-verb preset, setlist, grid, block, row, scene, catalog and device commands | Implemented; wire operations hardware-verified as listed in the roadmap | All ordinary device commands delegate to `QuadCortex` directly or through the held session |
 
 ## User Stories
 
@@ -99,6 +99,16 @@ Linux users with a Quad Cortex, script writers, AI coding agents driving the CLI
 | FR-16 | `cortex --schema` / `cortex --print-schema` emits a JSON Schema of command inputs - the authoritative input contract for scripts and agents. | Should Have |
 | FR-17 | Once the client layer (150) lands, `cortex device version` switches from calling `Transport::request` directly to calling `QuadCortex::version()`. | Should Have |
 
+#### Persistent session
+
+| ID | Requirement | Priority |
+| --- | --- | --- |
+| FR-18 | `cortex session start` claims its owner-only Unix socket before opening the exclusive HID interface, performs one subscribed handshake, and serves line-delimited JSON requests until stopped. | Must Have |
+| FR-19 | Every ordinary device command uses the daemon when it is running and falls back to one direct minimal session otherwise. The explicit `device probe` and `device version --session` diagnostics remain direct and refuse while the daemon owns the interface. | Must Have |
+| FR-20 | The daemon serves only responsive `Live` cache entries, falls back to explicit reads for missing state, and reports cache phase/generation/revision and reducer counters in `session status`. | Must Have |
+| FR-21 | A background liveness monitor invalidates state before replacing a silent session, closes the old handle before opening another, retries the full subscribed handshake with exponential backoff capped at 30 seconds, and exposes connected/reconnecting/failed status. | Must Have |
+| FR-22 | Requests received during reconnect fail immediately with the attempt and last error; status and shutdown remain available. | Must Have |
+
 ### Non-Functional Requirements
 
 | ID | Requirement | Target |
@@ -118,10 +128,11 @@ Linux users with a Quad Cortex, script writers, AI coding agents driving the CLI
 - [x] A bare `cortex` prints help and exits successfully.
 - [x] `cortex device version | head -1` does not panic (SIGPIPE reset).
 - [x] Errors go to stderr; stdout is clean data only.
-- [ ] `cortex device version --format json` emits structured JSON on stdout.
-- [ ] `cortex preset recall`, `cortex scene`, `cortex dump-preset`, `cortex list-presets`, `cortex list-folders` are implemented and delegate to the client layer.
+- [x] `cortex device version --format json` emits structured JSON on stdout.
+- [x] Preset recall/show/list, scene, setlist, grid, block, row, catalog and device operations are implemented and delegate to the client layer.
 - [ ] `cortex --schema` emits a JSON Schema of command inputs.
-- [ ] Every command honours `--format text|json`.
+- [x] Every command honours `--format text|json`.
+- [x] A fake-link reconnect test fails the first open, succeeds on the second, swaps the session, and advances the retained cache generation.
 
 ## Non-Goals
 
@@ -132,12 +143,12 @@ Linux users with a Quad Cortex, script writers, AI coding agents driving the CLI
 
 ## Dependencies
 
-- **`cortex-rs`** (workspace path) - the crate whose API the CLI calls. Currently uses `Transport`, `DeviceKind`, `proto::VersionMessage` directly; will switch to `QuadCortex` once the client layer (150) lands.
+- **`cortex-rs`** (workspace path) - the crate whose `QuadCortex`, `Session`, daemon contract, state cache and typed views the CLI calls. The fast one-shot version path deliberately uses `Transport` only when no daemon owns the interface.
 - **`clap`** (derive) - argument parsing.
 - **`clap_complete`** - shell completions from the live command tree.
 - **`anyhow`** - the binary's error type.
 - **`prost`** - protobuf encode/decode for the `version` command's direct transport call (will be hidden behind the client layer once 150 lands).
-- **`serde_json`** - JSON output for `--format json` (planned).
+- **`serde_json`** - JSON output and the line-delimited daemon contract.
 - **house-style rust-cli.md** - the shape rules this surface follows (thin main, clap derive, data on stdout, SIGPIPE reset, completions, `--format`, `--schema`).
 
 ## Future

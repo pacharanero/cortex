@@ -15,7 +15,7 @@ tags: ["transport", "usb-hid", "hidapi", "quad-cortex", "stall", "exclusive-acce
 
 ## References
 
-- [Protocol research note](../../quad-cortex-linux-editor-and-protocol.md) - the authoritative protocol facts (at the parent workspace root).
+- [Public protocol reference](../../docs/protocol.md) - the authoritative, repository-local protocol facts.
 - [pyquadcortex protocol docs](https://github.com/stokes-audio/pyquadcortex/blob/main/docs/protocol.md) - the MIT-licensed reference this behaviour is ported from.
 - [001-overview spec](../001-overview/spec.md) - governing spec, traceability contract, routing index entry for this zone.
 - [001-overview design](../001-overview/design.md) [DES-ARCH] - the system context flow map this layer sits at the bottom of.
@@ -43,7 +43,7 @@ This zone owns the `Transport` struct that wraps `hidapi::HidDevice` and encodes
 | The benign write STALL (`hid_write` returns `-1` on success) | Hardware-verified | Observed on this machine; documented in `pyquadcortex` |
 | Swallow write errors, detect dead device via read timeout | Hardware-verified | `cortex device version` succeeds despite `-1` writes; a powered-off device surfaces as `Error::ReadTimeout` |
 | `Transport::request` gzip-decompresses frame-level payloads starting `1f 8b` | Hardware-verified | Observed on RecallPreset pushes from `pyquadcortex`; the `version` round-trip does not compress |
-| Nano Cortex VID:PID | Provisional | `0x152A:0xFFFF` placeholder in `device.rs`; product ID to be recorded once verified against real hardware |
+| Nano Cortex transport | Unestablished | Third-party observation reports VID:PID `152A:88E7` and 65-byte reports, but no protobuf/trailer exchange; `device.rs` deliberately retains a non-matching `0xFFFF` sentinel |
 
 The `pyquadcortex` offline test suite is a conformance reference but not a substitute for a hardware smoke run. Agent-generated tests must not be the sole basis for accepting transport behaviour.
 
@@ -114,10 +114,10 @@ CLI users, the MCP server, the future Tauri GUI backend, and downstream crate co
 
 - **Frame encoding and reassembly logic.** Owned by zone `110-framing` (`framing.rs`). The transport layer calls `encode_message` and `Frame::parse` / `FrameReassembler`; it does not reimplement them.
 - **Protobuf decode and the `CortexMessageType` tag.** Owned by zone `120-proto-schema` and `130-domain-model` (`message.rs`). The transport layer strips the 8-byte trailer via `Message::parse`; it does not own the tag enum.
-- **`request_id` correlation and broadcast waiting.** Owned by the planned session layer (`140-session`). `Transport::request` returns the first reassembled message, full stop.
-- **The connect handshake (ResetCommsBuffers + Version announce + Connection + 22 subscribe READs).** Owned by `140-session`.
-- **Background RX thread.** A future concern for the session layer (`140`); the current transport is synchronous and blocking. See [Future](#future).
-- **Nano Cortex-specific behaviour.** The protocol shape is shared; Nano-specific messages and BLE behaviour are provisional until verified against real hardware.
+- **`request_id` correlation and broadcast waiting.** Owned by the session layer (`140-session`). `Transport::request` returns the first reassembled message, full stop.
+- **The paced connect handshake (ResetCommsBuffers; Version READ/cache and UPDATE; ModelRepo READ/wait; Connection; 22 subscribe READs; CPULoad CREATE; adaptive settle).** Owned by `140-session`.
+- **Background RX thread.** Owned by the session layer (`140`); the raw transport remains synchronous and blocking.
+- **Nano Cortex transport and behaviour.** The recovered schema's `ATMA` value is not evidence of a shared wire protocol. Third-party observation reports a different HID report size; all Nano transport assumptions remain provisional until verified against real hardware.
 - **On-device / ioctl access.** The `qc-stomp-tools` route is out of scope; this project uses the USB HID route exclusively.
 
 ## Dependencies
@@ -145,7 +145,7 @@ Re-plug the Quad Cortex. On this machine the interface-5 node appears at `/dev/h
 
 - **Background RX thread.** The current transport is synchronous and blocking. The session layer (`140-session`) will introduce a background reader thread that owns the read loop, correlates replies by `request_id`, and broadcasts unsolicited pushes (e.g. parameter changes, preset recalls). `Transport` will expose a `read`-driven hook for that thread; the synchronous `request` path stays for the CLI's fire-and-forget commands.
 - **Protocol-version probe.** There is no version field on the wire; a CorOS update can silently break things. The session layer will surface a version probe rather than a hard-coded assumption.
-- **Nano Cortex hardware verification.** `DeviceKind::NanoCortex` carries a placeholder product ID (`0xFFFF`) until a real device is tested; the transport API shape is shared, the product ID is not.
+- **Nano Cortex hardware verification.** `DeviceKind::NanoCortex` carries a non-matching product ID (`0xFFFF`) until a real device is tested. Verify its report geometry, framing, envelope, and handshake independently before replacing the sentinel with the third-party-observed `0x88E7`.
 
 ## Glossary
 

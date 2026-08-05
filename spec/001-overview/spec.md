@@ -15,7 +15,8 @@ tags: ["overview", "cortex-rs", "rust", "usb-hid", "quad-cortex", "nano-cortex",
 
 ## References
 
-- [Protocol research note](../../quad-cortex-linux-editor-and-protocol.md) (at the parent workspace root) - the authoritative protocol facts.
+- [Public protocol reference](../../docs/protocol.md) - the authoritative, repository-local protocol facts.
+- [Prior-art map](../prior-art.md) - what each reference project knows and where to read it.
 - [pyquadcortex protocol docs](https://github.com/stokes-audio/pyquadcortex/blob/main/docs/protocol.md) - the MIT-licensed Python reference implementation.
 - [deskop-nano-cortex spec tree](https://github.com/rixrix/deskop-nano-cortex/tree/main/docs/specs) - the AFX spec convention this tree mirrors.
 - [AGENTS.md](../../AGENTS.md) - agent instructions and protocol invariants.
@@ -63,7 +64,7 @@ Maintainers, AI coding agents, and downstream crate consumers.
 | FR-2 | Spec folders use 3-digit ranged numbering by category (see Appendix), spaced to allow insertion without renumbering. | Must Have |
 | FR-3 | Each zone spec owns a disjoint set of source files; the routing index below is the authoritative owner map. | Must Have |
 | FR-4 | Node IDs are zone-local: `[FR-x]`/`[NFR-x]` restart per `spec.md`, `[DES-*]` anchors are unique within a `design.md`. | Must Have |
-| FR-5 | Each zone `tasks.md` keeps a Work Sessions table as its last section (append-only). | Must Have |
+| FR-5 | Project progress is tracked only in `spec/roadmap.md` and `spec/completed.md`; zone folders contain no `tasks.md`. | Must Have |
 | FR-6 | Cross-cutting living behaviour uses numbered `900-999` specs; one-off decisions use `docs/adr/` (none yet). | Should Have |
 | FR-7 | Code/spec alignment is bidirectional: code `@see` resolves to existing zone IDs, and zone specs list their owned files. | Must Have |
 | FR-8 | Provisional surfaces (Nano Cortex specifics, MCP safety surface, unverified message types) are labelled as such in code, spec, UI, and release notes. | Must Have |
@@ -91,7 +92,7 @@ Maintainers, AI coding agents, and downstream crate consumers.
 
 - Feature requirements (each zone spec owns its own).
 - The Tauri GUI (owned by zone `400-gui`, deferred until the crate and CLI are complete).
-- Full Nano Cortex support (the protocol shape is shared; Nano-specific behaviour is provisional until verified against real hardware).
+- Full Nano Cortex support. The recovered schema names `ATMA`, but nobody has shown the Nano speaking this HID protobuf/trailer protocol; transport compatibility itself is provisional until verified against real hardware.
 - On-device builds (the `qc-stomp-tools` ioctl route; not in scope for this USB-first project).
 
 ## Dependencies
@@ -165,7 +166,7 @@ To answer "where are we up to", read `roadmap.md`. To answer "what must this do"
 | [110-framing](../110-framing/spec.md) | HID frame codec | `crates/cortex-rs/src/framing.rs` | Implemented |
 | [120-proto-schema](../120-proto-schema/spec.md) | Protobuf schema | `crates/cortex-rs/{build.rs,proto/}` | Implemented |
 | [130-domain-model](../130-domain-model/spec.md) | Domain model | `crates/cortex-rs/src/{device,message}.rs` | Partial |
-| [140-session](../140-session/spec.md) | Session handshake | `crates/cortex-rs/src/session.rs` | Implemented (provisional) |
+| [140-session](../140-session/spec.md) | Session handshake | `crates/cortex-rs/src/session.rs` | Implemented and hardware-verified |
 | [150-client](../150-client/spec.md) | Client API | `crates/cortex-rs/src/client.rs` | Partial (lifecycle, version, recall, scene, helpers) |
 | [200-cli](../200-cli/spec.md) | CLI surface | `crates/cortex-cli/src/main.rs` | Partial (version only) |
 | [300-mcp](../300-mcp/spec.md) | MCP server | `crates/cortex-mcp/src/main.rs` | Stub |
@@ -191,12 +192,12 @@ At least one `@see` MUST point at a `spec.md` or `design.md` under `spec/`.
 
 | Term | Definition |
 | --- | --- |
-| Zone spec | A `spec/XXX-name/` folder with spec.md, design.md, tasks.md |
+| Zone spec | A `spec/XXX-name/` folder with `spec.md` and `design.md`; progress lives in the repository-wide roadmap and completed record |
 | Living document | `spec.md`/`design.md` representing current truth, not logs |
 | `@see` | Doc-comment linking a source file to its governing zone spec |
 | Honest state | Protocol behaviour is hardware-verified (via pyquadcortex) or labelled provisional |
 | Leaf crate | `cortex-rs` with `default-features = false`: no hidapi, no async runtime |
 | Write STALL | The benign USB status-stage stall on every `SET_REPORT`; `hid_write()` returns `-1` on a write that worked |
 | Trailer | The 8-byte suffix on a reassembled message carrying the `CortexMessageType` tag as a LE u16 |
-| Connect handshake | The ResetCommsBuffers + Version announce + Connection + 22 subscribe READs the device requires before it pushes state |
+| Connect handshake | The paced sequence: ResetCommsBuffers; Version READ/cache and UPDATE; ModelRepo READ/wait; Connection; 22 subscribe READs; CPULoad CREATE; adaptive settle |
 | Provisional | Not yet verified against real hardware by this project; may work but is not confirmed |

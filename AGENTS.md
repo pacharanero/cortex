@@ -18,7 +18,8 @@ crate encodes.
 ## Read First
 
 - [README.md](README.md) - setup (udev rule, build, run) and project overview.
-- [/home/marcus/code/neuraldsp/quad-cortex-linux-editor-and-protocol.md](../quad-cortex-linux-editor-and-protocol.md) - the research note that established the protocol facts and architecture. Authoritative for protocol behaviour.
+- [docs/protocol.md](docs/protocol.md) - the public implementer-facing wire reference; correct it in the same change whenever evidence changes a protocol claim.
+- [spec/prior-art.md](spec/prior-art.md) - what each reference project already knows, the exact files to read, and which negative results are worth re-testing. Check it before capturing hardware traffic.
 - [NOTICE](NOTICE) and [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) - attribution for the MIT- and Apache-2.0-licensed prior art this project ports from.
 - [/home/marcus/code/house-style/AGENTS.md](/home/marcus/code/house-style/AGENTS.md) - cross-repo standards (the source of truth for CI, distribution, licensing, docs, etc.).
 - [/home/marcus/code/house-style/licensing.md](/home/marcus/code/house-style/licensing.md), [library-extraction.md](/home/marcus/code/house-style/library-extraction.md), [rust-cli.md](/home/marcus/code/house-style/rust-cli.md), [tauri-gui.md](/home/marcus/code/house-style/tauri-gui.md) - the specific standards this project follows.
@@ -32,19 +33,24 @@ may be taken from them.
 
 | Repo | License | Use |
 | --- | --- | --- |
-| `pyquadcortex` (stokes-audio) | MIT | **Port freely with attribution.** The primary protocol source; the recovered `.proto` files are vendored into `crates/cortex-rs/proto/` with their own SPDX header. The framing, the write-STALL gotcha, and the trailer-tagged envelope all originate here. Record any derivation in `NOTICE` / `THIRD-PARTY-NOTICES.md`. |
+| `pyquadcortex` (stokes-audio) | MIT | **Port freely with attribution.** The primary protocol source; the recovered `.proto` files are vendored into `crates/cortex-rs/proto/` with their own SPDX header. The framing, write-STALL, trailer envelope, session/client design, and most planned operations originate here. Read `pyquadcortex/docs/protocol.md`'s operation-coverage table and method docstrings before tracing the same operation. Record any derivation in `NOTICE` / `THIRD-PARTY-NOTICES.md`. |
 | `deskop-nano-cortex` (rixrix) | Apache-2.0 | **Adapt with attribution.** The architectural precedent for the Tauri app (Rust device I/O, honest verified-vs-provisional labelling, AFX spec layout, release/dx tooling). No code copied yet; re-implement independently. |
 | `qc-stomp-tools` (VanIseghemThomas) | MIT | Adapt with attribution. On-device footswitch/rotary/LED ioctls - relevant only if we ever target on-device builds. |
-| `OpenCortex` (VanIseghemThomas) | **None declared** | **Reference only.** No license file; GitHub reports `license: null`, so all rights reserved. Read for understanding of the device-rooting route; do **not** copy code, scripts, or docs into this repo. |
-| `qc-extras` (roelj) | **None declared** | **Reference only.** Cross-compilation notes only. |
+| `OpenCortex` (VanIseghemThomas) | **No repository-wide licence; mixed file-level notices** | **Reference only.** There is no root licence; some decryptor files carry GPL notices, while the rest remains unlicensed. Read for understanding of the device-rooting route; do **not** copy code, scripts, data, or docs into this repo. |
+| `qc-extras` (roelj) | **No repository-wide licence; GPL-3.0-or-later source headers** | **Reference only.** The source headers grant GPL-3.0-or-later but there is no root licence defining the repository-wide scope. Cross-compilation notes only; do not copy. |
 | `quad-cortex-usb-re-notes` (hsaastamoinen) | **None declared** | **Reference only.** Independent USB recon corroboration; do not copy prose or captures verbatim. |
-| `toneparse` (vian21) | **None declared** | **Reference only.** Preset-file parser logic; reimplement independently if needed, do not lift code. |
+| `toneparse` (vian21) | **None declared** | **Reference only, and not Quad Cortex prior art.** It parses Neural DSP desktop-plugin presets and Logic Pro channel strips, not Quad Cortex protobuf presets. Do not lift code or its bundled third-party preset content. |
 
 The MIT- and Apache-2.0-licensed material is compatible with the project
 license below. Anything copied or derived from `pyquadcortex`,
 `deskop-nano-cortex`, or `qc-stomp-tools` must carry its upstream copyright and
-a NOTICE entry. The four unlicensed repos must not have any of their content
-committed into this repo - cite findings in your own words and link out.
+a NOTICE entry. The four reference-only repos lack a clear repository-wide
+licence, so none of their code, scripts, data, or prose may be committed here -
+cite findings in our own words and link out.
+
+`deskop-nano-cortex` credits its BLE field map to the non-vendored,
+MIT-licensed `choldy/nano-cortex-web-editor`; adapting that decoder would
+require attribution to both projects.
 
 ## Project license
 
@@ -101,10 +107,13 @@ s/             Repo scripts: s/test, s/lint, s/gui-dev, s/version++ ...
   ourselves or extend (e.g. unknown message types, the MCP safety surface,
   Nano Cortex specifics) is provisional until verified against real hardware.
   Label it as such in UI, docs, and release notes.
-- **Multi-device from the start.** The `VersionMessage.DeviceType` enum in the
-  recovered schema already carries `QC = 0` and `ATMA = 1` (`ATMA` is the Nano
-  Cortex codename). `cortex-rs` targets both; Nano-specific behaviour that is
-  not hardware-verified is labelled provisional.
+- **Nano Cortex is a planned, unverified target.** The recovered Quad Cortex
+  schema carries `QC = 0` and `ATMA = 1` (`ATMA` is the Nano codename), but an
+  enum value does not prove a shared transport. Third-party macOS observation
+  reports VID:PID `152A:88E7`, 65-byte HID reports rather than 129, and no
+  passive HID traffic. Nobody has shown the Nano speaking this protobuf/trailer
+  protocol. `DeviceKind::NanoCortex` therefore remains a non-matching
+  placeholder until this project verifies the transport on hardware.
 
 ## Protocol invariants (do not break silently)
 

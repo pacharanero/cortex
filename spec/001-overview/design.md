@@ -65,7 +65,7 @@ hidapi -> /dev/hidraw7 -> Quad Cortex (USB, interface 5)
 | Protobuf | `prost` with vendored .proto files | Compile-time typed Rust; no runtime protobuf dependency |
 | HID backend | `hidapi` crate (hidraw on Linux) | Cross-platform; the same backend pyquadcortex uses |
 | Transport model | Synchronous `request()` for CLI; background RX thread for session/client | The CLI's `version` command is fire-and-forget; the full client needs correlation + broadcast waiting |
-| Multi-device | `DeviceKind::{QuadCortex, NanoCortex}` from the start | The schema's `VersionMessage.DeviceType` already has QC=0 and ATMA=1; shared protocol shape |
+| Planned multi-device model | `DeviceKind::{QuadCortex, NanoCortex}` with Nano failing closed | The schema has QC=0 and ATMA=1, but that does not establish a shared transport; the Nano variant retains a non-matching PID until hardware proves compatibility |
 | License | AGPL-3.0-or-later (code), CC-BY-SA-4.0 (content) | Not available for proprietary subsumption; MIT/Apache prior art ported with attribution |
 
 ## [DES-FILES] Repository Map

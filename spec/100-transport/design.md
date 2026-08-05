@@ -219,5 +219,5 @@ The dependency arrow points *into* the crate: the CLI, MCP server, and future Ta
 - **Synchronous only.** No background RX thread; `request` blocks the caller. The session layer (`140`) will introduce one.
 - **No `request_id` correlation.** `request` returns the first reassembled message. A concurrent command stream needs the session layer.
 - **First matching device only.** Multi-device scenarios are deferred; `open` does not filter by interface number or serial.
-- **Nano Cortex product ID is a placeholder.** `0xFFFF` until hardware-verified.
+- **Nano Cortex transport is unestablished.** Third-party observation reports PID `0x88E7` and 65-byte HID reports, but no protobuf/trailer exchange. The code retains `0xFFFF` so it fails closed until hardware verifies compatibility.
 - **No protocol-version probe.** A CorOS update can silently break the wire format; the session layer will surface a probe.
