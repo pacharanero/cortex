@@ -8,11 +8,15 @@ This project is licensed under the GNU Affero General Public License v3.0 or
 later (see LICENSE). Code is AGPL-3.0-or-later; written content is
 CC-BY-SA-4.0. See the README licensing section for details.
 
-It includes recovered Cortex Control protobuf schema definitions vendored from
-the MIT-licensed project stokes-audio/pyquadcortex
-(<https://github.com/stokes-audio/pyquadcortex>, (c) 2026 Stokes), used under
-the terms of the MIT license. The schema carries its own SPDX header in
-crates/cortex-rs/proto/.
+The protocol implementation and documentation are derived from the
+MIT-licensed project stokes-audio/pyquadcortex
+(<https://github.com/stokes-audio/pyquadcortex>, (c) 2026 Stokes). This includes
+the recovered Cortex Control protobuf schema, HID framing, trailer-tagged
+message envelope, benign write-STALL handling, session/correlation design, and
+client-operation wire shapes. The schema is vendored under the MIT license's
+distribution terms and carries its own SPDX header in crates/cortex-rs/proto/;
+protocol behaviour is re-verified against hardware where this project's
+documentation says so.
 
 The architectural precedent for the Tauri desktop app (Rust device I/O,
 honest verified-vs-provisional labelling, AFX spec layout) was informed by the
@@ -20,7 +24,7 @@ Apache-2.0-licensed project rixrix/deskop-nano-cortex
 (<https://github.com/rixrix/deskop-nano-cortex>, (c) 2026 Richard Sentino),
 reviewed for structure; no source code was copied from it.
 
-Full third-party attribution and license texts are recorded in
+Third-party copyrights, licence texts, and repository links are recorded in
 THIRD-PARTY-NOTICES.md.
 
 == Trademark and unaffiliation notice ==
