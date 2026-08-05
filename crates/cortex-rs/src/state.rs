@@ -668,6 +668,29 @@ fn folder_key(folder: &FolderInfo) -> Option<String> {
     })
 }
 
+fn is_complete_preset_listing(folder: &FolderInfo) -> bool {
+    if folder.files.len() != crate::client::SETLIST_SLOTS as usize {
+        return false;
+    }
+    let mut seen = [false; crate::client::SETLIST_SLOTS as usize];
+    for file in &folder.files {
+        let Some(crate::proto::product_data::Index::Index(index)) = file.index else {
+            return false;
+        };
+        let Ok(index) = usize::try_from(index) else {
+            return false;
+        };
+        let Some(slot) = seen.get_mut(index) else {
+            return false;
+        };
+        if *slot {
+            return false;
+        }
+        *slot = true;
+    }
+    seen.into_iter().all(|present| present)
+}
+
 fn apply_file(inner: &mut StateInner, revision: u64, message: FileMessage) -> Apply {
     let folder = message.folder.map(|folder| {
         let crate::proto::file_message::Folder::Folder(folder) = folder;
@@ -685,7 +708,12 @@ fn apply_file(inner: &mut StateInner, revision: u64, message: FileMessage) -> Ap
         let Some(key) = folder_key(&folder) else {
             return Apply::Ignored;
         };
-        inner.folders.insert(key, cached(inner, revision, folder));
+        if is_complete_preset_listing(&folder) {
+            inner.folders.insert(key, cached(inner, revision, folder));
+        } else {
+            inner.folders.remove(&key);
+            inner.storage_revision = inner.storage_revision.saturating_add(1);
+        }
         return Apply::Applied;
     }
 
@@ -1129,7 +1157,9 @@ fn merge_column_bypass(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::proto::{ParamValue, SceneBypass, chain, col_bypass, grid_message, model, param};
+    use crate::proto::{
+        ParamValue, ProductData, SceneBypass, chain, col_bypass, grid_message, model, param,
+    };
 
     fn full_preset(parameter_scene_mode: bool, bypass_scene_mode: bool) -> BinaryPreset {
         let values = (0_u8..8)
@@ -1332,6 +1362,12 @@ mod tests {
             key: Some(crate::proto::folder_info::Key::Key(
                 "/fictional/list".into(),
             )),
+            files: (0..i32::try_from(crate::client::SETLIST_SLOTS).unwrap())
+                .map(|index| ProductData {
+                    index: Some(crate::proto::product_data::Index::Index(index)),
+                    ..Default::default()
+                })
+                .collect(),
             ..Default::default()
         };
         observe(
@@ -1351,6 +1387,33 @@ mod tests {
             MessageType::File,
             &FileMessage {
                 action: MessageAction::Create as i32,
+                folder: Some(crate::proto::file_message::Folder::Folder(folder)),
+                ..Default::default()
+            },
+        );
+        assert!(cache.folder("/fictional/list").is_none());
+        assert_eq!(cache.status().storage_revision, 1);
+    }
+
+    #[test]
+    fn a_partial_file_update_invalidates_the_cached_listing() {
+        let (cache, generation) = seeded_cache(false, false);
+        let folder = FolderInfo {
+            key: Some(crate::proto::folder_info::Key::Key(
+                "/fictional/list".into(),
+            )),
+            files: vec![ProductData {
+                index: Some(crate::proto::product_data::Index::Index(0)),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        observe(
+            &cache,
+            generation,
+            MessageType::File,
+            &FileMessage {
+                action: MessageAction::Update as i32,
                 folder: Some(crate::proto::file_message::Folder::Folder(folder)),
                 ..Default::default()
             },
