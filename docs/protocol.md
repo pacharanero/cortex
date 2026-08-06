@@ -260,6 +260,8 @@ When an id-less reply could satisfy several waiters of the same type, the **olde
 
 So a broadcast waiter takes a predicate, and a candidate it rejects leaves the waiter registered.
 
+A recall command must not report completion after merely sending `SetlistPosition{UPDATE}`. The write is acted on before its expected USB stall, but the working grid changes asynchronously. Wait for the `RecallPreset` push carrying the recall's `request_id`; otherwise an immediate grid read can return the previous preset.
+
 ## The model catalog
 
 **Measured here.** The `ModelRepo` payload is `gzip(tar(ModelRepo.xml))`. On the unit tested: 46,704 bytes gzipped, 558,592 of tar, 556,732 of XML, describing **533 models in 31 categories with 3,809 parameters**.
@@ -323,6 +325,8 @@ There is no side-effect-free way to read a *stored* preset: the device only emit
 **Measured here**, and it demonstrated itself unprompted: we set scene 1, called `read_preset`, and the scene returned to 0 *by itself* because the recall reset it to the preset's default. A scene-targeted write issued after a `read_preset` therefore lands on the default scene rather than the one you selected.
 
 Use `read_current_preset` (`cortex grid show`) to inspect while editing.
+
+On CorOS 4.0.1, an ordinary recall can emit a full `RecallPreset` followed by sparse `Grid` messages from the same request. An empty USER-slot recall included `chain.input_control[0].sidechain_source_flag=false` after the full four-row preset. A subscribed cache must merge that flag-only delta rather than treating the post-recall stream as an invalid baseline; otherwise the session appears live but loses its current grid immediately after recall.
 
 ## Settings writes are not uniformly sparse
 

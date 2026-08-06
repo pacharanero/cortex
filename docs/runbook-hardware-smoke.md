@@ -2,7 +2,7 @@
 
 CI has no Quad Cortex, so anything touching the wire is unverified until a human runs this against a real unit. Run it before a release, and after any change to the transport, session, or grid layers.
 
-Sections 1 and 3-10 below are also scripted, with read-back assertions instead of a checklist: `s/hardware-smoke --scratch-bank N --restore-slot SLOT --discard-working-copy` (ENG-006). It needs one designated scratch bank (all 8 slots disposable), the slot to restore when it exits, and an explicit acknowledgement that the starting working-grid edit will be discarded when the scratch slot is recalled. The script starts editing from that scratch bank rather than the preset originally loaded, so every later working-grid change remains within declared disposable content. It is the faster way to run this repeatedly - after a CorOS update, for instance, where it also diffs the result against the last run on a different version. This page stays the source of truth for WHY each step is safe and for section 11 (the held session, cache, and reconnect), which the script does not yet cover.
+Sections 1 and 3-10 below are also scripted, with read-back assertions instead of a checklist: `s/hardware-smoke --scratch-bank N --restore-slot SLOT --discard-working-copy` (ENG-006). It needs one designated scratch bank (all 8 slots disposable), the slot to restore when it exits, and an explicit acknowledgement that preparing the scratch target recalls it and may discard the starting working-grid edit. The script starts one held session, prepares and backs up the scratch target before editing, then commits with the resulting opaque token, so every later working-grid change remains within declared disposable content. It is the faster way to run this repeatedly - after a CorOS update, for instance, where it also diffs the result against the last run on a different version. This page stays the source of truth for WHY each step is safe and for the physical disconnect/reconnect portion of section 11, which remains manual.
 
 Record the CorOS version, firmware, and serial from step 1 alongside the result: a pass on `d14e` says nothing about `d15x`.
 
@@ -110,6 +110,14 @@ cortex device probe                   # active_scene should be back to 0
 
 Pick an empty cell. `cortex grid show` shows which are free.
 
+Before editing, prepare the destination while the working grid is clean. The preparation recalls and backs up the target, and therefore requires the held session to retain its opaque token:
+
+```sh
+cortex session start
+cortex preset prepare-save --slot 31A --scratch-range 31A-31H
+# Retain the reported token, then make the edits below.
+```
+
 ```sh
 cortex block set --row 2 --column 0 --model 1
 cortex grid show --params
@@ -132,6 +140,15 @@ cortex block param --row 2 --column 0 --param WOBBLE --value 0.5
 ```
 
 - [ ] Refused, listing the model's real parameter names
+
+To retain the edited grid, commit the preparation made before editing:
+
+```sh
+cortex preset save --token save-1 --name "My preset" --yes
+```
+
+- [ ] The saved preset still contains the edits after recall
+- [ ] An unknown or reused token is refused
 
 ```sh
 cortex block remove --row 2 --column 0

@@ -18,6 +18,7 @@ path = "src/main.rs"
 
 [dependencies]
 cortex-rs = { path = "../cortex-rs" }
+cortex-host = { path = "../cortex-host" }
 anyhow = { workspace = true }
 clap = { workspace = true }
 clap_complete = { workspace = true }

@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
 [package]
-name = "cortex-mcp"
+name = "cortex-host"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -10,20 +10,10 @@ authors.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
-description = "MCP server exposing the Neural DSP Quad Cortex to agentic patch editing; Nano Cortex support is planned."
-
-[[bin]]
-name = "cortex-mcp"
-path = "src/main.rs"
+description = "Shared host and daemon IPC boundary for cortex-rs applications."
 
 [dependencies]
 cortex-rs = { path = "../cortex-rs", default-features = false }
-cortex-host = { path = "../cortex-host" }
 anyhow = { workspace = true }
-rmcp = { workspace = true }
-tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-
-[dev-dependencies]
-rmcp = { workspace = true, features = ["client", "transport-child-process"] }

@@ -82,7 +82,7 @@ The protocol facts this zone encodes are hardware-verified via `pyquadcortex` ag
 
 | ID    | Requirement                                                                                                       | Priority    |
 | ----- | ----------------------------------------------------------------------------------------------------------------- | ----------- |
-| FR-26 | `recall_preset(setlist_path, position, is_factory, request_id)` sends `SetlistPosition{UPDATE}`. Position is linear index or slot name (e.g. `"28C"`). | Must Have   |
+| FR-26 | `recall_preset(setlist_path, position, is_factory, timeout)` sends `SetlistPosition{UPDATE}` and waits for the correlated `RecallPreset` push before returning. Position is linear index or slot name (e.g. `"28C"`). | Must Have   |
 | FR-27 | `switch_scene(scene)` sends `Scene{UPDATE, selected_scene}`. Scenes are 0-based. | Must Have   |
 | FR-28 | `copy_scene(from_index, to_index, swap)` sends `SceneCopy{UPDATE}` (label and color travel with the copy). | Should Have |
 | FR-29 | `set_scene_label(scene_index, label)` sends `SceneLabel{UPDATE}`; `None` sends `SCENE_UNLABELLED` (a single space, not empty string). | Should Have |

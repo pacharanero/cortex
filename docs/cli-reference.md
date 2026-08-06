@@ -15,18 +15,18 @@ Accepted by every command.
 Options:
       --format <FORMAT>
           Output format. `text` is for humans; `json` is for scripts and agents, and is stable enough to parse.
-          
+
           Only the RESULT changes format. Progress, warnings, and errors always go to stderr as plain text, so `cortex preset list --format json | jq` gets clean JSON regardless.
 
           Possible values:
           - text: Human-readable, the default
           - json: Machine-readable JSON
-          
+
           [default: text]
 
       --zero-based
           Take `--row` as 0-3 rather than the 1-4 shown on the unit.
-          
+
           The unit labels its rows 1-4 and the wire numbers them 0-3, so the default matches what a player sees. Scripts and agents generally have a zero-based index already, and converting it back by hand is exactly the sort of arithmetic that silently edits the wrong row.
 
   -h, --help
@@ -66,18 +66,18 @@ Commands:
 Options:
       --format <FORMAT>
           Output format. `text` is for humans; `json` is for scripts and agents, and is stable enough to parse.
-          
+
           Only the RESULT changes format. Progress, warnings, and errors always go to stderr as plain text, so `cortex preset list --format json | jq` gets clean JSON regardless.
 
           Possible values:
           - text: Human-readable, the default
           - json: Machine-readable JSON
-          
+
           [default: text]
 
       --zero-based
           Take `--row` as 0-3 rather than the 1-4 shown on the unit.
-          
+
           The unit labels its rows 1-4 and the wire numbers them 0-3, so the default matches what a player sees. Scripts and agents generally have a zero-based index already, and converting it back by hand is exactly the sort of arithmetic that silently edits the wrong row.
 
   -h, --help
@@ -103,23 +103,23 @@ Usage: cortex session start [OPTIONS]
 Options:
       --foreground
           Stay in the foreground, logging to the terminal.
-          
+
           This is what the background mode runs internally. Useful when a handshake is misbehaving and you want to watch it happen.
 
       --format <FORMAT>
           Output format. `text` is for humans; `json` is for scripts and agents, and is stable enough to parse.
-          
+
           Only the RESULT changes format. Progress, warnings, and errors always go to stderr as plain text, so `cortex preset list --format json | jq` gets clean JSON regardless.
 
           Possible values:
           - text: Human-readable, the default
           - json: Machine-readable JSON
-          
+
           [default: text]
 
       --zero-based
           Take `--row` as 0-3 rather than the 1-4 shown on the unit.
-          
+
           The unit labels its rows 1-4 and the wire numbers them 0-3, so the default matches what a player sees. Scripts and agents generally have a zero-based index already, and converting it back by hand is exactly the sort of arithmetic that silently edits the wrong row.
 
   -h, --help
@@ -145,18 +145,18 @@ Usage: cortex session status [OPTIONS]
 Options:
       --format <FORMAT>
           Output format. `text` is for humans; `json` is for scripts and agents, and is stable enough to parse.
-          
+
           Only the RESULT changes format. Progress, warnings, and errors always go to stderr as plain text, so `cortex preset list --format json | jq` gets clean JSON regardless.
 
           Possible values:
           - text: Human-readable, the default
           - json: Machine-readable JSON
-          
+
           [default: text]
 
       --zero-based
           Take `--row` as 0-3 rather than the 1-4 shown on the unit.
-          
+
           The unit labels its rows 1-4 and the wire numbers them 0-3, so the default matches what a player sees. Scripts and agents generally have a zero-based index already, and converting it back by hand is exactly the sort of arithmetic that silently edits the wrong row.
 
   -h, --help
@@ -181,18 +181,18 @@ Usage: cortex session stop [OPTIONS]
 Options:
       --format <FORMAT>
           Output format. `text` is for humans; `json` is for scripts and agents, and is stable enough to parse.
-          
+
           Only the RESULT changes format. Progress, warnings, and errors always go to stderr as plain text, so `cortex preset list --format json | jq` gets clean JSON regardless.
 
           Possible values:
           - text: Human-readable, the default
           - json: Machine-readable JSON
-          
+
           [default: text]
 
       --zero-based
           Take `--row` as 0-3 rather than the 1-4 shown on the unit.
-          
+
           The unit labels its rows 1-4 and the wire numbers them 0-3, so the default matches what a player sees. Scripts and agents generally have a zero-based index already, and converting it back by hand is exactly the sort of arithmetic that silently edits the wrong row.
 
   -h, --help
@@ -215,28 +215,29 @@ Presets: list a setlist, show one, or load one onto the unit
 Usage: cortex preset [OPTIONS] <COMMAND>
 
 Commands:
-  delete  Delete a preset from a setlist, by name
-  save    Save the working grid into a slot
-  list    List the presets in a setlist, in slot order
-  show    Recall a slot and dump the preset it loads
-  recall  Recall a preset by slot, making it the one loaded on the grid
-  help    Print this message or the help of the given subcommand(s)
+  delete        Delete a preset from a setlist, by name
+  prepare-save  Prepare a save destination before editing the working grid
+  save          Commit the working grid to a destination prepared before editing
+  list          List the presets in a setlist, in slot order
+  show          Recall a slot and dump the preset it loads
+  recall        Recall a preset by slot, making it the one loaded on the grid
+  help          Print this message or the help of the given subcommand(s)
 
 Options:
       --format <FORMAT>
           Output format. `text` is for humans; `json` is for scripts and agents, and is stable enough to parse.
-          
+
           Only the RESULT changes format. Progress, warnings, and errors always go to stderr as plain text, so `cortex preset list --format json | jq` gets clean JSON regardless.
 
           Possible values:
           - text: Human-readable, the default
           - json: Machine-readable JSON
-          
+
           [default: text]
 
       --zero-based
           Take `--row` as 0-3 rather than the 1-4 shown on the unit.
-          
+
           The unit labels its rows 1-4 and the wire numbers them 0-3, so the default matches what a player sees. Scripts and agents generally have a zero-based index already, and converting it back by hand is exactly the sort of arithmetic that silently edits the wrong row.
 
   -h, --help
@@ -267,23 +268,23 @@ Options:
 
       --setlist <PATH>
           Absolute device path of the setlist
-          
+
           [default: "/media/p4/Presets/My Presets"]
 
       --format <FORMAT>
           Output format. `text` is for humans; `json` is for scripts and agents, and is stable enough to parse.
-          
+
           Only the RESULT changes format. Progress, warnings, and errors always go to stderr as plain text, so `cortex preset list --format json | jq` gets clean JSON regardless.
 
           Possible values:
           - text: Human-readable, the default
           - json: Machine-readable JSON
-          
+
           [default: text]
 
       --zero-based
           Take `--row` as 0-3 rather than the 1-4 shown on the unit.
-          
+
           The unit labels its rows 1-4 and the wire numbers them 0-3, so the default matches what a player sees. Scripts and agents generally have a zero-based index already, and converting it back by hand is exactly the sort of arithmetic that silently edits the wrong row.
 
   -h, --help
@@ -296,59 +297,47 @@ Examples:
   cortex preset delete --name "SCRATCH"
 ```
 
-#### `cortex preset save`
+#### `cortex preset prepare-save`
 
-Save the working grid into a slot.
+Prepare a save destination before editing the working grid.
 
 ```text
-Save the working grid into a slot.
+Prepare a save destination before editing the working grid
 
-WRITES TO THE UNIT, and there is no undo on the device. It overwrites whatever is in the slot.
-
-What gets saved is the working grid - whatever `cortex grid show` reports - not a preset you name. Omit --name to keep the slot's existing name; give one to save into an empty slot or rename an occupied one.
-
-The factory library is refused.
-
-Usage: cortex preset save [OPTIONS] --slot <BANK+LETTER>
+Usage: cortex preset prepare-save [OPTIONS] --slot <BANK+LETTER>
 
 Options:
       --slot <BANK+LETTER>
-          Target slot: bank number then letter, e.g. `2B`
-
-      --name <NAME>
-          Name to save under. Omit to keep the slot's existing name
+          Target slot: bank number then letter, e.g. `7A`
 
       --setlist <PATH>
           Absolute device path of the setlist
-          
+
           [default: "/media/p4/Presets/My Presets"]
 
       --scratch-setlist <PATH>
-          Scratch setlist path (the setlist whose ranges are safe to overwrite). Defaults to --setlist. Must be a USER setlist, never the factory library
+          Scratch setlist path. Defaults to --setlist
 
       --scratch-range <START-END>...
-          Inclusive scratch slot range, e.g. `31A-32H`. Repeat for multiple ranges. Required: the crate supplies no default because only you know which of your 256 USER slots are disposable
+          Inclusive scratch slot range, e.g. `7A-7H`
 
       --allow-outside-scratch
-          Allow saving to a USER slot outside the configured scratch range. Never permits the factory library. Use when you deliberately want to overwrite a non-scratch slot
-
-      --yes
-          Confirm the save without prompting. Without this flag, the command prompts on a TTY and refuses on a pipe
+          Allow a USER target outside the configured scratch range
 
       --format <FORMAT>
           Output format. `text` is for humans; `json` is for scripts and agents, and is stable enough to parse.
-          
+
           Only the RESULT changes format. Progress, warnings, and errors always go to stderr as plain text, so `cortex preset list --format json | jq` gets clean JSON regardless.
 
           Possible values:
           - text: Human-readable, the default
           - json: Machine-readable JSON
-          
+
           [default: text]
 
       --zero-based
           Take `--row` as 0-3 rather than the 1-4 shown on the unit.
-          
+
           The unit labels its rows 1-4 and the wire numbers them 0-3, so the default matches what a player sees. Scripts and agents generally have a zero-based index already, and converting it back by hand is exactly the sort of arithmetic that silently edits the wrong row.
 
   -h, --help
@@ -358,8 +347,60 @@ Options:
           Print version
 
 Examples:
-  cortex preset save --slot 2B
-  cortex preset save --slot 2B --name "Lead Tone"
+  cortex session start
+  cortex preset prepare-save --slot 7A --scratch-range 7A-7H
+```
+
+#### `cortex preset save`
+
+Commit the working grid to a destination prepared before editing.
+
+```text
+Commit the working grid to a destination prepared before editing.
+
+WRITES TO THE UNIT, and there is no undo on the device. It overwrites whatever is in the slot.
+
+What gets saved is the working grid - whatever `cortex grid show` reports - not a preset you name. Omit --name to keep the slot's existing name; give one to save into an empty slot or rename an occupied one.
+
+The factory library is refused.
+
+Usage: cortex preset save [OPTIONS] --token <TOKEN>
+
+Options:
+      --token <TOKEN>
+          Opaque token returned by `preset prepare-save`
+
+      --name <NAME>
+          Name to save under. Omit to keep the slot's existing name
+
+      --yes
+          Explicitly confirm this destructive commit
+
+      --format <FORMAT>
+          Output format. `text` is for humans; `json` is for scripts and agents, and is stable enough to parse.
+
+          Only the RESULT changes format. Progress, warnings, and errors always go to stderr as plain text, so `cortex preset list --format json | jq` gets clean JSON regardless.
+
+          Possible values:
+          - text: Human-readable, the default
+          - json: Machine-readable JSON
+
+          [default: text]
+
+      --zero-based
+          Take `--row` as 0-3 rather than the 1-4 shown on the unit.
+
+          The unit labels its rows 1-4 and the wire numbers them 0-3, so the default matches what a player sees. Scripts and agents generally have a zero-based index already, and converting it back by hand is exactly the sort of arithmetic that silently edits the wrong row.
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+  -V, --version
+          Print version
+
+Examples:
+  cortex preset save --token save-1 --yes
+  cortex preset save --token save-1 --name "Lead Tone" --yes
 ```
 
 #### `cortex preset list`
@@ -376,7 +417,7 @@ Usage: cortex preset list [OPTIONS]
 Options:
       --setlist <PATH>
           Absolute device path of the setlist, e.g. `/media/p4/Presets/My Presets`. Run `cortex setlist list` to list them
-          
+
           [default: "/media/p4/Presets/My Presets"]
 
       --include-empty
@@ -384,23 +425,23 @@ Options:
 
       --timeout <SECONDS>
           Seconds to wait for the complete 256-slot listing. A timeout means no answer arrived, not that the setlist is empty
-          
+
           [default: 25]
 
       --format <FORMAT>
           Output format. `text` is for humans; `json` is for scripts and agents, and is stable enough to parse.
-          
+
           Only the RESULT changes format. Progress, warnings, and errors always go to stderr as plain text, so `cortex preset list --format json | jq` gets clean JSON regardless.
 
           Possible values:
           - text: Human-readable, the default
           - json: Machine-readable JSON
-          
+
           [default: text]
 
       --zero-based
           Take `--row` as 0-3 rather than the 1-4 shown on the unit.
-          
+
           The unit labels its rows 1-4 and the wire numbers them 0-3, so the default matches what a player sees. Scripts and agents generally have a zero-based index already, and converting it back by hand is exactly the sort of arithmetic that silently edits the wrong row.
 
   -h, --help
@@ -431,7 +472,7 @@ Options:
 
       --setlist <PATH>
           Absolute device path of the setlist. `cortex setlist list` lists them
-          
+
           [default: "/media/p4/Presets/My Presets"]
 
       --factory
@@ -442,18 +483,18 @@ Options:
 
       --format <FORMAT>
           Output format. `text` is for humans; `json` is for scripts and agents, and is stable enough to parse.
-          
+
           Only the RESULT changes format. Progress, warnings, and errors always go to stderr as plain text, so `cortex preset list --format json | jq` gets clean JSON regardless.
 
           Possible values:
           - text: Human-readable, the default
           - json: Machine-readable JSON
-          
+
           [default: text]
 
       --zero-based
           Take `--row` as 0-3 rather than the 1-4 shown on the unit.
-          
+
           The unit labels its rows 1-4 and the wire numbers them 0-3, so the default matches what a player sees. Scripts and agents generally have a zero-based index already, and converting it back by hand is exactly the sort of arithmetic that silently edits the wrong row.
 
   -h, --help
@@ -484,7 +525,7 @@ Options:
 
       --setlist <PATH>
           Absolute device path of the setlist, e.g. `/media/p4/Presets/My Presets`. Run `cortex setlist list` to list them
-          
+
           [default: "/media/p4/Presets/My Presets"]
 
       --factory
@@ -492,18 +533,18 @@ Options:
 
       --format <FORMAT>
           Output format. `text` is for humans; `json` is for scripts and agents, and is stable enough to parse.
-          
+
           Only the RESULT changes format. Progress, warnings, and errors always go to stderr as plain text, so `cortex preset list --format json | jq` gets clean JSON regardless.
 
           Possible values:
           - text: Human-readable, the default
           - json: Machine-readable JSON
-          
+
           [default: text]
 
       --zero-based
           Take `--row` as 0-3 rather than the 1-4 shown on the unit.
-          
+
           The unit labels its rows 1-4 and the wire numbers them 0-3, so the default matches what a player sees. Scripts and agents generally have a zero-based index already, and converting it back by hand is exactly the sort of arithmetic that silently edits the wrong row.
 
   -h, --help
@@ -532,18 +573,18 @@ Commands:
 Options:
       --format <FORMAT>
           Output format. `text` is for humans; `json` is for scripts and agents, and is stable enough to parse.
-          
+
           Only the RESULT changes format. Progress, warnings, and errors always go to stderr as plain text, so `cortex preset list --format json | jq` gets clean JSON regardless.
 
           Possible values:
           - text: Human-readable, the default
           - json: Machine-readable JSON
-          
+
           [default: text]
 
       --zero-based
           Take `--row` as 0-3 rather than the 1-4 shown on the unit.
-          
+
           The unit labels its rows 1-4 and the wire numbers them 0-3, so the default matches what a player sees. Scripts and agents generally have a zero-based index already, and converting it back by hand is exactly the sort of arithmetic that silently edits the wrong row.
 
   -h, --help
@@ -569,28 +610,28 @@ Usage: cortex setlist list [OPTIONS]
 Options:
       --window <SECONDS>
           Seconds to gather folder announcements
-          
+
           [default: 20]
 
       --show-empty
           Also list folders holding no presets.
-          
+
           The unit reports hundreds of them, nearly all empty, which buries the two or three you actually use.
 
       --format <FORMAT>
           Output format. `text` is for humans; `json` is for scripts and agents, and is stable enough to parse.
-          
+
           Only the RESULT changes format. Progress, warnings, and errors always go to stderr as plain text, so `cortex preset list --format json | jq` gets clean JSON regardless.
 
           Possible values:
           - text: Human-readable, the default
           - json: Machine-readable JSON
-          
+
           [default: text]
 
       --zero-based
           Take `--row` as 0-3 rather than the 1-4 shown on the unit.
-          
+
           The unit labels its rows 1-4 and the wire numbers them 0-3, so the default matches what a player sees. Scripts and agents generally have a zero-based index already, and converting it back by hand is exactly the sort of arithmetic that silently edits the wrong row.
 
   -h, --help
@@ -620,18 +661,18 @@ Commands:
 Options:
       --format <FORMAT>
           Output format. `text` is for humans; `json` is for scripts and agents, and is stable enough to parse.
-          
+
           Only the RESULT changes format. Progress, warnings, and errors always go to stderr as plain text, so `cortex preset list --format json | jq` gets clean JSON regardless.
 
           Possible values:
           - text: Human-readable, the default
           - json: Machine-readable JSON
-          
+
           [default: text]
 
       --zero-based
           Take `--row` as 0-3 rather than the 1-4 shown on the unit.
-          
+
           The unit labels its rows 1-4 and the wire numbers them 0-3, so the default matches what a player sees. Scripts and agents generally have a zero-based index already, and converting it back by hand is exactly the sort of arithmetic that silently edits the wrong row.
 
   -h, --help
@@ -655,7 +696,7 @@ Usage: cortex grid show [OPTIONS]
 Options:
       --timeout <SECONDS>
           Seconds to wait for the grid
-          
+
           [default: 15]
 
       --params
@@ -663,18 +704,18 @@ Options:
 
       --format <FORMAT>
           Output format. `text` is for humans; `json` is for scripts and agents, and is stable enough to parse.
-          
+
           Only the RESULT changes format. Progress, warnings, and errors always go to stderr as plain text, so `cortex preset list --format json | jq` gets clean JSON regardless.
 
           Possible values:
           - text: Human-readable, the default
           - json: Machine-readable JSON
-          
+
           [default: text]
 
       --zero-based
           Take `--row` as 0-3 rather than the 1-4 shown on the unit.
-          
+
           The unit labels its rows 1-4 and the wire numbers them 0-3, so the default matches what a player sees. Scripts and agents generally have a zero-based index already, and converting it back by hand is exactly the sort of arithmetic that silently edits the wrong row.
 
   -h, --help
@@ -707,18 +748,18 @@ Commands:
 Options:
       --format <FORMAT>
           Output format. `text` is for humans; `json` is for scripts and agents, and is stable enough to parse.
-          
+
           Only the RESULT changes format. Progress, warnings, and errors always go to stderr as plain text, so `cortex preset list --format json | jq` gets clean JSON regardless.
 
           Possible values:
           - text: Human-readable, the default
           - json: Machine-readable JSON
-          
+
           [default: text]
 
       --zero-based
           Take `--row` as 0-3 rather than the 1-4 shown on the unit.
-          
+
           The unit labels its rows 1-4 and the wire numbers them 0-3, so the default matches what a player sees. Scripts and agents generally have a zero-based index already, and converting it back by hand is exactly the sort of arithmetic that silently edits the wrong row.
 
   -h, --help
@@ -768,18 +809,18 @@ Options:
 
       --format <FORMAT>
           Output format. `text` is for humans; `json` is for scripts and agents, and is stable enough to parse.
-          
+
           Only the RESULT changes format. Progress, warnings, and errors always go to stderr as plain text, so `cortex preset list --format json | jq` gets clean JSON regardless.
 
           Possible values:
           - text: Human-readable, the default
           - json: Machine-readable JSON
-          
+
           [default: text]
 
       --zero-based
           Take `--row` as 0-3 rather than the 1-4 shown on the unit.
-          
+
           The unit labels its rows 1-4 and the wire numbers them 0-3, so the default matches what a player sees. Scripts and agents generally have a zero-based index already, and converting it back by hand is exactly the sort of arithmetic that silently edits the wrong row.
 
   -h, --help
@@ -817,18 +858,18 @@ Options:
 
       --format <FORMAT>
           Output format. `text` is for humans; `json` is for scripts and agents, and is stable enough to parse.
-          
+
           Only the RESULT changes format. Progress, warnings, and errors always go to stderr as plain text, so `cortex preset list --format json | jq` gets clean JSON regardless.
 
           Possible values:
           - text: Human-readable, the default
           - json: Machine-readable JSON
-          
+
           [default: text]
 
       --zero-based
           Take `--row` as 0-3 rather than the 1-4 shown on the unit.
-          
+
           The unit labels its rows 1-4 and the wire numbers them 0-3, so the default matches what a player sees. Scripts and agents generally have a zero-based index already, and converting it back by hand is exactly the sort of arithmetic that silently edits the wrong row.
 
   -h, --help
@@ -870,23 +911,23 @@ Options:
 
       --timeout <SECONDS>
           Seconds to wait for the device's echo
-          
+
           [default: 5]
 
       --format <FORMAT>
           Output format. `text` is for humans; `json` is for scripts and agents, and is stable enough to parse.
-          
+
           Only the RESULT changes format. Progress, warnings, and errors always go to stderr as plain text, so `cortex preset list --format json | jq` gets clean JSON regardless.
 
           Possible values:
           - text: Human-readable, the default
           - json: Machine-readable JSON
-          
+
           [default: text]
 
       --zero-based
           Take `--row` as 0-3 rather than the 1-4 shown on the unit.
-          
+
           The unit labels its rows 1-4 and the wire numbers them 0-3, so the default matches what a player sees. Scripts and agents generally have a zero-based index already, and converting it back by hand is exactly the sort of arithmetic that silently edits the wrong row.
 
   -h, --help
@@ -919,18 +960,18 @@ Options:
 
       --format <FORMAT>
           Output format. `text` is for humans; `json` is for scripts and agents, and is stable enough to parse.
-          
+
           Only the RESULT changes format. Progress, warnings, and errors always go to stderr as plain text, so `cortex preset list --format json | jq` gets clean JSON regardless.
 
           Possible values:
           - text: Human-readable, the default
           - json: Machine-readable JSON
-          
+
           [default: text]
 
       --zero-based
           Take `--row` as 0-3 rather than the 1-4 shown on the unit.
-          
+
           The unit labels its rows 1-4 and the wire numbers them 0-3, so the default matches what a player sees. Scripts and agents generally have a zero-based index already, and converting it back by hand is exactly the sort of arithmetic that silently edits the wrong row.
 
   -h, --help
@@ -961,18 +1002,18 @@ Commands:
 Options:
       --format <FORMAT>
           Output format. `text` is for humans; `json` is for scripts and agents, and is stable enough to parse.
-          
+
           Only the RESULT changes format. Progress, warnings, and errors always go to stderr as plain text, so `cortex preset list --format json | jq` gets clean JSON regardless.
 
           Possible values:
           - text: Human-readable, the default
           - json: Machine-readable JSON
-          
+
           [default: text]
 
       --zero-based
           Take `--row` as 0-3 rather than the 1-4 shown on the unit.
-          
+
           The unit labels its rows 1-4 and the wire numbers them 0-3, so the default matches what a player sees. Scripts and agents generally have a zero-based index already, and converting it back by hand is exactly the sort of arithmetic that silently edits the wrong row.
 
   -h, --help
@@ -1002,18 +1043,18 @@ Options:
 
       --format <FORMAT>
           Output format. `text` is for humans; `json` is for scripts and agents, and is stable enough to parse.
-          
+
           Only the RESULT changes format. Progress, warnings, and errors always go to stderr as plain text, so `cortex preset list --format json | jq` gets clean JSON regardless.
 
           Possible values:
           - text: Human-readable, the default
           - json: Machine-readable JSON
-          
+
           [default: text]
 
       --zero-based
           Take `--row` as 0-3 rather than the 1-4 shown on the unit.
-          
+
           The unit labels its rows 1-4 and the wire numbers them 0-3, so the default matches what a player sees. Scripts and agents generally have a zero-based index already, and converting it back by hand is exactly the sort of arithmetic that silently edits the wrong row.
 
   -h, --help
@@ -1048,18 +1089,18 @@ Options:
 
       --format <FORMAT>
           Output format. `text` is for humans; `json` is for scripts and agents, and is stable enough to parse.
-          
+
           Only the RESULT changes format. Progress, warnings, and errors always go to stderr as plain text, so `cortex preset list --format json | jq` gets clean JSON regardless.
 
           Possible values:
           - text: Human-readable, the default
           - json: Machine-readable JSON
-          
+
           [default: text]
 
       --zero-based
           Take `--row` as 0-3 rather than the 1-4 shown on the unit.
-          
+
           The unit labels its rows 1-4 and the wire numbers them 0-3, so the default matches what a player sees. Scripts and agents generally have a zero-based index already, and converting it back by hand is exactly the sort of arithmetic that silently edits the wrong row.
 
   -h, --help
@@ -1094,23 +1135,23 @@ Options:
 
       --mix <COL>
           Column at which the branch rejoins. -1 means it never does
-          
+
           [default: -1]
 
       --format <FORMAT>
           Output format. `text` is for humans; `json` is for scripts and agents, and is stable enough to parse.
-          
+
           Only the RESULT changes format. Progress, warnings, and errors always go to stderr as plain text, so `cortex preset list --format json | jq` gets clean JSON regardless.
 
           Possible values:
           - text: Human-readable, the default
           - json: Machine-readable JSON
-          
+
           [default: text]
 
       --zero-based
           Take `--row` as 0-3 rather than the 1-4 shown on the unit.
-          
+
           The unit labels its rows 1-4 and the wire numbers them 0-3, so the default matches what a player sees. Scripts and agents generally have a zero-based index already, and converting it back by hand is exactly the sort of arithmetic that silently edits the wrong row.
 
   -h, --help
@@ -1142,18 +1183,18 @@ Commands:
 Options:
       --format <FORMAT>
           Output format. `text` is for humans; `json` is for scripts and agents, and is stable enough to parse.
-          
+
           Only the RESULT changes format. Progress, warnings, and errors always go to stderr as plain text, so `cortex preset list --format json | jq` gets clean JSON regardless.
 
           Possible values:
           - text: Human-readable, the default
           - json: Machine-readable JSON
-          
+
           [default: text]
 
       --zero-based
           Take `--row` as 0-3 rather than the 1-4 shown on the unit.
-          
+
           The unit labels its rows 1-4 and the wire numbers them 0-3, so the default matches what a player sees. Scripts and agents generally have a zero-based index already, and converting it back by hand is exactly the sort of arithmetic that silently edits the wrong row.
 
   -h, --help
@@ -1175,23 +1216,23 @@ Usage: cortex device version [OPTIONS]
 Options:
       --session
           Read via the session layer (background RX thread + correlated request) instead of the one-shot synchronous transport.
-          
+
           Both paths are valid: a `Version` READ is answered without the connect handshake. This flag exists to exercise the session layer against hardware. Both paths are now verified; see spec/140-session/spec.md.
 
       --format <FORMAT>
           Output format. `text` is for humans; `json` is for scripts and agents, and is stable enough to parse.
-          
+
           Only the RESULT changes format. Progress, warnings, and errors always go to stderr as plain text, so `cortex preset list --format json | jq` gets clean JSON regardless.
 
           Possible values:
           - text: Human-readable, the default
           - json: Machine-readable JSON
-          
+
           [default: text]
 
       --zero-based
           Take `--row` as 0-3 rather than the 1-4 shown on the unit.
-          
+
           The unit labels its rows 1-4 and the wire numbers them 0-3, so the default matches what a player sees. Scripts and agents generally have a zero-based index already, and converting it back by hand is exactly the sort of arithmetic that silently edits the wrong row.
 
   -h, --help
@@ -1219,18 +1260,18 @@ Usage: cortex device cpu [OPTIONS]
 Options:
       --format <FORMAT>
           Output format. `text` is for humans; `json` is for scripts and agents, and is stable enough to parse.
-          
+
           Only the RESULT changes format. Progress, warnings, and errors always go to stderr as plain text, so `cortex preset list --format json | jq` gets clean JSON regardless.
 
           Possible values:
           - text: Human-readable, the default
           - json: Machine-readable JSON
-          
+
           [default: text]
 
       --zero-based
           Take `--row` as 0-3 rather than the 1-4 shown on the unit.
-          
+
           The unit labels its rows 1-4 and the wire numbers them 0-3, so the default matches what a player sees. Scripts and agents generally have a zero-based index already, and converting it back by hand is exactly the sort of arithmetic that silently edits the wrong row.
 
   -h, --help
@@ -1259,23 +1300,23 @@ Usage: cortex device probe [OPTIONS]
 Options:
       --listen <SECONDS>
           Extra seconds to hold the session open after the handshake before reading. The handshake already waits for the device to go quiet, so 0 is usually fine; raise it if reads time out
-          
+
           [default: 0]
 
       --format <FORMAT>
           Output format. `text` is for humans; `json` is for scripts and agents, and is stable enough to parse.
-          
+
           Only the RESULT changes format. Progress, warnings, and errors always go to stderr as plain text, so `cortex preset list --format json | jq` gets clean JSON regardless.
 
           Possible values:
           - text: Human-readable, the default
           - json: Machine-readable JSON
-          
+
           [default: text]
 
       --zero-based
           Take `--row` as 0-3 rather than the 1-4 shown on the unit.
-          
+
           The unit labels its rows 1-4 and the wire numbers them 0-3, so the default matches what a player sees. Scripts and agents generally have a zero-based index already, and converting it back by hand is exactly the sort of arithmetic that silently edits the wrong row.
 
   -h, --help
@@ -1305,18 +1346,18 @@ Options:
 
       --format <FORMAT>
           Output format. `text` is for humans; `json` is for scripts and agents, and is stable enough to parse.
-          
+
           Only the RESULT changes format. Progress, warnings, and errors always go to stderr as plain text, so `cortex preset list --format json | jq` gets clean JSON regardless.
 
           Possible values:
           - text: Human-readable, the default
           - json: Machine-readable JSON
-          
+
           [default: text]
 
       --zero-based
           Take `--row` as 0-3 rather than the 1-4 shown on the unit.
-          
+
           The unit labels its rows 1-4 and the wire numbers them 0-3, so the default matches what a player sees. Scripts and agents generally have a zero-based index already, and converting it back by hand is exactly the sort of arithmetic that silently edits the wrong row.
 
   -h, --help
@@ -1357,23 +1398,23 @@ Options:
 
       --timeout <SECONDS>
           Seconds to wait. The payload is ~47 KB over several hundred reports, so allow generously
-          
+
           [default: 40]
 
       --format <FORMAT>
           Output format. `text` is for humans; `json` is for scripts and agents, and is stable enough to parse.
-          
+
           Only the RESULT changes format. Progress, warnings, and errors always go to stderr as plain text, so `cortex preset list --format json | jq` gets clean JSON regardless.
 
           Possible values:
           - text: Human-readable, the default
           - json: Machine-readable JSON
-          
+
           [default: text]
 
       --zero-based
           Take `--row` as 0-3 rather than the 1-4 shown on the unit.
-          
+
           The unit labels its rows 1-4 and the wire numbers them 0-3, so the default matches what a player sees. Scripts and agents generally have a zero-based index already, and converting it back by hand is exactly the sort of arithmetic that silently edits the wrong row.
 
   -h, --help
@@ -1407,23 +1448,23 @@ Options:
 
       --verbose
           Also describe each message's protobuf fields.
-          
+
           Generic, so it works on message types we do not model - which is the case that matters when reading a capture of another client.
 
       --format <FORMAT>
           Output format. `text` is for humans; `json` is for scripts and agents, and is stable enough to parse.
-          
+
           Only the RESULT changes format. Progress, warnings, and errors always go to stderr as plain text, so `cortex preset list --format json | jq` gets clean JSON regardless.
 
           Possible values:
           - text: Human-readable, the default
           - json: Machine-readable JSON
-          
+
           [default: text]
 
       --zero-based
           Take `--row` as 0-3 rather than the 1-4 shown on the unit.
-          
+
           The unit labels its rows 1-4 and the wire numbers them 0-3, so the default matches what a player sees. Scripts and agents generally have a zero-based index already, and converting it back by hand is exactly the sort of arithmetic that silently edits the wrong row.
 
   -h, --help
@@ -1465,7 +1506,7 @@ Arguments:
 Options:
       --shell <SHELL>
           Override the shell detected from $SHELL when using `install`
-          
+
           [possible values: bash, elvish, fish, powershell, zsh]
 
       --dir <DIR>
@@ -1473,18 +1514,18 @@ Options:
 
       --format <FORMAT>
           Output format. `text` is for humans; `json` is for scripts and agents, and is stable enough to parse.
-          
+
           Only the RESULT changes format. Progress, warnings, and errors always go to stderr as plain text, so `cortex preset list --format json | jq` gets clean JSON regardless.
 
           Possible values:
           - text: Human-readable, the default
           - json: Machine-readable JSON
-          
+
           [default: text]
 
       --zero-based
           Take `--row` as 0-3 rather than the 1-4 shown on the unit.
-          
+
           The unit labels its rows 1-4 and the wire numbers them 0-3, so the default matches what a player sees. Scripts and agents generally have a zero-based index already, and converting it back by hand is exactly the sort of arithmetic that silently edits the wrong row.
 
   -h, --help

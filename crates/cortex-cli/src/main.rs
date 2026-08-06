@@ -294,7 +294,28 @@ enum PresetCmd {
         #[arg(long, value_name = "PATH", default_value = cortex_rs::client::USER_SETLIST)]
         setlist: String,
     },
-    /// Save the working grid into a slot.
+    /// Prepare a save destination before editing the working grid.
+    #[command(
+        after_help = "Examples:\n  cortex session start\n  cortex preset prepare-save --slot 7A --scratch-range 7A-7H"
+    )]
+    PrepareSave {
+        /// Target slot: bank number then letter, e.g. `7A`.
+        #[arg(long, value_name = "BANK+LETTER")]
+        slot: String,
+        /// Absolute device path of the setlist.
+        #[arg(long, value_name = "PATH", default_value = cortex_rs::client::USER_SETLIST)]
+        setlist: String,
+        /// Scratch setlist path. Defaults to --setlist.
+        #[arg(long, value_name = "PATH")]
+        scratch_setlist: Option<String>,
+        /// Inclusive scratch slot range, e.g. `7A-7H`.
+        #[arg(long, value_name = "START-END", num_args = 1..)]
+        scratch_range: Vec<String>,
+        /// Allow a USER target outside the configured scratch range.
+        #[arg(long)]
+        allow_outside_scratch: bool,
+    },
+    /// Commit the working grid to a destination prepared before editing.
     ///
     /// WRITES TO THE UNIT, and there is no undo on the device. It overwrites
     /// whatever is in the slot.
@@ -306,35 +327,16 @@ enum PresetCmd {
     ///
     /// The factory library is refused.
     #[command(
-        after_help = "Examples:\n  cortex preset save --slot 2B\n  cortex preset save --slot 2B --name \"Lead Tone\""
+        after_help = "Examples:\n  cortex preset save --token save-1 --yes\n  cortex preset save --token save-1 --name \"Lead Tone\" --yes"
     )]
     Save {
-        /// Target slot: bank number then letter, e.g. `2B`.
-        #[arg(long, value_name = "BANK+LETTER")]
-        slot: String,
+        /// Opaque token returned by `preset prepare-save`.
+        #[arg(long, value_name = "TOKEN")]
+        token: String,
         /// Name to save under. Omit to keep the slot's existing name.
         #[arg(long, value_name = "NAME")]
         name: Option<String>,
-        /// Absolute device path of the setlist.
-        #[arg(long, value_name = "PATH", default_value = cortex_rs::client::USER_SETLIST)]
-        setlist: String,
-        /// Scratch setlist path (the setlist whose ranges are safe to
-        /// overwrite). Defaults to --setlist. Must be a USER setlist, never
-        /// the factory library.
-        #[arg(long, value_name = "PATH")]
-        scratch_setlist: Option<String>,
-        /// Inclusive scratch slot range, e.g. `31A-32H`. Repeat for multiple
-        /// ranges. Required: the crate supplies no default because only you
-        /// know which of your 256 USER slots are disposable.
-        #[arg(long, value_name = "START-END", num_args = 1..)]
-        scratch_range: Vec<String>,
-        /// Allow saving to a USER slot outside the configured scratch range.
-        /// Never permits the factory library. Use when you deliberately want
-        /// to overwrite a non-scratch slot.
-        #[arg(long)]
-        allow_outside_scratch: bool,
-        /// Confirm the save without prompting. Without this flag, the command
-        /// prompts on a TTY and refuses on a pipe.
+        /// Explicitly confirm this destructive commit.
         #[arg(long)]
         yes: bool,
     },
@@ -703,24 +705,23 @@ fn run(cli: Cli) -> Result<()> {
         },
         Some(Command::Preset { command }) => match command {
             PresetCmd::Delete { name, setlist } => cmd_preset_delete(&name, &setlist, fmt),
-            PresetCmd::Save {
+            PresetCmd::PrepareSave {
                 slot,
-                name,
                 setlist,
                 scratch_setlist,
                 scratch_range,
                 allow_outside_scratch,
-                yes,
-            } => cmd_preset_save(
+            } => cmd_preset_prepare_save(
                 &slot,
-                name.as_deref(),
                 &setlist,
                 scratch_setlist.as_deref(),
                 &scratch_range,
                 allow_outside_scratch,
-                yes,
                 fmt,
             ),
+            PresetCmd::Save { token, name, yes } => {
+                cmd_preset_save(&token, name.as_deref(), yes, fmt)
+            }
             PresetCmd::List {
                 setlist,
                 include_empty,
@@ -824,7 +825,7 @@ fn run(cli: Cli) -> Result<()> {
 /// rather than one reply, so a single-shot waiter would see only the first.
 fn cmd_folders(window: u64, show_empty: bool, fmt: Format) -> Result<()> {
     eprintln!("gathering folder announcements for {window}s ...");
-    if let Some(result) = connect::request(&cortex_rs::Request::ListFolders {
+    if let Some(result) = connect::request(&cortex_host::Request::ListFolders {
         window_seconds: window,
     }) {
         let folders: Vec<cortex_rs::client::Folder> = serde_json::from_value(result?)?;
@@ -884,6 +885,10 @@ fn emit_folders(
 /// Read-only. Nothing here writes preset data or saves.
 fn cmd_probe(listen: u64, fmt: Format) -> Result<()> {
     use std::io::Write;
+
+    if connect::is_running() {
+        return cmd_probe_held(listen, fmt);
+    }
 
     // Each step prints before it runs, so a hang is attributable rather than
     // just a silent stall. Progress goes to stderr, results to stdout.
@@ -988,6 +993,68 @@ fn cmd_probe(listen: u64, fmt: Format) -> Result<()> {
     session.stop();
     eprintln!("ok");
 
+    emit_probe(out, fmt)
+}
+
+fn cmd_probe_held(listen: u64, fmt: Format) -> Result<()> {
+    if listen > 0 {
+        eprintln!("listening {listen}s for pushes ...");
+        std::thread::sleep(Duration::from_secs(listen));
+    }
+    let mut out = ProbeOut {
+        handshake_seconds: 0.0,
+        active_scene: None,
+        current_preset: None,
+        current_preset_chains: None,
+        preset_count: None,
+        presets: Vec::new(),
+        failures: Vec::new(),
+    };
+
+    match connect::request(&cortex_host::Request::ActiveScene) {
+        Some(Ok(value)) => match serde_json::from_value(value) {
+            Ok(scene) => out.active_scene = Some(scene),
+            Err(error) => out.failures.push(format!("active_scene: {error}")),
+        },
+        Some(Err(error)) => out.failures.push(format!("active_scene: {error}")),
+        None => out.failures.push("active_scene: daemon disappeared".into()),
+    }
+    match connect::request(&cortex_host::Request::CurrentPreset {
+        with_params: false,
+        timeout_seconds: 15,
+    }) {
+        Some(Ok(value)) => match serde_json::from_value::<cortex_rs::view::Preset>(value) {
+            Ok(preset) => {
+                out.current_preset = Some(preset.name);
+                out.current_preset_chains = Some(preset.chains);
+            }
+            Err(error) => out.failures.push(format!("read_current_preset: {error}")),
+        },
+        Some(Err(error)) => out.failures.push(format!("read_current_preset: {error}")),
+        None => out
+            .failures
+            .push("read_current_preset: daemon disappeared".into()),
+    }
+    match connect::request(&cortex_host::Request::ListPresets {
+        setlist: cortex_rs::client::USER_SETLIST.into(),
+        include_empty: false,
+        timeout_seconds: 25,
+    }) {
+        Some(Ok(value)) => match serde_json::from_value::<Vec<PresetSlot>>(value) {
+            Ok(presets) => {
+                out.preset_count = Some(presets.len());
+                out.presets = presets;
+            }
+            Err(error) => out.failures.push(format!("list_presets: {error}")),
+        },
+        Some(Err(error)) => out.failures.push(format!("list_presets: {error}")),
+        None => out.failures.push("list_presets: daemon disappeared".into()),
+    }
+
+    emit_probe(out, fmt)
+}
+
+fn emit_probe(out: ProbeOut, fmt: Format) -> Result<()> {
     let failed = out.failures.len();
     emit(&out, fmt, |o| {
         if let Some(scene) = o.active_scene {
@@ -1043,7 +1110,7 @@ fn cmd_version(fmt: Format) -> Result<()> {
     // would break it exactly when the answer is most obviously yes - and it
     // cannot open the device for itself, because doing so alongside a held
     // session wedges both.
-    if let Some(result) = connect::request(&cortex_rs::Request::Version) {
+    if let Some(result) = connect::request(&cortex_host::Request::Version) {
         let parsed: DeviceVersion = serde_json::from_value(result?)?;
         return emit(&parsed, fmt, print_device_version);
     }
@@ -1094,7 +1161,7 @@ unsafe fn libc_sigpipe_reset() {
 fn cmd_presets(setlist: &str, include_empty: bool, timeout: u64, fmt: Format) -> Result<()> {
     // Prefer a held session. A listing is the most expensive read the CLI
     // does, and the daemon has already paid for the handshake.
-    if let Some(result) = connect::request(&cortex_rs::Request::ListPresets {
+    if let Some(result) = connect::request(&cortex_host::Request::ListPresets {
         setlist: setlist.to_string(),
         include_empty,
         timeout_seconds: timeout,
@@ -1238,7 +1305,7 @@ fn open_session(
 fn cmd_recall(slot: &str, setlist: &str, factory: bool, fmt: Format) -> Result<()> {
     // Through the daemon when there is one. It keeps its session, so the
     // settling sleep the direct path needs is unnecessary there.
-    if let Some(result) = connect::request(&cortex_rs::Request::RecallPreset {
+    if let Some(result) = connect::request(&cortex_host::Request::RecallPreset {
         setlist: setlist.to_string(),
         slot: slot.to_string(),
         factory,
@@ -1252,10 +1319,7 @@ fn cmd_recall(slot: &str, setlist: &str, factory: bool, fmt: Format) -> Result<(
     }
 
     let (session, qc) = connected()?;
-    let result = qc.recall_preset(setlist, slot, factory);
-    // Give the device a moment to service the recall before tearing the
-    // session down; a recall is fire-and-forget and the grid swap is lazy.
-    std::thread::sleep(Duration::from_millis(500));
+    let result = qc.recall_preset(setlist, slot, factory, Duration::from_secs(40));
     qc.disconnect();
     session.stop();
     result?;
@@ -1266,16 +1330,14 @@ fn cmd_recall(slot: &str, setlist: &str, factory: bool, fmt: Format) -> Result<(
     emit(&out, fmt, |o| println!("{}: {}", o.action, o.detail))
 }
 
-/// Save the working grid into a slot.
+/// Prepare one target while the working grid is known clean.
 #[allow(clippy::too_many_arguments)]
-fn cmd_preset_save(
+fn cmd_preset_prepare_save(
     slot: &str,
-    name: Option<&str>,
     setlist: &str,
     scratch_setlist: Option<&str>,
     scratch_ranges: &[String],
     allow_outside_scratch: bool,
-    yes: bool,
     fmt: Format,
 ) -> Result<()> {
     if cortex_rs::client::is_factory_setlist(setlist) {
@@ -1304,7 +1366,7 @@ fn cmd_preset_save(
             cortex_rs::ScratchRange::new(parts[0], parts[1]).map_err(|e| anyhow::anyhow!("{e}"))
         })
         .collect::<Result<_>>()?;
-    let policy = cortex_rs::daemon::SavePolicySpec {
+    let policy = cortex_host::SavePolicySpec {
         scratch_setlist: scratch_setlist.to_string(),
         scratch_ranges: ranges.clone(),
     };
@@ -1314,129 +1376,49 @@ fn cmd_preset_save(
         cortex_rs::ScratchOverride::ScratchOnly
     };
 
-    // Prepare phase: the daemon (or direct session) reads the target, backs
-    // it up, and holds the preparation. This is done before any confirmation
-    // prompt, so the user sees exactly what would be overwritten.
-    let prepare_result: cortex_rs::daemon::PrepareSaveResult = if let Some(result) =
-        connect::request(&cortex_rs::Request::PrepareSave {
-            setlist: setlist.to_string(),
-            slot: slot.to_string(),
-            policy,
-            override_scratch,
-            recall_consent: cortex_rs::RecallConsent::DiscardWorkingCopy,
-            timeout_seconds: 40,
-        }) {
-        serde_json::from_value(result?)?
-    } else {
-        // Direct path (no daemon): prepare in-process.
-        let (session, qc) = connected()?;
-        let validated_policy = cortex_rs::SavePolicy::new(scratch_setlist, ranges)?;
-        let preparation = qc.prepare_save_before_editing(
-            &validated_policy,
-            setlist,
-            slot,
-            override_scratch,
-            cortex_rs::RecallConsent::DiscardWorkingCopy,
-            Duration::from_secs(40),
-        )?;
-        let view = preparation.view();
-        // For the direct path we commit immediately after confirmation,
-        // so the token is a placeholder.
-        let _ = view;
-        // Fall through to direct commit below.
-        if !confirm_save(&view, yes)? {
-            qc.disconnect();
-            session.stop();
-            return Ok(());
-        }
-        let _receipt = qc.save_prepared(
-            &validated_policy,
-            preparation,
-            cortex_rs::SaveConfirmation::explicit(true)?,
-            name,
-            Duration::from_secs(40),
-        )?;
-        qc.disconnect();
-        session.stop();
-        let detail = match name {
-            Some(n) => format!("{slot} in {setlist} as {n:?}"),
-            None => format!("{slot} in {setlist}"),
-        };
-        return report_edit("save", detail, fmt);
+    let Some(result) = connect::request(&cortex_host::Request::PrepareSave {
+        setlist: setlist.to_string(),
+        slot: slot.to_string(),
+        policy,
+        override_scratch,
+        recall_consent: cortex_rs::RecallConsent::RequireClean,
+        timeout_seconds: 40,
+    }) else {
+        anyhow::bail!(
+            "saving requires `cortex session start`: preparation must survive until after editing"
+        )
     };
+    let prepare_result: cortex_host::PrepareSaveResult = serde_json::from_value(result?)?;
+    emit(&prepare_result, fmt, |result| {
+        println!(
+            "prepared {} in {}",
+            result.view.target.slot, result.view.target.setlist
+        );
+        println!("token: {}", result.token);
+    })
+}
 
-    // Daemon path: show what would be overwritten, then confirm.
-    if !confirm_save(&prepare_result.view, yes)? {
-        return Ok(());
+/// Commit a token prepared before working-grid edits.
+fn cmd_preset_save(token: &str, name: Option<&str>, yes: bool, fmt: Format) -> Result<()> {
+    if !yes {
+        anyhow::bail!(
+            "save tokens are destructive; pass --yes after reviewing `preset prepare-save` output"
+        )
     }
-    let commit_result = connect::request(&cortex_rs::Request::CommitSave {
-        token: prepare_result.token,
+    let Some(result) = connect::request(&cortex_host::Request::CommitSave {
+        token: token.to_string(),
         confirmed: true,
         name: name.map(str::to_string),
         timeout_seconds: 40,
-    });
-    match commit_result {
-        Some(result) => {
-            result?;
-        }
-        None => {
-            // Daemon disappeared between prepare and commit. The preparation
-            // is lost with it.
-            anyhow::bail!(
-                "the daemon disappeared between prepare and commit; the preparation is lost. \
-                 Run `cortex session start` and retry."
-            );
-        }
-    }
-    let detail = match name {
-        Some(n) => format!("{slot} in {setlist} as {n:?}"),
-        None => format!("{slot} in {setlist}"),
+    }) else {
+        anyhow::bail!("saving requires `cortex session start`; prepare the target before editing")
     };
-    report_edit("save", detail, fmt)
-}
-
-/// Show what would be overwritten and ask for confirmation.
-///
-/// Returns `true` if the user confirmed, `false` if they declined. Refuses
-/// on a non-TTY unless `--yes` was given, so a script cannot be silently
-/// destructive but also cannot hang.
-fn confirm_save(view: &cortex_rs::SavePreparationView, yes: bool) -> Result<bool> {
-    if let Some(ref name) = view.previous_name {
-        eprintln!("  target: {} in {}", view.target.slot, view.target.setlist);
-        eprintln!("  overwrites: {name:?}");
-    } else {
-        eprintln!(
-            "  target: {} in {} (empty slot)",
-            view.target.slot, view.target.setlist
-        );
-    }
-    if view.backup_retained {
-        eprintln!("  backup retained: yes");
-    } else {
-        eprintln!("  backup retained: no");
-    }
-    if yes {
-        eprintln!("  confirmed by --yes");
-        return Ok(true);
-    }
-    // Prompt on a TTY, refuse on a pipe.
-    use std::io::IsTerminal;
-    if !std::io::stdin().is_terminal() {
-        anyhow::bail!(
-            "saving requires --yes in non-interactive mode. Without a TTY, the command \
-             refuses rather than hanging or being silently destructive."
-        );
-    }
-    eprint!("  type 'yes' to confirm: ");
-    std::io::Write::flush(&mut std::io::stderr())?;
-    let mut input = String::new();
-    std::io::stdin().read_line(&mut input)?;
-    if input.trim() == "yes" {
-        Ok(true)
-    } else {
-        eprintln!("  declined.");
-        Ok(false)
-    }
+    let view: cortex_rs::SavePreparationView = serde_json::from_value(result?)?;
+    report_edit(
+        "save",
+        format!("{} in {}", view.target.slot, view.target.setlist),
+        fmt,
+    )
 }
 
 /// Delete a preset by name.
@@ -1446,7 +1428,7 @@ fn cmd_preset_delete(name: &str, setlist: &str, fmt: Format) -> Result<()> {
     }
     let detail = format!("{name:?} from {setlist}");
 
-    if let Some(result) = connect::request(&cortex_rs::Request::DeletePreset {
+    if let Some(result) = connect::request(&cortex_host::Request::DeletePreset {
         setlist: setlist.to_string(),
         name: name.to_string(),
     }) {
@@ -1467,7 +1449,7 @@ fn cmd_scene(index: u32, fmt: Format) -> Result<()> {
     // Prefer a held connection. It has already paid the handshake, so this
     // is a socket round trip rather than a fresh session - and it avoids
     // contending for a device interface the daemon already owns.
-    if let Some(result) = connect::request(&cortex_rs::Request::SwitchScene { scene: index }) {
+    if let Some(result) = connect::request(&cortex_host::Request::SwitchScene { scene: index }) {
         result?;
         return report_edit("scene", index.to_string(), fmt);
     }
@@ -1487,7 +1469,7 @@ fn cmd_scene(index: u32, fmt: Format) -> Result<()> {
 
 /// Recall a slot and dump the preset it loads, naming each block.
 fn cmd_preset(slot: &str, setlist: &str, factory: bool, params: bool, fmt: Format) -> Result<()> {
-    if let Some(result) = connect::request(&cortex_rs::Request::ReadPreset {
+    if let Some(result) = connect::request(&cortex_host::Request::ReadPreset {
         setlist: setlist.to_string(),
         slot: slot.to_string(),
         factory,
@@ -1534,7 +1516,7 @@ fn cmd_catalog(
     // the device, and without a 2 s handshake per iteration.
     let payload = if let Some(path) = from_file {
         std::fs::read(path)?
-    } else if let Some(result) = connect::request(&cortex_rs::Request::Catalog {
+    } else if let Some(result) = connect::request(&cortex_host::Request::Catalog {
         timeout_seconds: timeout,
     }) {
         // The daemon already holds this from its handshake, so this is a
@@ -1884,7 +1866,7 @@ fn cmd_set_param(
         _ => unreachable!("clap prevents more than one parameter value"),
     };
 
-    if let Some(result) = connect::request(&cortex_rs::Request::SetParam {
+    if let Some(result) = connect::request(&cortex_host::Request::SetParam {
         row: row.wire(),
         column,
         target: target.clone(),
@@ -1954,7 +1936,7 @@ fn cmd_set_bypass(row: u32, column: u32, bypass: bool, fmt: Format) -> Result<()
         if bypass { "bypassed" } else { "enabled" }
     );
 
-    if let Some(result) = connect::request(&cortex_rs::Request::SetBypass {
+    if let Some(result) = connect::request(&cortex_host::Request::SetBypass {
         row: row.wire(),
         column,
         bypass,
@@ -1981,7 +1963,7 @@ fn cmd_set_block(
     fmt: Format,
 ) -> Result<()> {
     let row = wire_row(row)?;
-    if let Some(result) = connect::request(&cortex_rs::Request::SetBlock {
+    if let Some(result) = connect::request(&cortex_host::Request::SetBlock {
         row: row.wire(),
         column,
         model,
@@ -2034,7 +2016,7 @@ fn cmd_remove_block(row: u32, column: u32, fmt: Format) -> Result<()> {
     let row = wire_row(row)?;
     let detail = format!("row {} column {column}", row.screen());
 
-    if let Some(result) = connect::request(&cortex_rs::Request::RemoveBlock {
+    if let Some(result) = connect::request(&cortex_host::Request::RemoveBlock {
         row: row.wire(),
         column,
     }) {
@@ -2141,7 +2123,7 @@ fn cmd_grid(timeout: u64, params: bool, fmt: Format) -> Result<()> {
     // Use the held session when one exists. This still performs a
     // side-effect-free live-grid read; the subscribed push-maintained cache
     // is separate work tracked by PROT-008.6.5.
-    if let Some(result) = connect::request(&cortex_rs::Request::CurrentPreset {
+    if let Some(result) = connect::request(&cortex_host::Request::CurrentPreset {
         with_params: params,
         timeout_seconds: timeout,
     }) {
@@ -2182,7 +2164,7 @@ fn cmd_set_routing(row: u32, input: Option<u32>, output: Option<u32>, fmt: Forma
     };
     let detail = format!("row {} {which} = port {port}", row.screen());
 
-    if let Some(result) = connect::request(&cortex_rs::Request::SetRouting {
+    if let Some(result) = connect::request(&cortex_host::Request::SetRouting {
         row: row.wire(),
         input,
         output,
@@ -2219,7 +2201,7 @@ fn cmd_set_split(row: u32, split: i32, mix: i32, fmt: Format) -> Result<()> {
             row.screen()
         )
     };
-    if let Some(result) = connect::request(&cortex_rs::Request::SetSplit {
+    if let Some(result) = connect::request(&cortex_host::Request::SetSplit {
         row: row.wire(),
         split,
         mix,
@@ -2239,7 +2221,7 @@ fn cmd_set_split(row: u32, split: i32, mix: i32, fmt: Format) -> Result<()> {
 /// Run, query, or stop the persistent connection.
 fn cmd_connect(status: bool, stop: bool, fmt: Format) -> Result<()> {
     if status {
-        let Some(result) = connect::request(&cortex_rs::Request::Status) else {
+        let Some(result) = connect::request(&cortex_host::Request::Status) else {
             // Not an error: "no connection running" is a legitimate answer to
             // "what is the status", and a caller scripting against this
             // should not have to parse stderr to find out.
@@ -2299,7 +2281,7 @@ fn cmd_connect(status: bool, stop: bool, fmt: Format) -> Result<()> {
     }
 
     if stop {
-        let Some(result) = connect::request(&cortex_rs::Request::Shutdown) else {
+        let Some(result) = connect::request(&cortex_host::Request::Shutdown) else {
             anyhow::bail!("no connection is running");
         };
         result?;
@@ -2569,7 +2551,7 @@ struct ActionOut {
 
 /// Show the unit's live DSP load.
 fn cmd_cpu(fmt: Format) -> Result<()> {
-    let Some(result) = connect::request(&cortex_rs::Request::CpuLoad) else {
+    let Some(result) = connect::request(&cortex_host::Request::CpuLoad) else {
         anyhow::bail!(
             "no `cortex session start` session is running.\n\
              The device only pushes CPU load to a subscribed client, so this \

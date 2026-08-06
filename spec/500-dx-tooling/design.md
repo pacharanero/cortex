@@ -82,11 +82,11 @@ Rust is 4-space (the `cargo fmt` default). Markdown, YAML, JSON, TOML are 2-spac
 - **4-space everywhere.** Rejected: 2-space for YAML/JSON/TOML is the house-style convention and matches the existing files.
 - **No `.editorconfig`.** Rejected: editors without it guess the style; the file makes the style explicit and uniform.
 
-## [DES-FUTURE] Planned scripts
+## [DES-FUTURE] Scripts and remaining work
 
 ### `s/gui-dev`
 
-Lands when `gui/` exists (zone 400). Runs the Tauri dev server from any working directory:
+Implemented now that `gui/` exists (zone 400). Runs the Tauri dev server from any working directory:
 
 ```sh
 #!/usr/bin/env bash
@@ -100,7 +100,7 @@ This is the house-style rule (tauri-gui.md): the script is the canonical entry p
 
 ### `s/version++`
 
-Lands with the release pipeline (zone 600). Bumps the canonical version across `Cargo.toml` (workspace + crate packages), `gui/package.json`, and `tauri.conf.json` in one release commit. The exact semantics (major/minor/patch arg, commit message, whether it opens a PR) follow house-style distribution.md.
+Implemented for the Rust workspace and release commit flow. Outstanding: update and verify `gui/package.json` and `tauri.conf.json` in the same commit.
 
 A thin bash script works for `Cargo.toml` (toml-edit) and `gui/package.json` (jq). If the parsing gets complex, this is the one script that might justify an `xtask` Rust binary.
 
@@ -116,8 +116,7 @@ The pre-commit hook should be opt-in (a script the maintainer runs), not forced 
 
 ## [DES-LIMITS] Known Limitations
 
-- **No `s/gui-dev` yet.** The GUI is deferred (zone 400); the script lands when `gui/` exists.
-- **No `s/version++` yet.** The release pipeline is not wired (zone 600); the script lands with it.
+- **GUI versions are not synchronized by `s/version++`.** The script exists, but the frontend and Tauri manifests can drift from the workspace version.
 - **No markdown lint yet.** The config and the CI step are planned.
 - **No pre-commit hook yet.** `.githooks/` does not exist; `s/install-hooks` is planned.
 - **`s/test` does not run `cargo test --all --no-default-features`.** CI does (the leaf-crate no-default-features path); the local script currently runs the all-features path only. This is a gap to close.

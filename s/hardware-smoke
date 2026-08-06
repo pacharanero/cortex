@@ -29,9 +29,9 @@
 # hide the others - see the summary at the end for a full tally.
 #
 # Scope, deliberately: read-only checks, plus write/read-back inside the
-# scratch bank. Does not script `cortex session start`/reconnect (the daemon
-# lifecycle and a physical unplug/replug need their own pass - runbook
-# section 11 stays manual) and does not attempt an IR/capture round trip
+# scratch bank through one held daemon session. A physical unplug/replug still
+# needs its own manual pass (runbook section 11), and this does not attempt an
+# IR/capture round trip
 # (PROT-007 is unimplemented). Physical unplug/replug is not scripted at
 # all: this project has already recorded a case (OpenCortex, spec/prior-art.md)
 # of a USB link dying under repeated large writes and needing a power cycle,
@@ -131,6 +131,7 @@ fi
 
 SAVE_SLOT="${SCRATCH_BANK}A"
 SCRATCH_RANGE="${SCRATCH_BANK}A-${SCRATCH_BANK}H"
+STARTED_DAEMON=false
 
 if ! command -v "$BIN" >/dev/null 2>&1; then
   echo "error: '$BIN' not found on PATH. Build and install it first (s/install)," \
@@ -208,6 +209,10 @@ restore_and_report() {
     echo "Restoring $RESTORE_SLOT ..." >&2
     "$BIN" preset recall --slot "$RESTORE_SLOT" --format json >/dev/null 2>&1 || \
       echo "warning: restore recall of $RESTORE_SLOT failed" >&2
+  fi
+  if [[ "$STARTED_DAEMON" == true ]]; then
+    "$BIN" session stop --format json >/dev/null 2>&1 || \
+      echo "warning: the hardware-smoke daemon did not stop cleanly" >&2
   fi
 
   echo >&2
@@ -304,16 +309,50 @@ if [[ "$LAST_CODE" -ne 0 ]] || ! jq -e \
   exit 1
 fi
 
-# --- 6. Grid editing --------------------------------------------------------
-# Begin from a declared disposable slot. This keeps working-grid changes out
-# of the preset that was loaded when the test started, even if a later check
-# fails.
+# --- 6. Held session and save preparation ----------------------------------
+run_cli session start
+if [[ "$LAST_CODE" -eq 0 ]]; then
+  STARTED_DAEMON=true
+  log_pass "session start"
+else
+  log_fail "session start" "exit $LAST_CODE"
+  echo "error: could not establish the held session required for safe preparation; refusing to edit." >&2
+  exit 1
+fi
+
+run_cli session status
+jq_check "held session reports a live cache" "$LAST_OUT" \
+  '.device.state == "connected" and .cache.phase == "live" and .cache.current_preset == true'
+
+# The operator's --discard-working-copy consent applies here. Establish the
+# declared scratch slot as a clean baseline before asking preparation to prove
+# that it is safe to recall and back up the target.
 run_cli preset recall --slot "$SAVE_SLOT" --setlist "$SETLIST"
 if [[ "$LAST_CODE" -eq 0 ]]; then
-  log_pass "recall scratch slot before editing ($SAVE_SLOT)"
+  log_pass "recall scratch slot before preparation ($SAVE_SLOT)"
 else
-  log_fail "recall scratch slot before editing ($SAVE_SLOT)" "exit $LAST_CODE"
+  log_fail "recall scratch slot before preparation ($SAVE_SLOT)" "exit $LAST_CODE"
   echo "error: could not establish the declared scratch working copy; refusing to edit." >&2
+  exit 1
+fi
+
+# Preparation recalls and backs up the scratch target while the grid is still
+# clean, then leaves the opaque token in the daemon. Every later edit is made
+# from that known scratch baseline. Preparing after the edit would recall the
+# target and silently save the wrong grid (PROT-009.3).
+SAVE_TOKEN=""
+for _ in {1..5}; do
+  run_cli preset prepare-save --slot "$SAVE_SLOT" --setlist "$SETLIST" \
+    --scratch-setlist "$SETLIST" --scratch-range "$SCRATCH_RANGE"
+  SAVE_TOKEN="$(jq -r '.token // empty' <<<"$LAST_OUT" 2>/dev/null || true)"
+  [[ "$LAST_CODE" -eq 0 && -n "$SAVE_TOKEN" ]] && break
+  sleep 1
+done
+if [[ "$LAST_CODE" -eq 0 && -n "$SAVE_TOKEN" ]]; then
+  log_pass "prepare scratch slot before editing ($SAVE_SLOT)"
+else
+  log_fail "prepare scratch slot before editing ($SAVE_SLOT)" "exit $LAST_CODE or missing token"
+  echo "error: the scratch target was not safely prepared; refusing to edit." >&2
   exit 1
 fi
 
@@ -351,9 +390,22 @@ else
   expect_ok "block param (GAIN = 0.42)" \
     block param --row "$FREE_ROW" --column "$FREE_COL" --param GAIN --value 0.42
 
-  run_cli grid show --params
-  jq_check "GAIN reads back as written" "$LAST_OUT" \
-    ".blocks[] | select(.screen_row == $FREE_ROW and .column == $FREE_COL) | .params[] | select(.name == \"GAIN\") | (.value - 0.42 | . * . < 0.0001)"
+  GAIN_LANDED=false
+  for _ in {1..10}; do
+    run_cli grid show --params
+    if jq -e \
+      ".blocks[] | select(.screen_row == $FREE_ROW and .column == $FREE_COL) | .params[] | select(.name == \"GAIN\") | (.value - 0.42 | . * . < 0.0001)" \
+      >/dev/null 2>&1 <<<"$LAST_OUT"; then
+      GAIN_LANDED=true
+      break
+    fi
+    sleep 1
+  done
+  if [[ "$GAIN_LANDED" == true ]]; then
+    log_pass "GAIN reads back as written"
+  else
+    log_fail "GAIN reads back as written" "value did not appear after 10 seconds"
+  fi
 
   expect_fail "block param refuses an unknown parameter name" \
     block param --row "$FREE_ROW" --column "$FREE_COL" --param WOBBLE --value 0.5
@@ -362,9 +414,7 @@ else
   # designated scratch bank ---------------------------------------------
   SAVE_NAME="cortex-smoke-test"
   expect_ok "preset save (scratch slot $SAVE_SLOT)" \
-    preset save --slot "$SAVE_SLOT" --name "$SAVE_NAME" \
-      --setlist "$SETLIST" --scratch-setlist "$SETLIST" \
-      --scratch-range "$SCRATCH_RANGE" --yes
+    preset save --token "$SAVE_TOKEN" --name "$SAVE_NAME" --yes
 
   # File mutations are eventually consistent. The device can acknowledge a
   # save or delete before a folder listing reflects it, so poll state rather
@@ -410,9 +460,22 @@ else
 
   expect_ok "block remove (cleanup, $FREE_ROW,$FREE_COL)" \
     block remove --row "$FREE_ROW" --column "$FREE_COL"
-  run_cli grid show
-  jq_check "cell is empty after remove" "$LAST_OUT" \
-    ".blocks | any(.screen_row == $FREE_ROW and .column == $FREE_COL) | not"
+  CELL_EMPTY=false
+  for _ in {1..10}; do
+    run_cli grid show
+    if jq -e \
+      ".blocks | any(.screen_row == $FREE_ROW and .column == $FREE_COL) | not" \
+      >/dev/null 2>&1 <<<"$LAST_OUT"; then
+      CELL_EMPTY=true
+      break
+    fi
+    sleep 1
+  done
+  if [[ "$CELL_EMPTY" == true ]]; then
+    log_pass "cell is empty after remove"
+  else
+    log_fail "cell is empty after remove" "block remained after 10 seconds"
+  fi
 
   if [[ -n "$STORED_NAME" ]]; then
     expect_ok "preset delete (cleanup, '$STORED_NAME')" \

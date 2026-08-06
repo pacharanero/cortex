@@ -21,13 +21,13 @@ tags: ["dx", "tooling", "lint", "format", "test", "scripts", "editorconfig"]
 - [house-style testing.md](https://github.com/marcus-pacharanero/house-style/blob/main/testing.md) - the testing conventions.
 - [house-style ci.md](https://github.com/marcus-pacharanero/house-style/blob/main/ci.md) - the CI conventions this zone mirrors locally.
 - [600-ci-release spec](../600-ci-release/spec.md) - the CI workflow that `s/test` mirrors.
-- Owned source: `s/test`, `s/lint`, `.editorconfig`.
+- Owned source: `s/`, `.editorconfig`.
 
 ## Problem Statement
 
 A maintainer or agent running `s/test` locally should get the same gate CI runs: `cargo fmt --check`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test --all`, and `reuse lint`. If the local gate is green, CI is green. The `s/` scripts are the canonical entry point so no one has to remember the exact incantations.
 
-This zone owns the scripts, the `.editorconfig`, and the lint/format config. The CI workflow itself is owned by zone 600; this zone mirrors it locally. The GUI dev script (`s/gui-dev`) and the version-bump script (`s/version++`) are planned; they land when `gui/` exists and when the release pipeline is wired.
+This zone owns the scripts, the `.editorconfig`, and the lint/format config. The CI workflow itself is owned by zone 600; this zone mirrors it locally. `s/gui-dev` and `s/version++` exist. The version script still needs to synchronize the now-existing GUI manifests.
 
 ## Verification Basis
 
@@ -37,7 +37,8 @@ This zone owns the scripts, the `.editorconfig`, and the lint/format config. The
 | `s/lint` runs fmt + clippy + REUSE | Implemented | `s/lint` runs `cargo fmt --all --check`, `cargo clippy --all-targets --all-features -- -D warnings`, `reuse lint` (with a fallback message if `reuse` is not installed) |
 | `.editorconfig` enforces UTF-8, LF, 4-space indent (2 for md/yaml/json), final newline | Implemented | `.editorconfig` at repo root |
 | `cargo fmt` and `cargo clippy` run in CI | Implemented | `.github/workflows/ci.yml` (owned by zone 600) |
-| `s/gui-dev` and `s/version++` | Planned | Not yet implemented; `s/gui-dev` lands when `gui/` exists, `s/version++` lands with the release pipeline |
+| `s/gui-dev` | Implemented | Runs the Tauri dev server from the repository-independent entry point |
+| `s/version++` | Partial | Release script exists; GUI manifest synchronization remains outstanding |
 | Markdown lint | Planned | Not yet wired |
 
 ## User Stories
@@ -77,13 +78,13 @@ Maintainers and AI coding agents running the local gate before a commit.
 | FR-3 | `.editorconfig` enforces UTF-8 charset, LF line endings, 4-space indent (2 for `*.md`/`*.yaml`/`*.yml`/`*.json`/`*.toml`, 4 for `*.rs`), final newline, and trailing-whitespace trim. | Must Have |
 | FR-4 | The `s/` scripts carry an SPDX header (`SPDX-FileCopyrightText` / `SPDX-License-Identifier`) and a one-line description of what they do. | Must Have |
 | FR-5 | The `s/` scripts `set -euo pipefail` and `cd` to the repo root via `git rev-parse --show-toplevel`, so they run from any working directory. | Must Have |
+| FR-10 | `s/gui-dev` runs the Tauri dev server from any working directory. | Must Have |
 
 #### Planned
 
 | ID | Requirement | Priority |
 | --- | --- | --- |
-| FR-10 | `s/gui-dev` runs the Tauri dev server from any working directory (lands when `gui/` exists, per house-style tauri-gui.md). | Must Have |
-| FR-11 | `s/version++` bumps the canonical version across `Cargo.toml`, `gui/package.json`, `tauri.conf.json` in one release commit (lands with the release pipeline, per house-style tauri-gui.md / distribution.md). | Must Have |
+| FR-11 | Extend the existing `s/version++` so it bumps the canonical version across `Cargo.toml`, `gui/package.json`, and `tauri.conf.json` in one release commit. | Must Have |
 | FR-12 | Markdown lint (e.g. `markdownlint` or equivalent) runs in `s/lint` and CI, enforcing prose style (line wrapping, heading style, etc.). | Should Have |
 | FR-13 | `s/install-hooks` installs the `.githooks/` directory as the git hooks path. | Should Have |
 | FR-14 | `.githooks/pre-commit` runs `s/lint` (or a fast subset) and refuses the commit on failure. | Should Have |
@@ -105,7 +106,7 @@ Maintainers and AI coding agents running the local gate before a commit.
 - [x] `.editorconfig` is present at the repo root with the correct rules.
 - [x] The `s/` scripts run from any working directory.
 - [x] The `s/` scripts carry SPDX headers.
-- [ ] `s/gui-dev` runs the Tauri dev server (when `gui/` exists).
+- [x] `s/gui-dev` runs the Tauri dev server.
 - [ ] `s/version++` bumps the version across all surfaces in one commit (when the release pipeline is wired).
 - [ ] Markdown lint runs in `s/lint` and CI.
 - [ ] `s/install-hooks` and `.githooks/pre-commit` are wired.
@@ -114,7 +115,7 @@ Maintainers and AI coding agents running the local gate before a commit.
 
 - **The CI workflow itself.** Owned by zone 600. This zone mirrors it locally.
 - **The release pipeline.** Owned by zone 600 (`cargo-dist`, crates.io publish, auto-tag).
-- **The GUI.** Owned by zone 400 (deferred). `s/gui-dev` lands when `gui/` exists.
+- **The GUI.** Owned by zone 400; this zone owns only its repeated development/release scripts.
 - **Test content.** Tests live alongside the source they test; this zone owns the runner, not the test suites.
 
 ## Dependencies
@@ -123,11 +124,11 @@ Maintainers and AI coding agents running the local gate before a commit.
 - **`reuse`** (FSFE REUSE tool) - the SPDX header lint. Optional; `s/lint` degrades gracefully.
 - **`git`** - the `s/` scripts use `git rev-parse --show-toplevel` to find the repo root.
 - **Zone 600 (CI)** - the workflow this zone mirrors locally.
-- **Zone 400 (GUI)** - the `s/gui-dev` script lands when `gui/` exists.
+- **Zone 400 (GUI)** - supplies the manifests `s/gui-dev` runs and `s/version++` must keep in sync.
 
 ## Future
 
-- **`s/version++` details.** The script will parse the current version from `Cargo.toml`, bump it (major/minor/patch via an arg), write it back to `Cargo.toml` (and `gui/package.json`, `tauri.conf.json` once they exist), and create a release commit. The exact bump semantics (and whether it opens a PR) will follow house-style distribution.md.
+- **`s/version++` GUI synchronization.** Extend the implemented release script to update and verify `gui/package.json` and `gui/src-tauri/tauri.conf.json` alongside the canonical workspace version.
 - **Markdown lint config.** A `.markdownlint.json` or equivalent enforcing the house-style prose rules (no hard-wrap, heading style, etc.). Will run in `s/lint` and CI.
 - **Pre-commit hook scope.** `.githooks/pre-commit` should run a fast subset (fmt + clippy, not the full test suite) so the commit is not blocked on a long test run. `s/test` remains the full pre-push gate.
 

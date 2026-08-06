@@ -24,7 +24,7 @@ tags: ["overview", "cortex-rs", "rust", "usb-hid", "quad-cortex", "nano-cortex",
 
 ## Problem Statement
 
-cortex-rs is an unofficial, Linux-first Rust toolkit for the Neural DSP Quad Cortex (and, in time, the Nano Cortex). The core deliverable is a low-level leaf crate that speaks the Cortex Control USB HID protocol and exposes a typed domain model - presets, scenes, grid, blocks. On top of the crate sit a CLI (`cortex`), an MCP server (`cortex-mcp`) for agentic patch editing, and a planned Tauri desktop GUI.
+cortex-rs is an unofficial, Linux-first Rust toolkit for the Neural DSP Quad Cortex (and, in time, the Nano Cortex). The core deliverable is a low-level leaf crate that speaks the Cortex Control USB HID protocol and exposes a typed domain model - presets, scenes, grid, blocks. A shared `cortex-host` daemon IPC boundary serves three host surfaces: the hardware-verified `cortex` CLI; the hardware-verified, non-persistent `cortex-mcp` server; and a Tauri desktop GUI whose interactive first draft is fixture-backed and not yet connected to the device. The GUI target is cross-platform, while Linux is the only verified host today.
 
 The project is a Rust port of the protocol behaviour established by the MIT-licensed `stokes-audio/pyquadcortex` Python library, re-verified against a real Quad Cortex on Linux (CorOS 4.0.1, firmware `d14e`). It is not affiliated with or endorsed by Neural DSP.
 
@@ -91,7 +91,7 @@ Maintainers, AI coding agents, and downstream crate consumers.
 ## Non-Goals
 
 - Feature requirements (each zone spec owns its own).
-- The Tauri GUI (owned by zone `400-gui`, deferred until the crate and CLI are complete).
+- GUI interaction and presentation requirements (owned by zone `400-gui`).
 - Full Nano Cortex support. The recovered schema names `ATMA`, but nobody has shown the Nano speaking this HID protobuf/trailer protocol; transport compatibility itself is provisional until verified against real hardware.
 - On-device builds (the `qc-stomp-tools` ioctl route; not in scope for this USB-first project).
 
@@ -148,10 +148,10 @@ To answer "where are we up to", read `roadmap.md`. To answer "what must this do"
   140      - session (connect handshake, keepalive, subscription, correlation)
   150      - client (the ergonomic QuadCortex API surface)
 200-299    - CLI (cortex binary)
-  200      - CLI surface (clap, version, completions, future commands)
+  200      - CLI surface (commands, held daemon, output, completions)
 300-399    - MCP server (cortex-mcp binary)
   300      - MCP safety surface and tool list
-400-499    - GUI (Tauri desktop app, deferred)
+400-499    - GUI (cross-platform Tauri desktop app; first draft in progress)
   400      - Tauri 2 + React + Mantine + Vite
 500-599    - DX (linting, formatting, testing)
 600-699    - CI / release
@@ -162,15 +162,15 @@ To answer "where are we up to", read `roadmap.md`. To answer "what must this do"
 
 | Zone | Spec | Owns (primary source) | Status |
 | --- | --- | --- | --- |
-| [100-transport](../100-transport/spec.md) | USB HID transport | `crates/cortex-rs/src/transport.rs` | Implemented (scaffold) |
+| [100-transport](../100-transport/spec.md) | USB HID transport | `crates/cortex-rs/src/transport.rs` | Implemented and hardware-verified |
 | [110-framing](../110-framing/spec.md) | HID frame codec | `crates/cortex-rs/src/framing.rs` | Implemented |
 | [120-proto-schema](../120-proto-schema/spec.md) | Protobuf schema | `crates/cortex-rs/{build.rs,proto/}` | Implemented |
-| [130-domain-model](../130-domain-model/spec.md) | Domain model | `crates/cortex-rs/src/{device,message}.rs` | Partial |
+| [130-domain-model](../130-domain-model/spec.md) | Domain model | `crates/cortex-rs/src/{device,message,catalog,state,view,safety}.rs` | Partial; core typed views implemented |
 | [140-session](../140-session/spec.md) | Session handshake | `crates/cortex-rs/src/session.rs` | Implemented and hardware-verified |
-| [150-client](../150-client/spec.md) | Client API | `crates/cortex-rs/src/client.rs` | Partial (lifecycle, version, recall, scene, helpers) |
-| [200-cli](../200-cli/spec.md) | CLI surface | `crates/cortex-cli/src/main.rs` | Partial (version only) |
-| [300-mcp](../300-mcp/spec.md) | MCP server | `crates/cortex-mcp/src/main.rs` | Stub |
-| [400-gui](../400-gui/spec.md) | Tauri GUI | `gui/` (planned) | Deferred |
+| [150-client](../150-client/spec.md) | Client API | `crates/cortex-rs/src/client.rs` | Partial; core read/edit/save paths hardware-verified |
+| [200-cli](../200-cli/spec.md) | CLI surface | `crates/cortex-cli/src/{main,connect}.rs` | Usable pre-alpha; core paths hardware-verified |
+| [300-mcp](../300-mcp/spec.md) | MCP server | `crates/cortex-mcp/src/` | Non-persistent tools hardware-verified; save/delete absent |
+| [400-gui](../400-gui/spec.md) | Tauri GUI | `gui/` | Interactive fixture-backed first draft |
 | [500-dx-tooling](../500-dx-tooling/spec.md) | DX/tests | `s/`, `.editorconfig`, lint configs | Partial |
 | [600-ci-release](../600-ci-release/spec.md) | CI/release | `.github/workflows/`, `dependabot.yml` | Partial |
 | [900-project-governance](../900-project-governance/spec.md) | Governance | `AGENTS.md`, `NOTICE`, `THIRD-PARTY-NOTICES.md`, `LICENSE` | Implemented |

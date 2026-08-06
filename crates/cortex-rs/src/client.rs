@@ -437,23 +437,24 @@ impl QuadCortex {
     /// Recall a preset within a setlist. `position` is either the linear slot
     /// index or a slot name like `"28C"`.
     ///
-    /// This sends `SetlistPosition{UPDATE}`. It does NOT wait for a reply
-    /// (writes are stalled); the recall triggers a `RecallPreset` push that
-    /// `read_preset` captures.
+    /// This sends `SetlistPosition{UPDATE}` and waits for the correlated
+    /// `RecallPreset` push. Returning before that push is unsafe: the device
+    /// has accepted the write but may still expose the previous grid.
     ///
     /// # Errors
     ///
     /// Returns [`crate::Error::InvalidSlot`] if `position` is not a valid slot
-    /// name. Otherwise returns `Ok` even on a write error, since the USB
-    /// status-stage stall makes every write appear to fail.
+    /// name, or [`crate::Error::ReadTimeout`] if the matching recall push does
+    /// not arrive within `timeout`.
     pub fn recall_preset(
         &self,
         setlist_path: &str,
         position: &str,
         is_factory: bool,
+        timeout: Duration,
     ) -> crate::Result<()> {
-        let payload = build_recall(setlist_path, position, is_factory, None)?;
-        self.session.send(MessageType::SetlistPosition, &payload)
+        self.read_preset(setlist_path, position, is_factory, timeout)
+            .map(drop)
     }
 
     /// Switch the active scene. Scenes are 0-based.

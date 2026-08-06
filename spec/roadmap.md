@@ -15,11 +15,23 @@ tags: ["roadmap", "planning"]
 >
 > Status legend: `[x]` done, `[~]` in-progress, `[ ]` planned. Future items live under `## Future` and promote to Planned when scheduled.
 >
-> Completed items are RETAINED here until the first release, because until then this file is the only place that records what is built and what is merely specified. Once a CHANGELOG exists to carry that record, done items move out and this becomes a pure backlog.
+> Completed parent items move to `completed.md`; completed sub-items remain beside unfinished siblings while an active milestone is mixed. `s/progress` counts both files. Once a CHANGELOG exists, this roadmap becomes a pure backlog.
 >
 > **`[x]` means the code exists and passes the local gate. It does NOT mean hardware-verified.** Anything touching the wire stays provisional until its hardware smoke item passes against a real Quad Cortex.
 >
-> Hardware-verified so far (2026-08-02, CorOS 4.0.1 / firmware `d14e` / serial `QA00AB123`): the transport, framing, envelope, session handshake, keepalive, correlation primitives, read and navigation paths; grid writes including block placement/removal, parameters, bypass, routing, and splits; and `save_current_preset` plus `delete_preset`. Individual items below identify what remains provisional or unimplemented.
+> Hardware-verified so far (2026-08-06, CorOS 4.0.1 / firmware `d14e`): transport through typed client; the held daemon and live cache; core read, navigation and grid-edit paths; and the prepared save/recall/read-back/delete flow. The final core/CLI smoke passed 37/37 checks. Individual items below identify what remains provisional or unimplemented.
+
+## Next Milestone: MCP Live-Grid Tools
+
+The next workstream is `cortex-mcp`, built as a useful but non-destructive agent surface over the hardware-verified core and held-session daemon:
+
+1. Extract the daemon request client and session-owner boundary from `cortex-cli` into a reusable host layer; keep Unix-socket details out of the leaf crate and behind that boundary.
+2. Start the stdio `rmcp` server and require/reuse the held daemon rather than opening another HID connection.
+3. Expose read tools, catalog search, CPU load, recall and scene switching.
+4. Expose verified working-copy edits (`set_block`, `set_param`, bypass, remove and routing) with the protocol traps in tool descriptions.
+5. Hardware-smoke the server by researching and building a plain-English preset brief into the live grid, reading every edit back, and stopping short of save.
+
+`save_preset` is explicitly outside this milestone. It remains blocked on PROT-009.1, PROT-009.5, PROT-009.6 and PROT-009.9 plus an MCP-held preparation-token registry and its own hardware smoke. The GUI first draft remains available for refinement, and its next backend step should reuse the same daemon-facing read contract once this MCP slice proves it.
 
 ## Where each ID lives
 
@@ -144,9 +156,9 @@ Raised by a review of the state-cache/prepared-save/daemon-routing change (`a603
 
 Ordered by what would hurt a user most.
 
-- [x] **PROT-009.2**: **The shipping save path bypasses the prepared-save API entirely.** FIXED 2026-08-05 in `743692a`. The daemon now exposes `PrepareSave`/`CommitSave` with server-held preparations and opaque tokens; the CLI `preset save` command is two-phase with `--yes`/TTY confirmation and `--scratch-range` policy. The raw `SavePreset` request is gone. CONFIRMED by call-site search: `save_current_preset` now has zero production callers outside `safety.rs`. So the safety layer this change added does not protect the surfaces a user actually touches, and a non-`/opt/neuraldsp/` slot can still be overwritten with no backup. **Fix before anything describes prepared saves as a guarantee.** Referred to elsewhere as PROT-006.10.1
+- [x] **PROT-009.2**: **The shipping save path bypassed the prepared-save API entirely.** FIXED 2026-08-05 in `743692a`, then corrected for pre-edit ordering under PROT-009.3. The daemon exposes `PrepareSave`/`CommitSave` with server-held preparations and opaque tokens; the CLI uses separate `preset prepare-save` and explicitly confirmed `preset save --token --yes` commands. The raw `SavePreset` request is gone. CONFIRMED by call-site search: `save_current_preset` has zero production callers outside `safety.rs`. Referred to elsewhere as PROT-006.10.1
 - [ ] **PROT-009.1**: **Reconnect can open a replacement while the old HID handle is still held.** CONFIRMED by reading the code. The handle lives behind `Arc<Mutex<dyn HidLink>>`, cloned into both the RX and keepalive threads, and `Transport` releases it only on drop; `Session::stop()` only joins the workers and `disconnect()` only sends a message. The reconnect path keeps the old `Arc<Session>` in its slot until a replacement has opened, and in-flight handlers may hold further clones - so the replacement can open alongside a live handle, violating the single-owner invariant that this repo documents as unenforced and fatal on the *next* request. A fix probably needs an explicit release on `Session` rather than relying on `Arc` drop order. The fake-link test cannot see this, because independent fakes model neither exclusivity nor drop order
-- [ ] **PROT-009.3**: **A save prepared after editing recalls its target and saves the wrong grid. HARDWARE-CONFIRMED 2026-08-06.** `prepare_save_before_editing` necessarily recalls the target to retain its backup. The CLI calls it inside `preset save`, after the user has edited the working grid and with `DiscardWorkingCopy` consent, so saving the smoke-test block to empty `7A` recalled empty `7A` then saved it. The named preset appeared and was deletable, but neither the live grid nor the recalled preset contained the block. Fix the CLI flow to prepare an occupied target before edits, or refuse a save whose target was not prepared; do not present a post-edit recall as safe. This blocks GUI save controls. Separately, a direct recall must not acknowledge before its grid swap lands; await the correlated push or invalidate affected cache entries before replying.
+- [x] **PROT-009.3**: **A save prepared after editing recalled its target and saved the wrong grid. FIXED AND HARDWARE-VERIFIED 2026-08-06.** The CLI now requires `preset prepare-save` on a held daemon before editing and `preset save --token` afterwards; there is no post-edit preparation or direct one-shot save path. `recall_preset` waits for the correlated `RecallPreset` push before acknowledging. The 37-check hardware smoke prepared empty `7A`, placed a block, changed GAIN, committed, recalled, and confirmed both the block and stored edit before deleting the test preset and restoring `1A`. The run also found and fixed two daemon-path blockers: the version check deadlocked by retaining one socket while opening another, and a measured post-recall `input_control.sidechain_source_flag=false` delta invalidated the live-grid cache.
 - [x] **PROT-009.4**: **An eventually consistent listing is treated as proof a slot is empty.** FIXED 2026-08-05 in `743692a`. The backup read is now always attempted regardless of the listing; the listing determines `previous_name` for the UI but never decides whether to skip the backup. The consent gate widens to all targets. A fake-session test (`a_stale_listing_saying_empty_still_backs_up_the_real_preset`) pins the stale-listing case.
 - [ ] **PROT-009.5**: **Preparation is revalidated against an epoch that may not be trustworthy.** `validate_current` rejects only `Invalidated`, admitting `Unsubscribed` and `Incomplete`; without a live File subscription an in-place edit that leaves listing metadata unchanged will not advance `storage_revision` and will pass. `finish_subscription` can also turn a stream-gapped handshake into `Incomplete`, routing around the explicit refusal. Prepared saves need a demonstrably live subscribed generation, or a content-level proof of the target
 - [ ] **PROT-009.6**: **File replies are correlated by shape, not by operation or target.** Save and delete accept the first non-empty `File` message, so an unrelated folder announcement can report a destructive operation as successful; `list_presets` accepts any same-folder non-empty `File` without checking `action` or completeness, so a one-item mutation acknowledgement can pass as a full listing. `SaveReceipt` inherits the false-success risk
@@ -224,17 +236,21 @@ Complete. See [completed.md](completed.md).
 - [ ] **CLI-004.3**: crates.io publish workflow (PROT layers must be complete first)
 - [ ] **CLI-004.4**: cargo-dist release pipeline (archives + installers)
 
+### CLI-007: Shared machine contract
+
+- [ ] **CLI-007.1**: Add a typed command/input registry and `cortex --schema` output shared by CLI and MCP. MCP currently owns explicit bounded JSON Schemas because the CLI contract promised by MCP NFR-3 does not yet exist; migrate both surfaces to one registry rather than allowing those schemas to drift
+
 ## MCP (MCP)
 
-The `cortex-mcp` MCP server for agentic patch editing. Greenfield - no MCP server for any Neural DSP hardware exists.
+The `cortex-mcp` MCP server for agentic patch editing. Its first non-persistent slice is implemented and hardware-verified through the held-session daemon; no save or delete tool is exposed.
 
 ### MCP-001: Safety surface
 
 - [ ] **MCP-001.1**: Read and recall are free; saving is always explicitly confirmed
 - [ ] **MCP-001.2**: Never write to the factory setlist; restrict saves to a host-configured range of valid USER slots (1A-32H) unless explicitly overridden. Do not invent a default range: only the user knows which slots are disposable
 - [ ] **MCP-001.3**: Prepare an occupied target and retain its backup **before working-copy edits begin**. Correction: calling `read_preset` immediately before save recalls the target and destroys the unsaved grid being saved. A target selected after edits must be listing-confirmed empty or the save is refused
-- [ ] **MCP-001.4**: Surface the row-numbering trap (0-based API, 1-4 on screen) in tool descriptions
-- [ ] **MCP-001.5**: Single owning process for the USB interface
+- [x] **MCP-001.4**: Surface the row-numbering trap (0-based API, 1-4 on screen) in every row-taking tool description and schema
+- [x] **MCP-001.5**: Single owning process for the USB interface. `cortex-host` has no HID feature; MCP requires and reuses `cortex session`, opening zero transports. Hardware-verified 2026-08-06
 
 ### MCP-003: Show what the MCP server is for
 
@@ -245,14 +261,17 @@ The reason this project has an MCP server at all is that an agent can do things 
 
 ### MCP-002: Tool surface
 
-- [ ] **MCP-002.1**: Read tools: `list_presets`, `read_preset`, `list_blocks`, `get_device_version` (unrestricted)
-- [ ] **MCP-002.2**: Transient write tools: `recall_preset`, `switch_scene` (changes what is heard, nothing persistent lost)
-- [ ] **MCP-002.3**: Working-copy write tools: `set_block`, `set_param`, `set_routing` (edits the recalled preset in device RAM)
-- [ ] **MCP-002.4**: Destructive tool: `save_preset` (gated: explicit slot, refuse FACTORY, require confirmation)
+- [x] **MCP-002.1**: Read tools: status, version, active scene, CPU, current/stored presets, blocks, folders, preset listings and catalog search. Hardware-verified 2026-08-06 through the official `rmcp` client
+- [x] **MCP-002.2**: Transient write tools: `recall_preset`, `switch_scene` (changes what is heard, nothing persistent lost). Hardware-verified 2026-08-06
+- [x] **MCP-002.3**: Working-copy write tools: block placement/removal, named parameter writes, bypass, input/output routing and split. Hardware-verified 2026-08-06 with live-grid read-back and restoration by recall
+- [ ] **MCP-002.4**: Destructive tool: `save_preset` (deferred beyond the first milestone; gated by explicit slot, FACTORY refusal, configured scratch policy, pre-edit preparation and confirmation; blocked on PROT-009.1/.5/.6/.9)
+- [x] **MCP-002.5**: Official `rmcp` stdio server with modern discovery, structured tool results, a custom 16 MiB bounded reader, and an eight-request aggregate cap held through response transmission. Required because stable `rmcp` 3.1.0 still contains the unbounded read tracked by upstream issue #1030 / PR #1049. Process-tested with the official client
+- [ ] **MCP-002.6**: Add typed daemon error codes so model-correctable failures such as invalid rows, DSP refusal and reconnecting survive the socket boundary without parsing human-readable strings
+- [ ] **MCP-002.7**: Replace raw routing port integers with typed input/output enums and add post-write read-back for bypass, remove, routing, split and parameter writes. The device accepts meaningless output IDs silently, while those daemon acknowledgements currently prove only that a write was sent
 
 ## GUI (GUI)
 
-The typed read/edit, live-cache, health, reconnect, and shared prepared-save foundations are now in place. The GUI can begin with the Rust backend retaining opaque `SavePreparation` values and exposing only their serialisable views. Keep saves labelled provisional until the safety sequence passes its hardware smoke and require user-configured scratch ranges before enabling them. See [400-gui/spec.md](400-gui/spec.md).
+The typed read/edit, live-cache, health, reconnect, and shared prepared-save foundations are now in place. An interactive read-only, fixture-backed Tauri first draft exists. Its next backend step is daemon-backed typed reads; save controls remain disabled until user-configured scratch ranges and the remaining PROT-009 correctness gaps are addressed. See [400-gui/spec.md](400-gui/spec.md).
 
 **The prepared-save API is now enforced by the daemon and CLI.** Fixed in `743692a` (PROT-009.2): the daemon holds preparations under opaque tokens, the CLI is two-phase with confirmation. A GUI that wants target backup, scratch policy and revalidation should call the same API.
 
@@ -260,8 +279,8 @@ The visual design goal is a **hardware-faithful rendering of the Quad Cortex fro
 
 ### GUI-001: Scaffold and Tauri MCP
 
-- [ ] **GUI-001.1**: `gui/` with Tauri 2 + React + Mantine + Vite, `s/gui-dev` script
-- [ ] **GUI-001.2**: Tauri commands calling `cortex-rs` and returning typed serialisable data; no protocol/domain logic in TypeScript. Follow the prior-art boundary: one managed Rust `AppState`, optional transport behind a feature with stubs, and frontend Tauri access only through mockable wrapper modules ([prior-art.md](prior-art.md#for-gui-001-to-gui-005))
+- [x] **GUI-001.1**: `gui/` with Tauri 2 + React + Mantine + Vite, `s/gui-dev` script. Implemented as an interactive, fixture-backed read-only first draft
+- [~] **GUI-001.2**: A demo Tauri command and mockable TypeScript API boundary exist. Outstanding: daemon-backed typed snapshots from `cortex-rs`, one managed Rust `AppState`, and no protocol/domain logic in TypeScript. Follow the prior-art boundary ([prior-art.md](prior-art.md#for-gui-001-to-gui-005))
 - [ ] **GUI-001.3**: Wire Tauri MCP for the dev feedback loop - drive the GUI from the MCP server to test Tauri commands without manual clicking
 
 ### GUI-002: Hardware-faithful control surface
@@ -309,7 +328,7 @@ Improve on the Cortex Control appearance while staying familiar enough to naviga
 
 ### ENG-001: DX and testing
 
-- [ ] **ENG-001.1**: `s/gui-dev` (once `gui/` exists)
+- [x] **ENG-001.1**: `s/gui-dev`
 - [ ] **ENG-001.2**: `s/version++` exists (CLI-004.1). Outstanding: teach it the GUI manifests - `gui/package.json` and `gui/src-tauri/tauri.conf.json` must move in the same release commit once they exist
 - [ ] **ENG-001.3**: `s/install-hooks` and `.githooks/pre-commit`
 - [ ] **ENG-001.4**: Markdown lint
@@ -349,17 +368,17 @@ The method is documented in the [protocol reference](../docs/protocol.md#observi
 
 ### ENG-006: `s/hardware-smoke` - scripted CLI smoke test with read-back assertions
 
-- [~] **ENG-006.1**: `s/hardware-smoke` - exercises the CLI binary end to end against a real unit: device identity (direct and session paths, cross-checked for agreement), the connect handshake, preset/setlist enumeration, catalog search, a grid-edit cycle (place a block, set a parameter, refuse an unknown one, remove it), and a save/recall/stored-read/delete round trip - each write verified by reading it back through a DIFFERENT command than the one that made it, per the pattern this project's own bug history argues for (spec/roadmap.md PROT-009, spec/completed.md). All writes are confined to one operator-designated scratch bank; the script refuses to run without `--scratch-bank`, `--restore-slot`, and explicit `--discard-working-copy` consent, starts its edits by recalling the scratch slot, and always restores the named slot on exit. This mirrors `safety.rs`'s refusal to supply a default. File-mutation assertions poll the listing rather than assuming it is instantly consistent. A failed check is logged and the run continues, so one bad step does not hide the rest.
-  - Automates `docs/runbook-hardware-smoke.md` sections 1, 3-10. Section 2 is folded into section 1 as a direct/session cross-check. Section 11 (held-session/cache/reconnect) and a physical unplug/replug stay manual: this project has already recorded a USB link dying under repeated large writes (OpenCortex, [prior-art.md](prior-art.md#opencortex---one-high-value-fact-and-a-minefield)), and scripting a physical disconnect is not worth that risk.
+- [x] **ENG-006.1**: `s/hardware-smoke` - exercises the CLI binary end to end against a real unit: device identity (direct and session paths, cross-checked for agreement), the connect handshake, preset/setlist enumeration, catalog search, a grid-edit cycle (place a block, set a parameter, refuse an unknown one, remove it), and a prepared-save/recall/stored-read/delete round trip - each write verified by reading it back through a DIFFERENT command than the one that made it, per the pattern this project's own bug history argues for (spec/roadmap.md PROT-009, spec/completed.md). All writes are confined to one operator-designated scratch bank; the script refuses to run without `--scratch-bank`, `--restore-slot`, and explicit `--discard-working-copy` consent, starts its edits by recalling and preparing the scratch slot, and always restores the named slot on exit. This mirrors `safety.rs`'s refusal to supply a default. Asynchronous and file-mutation assertions poll reported state rather than assuming immediate consistency. A failed check is logged and the run continues, so one bad step does not hide the rest.
+  - Automates `docs/runbook-hardware-smoke.md` sections 1 and 3-10, plus the start/status/routed-command/stop portions of section 11. Section 2 is folded into section 1 as a direct/session cross-check. Physical knob input, an on-device save, and physical unplug/replug stay manual: this project has already recorded a USB link dying under repeated large writes (OpenCortex, [prior-art.md](prior-art.md#opencortex---one-high-value-fact-and-a-minefield)), and scripting a physical disconnect is not worth that risk.
   - Writes a result to `smoke-fixtures/<coros_version>.json` (gitignored: it records local firmware details) and, on a successful run, updates `smoke-fixtures/latest.json`. The next run against a DIFFERENT `CorOS` version diffs against it and prints what changed - the concrete answer to "how much of a breaking change did this firmware update cause," in place of an inferred one.
-- [ ] **ENG-006.2**: Script `cortex session start`/`status`/`stop` and the daemon-routed command paths (runbook section 11), so the held-session, cache, and reconnect behaviour gets the same read-back discipline as the one-shot paths
-- [~] **ENG-006.3**: First hardware run, 2026-08-06, CorOS 4.0.1. **27/34 checks passed.** Device identity, direct/session equality, folder and preset enumeration, catalog search, model preflight, scratch recall, block placement/read-back, unknown-parameter refusal, save/list/delete, scene switch, preset-show recall, block removal, output JSON, and final restore passed. The script proved PROT-009.3: a save after a working-grid edit stored the recalled empty target rather than the edited grid. Two `device probe` runs completed the handshake in 13.1 s but then reported the device silent at 12-13 s for every read; a later probe passed in 3.9 s. One parameter write timed out after 40 s, though the placement and later cleanup succeeded. Trace a short reproduction before attributing those intermittent one-shot failures to the device.
+- [~] **ENG-006.2**: `cortex session start`/`status`/`stop` and all daemon-routed read/edit/save paths are scripted and hardware-verified by ENG-006.3. The physical unplug/replug reconnect remains manual by design; add a safe automated reconnect substitute only if it can exercise handle release without requiring a physical disconnect
+- [x] **ENG-006.3**: Final core/CLI hardware run, 2026-08-06, CorOS 4.0.1. **37/37 checks passed.** Device identity, direct/session equality, 3.8 s subscribed handshake, enumeration, catalog lookup, daemon lifecycle and live cache, scratch recall and pre-edit save preparation, block placement, parameter write, unknown-parameter refusal, save/list/live-grid/recall read-back, scene switch/reset, block removal, delete, output JSON, final `1A` restore, and daemon shutdown all passed. Earlier failed runs directly found PROT-009.3, the two-connection daemon deadlock, compact-view deserialisation drift, `device probe` bypassing daemon routing, the recall `input_control` cache delta, and asynchronous read-back assumptions; each was fixed before the passing run
 
 ## Future
 
 - **FUTURE-001**: Nano Cortex hardware verification - third-party macOS observation records provisional VID:PID `152A:88E7` and 65-byte HID reports, not the Quad Cortex's 129. Its HID interface opened but emitted no passive reports; nobody has shown it speaking this protobuf/trailer protocol. Plug in a Nano, verify the transport and handshake rather than assuming a shared shape, then replace the `0xFFFF` sentinel and promote `DeviceKind::NanoCortex` only if the evidence supports it ([prior-art.md](prior-art.md#what-it-says-about-the-nano-cortex-and-one-contradiction))
 - **FUTURE-002**: Nano Cortex BLE protocol - the Nano uses BLE for control telemetry; `deskop-nano-cortex` has a provisional decode (Apache-2.0) whose field map credits `choldy/nano-cortex-web-editor` (MIT). Any adaptation carries both attributions ([prior-art.md](prior-art.md#an-additional-project-not-vendored))
-- **FUTURE-003**: Tauri desktop GUI (zone 400) - React + Mantine + Vite, a consumer of the crate; use Tauri MCP to tighten the feedback loop
+- **FUTURE-003**: Cross-platform GUI completion and distribution - connect the existing Tauri + React + Mantine first draft to the daemon/core, then package and verify Linux, Windows and macOS; use Tauri MCP to tighten the feedback loop
 - **FUTURE-004**: On-device builds (qc-stomp-tools ioctl route) - only if there is a compelling reason; the USB route is preferred
 - **FUTURE-005**: Protocol-version probe - surface a CorOS version check rather than hard-coding assumptions, since the protocol has no version field on the wire
 - **FUTURE-006**: Conformance suite - port pyquadcortex's offline test suite as a Rust integration test reference

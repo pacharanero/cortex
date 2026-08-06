@@ -44,9 +44,9 @@ fn main() -> ExitCode {
 
 ### Design choice: behaviour in the crate, not the binary
 
-The `cortex` binary, the `cortex-mcp` server, and the future Tauri backend are three surfaces over one crate. If protocol or domain logic lived in `main.rs`, the MCP server would have to reimplement it or depend on the CLI binary (which is wrong). Keeping `main.rs` thin is what makes the crate the single implementation.
+The `cortex` binary, the `cortex-mcp` server, and the Tauri backend are three surfaces over one crate. If protocol or domain logic lived in `main.rs`, the sibling surfaces would have to reimplement it or depend on the CLI binary (which is wrong). Keeping `main.rs` thin is what makes the crate the single implementation.
 
-Today `cmd_version()` calls `Transport::open` and `Transport::request` directly because the client layer (150) is not yet implemented. Once `QuadCortex::version()` lands, `cmd_version()` becomes a one-liner delegation. This is the only place the CLI reaches below the client layer, and it is a temporary state.
+Ordinary commands call `QuadCortex` directly or send typed requests to the persistent daemon. Direct transport access is reserved for deliberately unconnected diagnostics and trace decoding; it is never used to duplicate domain behaviour.
 
 ### Alternatives considered
 
@@ -57,36 +57,7 @@ Today `cmd_version()` calls `Transport::open` and `Transport::request` directly 
 
 ### Behaviour
 
-The command tree is a clap derive enum:
-
-```rust
-#[derive(Parser, Debug)]
-#[command(
-    name = "cortex",
-    version,
-    about,
-    long_about = None,
-    propagate_version = true,
-    subcommand_required = false,
-    arg_required_else_help = true,
-)]
-struct Cli {
-    #[command(subcommand)]
-    command: Option<Command>,
-}
-
-#[derive(Subcommand, Debug)]
-enum Command {
-    /// Read the device firmware version (CorOS, app, bootloader, zencoder).
-    Version,
-    /// Print shell completions to stdout.
-    Completions {
-        /// The shell to generate completions for.
-        #[arg(value_enum)]
-        shell: clap_complete::Shell,
-    },
-}
-```
+The clap derive tree is noun-then-verb: `session`, `preset`, `setlist`, `grid`, `block`, `row` and `device` group the operations a player recognises. `catalog`, `scene`, `completions`, `version` and trace decoding complete the current surface. The generated [CLI reference](../../docs/cli-reference.md) is the authoritative command inventory.
 
 ### Design choice: `arg_required_else_help = true`
 
@@ -96,9 +67,9 @@ A bare `cortex` prints help and exits successfully. This is the house-style rule
 
 clap's `subcommand_required = true` exits with a non-zero code and a "missing subcommand" error. The house-style wants a bare invocation to be helpful, which means printing help and exiting successfully. `Option<Command>` with `arg_required_else_help = true` gives both: clap prints help before `parse()` returns, and the `None` arm in `run()` covers the case where `--help` was not triggered.
 
-### Planned commands
+### Device routing
 
-The planned commands (`recall`, `scene`, `dump-preset`, `list-presets`, `list-folders`) are variants on the same pattern: a clap struct with path/slot/index args, a `run()` that opens a `QuadCortex` client and calls the corresponding method, and a print function that honours `--format`. They will be added as variants to `Command` once the client layer (150) lands.
+`cortex session start` owns one subscribed connection and serves typed line-delimited requests over an owner-only Unix socket. Ordinary commands use it when available and otherwise open one bounded direct session. The socket is claimed before the handshake so a second process cannot race startup and wedge the device. Cached values are served only while their generation is usable; missing values fall back to explicit reads.
 
 ### Design choice: `--format` as a global flag
 
@@ -113,21 +84,11 @@ A global `--format text|json` flag on `Cli` (not per-command) is the house-style
 
 ### Behaviour
 
-`cortex device version` is the one implemented command that touches the device. It opens a `Transport`, builds a `VersionMessage{action: READ}`, encodes it with `prost`, calls `Transport::request`, decodes the reply, and prints every field as YAML-like text to stdout.
+`cortex device version` is the cheapest hardware diagnostic. It can read the version without the full subscribed handshake, while ordinary commands use the client/daemon paths.
 
-### Design choice: direct transport call (temporary)
+### Design choice: minimal unconnected diagnostic
 
-The `version` command works without the full connect handshake - a plain Version READ gets a reply. This is why it can call `Transport::request` directly today, before the session (140) and client (150) layers exist. Once `QuadCortex::version()` lands, `cmd_version()` switches to:
-
-```rust
-fn cmd_version(client: &QuadCortex, format: Format) -> Result<()> {
-    let v = client.version(Duration::from_secs(10))?;
-    match format {
-        Format::Text => print_version_text(&v),
-        Format::Json => print_version_json(&v),
-    }
-}
-```
+The device answers a plain Version READ without the full connect handshake. Keeping a minimal diagnostic path distinguishes connection/permission failures from handshake failures and avoids paying several seconds when only identity is needed. It still refuses to open while the daemon owns HID.
 
 ### Design choice: YAML-like text, not structured YAML
 
@@ -148,9 +109,9 @@ The current `print_version` function prints `label: value` lines, one per field,
 
 Completions are generated from `Cli::command()` - the same tree clap parses against. This means completions cannot drift from the actual command surface. The moment a new subcommand is added to the `Command` enum, completions include it with no manual step.
 
-### Design choice: print to stdout, not install
+### Design choice: print and install from the live tree
 
-The current interface is `completions <shell>` (print to stdout), which is the stable interface for package managers and scripting. The house-style ideal adds `completions install [--shell <shell>] [--dir <path>]` as the human interface. That is a planned follow-up (see [Future](spec.md#future)).
+`completions <shell>` prints to stdout for package managers and scripting. `completions install` detects or accepts a shell and writes the conventional user completion filename without editing shell startup files.
 
 ## [DES-SIGPIPE] SIGPIPE reset
 
@@ -188,7 +149,7 @@ Data goes on stdout; everything else (hints, progress, errors) goes on stderr. `
 
 ### Design choice: `eprintln` for errors, `println` for data
 
-This is the single most important composability rule. The current `print_version` function uses `println!` exclusively; errors in `run()` go through `eprintln!`. Once `--format json` lands, the JSON output goes on stdout and any human-readable hints ("opening device...", "request timed out") go on stderr.
+This is the single most important composability rule. Text and JSON results go to stdout; connection phases, progress and warnings go to stderr. The 37-check hardware smoke parses JSON output through `jq`, so this contract is exercised end to end.
 
 ### Alternatives considered
 
@@ -211,9 +172,7 @@ The schema is generated from the same `Cli::command()` tree that drives parsing 
 
 ## [DES-LIMITS] Known Limitations
 
-- **No `--format` flag yet.** The current `version` command prints text only. The global `--format text|json` flag and JSON output are planned.
 - **No `--schema` yet.** Machine discoverability is planned but not implemented.
-- **Direct transport call in `version`.** `cmd_version()` calls `Transport::request` directly, bypassing the session and client layers. This is temporary; it switches to `QuadCortex::version()` once 150 lands.
-- **No `completions install`.** Only `completions <shell>` (print-to-stdout) is implemented. The human-friendly `install` subcommand is planned.
-- **No `--dry-run`.** No mutating commands are implemented yet; `--dry-run` follows when they land.
-- **No progress bars.** No long-running commands are implemented yet; `indicatif` on stderr follows when `dump-preset` / `list-presets` land.
+- **No uniform `--dry-run`.** Mutating commands are guarded according to their risk, but there is no global plan-only mode.
+- **The daemon is Unix-socket based.** Linux is the verified CLI host; a cross-platform host/IPC strategy is still needed for Windows GUI support.
+- **The command implementation remains concentrated in `main.rs`.** Behaviour is in the crate, but command-family modules may become worthwhile as the surface grows.

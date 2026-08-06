@@ -141,14 +141,14 @@ Dependabot's cargo ecosystem needs each `Cargo.toml` listed. The workspace root 
 - **No grouping.** Rejected: one PR per dep is spam; grouping the routine ones keeps the signal high.
 - **Group major updates too.** Rejected: a major bump needs individual review and a dedicated changelog note.
 
-## [DES-RELEASE] Release pipeline (planned)
+## [DES-RELEASE] Release pipeline (partial)
 
 ### Behaviour
 
-The release pipeline is not yet wired. The plan, following house-style distribution.md:
+The release pipeline is partly wired. `s/version++` and auto-tag exist; the remaining plan follows house-style distribution.md:
 
-1. **`s/version++`** (zone 500) bumps the canonical version in `Cargo.toml` (and, once they exist, `gui/package.json`, `tauri.conf.json`) in one release commit.
-2. **Auto-tag workflow** detects the version bump on `main` (or is triggered by the `s/version++` commit message) and creates a `vX.Y.Z` tag.
+1. **`s/version++`** (zone 500) bumps the canonical Rust workspace version in one release commit. GUI manifest synchronization remains outstanding.
+2. **Auto-tag workflow** detects the version bump on `main` and creates a `vX.Y.Z` tag. Implemented.
 3. **crates.io publish workflow** is gated on the `vX.Y.Z` tag. It runs `cargo publish --dry-run` in CI, then `cargo publish` for `cortex-rs` (and later `cortex-cli`). Requires approval before first use (AGENTS.md).
 4. **`cargo-dist`** is gated on the `vX.Y.Z` tag. It builds distributable `cortex` binaries for the supported targets (Linux-first) and attaches them to the GitHub Release.
 5. **GitHub Release** is created from the tag with changelog notes (from `cargo-dist` or a `CHANGELOG.md`).
@@ -163,7 +163,7 @@ Per AGENTS.md, publishing to crates.io, cutting a release tag, and any externall
 
 ### Design choice: `cargo-dist` for binaries
 
-`cargo-dist` produces distributable binaries from a release tag. For the `cortex` CLI, it builds `x86_64-unknown-linux-gnu` (and maybe `aarch64-unknown-linux-gnu`) binaries and attaches them to the GitHub Release as tarballs. For the Tauri GUI (zone 400, deferred), `cargo-dist` or Tauri's own bundler produces `.AppImage`/`.deb` artifacts.
+`cargo-dist` produces distributable binaries from a release tag. For the `cortex` CLI, it builds Linux binaries and attaches them to the GitHub Release as archives. The cross-platform Tauri GUI will use Tauri's bundler or an integrated release path for Linux, Windows and macOS once those hosts are supported and verified.
 
 ### Alternatives considered
 
@@ -173,9 +173,9 @@ Per AGENTS.md, publishing to crates.io, cutting a release tag, and any externall
 
 ## [DES-LIMITS] Known Limitations
 
-- **No release pipeline yet.** Auto-tag, crates.io publish, and `cargo-dist` are planned, not implemented.
+- **Release pipeline is incomplete.** Auto-tag exists; crates.io publish, `cargo-dist`, GitHub Release generation and GUI bundles are not implemented.
 - **No `CHANGELOG.md`.** Changelog generation is undecided (cargo-dist auto vs. hand-maintained per house-style docs.md).
 - **Linux-only CI.** No macOS/Windows matrix; the project is Linux-first and the USB HID transport is the focus.
 - **No hardware smoke in CI.** CI has no hardware; the hardware smoke runbook is manual.
-- **No frontend CI.** The GUI is deferred (zone 400); frontend lint/typecheck and Tauri build CI land when `gui/` exists.
+- **No frontend CI.** The GUI exists, but frontend lint/typecheck and Tauri build jobs are not wired into CI.
 - **`s/test` does not run the no-default-features test path.** CI runs `cargo test --all --no-default-features`; the local `s/test` currently runs all-features only (zone 500 gap).

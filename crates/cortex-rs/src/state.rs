@@ -572,6 +572,25 @@ fn apply_recall_preset(
     revision: u64,
     message: RecallPresetMessage,
 ) -> Apply {
+    if crate::session::trace_enabled() {
+        eprintln!(
+            "cortex-trace: RecallPreset state action={} reason={:?} chains={} rows={:?}",
+            message.action,
+            message.reason,
+            message.preset.as_ref().map_or(0, |preset| {
+                let crate::proto::recall_preset_message::Preset::Preset(preset) = preset;
+                preset.chains.len()
+            }),
+            message.preset.as_ref().map(|preset| {
+                let crate::proto::recall_preset_message::Preset::Preset(preset) = preset;
+                preset
+                    .chains
+                    .iter()
+                    .map(|chain| chain.row)
+                    .collect::<Vec<_>>()
+            })
+        );
+    }
     let saved = message.reason.as_ref().is_some_and(|reason| {
         let crate::proto::recall_preset_message::Reason::Reason(reason) = reason;
         *reason == crate::proto::recall_preset_reason::Enum::Save as i32
@@ -617,6 +636,12 @@ fn apply_scene(inner: &mut StateInner, revision: u64, message: SceneMessage) -> 
 }
 
 fn apply_preset_dirty(inner: &mut StateInner, revision: u64, message: PresetDirtyMessage) -> Apply {
+    if crate::session::trace_enabled() {
+        eprintln!(
+            "cortex-trace: PresetDirty state action={} dirty={}",
+            message.action, message.is_dirty
+        );
+    }
     if message.action != MessageAction::Update as i32 {
         return Apply::Ignored;
     }
@@ -774,6 +799,9 @@ fn apply_grid(inner: &mut StateInner, revision: u64, message: GridMessage) -> Ap
         return Apply::Ignored;
     };
     let Some(current) = inner.current_preset.as_ref() else {
+        if crate::session::trace_enabled() {
+            eprintln!("cortex-trace: rejecting Grid: no full preset baseline");
+        }
         invalidate_current(
             inner,
             "Grid delta arrived before a full preset baseline".into(),
@@ -787,6 +815,9 @@ fn apply_grid(inner: &mut StateInner, revision: u64, message: GridMessage) -> Ap
             Apply::Applied
         }
         Err(reason) => {
+            if crate::session::trace_enabled() {
+                eprintln!("cortex-trace: rejecting Grid: {reason}");
+            }
             invalidate_current(inner, reason);
             Apply::Rejected
         }
@@ -891,7 +922,11 @@ fn merge_chain(
     extra.out_portid = None;
     extra.models.clear();
     extra.split_control_points.clear();
+    extra.input_control.clear();
     if extra != Chain::default() {
+        if crate::session::trace_enabled() {
+            eprintln!("cortex-trace: unsupported Grid chain state: {extra:?}");
+        }
         return Err(format!(
             "Grid delta changed unsupported state on wire row {row}"
         ));
@@ -917,6 +952,25 @@ fn merge_chain(
         target
             .split_control_points
             .clone_from(&delta.split_control_points);
+    }
+    if action == MessageAction::Delete as i32 && !delta.input_control.is_empty() {
+        return Err("DELETE Grid carried input-control state".into());
+    }
+    for (position, control) in delta.input_control.iter().enumerate() {
+        let target = target
+            .input_control
+            .get_mut(position)
+            .ok_or_else(|| format!("Grid input control addressed missing position {position}"))?;
+        let mut extra = control.clone();
+        extra.sidechain_source_flag = None;
+        if extra != Model::default() {
+            return Err(format!(
+                "Grid input control changed unsupported state at position {position}"
+            ));
+        }
+        if let Some(flag) = &control.sidechain_source_flag {
+            target.sidechain_source_flag = Some(*flag);
+        }
     }
 
     for model in &delta.models {
@@ -1248,6 +1302,34 @@ mod tests {
         assert!(values.iter().all(|value| {
             value.value == Some(crate::proto::param_value::Value::FloatValue(0.75))
         }));
+    }
+
+    #[test]
+    fn a_recall_input_control_flag_keeps_the_full_baseline_live() {
+        let mut preset = full_preset(false, false);
+        preset.chains[0].input_control.push(Model {
+            sidechain_source_flag: Some(model::SidechainSourceFlag::SidechainSourceFlag(true)),
+            ..Default::default()
+        });
+        let delta = BinaryPreset {
+            chains: vec![Chain {
+                row: Some(chain::Row::Row(0)),
+                input_control: vec![Model {
+                    sidechain_source_flag: Some(model::SidechainSourceFlag::SidechainSourceFlag(
+                        false,
+                    )),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+
+        let merged = merge_grid(&preset, &delta, MessageAction::Update as i32, Some(0)).unwrap();
+        assert!(matches!(
+            merged.chains[0].input_control[0].sidechain_source_flag,
+            Some(model::SidechainSourceFlag::SidechainSourceFlag(false))
+        ));
     }
 
     #[test]

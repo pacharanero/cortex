@@ -153,7 +153,7 @@ const HEARTBEAT_TYPES: &[MessageType] = &[MessageType::GlobalTempo, MessageType:
 /// The RX thread swallows errors by design (the benign write STALL, malformed
 /// frames, unknown message types), so without this a failure is invisible.
 /// Traces go to stderr so they can never corrupt a command's stdout.
-fn trace_enabled() -> bool {
+pub(crate) fn trace_enabled() -> bool {
     use std::sync::OnceLock;
     static ENABLED: OnceLock<bool> = OnceLock::new();
     *ENABLED.get_or_init(|| std::env::var("CORTEX_TRACE").is_ok_and(|v| !v.is_empty() && v != "0"))

@@ -153,10 +153,10 @@ pub struct Block {
     /// Neural DSP's own attribution, verbatim. Never paraphrase it.
     pub based_on: Option<String>,
     /// Parameter values as stored, when asked for. Empty otherwise.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub params: Vec<ParamValue>,
     /// Bypass state, when the preset carried one for this cell.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bypass: Option<Bypass>,
 }
 
@@ -174,7 +174,7 @@ pub struct ParamValue {
     pub value: ParamValueKind,
     /// Every stored value, when the parameter carries more than one - which
     /// is how a scene-following parameter is represented. Empty otherwise.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub per_scene: Vec<ParamValueKind>,
 }
 
@@ -535,5 +535,26 @@ mod tests {
         let slot = PresetSlot::from(&entry);
         assert_eq!(slot.slot, "3C");
         assert_eq!(slot.name, "Fictional Rig");
+    }
+
+    #[test]
+    fn compact_block_views_round_trip_without_optional_collections() {
+        let block = Block {
+            row: 0,
+            screen_row: 1,
+            column: 2,
+            model_id: 1001,
+            name: Some("Fictional Amp".into()),
+            category: Some("Guitar Amplifier".into()),
+            based_on: None,
+            params: Vec::new(),
+            bypass: None,
+        };
+        let value = serde_json::to_value(&block).unwrap();
+        assert!(value.get("params").is_none());
+        assert!(value.get("bypass").is_none());
+        let decoded: Block = serde_json::from_value(value).unwrap();
+        assert!(decoded.params.is_empty());
+        assert!(decoded.bypass.is_none());
     }
 }

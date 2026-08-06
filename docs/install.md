@@ -77,7 +77,7 @@ It also checks for the udev rule and prints the fix if it is missing.
     s/install --force     # reinstall over an existing copy
     s/install --debug     # faster build, slower runtime
     s/install --root ~/.local
-    s/install --mcp       # also install cortex-mcp (a scaffold; see below)
+    s/install --mcp       # also install the non-persistent cortex-mcp server
     ```
 
     Any other flags are passed through to `cargo install`.

@@ -4,9 +4,9 @@ An unofficial, Linux-first toolkit for the Neural DSP **Quad Cortex** over the
 Cortex Control USB HID protocol. **Nano Cortex** support is planned, but its
 transport compatibility is not yet established. The core deliverable is a
 low-level Rust crate (`cortex-rs`) that speaks the protocol and exposes a typed
-domain model - presets, scenes, grid, blocks. On top of the crate sit a CLI
-(`cortex`), an MCP server (`cortex-mcp`) for agentic patch editing, and a
-planned Tauri desktop GUI.
+domain model - presets, scenes, grid, blocks. The planned product has three
+surfaces over that crate: the `cortex` CLI, a `cortex-mcp` server for agentic
+patch editing, and a cross-platform Tauri desktop GUI.
 
 > **Unofficial.** This project is not affiliated with, endorsed by, or
 > sponsored by Neural DSP Technologies. "Neural DSP", "Quad Cortex", "Nano
@@ -18,12 +18,17 @@ planned Tauri desktop GUI.
 
 ## Status
 
-Pre-alpha, with the Quad Cortex core and CLI usable on Linux. Transport,
-framing, session/correlation, the typed client, live subscribed state,
-reconnecting session daemon, CLI read/edit operations, and shared prepared-save
-safety are implemented. The MCP binary remains a scaffold and the Tauri GUI
-has not started. See `AGENTS.md` for the current architecture and
-`spec/roadmap.md` for outstanding work.
+**Pre-alpha and actively changing.** The Quad Cortex core and CLI are usable on
+Linux and passed a 37-check hardware smoke against CorOS 4.0.1, including live
+state, grid editing, prepared save, recall and delete. This is not a finished
+editor: much of the wider device API remains unimplemented, reconnect and save
+correctness gaps remain tracked, and releases are not yet distributed.
+
+The MCP server exposes hardware-verified read, recall, scene and unsaved live-grid editing tools through the held-session daemon; it deliberately exposes no save or delete tool. The Tauri GUI has an
+interactive read-only, fixture-backed first draft, but it is not connected to
+the device. Linux is the only hardware-verified host today; the GUI is intended
+to support Linux, Windows and macOS once those platforms are implemented and
+tested. See `spec/roadmap.md` for the exact current state and next milestone.
 
 ## What it is
 
@@ -33,10 +38,11 @@ has not started. See `AGENTS.md` for the current architecture and
   drive every host surface without depending on one.
 - `cortex-cli` - a thin CLI over the crate, including a persistent daemon that
   owns the one device connection and reconnects without serving stale state.
-- `cortex-mcp` - an MCP server for agentic patch editing. The shared save policy
-  exists in `cortex-rs`; MCP tools and their opaque preparation-token registry
-  are not wired yet.
-- `gui/` (planned) - a Tauri 2 desktop app, a consumer of the crate.
+- `cortex-host` - the shared synchronous daemon contract and Unix-socket client used by host surfaces; it has no HID feature and cannot open the device.
+- `cortex-mcp` - an MCP server for agentic patch editing through `cortex session`. Its read, recall, scene and working-copy tools are hardware-verified; persistent writes remain deliberately unavailable.
+- `gui/` - a Tauri 2 + React + Mantine first draft. It is currently an
+  interactive, fixture-backed read-only demo; daemon/device integration and
+  cross-platform packaging are planned.
 
 ## What it is not
 
@@ -83,9 +89,10 @@ cargo run -p cortex-cli -- device version
 crates/
   cortex-rs/    The leaf crate (transport, framing, session, client, live state,
                 save safety, typed domain model, vendored protobuf schema).
+  cortex-host/  Shared held-session daemon contract and Unix-socket client.
   cortex-cli/   The `cortex` CLI - a thin surface over the crate.
-  cortex-mcp/   The `cortex-mcp` MCP server (tool wiring scaffold).
-gui/           Planned: Tauri 2 desktop app (React + Mantine + Vite).
+  cortex-mcp/   Non-persistent MCP read, recall, scene and live-grid tools.
+gui/           Tauri 2 + React + Mantine demo (fixture-backed, no device IPC).
 docs/          Protocol notes, runbooks, GUI docs.
 spec/          Living spec/design per zone; roadmap and completed work ledgers.
 s/             Repo scripts: s/test, s/lint, s/gui-dev, s/version++ ...

@@ -57,7 +57,6 @@
 #![warn(missing_docs)]
 #![warn(clippy::all, clippy::pedantic)]
 
-pub mod daemon;
 pub mod device;
 pub mod framing;
 pub mod grid;
@@ -85,7 +84,6 @@ pub mod proto {
 
 pub use catalog::{Catalog, Model, Parameter, ParameterKind};
 pub use client::{ParameterInput, ParameterTarget, ParameterWrite, Placement, QuadCortex};
-pub use daemon::{DAEMON_PROTOCOL_VERSION, PrepareSaveResult, Request, Response, SavePolicySpec};
 pub use device::DeviceKind;
 pub use framing::{Flags, Frame, FrameReassembler, ReportId};
 pub use grid::{Row, Value};

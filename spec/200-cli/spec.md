@@ -11,15 +11,15 @@ tags: ["cli", "cortex", "clap", "completions", "version", "format", "rust-cli"]
 
 # 200 CLI - Spec
 
-> The `cortex` command-line surface: a thin wrapper over the `cortex-rs` crate. All protocol and domain behaviour lives in the library; the binary adds only argument parsing, shell completions, output formatting, and the version command.
+> The `cortex` command-line surface: a thin, usable pre-alpha wrapper over the `cortex-rs` crate. It provides noun-then-verb read/edit/save commands and a persistent held-session daemon; all protocol, domain and save-policy behaviour remains in the library.
 
 ## References
 
 - [001-overview spec](../001-overview/spec.md) - governing spec, traceability contract, routing index entry for this zone.
 - [001-overview design](../001-overview/design.md) [DES-ARCH] - the flow map this surface sits at the top of (`[Flow.CLI]`).
-- [100-transport spec](../100-transport/spec.md) - the transport the `version` command opens directly today (will switch to the client layer once 150 lands).
-- [130-domain-model spec](../130-domain-model/spec.md) - `DeviceKind`, `Message` types the CLI decodes.
-- [150-client spec](../150-client/spec.md) - the planned `QuadCortex` client API the future commands (`recall`, `scene`, `dump-preset`, `list-presets`) will call.
+- [100-transport spec](../100-transport/spec.md) - the HID transport, including exclusive ownership.
+- [130-domain-model spec](../130-domain-model/spec.md) - typed catalog, preset, cache and output views.
+- [150-client spec](../150-client/spec.md) - the implemented `QuadCortex` API the command surface calls.
 - [house-style rust-cli.md](https://github.com/marcus-pacharanero/house-style/blob/main/rust-cli.md) - the CLI shape rules this surface follows.
 - [pyquadcortex qcctl](https://github.com/stokes-audio/pyquadcortex) - the MIT-licensed CLI whose command surface informs the planned commands.
 - Owned source: `crates/cortex-cli/src/main.rs`, `crates/cortex-cli/Cargo.toml`.
@@ -86,25 +86,30 @@ Linux users with a Quad Cortex, script writers, AI coding agents driving the CLI
 | FR-7 | Every command carries a short `///` doc-comment used as the clap `about`, so `--help`, completions, and generated docs have no blank rows. | Must Have |
 | FR-8 | Errors print to stderr as `cortex: {e:#}` and the process exits with `ExitCode::FAILURE`; data never touches stderr. | Must Have |
 
-#### Planned
+#### Implemented command surface
 
 | ID | Requirement | Priority |
 | --- | --- | --- |
 | FR-10 | A global `--format text\|json` flag (default `text`) is honoured by every command. `text` is for humans; `json` is for scripts and agents. `cortex device version --format json` emits structured version output. | Must Have |
 | FR-11 | `cortex preset recall --setlist <path> --slot <slot>` recalls a preset on the device (delegates to `QuadCortex::recall_preset`). | Must Have |
 | FR-12 | `cortex scene --index <n>` switches the active scene (delegates to `QuadCortex::switch_scene`). | Must Have |
-| FR-13 | `cortex dump-preset --setlist <path> --slot <slot>` recalls a preset and prints the full `BinaryPreset` to stdout (text summary by default, JSON with `--format json`). | Must Have |
-| FR-14 | `cortex list-presets --setlist <path>` lists presets in a setlist (delegates to `QuadCortex::list_presets`). | Must Have |
-| FR-15 | `cortex list-folders` lists all folders the device knows (delegates to `QuadCortex::list_folders`). | Should Have |
+| FR-13 | `cortex preset show --setlist <path> --slot <slot>` recalls a preset and prints a typed summary (text by default, JSON with `--format json`). | Must Have |
+| FR-14 | `cortex preset list --setlist <path>` lists presets in a setlist (delegates to `QuadCortex::list_presets`). | Must Have |
+| FR-15 | `cortex setlist list` lists folders the device knows (delegates to `QuadCortex::list_folders`). | Should Have |
+| FR-17 | Ordinary commands delegate to `QuadCortex` directly or through the held daemon; the fast unconnected version diagnostic remains deliberately minimal. | Should Have |
+
+#### Planned
+
+| ID | Requirement | Priority |
+| --- | --- | --- |
 | FR-16 | `cortex --schema` / `cortex --print-schema` emits a JSON Schema of command inputs - the authoritative input contract for scripts and agents. | Should Have |
-| FR-17 | Once the client layer (150) lands, `cortex device version` switches from calling `Transport::request` directly to calling `QuadCortex::version()`. | Should Have |
 
 #### Persistent session
 
 | ID | Requirement | Priority |
 | --- | --- | --- |
 | FR-18 | `cortex session start` claims its owner-only Unix socket before opening the exclusive HID interface, performs one subscribed handshake, and serves line-delimited JSON requests until stopped. | Must Have |
-| FR-19 | Every ordinary device command uses the daemon when it is running and falls back to one direct minimal session otherwise. The explicit `device probe` and `device version --session` diagnostics remain direct and refuse while the daemon owns the interface. | Must Have |
+| FR-19 | Every ordinary device command uses the daemon when it is running and falls back to one direct session otherwise. Diagnostics that can use held state, including `device probe`, route through it; no command opens a second HID connection while the daemon owns the interface. | Must Have |
 | FR-20 | The daemon serves only responsive `Live` cache entries, falls back to explicit reads for missing state, and reports cache phase/generation/revision and reducer counters in `session status`. | Must Have |
 | FR-21 | A background liveness monitor invalidates state before replacing a silent session, closes the old handle before opening another, retries the full subscribed handshake with exponential backoff capped at 30 seconds, and exposes connected/reconnecting/failed status. | Must Have |
 | FR-22 | Requests received during reconnect fail immediately with the attempt and last error; status and shutdown remain available. | Must Have |
@@ -138,25 +143,24 @@ Linux users with a Quad Cortex, script writers, AI coding agents driving the CLI
 
 - **Protocol or domain logic.** Owned by the crate (zones 100-150). The CLI calls the crate's public API; it does not reimplement framing, protobuf, or the client surface.
 - **The MCP server.** Owned by zone 300. The CLI and MCP server are sibling surfaces over the same crate.
-- **The Tauri GUI.** Owned by zone 400 (deferred).
+- **The Tauri GUI.** Owned by zone 400; it is a sibling surface over the same crate and daemon contract.
 - **Interactive editing.** The CLI is batch-oriented (parse, call, print). A REPL or interactive TUI is out of scope; the GUI owns interactive editing.
 
 ## Dependencies
 
-- **`cortex-rs`** (workspace path) - the crate whose `QuadCortex`, `Session`, daemon contract, state cache and typed views the CLI calls. The fast one-shot version path deliberately uses `Transport` only when no daemon owns the interface.
+- **`cortex-rs`** (workspace path) - the crate whose `QuadCortex`, `Session`, daemon contract, state cache, save policy and typed views the CLI calls.
 - **`clap`** (derive) - argument parsing.
 - **`clap_complete`** - shell completions from the live command tree.
 - **`anyhow`** - the binary's error type.
-- **`prost`** - protobuf encode/decode for the `version` command's direct transport call (will be hidden behind the client layer once 150 lands).
+- **`prost`** - protobuf encode/decode for direct diagnostics and trace tooling.
 - **`serde_json`** - JSON output and the line-delimited daemon contract.
 - **house-style rust-cli.md** - the shape rules this surface follows (thin main, clap derive, data on stdout, SIGPIPE reset, completions, `--format`, `--schema`).
 
 ## Future
 
 - **`--format yaml`.** A third format option for the global flag, if the need arises. JSON covers the script/agent case; YAML is a human-friendly middle ground.
-- **`cortex completions install`.** The house-style ideal is `completions install [--shell <shell>] [--dir <path>]` that detects the current shell, writes the file to the standard user completion directory, and prints any one-time shell config. The current `completions <shell>` (print-to-stdout) is the packaging fallback; `install` is the human interface.
-- **`--dry-run` on mutating commands.** Once `recall` and `scene` land, a global `--dry-run` that prints the plan without touching the device follows the house-style pattern.
-- **Progress on long-running commands.** `dump-preset` and `list-presets` may take a second or more over USB; an `indicatif` progress bar on stderr (auto-hidden when not a TTY) follows the house-style pattern.
+- **`--dry-run` on mutating commands.** Mutations are implemented, but a uniform plan-only mode remains outstanding.
+- **Progress widgets on long-running commands.** The CLI prints phase progress to stderr today; auto-hiding count/byte bars may be worthwhile for operations with a known total.
 - **Registry-driven dispatch.** If the command surface grows large, a single registry driving the CLI, schema, and any MCP tool surface keeps them from drifting.
 
 ## Glossary

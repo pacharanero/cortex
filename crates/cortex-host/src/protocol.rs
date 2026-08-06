@@ -33,7 +33,7 @@
 
 use std::path::PathBuf;
 
-use crate::{RecallConsent, ScratchOverride};
+use cortex_rs::{RecallConsent, ScratchOverride};
 
 /// The daemon socket protocol version, checked by clients to detect skew
 /// after an upgrade leaves an old daemon running.
@@ -141,7 +141,7 @@ pub enum Request {
     },
     /// Write a parameter value.
     ///
-    /// Rows travel as a plain zero-based WIRE index, not a [`crate::Row`].
+    /// Rows travel as a plain zero-based WIRE index, not a [`cortex_rs::Row`].
     /// That type exists to keep wire rows and the 1-4 shown on screen from
     /// being interchangeable, and deriving `Deserialize` on it would let any
     /// integer off a socket become one - defeating the guard on a mistake
@@ -152,9 +152,9 @@ pub enum Request {
         /// Zero-based column.
         column: u32,
         /// Parameter index or display name.
-        target: crate::client::ParameterTarget,
+        target: cortex_rs::client::ParameterTarget,
         /// Normalised, real-unit, or string input.
-        input: crate::client::ParameterInput,
+        input: cortex_rs::client::ParameterInput,
         /// Write into this scene rather than the active one.
         scene: Option<u32>,
         /// Make the parameter follow scenes first.
@@ -260,7 +260,7 @@ pub enum Request {
 }
 
 /// A serialisable save policy specification, sent by the client and converted
-/// to a [`crate::safety::SavePolicy`] by the daemon. This exists because
+/// to a [`cortex_rs::safety::SavePolicy`] by the daemon. This exists because
 /// `SavePolicy` does not derive `Deserialize` - it validates at construction
 /// time, and a socket value should not bypass that.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -268,7 +268,7 @@ pub struct SavePolicySpec {
     /// The setlist configured as scratch space.
     pub scratch_setlist: String,
     /// Inclusive slot ranges within that setlist.
-    pub scratch_ranges: Vec<crate::safety::ScratchRange>,
+    pub scratch_ranges: Vec<cortex_rs::safety::ScratchRange>,
 }
 
 impl SavePolicySpec {
@@ -276,9 +276,9 @@ impl SavePolicySpec {
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::UnsafeSave`] if the spec is invalid.
-    pub fn to_policy(&self) -> crate::Result<crate::safety::SavePolicy> {
-        crate::safety::SavePolicy::new(&self.scratch_setlist, self.scratch_ranges.clone())
+    /// Returns [`cortex_rs::Error::UnsafeSave`] if the spec is invalid.
+    pub fn to_policy(&self) -> cortex_rs::Result<cortex_rs::safety::SavePolicy> {
+        cortex_rs::safety::SavePolicy::new(&self.scratch_setlist, self.scratch_ranges.clone())
     }
 }
 
@@ -289,7 +289,7 @@ pub struct PrepareSaveResult {
     /// actual `SavePreparation` under this key.
     pub token: String,
     /// Safe serialisable view of the preparation.
-    pub view: crate::safety::SavePreparationView,
+    pub view: cortex_rs::safety::SavePreparationView,
 }
 
 /// A response from the daemon.
@@ -317,11 +317,11 @@ impl Response {
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::Decode`] if the payload cannot be serialised,
+    /// Returns [`cortex_rs::Error::Decode`] if the payload cannot be serialised,
     /// which would be a bug in the caller rather than a protocol failure.
-    pub fn ok<T: serde::Serialize>(value: &T) -> crate::Result<Self> {
+    pub fn ok<T: serde::Serialize>(value: &T) -> cortex_rs::Result<Self> {
         let data = serde_json::to_value(value)
-            .map_err(|e| crate::Error::Decode(format!("serialising a response: {e}")))?;
+            .map_err(|e| cortex_rs::Error::Decode(format!("serialising a response: {e}")))?;
         Ok(Self::Ok { data })
     }
 
@@ -394,7 +394,7 @@ pub struct CacheStatus {
     /// Stored-preset mutation epoch in this generation.
     pub storage_revision: u64,
     /// Overall cache readiness.
-    pub phase: crate::CachePhase,
+    pub phase: cortex_rs::CachePhase,
     /// Whether the model catalog is held.
     pub catalog: bool,
     /// Whether a live grid is held.
@@ -473,8 +473,8 @@ mod tests {
         let request = Request::SetParam {
             row: 1,
             column: 2,
-            target: crate::ParameterTarget::Name("GAIN".into()),
-            input: crate::ParameterInput::Real(7.5),
+            target: cortex_rs::ParameterTarget::Name("GAIN".into()),
+            input: cortex_rs::ParameterInput::Real(7.5),
             scene: Some(3),
             promote: true,
             timeout_seconds: 15,
@@ -486,8 +486,8 @@ mod tests {
             Request::SetParam {
                 row: 1,
                 column: 2,
-                target: crate::ParameterTarget::Name(name),
-                input: crate::ParameterInput::Real(7.5),
+                target: cortex_rs::ParameterTarget::Name(name),
+                input: cortex_rs::ParameterInput::Real(7.5),
                 scene: Some(3),
                 promote: true,
                 timeout_seconds: 15,

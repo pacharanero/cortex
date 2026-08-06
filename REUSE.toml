@@ -24,6 +24,7 @@ path = [
     "**/*.txt",
     "**/*.json",
     "**/*.html",
+    "**/*.png",
     "**/Cargo.lock",
     "LICENSE",
     "**/LICENSE",

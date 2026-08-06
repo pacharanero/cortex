@@ -196,13 +196,21 @@ row 3 (screen row 4):
   col 5: Room (Reverb)
 ```
 
-!!! warning "`preset --slot` recalls the slot"
+!!! warning "`preset show --slot` recalls the slot"
 
     There is no side-effect-free way to read a **stored** preset: the device only emits one when it recalls it. So this changes what is loaded and what you hear, and discards any unsaved edit.
 
     To inspect what is loaded **right now** without disturbing it, use `cortex grid show`.
 
 ## Edit the grid
+
+If you intend to save the result, start a held session and prepare the destination **before** editing. Preparation recalls and backs up the target, so doing it afterwards would discard the grid you meant to save:
+
+```sh
+cortex session start
+cortex preset prepare-save --slot 31A --scratch-range 31A-31H
+# Keep the reported token, for example save-1.
+```
 
 ```sh
 cortex grid show --params        # what is loaded right now, no side effects
@@ -236,11 +244,15 @@ You can also give a value in the parameter's own units:
 cortex block param --row 1 --column 1 --param THRESHOLD --real -20
 ```
 
-!!! danger "Nothing is saved"
+!!! warning "Edits remain a working copy until committed"
 
-    Saving is not implemented. Every grid edit lives on the working grid until you recall another preset, which discards it. That makes experimenting safe today - and means you cannot yet keep anything you make.
+    Every grid edit lives on the working grid until you save or recall another preset. A recall discards the edits. To keep them, explicitly commit the destination token you reviewed before editing:
 
-`set-block` **verifies**. A block that does not fit the preset's DSP budget is accepted on the wire and simply is not there afterwards, with no error of any kind. So `cortex` waits for the device's echo naming the cell, and reports `BlockRefused` if none arrives.
+    ```sh
+    cortex preset save --token save-1 --name "My preset" --yes
+    ```
+
+`block set` **verifies**. A block that does not fit the preset's DSP budget is accepted on the wire and simply is not there afterwards, with no error of any kind. So `cortex` uses the device's echo as a fast path and reads the grid back when no echo arrives; it reports `BlockRefused` only when the grid confirms that the block is absent.
 
 ## Machine-readable output
 

@@ -5,7 +5,7 @@ the Neural DSP Quad Cortex (and, in time, the Nano Cortex). The core deliverable
 is a low-level leaf crate that speaks the Cortex Control USB HID protocol and
 exposes a typed domain model - presets, scenes, grid, blocks. On top of the
 crate sit a CLI (`cortex`), an MCP server (`cortex-mcp`) for agentic patch
-editing, and a planned Tauri desktop GUI. This project is not affiliated with
+editing, and a Tauri desktop GUI whose first draft is now scaffolded. This project is not affiliated with
 or endorsed by Neural DSP; it is an interoperability client for hardware whose
 vendor ships no Linux editor.
 
@@ -75,10 +75,11 @@ crates/
                 message envelope, typed domain model, vendored protobuf schema
                 built via prost.
   cortex-cli/   The `cortex` binary: thin main.rs, all behaviour in the crate.
-  cortex-mcp/   The `cortex-mcp` MCP server binary (scaffold; safety surface
-                designed in, tools not yet wired).
-gui/           Planned: Tauri 2 desktop app (React + Mantine + Vite), a
-                consumer of the crate.
+  cortex-host/  Shared synchronous daemon contract and Unix-socket client.
+  cortex-mcp/   The `cortex-mcp` MCP server: hardware-verified read, recall,
+                scene and live-grid tools; no persistent save/delete tools.
+gui/           Tauri 2 + React + Mantine first draft. Interactive and
+                fixture-backed; daemon/device IPC is not wired yet.
 docs/          Protocol notes, runbooks, GUI docs.
 spec/          Zone specs: spec.md (what it must do) + design.md (how, and why).
                NO tasks.md - progress lives in spec/roadmap.md (outstanding)
@@ -192,6 +193,7 @@ existing projects:
 
 ## Workflow
 
+- **Record missing capabilities.** If a development agent or an agent using the MCP server needs a `cortex` capability that does not exist, add it to `spec/roadmap.md` with a stable ID and enough context for another agent to implement it. Do not improvise around the missing operation or leave it only in chat.
 - `s/test` - run `cargo test` across the workspace.
 - `s/lint` - `cargo fmt --check`, clippy `-D warnings`, `reuse lint`.
 - `s/gui-dev` - run the Tauri dev server from any working directory (once

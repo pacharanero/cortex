@@ -14,12 +14,13 @@ Neural DSP's own editor, Cortex Control, runs on macOS and Windows. There is no 
 
 - **A leaf crate** implementing the USB HID transport, framing, protobuf envelope, session handshake, and a typed domain model. It depends on no host application and no async runtime, so one implementation can drive every surface.
 - **A CLI** for reading device state, browsing presets, searching the model catalog, and editing the grid.
-- **Planned**: an MCP server for agentic patch editing, and a Tauri desktop GUI.
+- **An MCP server** for agentic patch editing through the held-session daemon. Read, recall, scene and unsaved live-grid editing tools are hardware-verified; save and delete are not exposed.
+- **A Tauri GUI first draft**: an interactive, fixture-backed read-only demo. The intended desktop product is cross-platform, but only Linux hardware access has been verified so far.
 
 ## What it is not
 
 - **Not a replacement for Cortex Control.** It does not do cloud sync, firmware updates, or Neural Capture creation, and it is not trying to.
-- **Not finished.** Saving a preset is not implemented, which means every edit is currently transient.
+- **Not finished.** The CLI can save through a hardware-verified prepare/edit/commit flow and MCP can edit the unsaved live grid, but major device operations, persistent MCP writes, GUI device integration, cross-platform support and distribution remain unfinished.
 - **Not a jailbreak.** It talks to the device over USB exactly as the official editor does. It does not modify firmware, root the unit, or touch the SD card, and it carries none of the warranty risk that route does.
 
 ## Status
@@ -40,11 +41,11 @@ The project's central discipline is being honest about what has actually run aga
 | Model catalog | <span class="status verified">verified</span> |
 | Recall preset, switch scene | <span class="status verified">verified</span> |
 | Grid: place block, set parameter, remove block | <span class="status verified">verified</span> |
-| Grid: bypass, routing, per-scene values, splits | <span class="status provisional">provisional</span> |
-| Saving a preset | <span class="status planned">planned</span> |
+| Grid: bypass, routing, per-scene values, splits | <span class="status verified">verified</span> |
+| Prepared save, stored read-back and delete | <span class="status verified">verified</span> |
 | Capture and IR export/import | <span class="status planned">planned</span> |
-| MCP server | <span class="status planned">planned</span> |
-| Desktop GUI | <span class="status planned">planned</span> |
+| MCP server read, recall, scene and live-grid tools | <span class="status verified">verified; no save/delete tools</span> |
+| Desktop GUI | <span class="status provisional">fixture-backed first draft; no device IPC</span> |
 | Nano Cortex | <span class="status planned">planned</span> |
 
 ## Start here

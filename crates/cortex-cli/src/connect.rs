@@ -17,7 +17,10 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
-use cortex_rs::daemon::{CacheStatus, DeviceHealth, Request, Response, Status, socket_path};
+use cortex_host::{
+    CacheStatus, DAEMON_PROTOCOL_VERSION, DeviceHealth, PrepareSaveResult, Request, Response,
+    Status, log_path, socket_path,
+};
 use cortex_rs::{DeviceKind, QuadCortex, Session};
 
 /// How long a request may take before the daemon gives up on the device.
@@ -31,6 +34,10 @@ const HEALTH_POLL: Duration = Duration::from_secs(1);
 
 /// Reconnect starts quickly, then backs off to this ceiling while unplugged.
 const MAX_RECONNECT_BACKOFF: Duration = Duration::from_secs(30);
+
+/// Bound a caller waiting on a wedged daemon socket.
+#[cfg(test)]
+const SOCKET_REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
 
 #[derive(Clone, Copy)]
 struct ReconnectTimings {
@@ -293,7 +300,7 @@ impl Daemon {
                 slot,
                 factory,
             } => self.respond(move |c| {
-                c.recall_preset(&setlist, &slot, factory)
+                c.recall_preset(&setlist, &slot, factory, REQUEST_TIMEOUT)
                     .map(|()| serde_json::json!({ "slot": slot }))
             }),
             Request::ListPresets {
@@ -467,7 +474,7 @@ impl Daemon {
                             .lock()
                             .unwrap()
                             .insert(token.clone(), (validated_policy, preparation));
-                        let result = cortex_rs::daemon::PrepareSaveResult { token, view };
+                        let result = PrepareSaveResult { token, view };
                         Response::ok(&result).unwrap_or_else(|e| {
                             Response::error(format!("serialising preparation: {e}"))
                         })
@@ -582,7 +589,7 @@ impl Daemon {
             RuntimeHealth::Failed { error } => DeviceHealth::Failed { error },
         };
         Status {
-            daemon_version: cortex_rs::daemon::DAEMON_PROTOCOL_VERSION.to_string(),
+            daemon_version: DAEMON_PROTOCOL_VERSION.to_string(),
             uptime_seconds: self.started.elapsed().as_secs(),
             device,
             cache: CacheStatus {
@@ -966,7 +973,7 @@ pub fn start_detached() -> Result<()> {
         );
     }
 
-    let log = cortex_rs::daemon::log_path();
+    let log = log_path();
     let file = std::fs::File::create(&log)?;
     let exe = std::env::current_exe()?;
 
@@ -1062,59 +1069,60 @@ fn answers_status(timeout: Duration) -> bool {
 /// mismatch (e.g. an old daemon survived an upgrade) produces an error naming
 /// the fix rather than a cryptic parse failure.
 pub fn request(request: &Request) -> Option<Result<serde_json::Value>> {
-    let path = socket_path();
-    let stream = UnixStream::connect(&path).ok()?;
+    cortex_host::request(request)
+}
 
-    Some((|| {
-        let mut writer = stream.try_clone()?;
+#[cfg(test)]
+fn request_on(stream: UnixStream, request: &Request) -> Result<serde_json::Value> {
+    stream.set_read_timeout(Some(SOCKET_REQUEST_TIMEOUT))?;
+    stream.set_write_timeout(Some(SOCKET_REQUEST_TIMEOUT))?;
+    let mut writer = stream.try_clone()?;
+    let mut reader = BufReader::new(stream.try_clone()?);
 
-        // Version gate: check the daemon's protocol version before sending
-        // a request it might not understand. An old daemon that survived an
-        // upgrade would otherwise misparse a new request shape.
-        let version_line = serde_json::to_string(&Request::Status)?;
-        let mut vl = version_line.clone();
-        vl.push('\n');
-        writer.write_all(vl.as_bytes())?;
-        writer.flush()?;
-        let mut status_reply = String::new();
-        BufReader::new(stream.try_clone()?).read_line(&mut status_reply)?;
-        let status: Response = serde_json::from_str(&status_reply)?;
-        let status_data = match status {
-            Response::Ok { data } => data,
-            Response::Error { message } => anyhow::bail!("{message}"),
-        };
-        let daemon_version: u32 = status_data
-            .get("daemon_version")
-            .and_then(|v| v.as_str())
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(0);
-        if daemon_version != cortex_rs::daemon::DAEMON_PROTOCOL_VERSION {
-            anyhow::bail!(
-                "daemon protocol version mismatch: client expects {}, daemon reports {}. \
+    // Version gate: check the daemon's protocol version before sending
+    // a request it might not understand. An old daemon that survived an
+    // upgrade would otherwise misparse a new request shape.
+    let version_line = serde_json::to_string(&Request::Status)?;
+    let mut vl = version_line.clone();
+    vl.push('\n');
+    writer.write_all(vl.as_bytes())?;
+    writer.flush()?;
+    let mut status_reply = String::new();
+    reader.read_line(&mut status_reply)?;
+    let status: Response = serde_json::from_str(&status_reply)?;
+    let status_data = match status {
+        Response::Ok { data } => data,
+        Response::Error { message } => anyhow::bail!("{message}"),
+    };
+    let daemon_version: u32 = status_data
+        .get("daemon_version")
+        .and_then(|v| v.as_str())
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
+    if daemon_version != DAEMON_PROTOCOL_VERSION {
+        anyhow::bail!(
+            "daemon protocol version mismatch: client expects {}, daemon reports {}. \
                  The daemon is older or newer than this CLI. \
                  Run `cortex session stop` to stop the old daemon, then retry.",
-                cortex_rs::daemon::DAEMON_PROTOCOL_VERSION,
-                daemon_version
-            );
-        }
+            DAEMON_PROTOCOL_VERSION,
+            daemon_version
+        );
+    }
 
-        // Now send the actual request on a fresh connection (the status
-        // connection's reader has consumed the reply).
-        let path = socket_path();
-        let stream2 = UnixStream::connect(&path)?;
-        let mut writer2 = stream2.try_clone()?;
-        let mut line = serde_json::to_string(request)?;
-        line.push('\n');
-        writer2.write_all(line.as_bytes())?;
-        writer2.flush()?;
+    // The daemon serves each accepted stream until EOF, so send the real
+    // request on this same stream. Opening a second connection while
+    // retaining the first deadlocks against that serial accept loop.
+    let mut line = serde_json::to_string(request)?;
+    line.push('\n');
+    writer.write_all(line.as_bytes())?;
+    writer.flush()?;
 
-        let mut reply = String::new();
-        BufReader::new(stream2).read_line(&mut reply)?;
-        match serde_json::from_str::<Response>(&reply)? {
-            Response::Ok { data } => Ok(data),
-            Response::Error { message } => anyhow::bail!("{message}"),
-        }
-    })())
+    let mut reply = String::new();
+    reader.read_line(&mut reply)?;
+    match serde_json::from_str::<Response>(&reply)? {
+        Response::Ok { data } => Ok(data),
+        Response::Error { message } => anyhow::bail!("{message}"),
+    }
 }
 
 #[cfg(test)]
@@ -1364,6 +1372,22 @@ mod tests {
             replies, 2,
             "a client may send several requests on one stream"
         );
+        daemon.shutdown();
+    }
+
+    #[test]
+    fn client_version_check_and_request_share_one_connection() {
+        let daemon = fake_daemon();
+        let (client, server) = UnixStream::pair().expect("socket pair");
+        std::thread::scope(|scope| {
+            let worker = scope.spawn(|| serve(&daemon, server));
+            let status = request_on(client, &Request::Status).expect("status request");
+            assert_eq!(
+                status["daemon_version"],
+                DAEMON_PROTOCOL_VERSION.to_string()
+            );
+            assert_eq!(worker.join().unwrap(), Control::Continue);
+        });
         daemon.shutdown();
     }
 

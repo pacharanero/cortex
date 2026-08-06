@@ -22,13 +22,13 @@ tags: ["ci", "release", "github-actions", "dependabot", "cargo-dist", "crates-io
 - [house-style dependencies.md](https://github.com/marcus-pacharanero/house-style/blob/main/dependencies.md) - the dependency-pinning conventions.
 - [500-dx-tooling spec](../500-dx-tooling/spec.md) - the local gate (`s/test`/`s/lint`) that mirrors this zone's CI workflow.
 - [900-project-governance spec](../900-project-governance/spec.md) - the license/REUSE lint this zone enforces in CI.
-- Owned source: `.github/workflows/ci.yml`, `.github/dependabot.yml`.
+- Owned source: `.github/workflows/`, `.github/dependabot.yml`.
 
 ## Problem Statement
 
 CI runs the full gate on every push and PR: formatting, clippy (all-features and no-default-features, both with `-D warnings`), tests (all-features and no-default-features), and the REUSE license lint. A green CI run is the gate to merge. The workflow uses pinned action SHAs with `# vX.Y.Z` comments (house-style), cached dependencies, and the minimal permissions (`contents: read`).
 
-Release is not yet wired. The plan: an auto-tag workflow (version bump on `main` -> tag -> release cascade), a crates.io publish workflow (gated on the tag, requiring approval per AGENTS.md), and a `cargo-dist` release pipeline for distributable binaries (the `cortex` CLI and, eventually, the Tauri GUI). All release actions are externally visible and require explicit approval before first use.
+Release is only partly wired. `s/version++` and the auto-tag workflow exist; crates.io publishing, `cargo-dist`, GitHub Release generation and GUI bundles do not. All release actions are externally visible and require explicit approval before first use.
 
 ## Verification Basis
 
@@ -42,7 +42,7 @@ Release is not yet wired. The plan: an auto-tag workflow (version bump on `main`
 | CI runs the REUSE license lint | Implemented | `.github/workflows/ci.yml` `reuse` job via `fsfe/reuse-action` |
 | Actions are pinned to SHA with `# vX.Y.Z` comments | Implemented | `actions/checkout@3d3c42e...# v7.0.1`, `dtolnay/rust-toolchain@e97e2d8...# v1`, `Swatinem/rust-cache@c193711...# v2.9.1`, `fsfe/reuse-action@676e2d5...# v6.0.0` |
 | Dependabot: cargo + github-actions, weekly, cooldown, grouping | Implemented | `.github/dependabot.yml` |
-| Auto-tag workflow | Planned | Not implemented |
+| Auto-tag workflow | Implemented | `.github/workflows/auto-tag.yml` |
 | crates.io publish workflow | Planned | Not implemented (requires approval per AGENTS.md) |
 | `cargo-dist` release pipeline | Planned | Not implemented |
 
@@ -88,12 +88,12 @@ Maintainers merging PRs, and the downstream consumers who install the crate or t
 | FR-8 | CI installs `protoc` (for `prost-build`) via `protobuf-compiler`. | Must Have |
 | FR-9 | CI caches the cargo registry/target via `Swatinem/rust-cache`. | Must Have |
 | FR-10 | Dependabot watches `cargo` (workspace + each crate) and `github-actions`, weekly, with a cooldown and routine-update grouping. | Must Have |
+| FR-20 | Auto-tag workflow: a version bump on `main` (via `s/version++`) produces a `vX.Y.Z` tag, which triggers the future release cascade. | Must Have |
 
 #### Planned
 
 | ID | Requirement | Priority |
 | --- | --- | --- |
-| FR-20 | Auto-tag workflow: a version bump on `main` (via `s/version++`) produces a `vX.Y.Z` tag, which triggers the release cascade. | Must Have |
 | FR-21 | crates.io publish workflow: gated on the release tag, publishes `cortex-rs` (and later `cortex-cli`) to crates.io. **Requires approval before first use** (AGENTS.md). | Must Have |
 | FR-22 | `cargo-dist` release pipeline: gated on the release tag, builds distributable `cortex` binaries for the supported targets and attaches them to the GitHub release. | Must Have |
 | FR-23 | The release tag triggers a GitHub Release with changelog notes. | Should Have |
@@ -116,7 +116,7 @@ Maintainers merging PRs, and the downstream consumers who install the crate or t
 - [x] Dependabot watches cargo + github-actions, weekly, with cooldown and grouping.
 - [x] CI uses `permissions: contents: read`.
 - [x] CI installs `protoc` and caches cargo.
-- [ ] Auto-tag workflow produces a `vX.Y.Z` tag on a version bump.
+- [x] Auto-tag workflow produces a `vX.Y.Z` tag on a version bump.
 - [ ] crates.io publish workflow publishes on the release tag (requires approval before first use).
 - [ ] `cargo-dist` produces distributable `cortex` binaries on the release tag.
 - [ ] The release tag produces a GitHub Release with changelog notes.
@@ -124,8 +124,8 @@ Maintainers merging PRs, and the downstream consumers who install the crate or t
 ## Non-Goals
 
 - **The local gate.** Owned by zone 500 (`s/test`, `s/lint`). This zone mirrors it in CI.
-- **The GUI CI.** The GUI is deferred (zone 400); frontend lint/typecheck and Tauri build CI land when `gui/` exists.
-- **A macOS/Windows matrix.** The project is Linux-first; the USB HID transport is the focus. A matrix may be worth it for the GUI eventually, not for the crate.
+- **The GUI CI.** The GUI exists, but frontend lint/typecheck, Tauri build matrices and bundle tests are not in CI yet.
+- **A macOS/Windows matrix.** The project is Linux-first today. Windows and macOS CI become required as the cross-platform GUI moves beyond its fixture-backed draft.
 - **Hardware smoke in CI.** CI has no hardware; the hardware smoke runbook is manual (AGENTS.md). This zone does not attempt to connect to a real Quad Cortex.
 
 ## Dependencies

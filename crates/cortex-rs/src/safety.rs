@@ -566,15 +566,23 @@ mod tests {
     }
 
     fn listing(name: Option<&str>) -> FileMessage {
+        let slot_count = i32::try_from(crate::client::SETLIST_SLOTS).unwrap();
+        let files = (0..slot_count)
+            .map(|index| ProductData {
+                index: Some(product_data::Index::Index(index)),
+                name: if index == 0 {
+                    name.map(|name| product_data::Name::Name(name.into()))
+                } else {
+                    None
+                },
+                ..Default::default()
+            })
+            .collect();
         FileMessage {
             action: crate::proto::message_action::Enum::Update as i32,
             folder: Some(file_message::Folder::Folder(FolderInfo {
                 key: Some(folder_info::Key::Key(USER.into())),
-                files: vec![ProductData {
-                    index: Some(product_data::Index::Index(0)),
-                    name: name.map(|name| product_data::Name::Name(name.into())),
-                    ..Default::default()
-                }],
+                files,
                 ..Default::default()
             })),
             ..Default::default()

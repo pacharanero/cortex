@@ -25,7 +25,7 @@ Needed because the obvious command does not work here: the workspace root has no
 - `s/install` - install `cortex`
 - `s/install --force` - reinstall over an existing copy
 - `s/install --debug` - faster build, slower runtime
-- `s/install --mcp` - also install `cortex-mcp` (currently a scaffold)
+- `s/install --mcp` - also install the non-persistent `cortex-mcp` tool server
 
 Also preflights the udev rule and prints the fix if it is missing.
 

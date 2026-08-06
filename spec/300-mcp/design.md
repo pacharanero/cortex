@@ -10,7 +10,7 @@ tags: ["mcp", "cortex-mcp", "safety-surface", "tool-model", "rmcp", "provisional
 spec: spec.md
 ---
 
-# 300 MCP - Design (stub)
+# 300 MCP - Design (next workstream)
 
 > Design for the `cortex-mcp` MCP server. The interesting part is not the tool list - it is the **safety surface** that gates destructive operations and surfaces the silent-failure traps an agent would not notice. The tool model is a thin wrapper over the client layer (150).
 
@@ -70,8 +70,8 @@ The old wording called `read_preset` immediately before the overwrite. That cann
 The safe workflow has a preparation phase before editing starts:
 
 1. List the target setlist and bind the preparation to its exact setlist, slot, listing entry, physical-session generation, and stored-preset mutation epoch.
-2. If the target is empty, record an empty-target preparation without recalling anything.
-3. If occupied, read it now, while replacing the working grid is still acceptable, and retain the returned `BinaryPreset`. A host that needs immediately restorable backups may additionally copy it to a configured empty backup slot.
+2. Recall/read the target now, while replacing the working grid is still acceptable, and retain the returned `BinaryPreset`. Do this even when the listing says empty because listings are eventually consistent and cannot prove emptiness.
+3. A host that needs immediately restorable backups may additionally copy the retained preset to a configured empty backup slot once that restoration path is verified.
 4. Recall/build the intended source and perform working-copy edits.
 5. `save_preset` re-lists the target, rejects any reconnect, stored-preset mutation, invalidated stream, or changed listing entry, then consumes the matching preparation plus an explicit confirmation. A stale preparation, a preparation for another slot, or no preparation for an occupied target is refused.
 
@@ -97,30 +97,20 @@ The traps are not errors - the device does not refuse a wrong-row edit or a too-
 
 ### Behaviour
 
-The server constructs one `Transport` at startup and holds it for the process lifetime. Every tool call reuses it. Opening a transport per tool call is a bug, not a pattern (see [100-transport design](../100-transport/design.md) [DES-EXCLUSIVE]).
+The first MCP milestone opens no `Transport`. It connects to the held `cortex session` daemon through a reusable host boundary extracted from `cortex-cli::connect`. Every tool call uses that typed request client, so the daemon remains the one process holding HID.
 
-### Design choice: construct at startup, hold for lifetime
+### Design choice: reuse the daemon, do not become another owner
 
-```rust
-fn main() -> anyhow::Result<()> {
-    let transport = Transport::open(DeviceKind::QuadCortex)?;
-    let session = Session::new(transport);
-    let client = QuadCortex::new(session);
-    let server = CortexMcpServer::new(client);
-    rmcp::serve_stdio(server)
-}
-```
-
-The `Transport`, `Session`, and `QuadCortex` are all held by the server for its lifetime. `rmcp` drives the event loop; each tool call borrows the `QuadCortex` and calls a method.
+`cortex-cli/src/connect.rs` currently contains both daemon ownership and the request client. Before MCP tool wiring, extract the host-facing request/lifecycle boundary into a reusable non-leaf crate or module. `cortex-rs` remains free of host IPC and async-runtime dependencies. The MCP process constructs one host client at startup, fails clearly when no compatible daemon is available, and serves stdio through `rmcp`.
 
 ### Design choice: no per-tool-call reconnect
 
-The shared `cortex session` owner now reconnects with a surfaced health state, generation invalidation, and bounded backoff. An MCP server may use that daemon contract or apply the same manager around its one owned session; it must not reopen per tool call. Tool calls made while replacement is in progress receive the reconnect attempt and last error rather than racing another HID owner.
+The shared `cortex session` owner reconnects with a surfaced health state, generation invalidation, and bounded backoff. MCP uses that contract rather than implementing a second manager. Tool calls made while replacement is in progress receive the reconnect attempt and last error rather than racing another HID owner.
 
 ### Alternatives considered
 
-- **Pool of transports.** Rejected: the HID interface does not multiplex. A pool of one is a held transport.
-- **Reopen per tool call.** Rejected: deadlocks against a concurrently-running CLI or against the server's own prior tool calls.
+- **MCP owns a second long-lived transport.** Rejected for the first milestone: it prevents CLI and GUI sharing and duplicates the reconnect manager.
+- **Pool or reopen per tool call.** Rejected: the HID interface does not multiplex, and a second open wedges the existing owner.
 - **Rely on `hidapi` open to enforce ownership.** Rejected by hardware: a second process opens without error and wedges the held session on its next request. The owner claims its socket before opening the interface and every other surface routes through it or refuses.
 
 ## [DES-TOOLS] Tool Model
@@ -128,6 +118,8 @@ The shared `cortex session` owner now reconnects with a surfaced health state, g
 ### Behaviour
 
 Each tool is a thin wrapper over a `QuadCortex` method. The tool parses its input (validated against `inputSchema`), calls the client method, and returns the result as JSON. The safety surface (above) gates the destructive tier.
+
+The first implementation milestone deliberately omits the destructive tier. Read, transient and working-copy tools are sufficient to research and build a preset in the live grid, and a recall reverses the experiment. `save_preset` appears only after the remaining PROT-009 correctness gaps and the MCP preparation-token registry pass hardware smoke.
 
 ### Design choice: one tool per client method, grouped by tier
 
@@ -165,7 +157,7 @@ Where a tool corresponds to a CLI command (e.g. `list_presets`, `recall_preset`,
 
 ### Behaviour
 
-The server uses the `rmcp` crate (workspace dependency, `server` + `transport-io` features) on a `tokio` runtime. The binary's `main()` constructs the `Transport` -> `Session` -> `QuadCortex` -> `CortexMcpServer` and hands it to `rmcp::serve_stdio`.
+The server uses the `rmcp` crate on a `tokio` runtime. Stable `rmcp` 3.1.0 still buffers an unterminated stdio line without a finite read limit, so `BoundedStdioTransport` supplies a 16 MiB line cap and limits aggregate work to eight in-flight requests until each response has been transmitted. The binary constructs the reusable daemon host client and `CortexMcp`, then serves that bounded transport through the official SDK.
 
 ### Design choice: rmcp over a hand-rolled JSON-RPC server
 
@@ -182,10 +174,10 @@ The server uses the `rmcp` crate (workspace dependency, `server` + `transport-io
 
 ## [DES-LIMITS] Known Limitations
 
-- **Everything in this zone is provisional.** The server is scaffolded (prints "not yet implemented"); no tools are wired. The safety surface is designed but not yet enforced.
+- **The non-persistent slice is hardware-verified.** Read, recall, scene and unsaved live-grid tools passed an official-client hardware smoke against CorOS 4.0.1 on 2026-08-06. Persistent writes remain absent.
 - **The client and persistent-session foundations now exist.** Tool wiring remains unimplemented, but it is no longer blocked on zone 150.
 - **No scratch-range host configuration mechanism yet.** `SavePolicy` validates host-supplied 1A-32H ranges without guessing a default; the MCP process still needs to obtain that policy from the user.
 - **Prepared-save token and backup retention are implemented in the shared crate.** The MCP server still needs an opaque token registry so it can retain `SavePreparation` between tool calls without serialising raw backups.
 - **Automatic restoration is not implemented.** The retained `BinaryPreset` can be persisted, but the device ignores an unkeyed whole-preset grid write. Restoration needs a separately verified device-side copy, import, or keyed replay path; hosts must not present the retained blob as one-click rollback yet.
-- **Reconnect policy for the MCP host is not selected.** The CLI daemon now has the correct generation-invalidating manager; the MCP process can reuse its socket contract or own one equivalent session, never both.
-- **Safety hardware smoke remains outstanding.** Fake-session tests pin empty-target, occupied-target, explicit-discard, confirmation, stale-generation, mutation-epoch, and changed-entry behaviour, but the save reason and listing refresh must still be observed on the unit.
+- **The reusable host boundary is extracted.** `cortex-host` owns the typed daemon protocol and synchronous short-lived Unix-socket client. It has no HID feature; CLI and MCP share it without putting host IPC into the leaf crate.
+- **Destructive MCP save is intentionally deferred.** PROT-009.1, PROT-009.5, PROT-009.6 and PROT-009.9 must close before the server exposes it.
