@@ -45,7 +45,10 @@
 
 set -uo pipefail
 
-ROOT="$(git rev-parse --show-toplevel)"
+# Locate this checkout from the script, not the caller's current directory.
+# Hardware checks are commonly invoked as `cortex/s/hardware-smoke` from the
+# parent workspace, which is not itself a Git checkout.
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BIN="${CORTEX_BIN:-cortex}"
 SETLIST="/media/p4/Presets/My Presets"
 SCRATCH_BANK=""
