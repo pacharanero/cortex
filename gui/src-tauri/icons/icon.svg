@@ -1,0 +1,10 @@
+<!-- SPDX-FileCopyrightText: 2026 Dr Marcus Baw -->
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="96" fill="#17181b"/>
+  <path d="M96 156h320v200H96z" fill="#f76707"/>
+  <path d="M132 192h248v128H132z" fill="#17181b"/>
+  <circle cx="174" cy="256" r="28" fill="#f76707"/>
+  <circle cx="256" cy="256" r="28" fill="#f76707"/>
+  <circle cx="338" cy="256" r="28" fill="#f76707"/>
+</svg>

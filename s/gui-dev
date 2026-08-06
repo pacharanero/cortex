@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Dr Marcus Baw
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# Start the Cortex Tauri desktop GUI. Run `npm install` in gui/ once first.
+
+set -euo pipefail
+cd "$(git rev-parse --show-toplevel)/gui"
+exec npm run tauri dev "$@"

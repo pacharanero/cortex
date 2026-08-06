@@ -1,0 +1,7 @@
+/* SPDX-FileCopyrightText: 2026 Dr Marcus Baw */
+/* SPDX-License-Identifier: AGPL-3.0-or-later */
+
+body { margin: 0; background: #101113; }
+.grid { display: grid; gap: 8px; grid-template-columns: repeat(8, minmax(64px, 1fr)); }
+.grid-cell { height: 72px; min-width: 0; padding: 4px; }
+@media (max-width: 700px) { .grid { grid-template-columns: repeat(4, minmax(64px, 1fr)); } }
