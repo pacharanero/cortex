@@ -13,7 +13,7 @@ use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
@@ -82,6 +82,8 @@ struct Daemon {
     /// Next preparation token id.
     next_token: AtomicU64,
     health: Arc<Mutex<RuntimeHealth>>,
+    /// Excludes reconnect/recovery from every in-flight device operation.
+    operations: Arc<RwLock<()>>,
     stopping: Arc<AtomicBool>,
     started: Instant,
 }
@@ -128,6 +130,7 @@ impl Daemon {
             preparations: Mutex::new(HashMap::new()),
             next_token: AtomicU64::new(1),
             health: Arc::new(Mutex::new(RuntimeHealth::Connected)),
+            operations: Arc::new(RwLock::new(())),
             stopping: Arc::new(AtomicBool::new(false)),
             started: Instant::now(),
         }
@@ -197,7 +200,18 @@ impl Daemon {
     /// failed request must not take the daemon down with it - the session is
     /// shared by every other client.
     fn handle(&self, request: Request) -> Response {
-        if !matches!(&request, Request::Status | Request::Shutdown) {
+        let needs_device = !matches!(&request, Request::Status | Request::Shutdown);
+        if needs_device {
+            if let Some(message) = self.unavailable() {
+                return Response::error(message);
+            }
+        }
+        let _operation = if needs_device {
+            Some(self.operations.read().unwrap())
+        } else {
+            None
+        };
+        if needs_device {
             if let Some(message) = self.unavailable() {
                 return Response::error(message);
             }
@@ -618,6 +632,7 @@ impl Daemon {
         let state = self.state.clone();
         let health = self.health.clone();
         let stopping = self.stopping.clone();
+        let operations = self.operations.clone();
         let result = std::thread::Builder::new()
             .name("cortex-reconnect".into())
             .spawn(move || {
@@ -626,6 +641,7 @@ impl Daemon {
                     state,
                     health.clone(),
                     stopping,
+                    operations,
                     RECONNECT_TIMINGS,
                     open_replacement,
                 );
@@ -639,9 +655,8 @@ impl Daemon {
 
     fn shutdown(&self) {
         self.stopping.store(true, Ordering::Relaxed);
-        let session = self.session();
-        session.disconnect();
-        session.stop();
+        let _operation = self.operations.write().unwrap();
+        self.session().close();
     }
 }
 
@@ -673,10 +688,14 @@ fn open_replacement(state: &cortex_rs::DeviceStateCache) -> Result<Arc<Session>>
         |step| eprintln!("cortex session: reconnect: {step} ..."),
     );
     if let Err(error) = connected {
-        session.stop();
+        session.close();
         return Err(error.into());
     }
     seed_session(&session, state);
+    if state.status().phase != cortex_rs::CachePhase::Live {
+        session.close();
+        anyhow::bail!("replacement session did not establish a live subscribed cache");
+    }
     Ok(session)
 }
 
@@ -697,6 +716,7 @@ fn reconnect_loop<F>(
     state: cortex_rs::DeviceStateCache,
     health: Arc<Mutex<RuntimeHealth>>,
     stopping: Arc<AtomicBool>,
+    operations: Arc<RwLock<()>>,
     timings: ReconnectTimings,
     connect: F,
 ) where
@@ -704,14 +724,19 @@ fn reconnect_loop<F>(
 {
     while backoff(&stopping, timings.poll) {
         let current = session_slot.lock().unwrap().clone();
-        if current.is_responsive() {
+        let cache_phase = state.status().phase;
+        if current.is_responsive() && cache_phase != cortex_rs::CachePhase::Invalidated {
             continue;
         }
 
         let silent_for = current.seconds_since_last_message();
         let mut attempts = 0_u32;
         let mut delay = timings.initial_backoff;
-        let mut last_error = format!("device silent for {silent_for}s");
+        let mut last_error = if cache_phase == cortex_rs::CachePhase::Invalidated {
+            "subscribed state continuity was lost".to_string()
+        } else {
+            format!("device silent for {silent_for}s")
+        };
         state.invalidate(last_error.clone());
         *health.lock().unwrap() = RuntimeHealth::Reconnecting {
             attempts,
@@ -719,10 +744,13 @@ fn reconnect_loop<F>(
         };
         eprintln!("cortex session: {last_error}; reconnecting");
 
+        // Health changes first so no new request can acquire the operation
+        // side while recovery waits for existing calls to drain.
+        let _recovery = operations.write().unwrap();
+
         // The old handle must be gone before opening another. Concurrent HID
         // ownership is accepted initially and wedges the next request.
-        current.disconnect();
-        current.stop();
+        current.close();
 
         loop {
             if stopping.load(Ordering::Relaxed) {
@@ -738,8 +766,7 @@ fn reconnect_loop<F>(
             match connect(&state) {
                 Ok(replacement) => {
                     if stopping.load(Ordering::Relaxed) {
-                        replacement.disconnect();
-                        replacement.stop();
+                        replacement.close();
                         return;
                     }
                     *session_slot.lock().unwrap() = replacement;
@@ -1144,11 +1171,38 @@ mod tests {
     use std::net::Shutdown;
     use std::sync::atomic::AtomicUsize;
 
+    struct ExclusiveLink {
+        inner: FakeLink,
+        active: Arc<AtomicBool>,
+    }
+
+    impl ExclusiveLink {
+        fn new(inner: FakeLink, active: Arc<AtomicBool>) -> Self {
+            assert!(!active.swap(true, Ordering::AcqRel), "link opened twice");
+            Self { inner, active }
+        }
+    }
+
+    impl HidLink for ExclusiveLink {
+        fn write(&self, report: &[u8]) -> cortex_rs::Result<usize> {
+            self.inner.write(report)
+        }
+
+        fn read_timeout(&self, buf: &mut [u8], timeout_ms: i32) -> cortex_rs::Result<usize> {
+            self.inner.read_timeout(buf, timeout_ms)
+        }
+    }
+
+    impl Drop for ExclusiveLink {
+        fn drop(&mut self) {
+            self.active.store(false, Ordering::Release);
+        }
+    }
+
     fn fake_daemon() -> Daemon {
         let link = FakeLink::new();
-        let device: Arc<std::sync::Mutex<dyn HidLink>> = Arc::new(std::sync::Mutex::new(link));
         Daemon::over(Arc::new(
-            Session::over(device).expect("session over a fake link"),
+            Session::over(link).expect("session over a fake link"),
         ))
     }
 
@@ -1259,19 +1313,37 @@ mod tests {
     fn reconnect_retries_then_swaps_in_a_new_generation() {
         let state = cortex_rs::DeviceStateCache::new();
         let initial_link = FakeLink::new();
-        let initial_device: Arc<Mutex<dyn HidLink>> = Arc::new(Mutex::new(initial_link));
+        let active_lease = Arc::new(AtomicBool::new(false));
         let initial = Arc::new(
-            Session::over_with_state(initial_device, state.clone()).expect("initial fake session"),
+            Session::over_with_state(
+                ExclusiveLink::new(initial_link.clone(), active_lease.clone()),
+                state.clone(),
+            )
+            .expect("initial fake session"),
         );
+        let _retained_old_session = initial.clone();
+        initial_link.push_inbound(inbound(
+            cortex_rs::proto::cortex_message_type::Enum::GlobalTempo as u16,
+            &[],
+        ));
+        let heard_deadline = Instant::now() + Duration::from_secs(1);
+        while Instant::now() < heard_deadline && !initial.is_responsive() {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        assert!(initial.is_responsive());
+        state.invalidate("fictional stream gap");
         let slot = Arc::new(Mutex::new(initial));
         let health = Arc::new(Mutex::new(RuntimeHealth::Connected));
         let stopping = Arc::new(AtomicBool::new(false));
+        let operations = Arc::new(RwLock::new(()));
         let attempts = Arc::new(AtomicUsize::new(0));
         let connector_attempts = attempts.clone();
+        let connector_lease = active_lease.clone();
         let worker_slot = slot.clone();
         let worker_state = state.clone();
         let worker_health = health.clone();
         let worker_stopping = stopping.clone();
+        let worker_operations = operations.clone();
 
         let worker = std::thread::spawn(move || {
             reconnect_loop(
@@ -1279,19 +1351,23 @@ mod tests {
                 worker_state,
                 worker_health,
                 worker_stopping,
+                worker_operations,
                 ReconnectTimings {
                     poll: Duration::from_millis(1),
                     initial_backoff: Duration::from_millis(1),
                     max_backoff: Duration::from_millis(2),
                 },
                 move |state| {
+                    assert!(
+                        !connector_lease.load(Ordering::Acquire),
+                        "replacement opened before old link dropped"
+                    );
                     let attempt = connector_attempts.fetch_add(1, Ordering::Relaxed) + 1;
                     if attempt == 1 {
                         anyhow::bail!("fictional first-open failure");
                     }
                     let link = FakeLink::new();
-                    let device: Arc<Mutex<dyn HidLink>> = Arc::new(Mutex::new(link.clone()));
-                    let session = Arc::new(Session::over_with_state(device, state.clone())?);
+                    let session = Arc::new(Session::over_with_state(link.clone(), state.clone())?);
                     link.push_inbound(inbound(
                         cortex_rs::proto::cortex_message_type::Enum::GlobalTempo as u16,
                         &[],
@@ -1307,7 +1383,9 @@ mod tests {
 
         let deadline = Instant::now() + Duration::from_secs(2);
         while Instant::now() < deadline
-            && (attempts.load(Ordering::Relaxed) < 2 || !slot.lock().unwrap().is_responsive())
+            && (attempts.load(Ordering::Relaxed) < 2
+                || state.status().generation < 2
+                || !matches!(*health.lock().unwrap(), RuntimeHealth::Connected))
         {
             std::thread::sleep(Duration::from_millis(2));
         }
@@ -1317,7 +1395,8 @@ mod tests {
         assert_eq!(attempts.load(Ordering::Relaxed), 2);
         assert!(matches!(*health.lock().unwrap(), RuntimeHealth::Connected));
         assert_eq!(state.status().generation, 2);
-        slot.lock().unwrap().stop();
+        assert!(!active_lease.load(Ordering::Acquire));
+        slot.lock().unwrap().close();
     }
 
     #[test]

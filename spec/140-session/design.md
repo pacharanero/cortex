@@ -160,7 +160,7 @@ This is because:
 - **Frame-level gzip** (`1f 8b` prefix) is decompressed before protobuf decode. Field-level gzip inside `bytes` fields is a domain-layer concern (zone 130).
 - **Write serialization.** A `write_lock` serializes the reports of a single logical message so a keepalive cannot interleave. Encoding happens outside the lock to keep the critical section to device I/O only. The `state_lock` is never held across blocking I/O.
 - **State observation precedes consumption.** The reducer sees a message after liveness is stamped and before collectors/pending/type waiters. An explicit read therefore repairs the same cache before its caller returns.
-- **A broken stream invalidates continuity.** A malformed report, stale partial abandoned by a new FIRST, reassembly error, or cap breach means a complete state update may have been lost. The RX loop continues, but the cache is cleared rather than serving the pre-gap snapshot.
+- **A broken stream invalidates continuity.** A malformed report, stale partial abandoned by a new FIRST, reassembly error, or cap breach means a complete state update may have been lost. The RX loop continues, but the cache is cleared rather than serving the pre-gap snapshot. Continuing heartbeats do not repair that proof: the daemon drains active operations and replaces the physical session so a complete subscribed handshake establishes a new generation.
 
 ### Subscribed state reducer
 
@@ -170,7 +170,7 @@ A full four-row, positional `RecallPreset` is the live-grid baseline. Sparse `Gr
 
 Version, model-repository payload, CPU load, active scene, dirty state, selected slot, and complete per-folder `File{UPDATE}` listings are also retained. `File` mutation acknowledgements invalidate the named listing rather than masquerading as a one-item snapshot. The device's later empty `Version{READ}` is ignored so it cannot erase the handshake identity.
 
-One cache handle survives host reconnect. Every attached `Session` begins a generation, and reducer calls carry that token; delivery from a stopped old RX thread is therefore ignored after replacement. Invalidation happens before reconnect backoff, not after success.
+One cache handle survives host reconnect. Every attached `Session` begins a generation, and reducer calls carry that token; delivery from a stopped old RX thread is therefore ignored after replacement. Invalidation happens before reconnect backoff, not after success. `Session` owns the link in a removable slot: `close()` joins workers and takes the link before replacement open, so retained session references cannot retain the HID lease. The daemon's read/write operation gate covers health recheck, selected-session use, handle release and replacement handshake.
 
 ---
 

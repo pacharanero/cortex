@@ -36,6 +36,8 @@ The device grants the HID interface to one process at a time. Quit Cortex Contro
 
 A client should therefore refuse to open the device when it can tell another owner exists, rather than relying on the OS. A daemon holding a session should take its ownership claim (lock file, socket) **before** the handshake: the handshake is seconds long, and a claim registered afterwards leaves that window unguarded.
 
+Reconnect has the same constraint. Stopping worker threads is not enough if another `Arc` still retains the underlying HID object. A session owner must join readers and explicitly destroy the old handle before attempting the replacement open; in-flight operations must drain behind the same recovery barrier. This implementation has both an exclusivity-aware fake proving that order and a CorOS 4.0.1 unplug/replug run in which the replacement handshake returned to `live` and its first grid read succeeded.
+
 ### Nano Cortex compatibility is unestablished
 
 The recovered schema contains `DeviceType.ATMA`, the Nano Cortex codename, but that enum value does **not** establish transport compatibility. Third-party macOS observation in [`deskop-nano-cortex`](https://github.com/rixrix/deskop-nano-cortex) records provisional VID:PID `152A:88E7` and 65-byte HID reports (one report-ID byte plus 64 payload bytes), rather than the Quad Cortex's 129. Its HID interface opened but produced no passive input reports; an unknown handshake may still exist.
@@ -232,6 +234,8 @@ Delete addresses its target by **full path**, not by slot index - the opposite o
 
 Each of these is answered by a `File` reply, and a save is followed by a `RecallPreset` push carrying `reason: SAVE` (`RecallPresetReason.SAVE = 2`). That reason is the only thing distinguishing it from an ordinary recall, which matters for a client keeping a cache: a save changes the stored slot without the user having recalled anything.
 
+Do not correlate these replies by message type or non-empty body alone. On CorOS 4.0.1, targeted setlist reads return `File{UPDATE}` with exactly 256 unique indices; save acknowledgements return `File{CREATE}` with the target folder and slot index; delete acknowledgements return `File{DELETE}` with the target folder and full preset path. This project now requires those operation and target fields. An unrelated folder announcement or one-item mutation must not report a destructive operation as successful. These broadcasts carry no usable request ID, so a delayed acknowledgement from an earlier identical operation cannot be distinguished from the current operation; serialize file mutations and verify the resulting listing rather than blindly retrying a timed-out mutation.
+
 File mutations are **eventually consistent**. `pyquadcortex` observed eleven successful deletes still present in a listing five seconds later; a fresh listing eventually reflected all of them. Do not use a fixed post-write sleep as verification. Poll until the expected listing state appears or a real deadline expires. The device may also de-duplicate a colliding name by truncating it and appending `_N`, so read the stored name back before issuing a later name-addressed delete.
 
 ## Capture and IR transfer (provisional)
@@ -327,6 +331,10 @@ There is no side-effect-free way to read a *stored* preset: the device only emit
 Use `read_current_preset` (`cortex grid show`) to inspect while editing.
 
 On CorOS 4.0.1, an ordinary recall can emit a full `RecallPreset` followed by sparse `Grid` messages from the same request. An empty USER-slot recall included `chain.input_control[0].sidechain_source_flag=false` after the full four-row preset. A subscribed cache must merge that flag-only delta rather than treating the post-recall stream as an invalid baseline; otherwise the session appears live but loses its current grid immediately after recall.
+
+A malformed report or envelope breaks subscribed-state continuity even when later heartbeats prove the USB link is responsive. Explicit reads can repopulate individual values but cannot prove no update was lost. Treat an invalidated cache as a reconnect condition: block new device operations, drain existing calls, destroy the old handle, perform a complete subscribed handshake in a new generation, and serve cached state only after it returns to `live`.
+
+Prepared saves rely on that continuous subscription as their mutation epoch. Preparation and commit both require `cache.phase == live`; one unchanged generation and `storage_revision` must span the preparation listing and backup read. `unsubscribed`, `seeding`, `incomplete`, or `invalidated` state fails closed even if the target's listing metadata is unchanged.
 
 ## Settings writes are not uniformly sparse
 

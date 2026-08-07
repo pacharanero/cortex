@@ -95,6 +95,8 @@ enum WaitOutcome {
     TimedOut,
     /// Nothing arrived at all for this many seconds.
     Silent(u64),
+    /// The owning session was closed while waiting.
+    Closed,
 }
 
 /// Hard upper bound on reassembled body size. A legitimate message never
@@ -319,7 +321,7 @@ struct Shared {
 /// `Clone`; callers hold it by reference or behind an `Arc<Session>` at the
 /// host layer.
 pub struct Session {
-    device: Arc<Mutex<dyn crate::link::HidLink>>,
+    device: Arc<Mutex<Option<Box<dyn crate::link::HidLink>>>>,
     shared: Arc<Shared>,
     rx_handle: Mutex<Option<thread::JoinHandle<()>>>,
     keepalive_handle: Mutex<Option<thread::JoinHandle<()>>>,
@@ -350,9 +352,7 @@ impl Session {
     #[cfg(feature = "hid")]
     pub fn open_with_state(kind: DeviceKind, state: DeviceStateCache) -> crate::Result<Self> {
         let transport = crate::Transport::open(kind)?;
-        let device: Arc<Mutex<dyn crate::link::HidLink>> =
-            Arc::new(Mutex::new(transport.into_device()));
-        Self::over_with_state(device, state)
+        Self::over_with_state(transport.into_device(), state)
     }
 
     /// Start a session over any [`HidLink`](crate::link::HidLink).
@@ -365,7 +365,7 @@ impl Session {
     /// # Errors
     ///
     /// Returns [`crate::Error::Hid`] if a background thread cannot be spawned.
-    pub fn over(device: Arc<Mutex<dyn crate::link::HidLink>>) -> crate::Result<Self> {
+    pub fn over(device: impl crate::link::HidLink + 'static) -> crate::Result<Self> {
         Self::over_with_state(device, DeviceStateCache::new())
     }
 
@@ -376,9 +376,11 @@ impl Session {
     /// Returns [`crate::Error::Session`] if a background thread cannot be
     /// spawned.
     pub fn over_with_state(
-        device: Arc<Mutex<dyn crate::link::HidLink>>,
+        device: impl crate::link::HidLink + 'static,
         state: DeviceStateCache,
     ) -> crate::Result<Self> {
+        let device: Arc<Mutex<Option<Box<dyn crate::link::HidLink>>>> =
+            Arc::new(Mutex::new(Some(Box::new(device))));
         let generation = state.begin_generation();
         let shared = Arc::new(Shared {
             pending: Mutex::new(HashMap::new()),
@@ -407,10 +409,20 @@ impl Session {
         // Keepalive thread: also gets a clone for writing.
         let ka_device = Arc::clone(&device);
         let ka_shared = Arc::clone(&shared);
-        let keepalive_handle = thread::Builder::new()
+        let keepalive_handle = match thread::Builder::new()
             .name("cortex-keepalive".into())
             .spawn(move || keepalive_loop(ka_device, ka_shared))
-            .map_err(|e| crate::Error::Session(format!("failed to spawn keepalive thread: {e}")))?;
+        {
+            Ok(handle) => handle,
+            Err(error) => {
+                shared.running.store(false, Ordering::Relaxed);
+                let _ = rx_handle.join();
+                drop(device.lock().unwrap().take());
+                return Err(crate::Error::Session(format!(
+                    "failed to spawn keepalive thread: {error}"
+                )));
+            }
+        };
 
         Ok(Self {
             device,
@@ -437,10 +449,16 @@ impl Session {
     pub fn send(&self, message_type: MessageType, payload: &[u8]) -> crate::Result<()> {
         let reports = encode_message(message_type as u16, payload);
         let _lock = self.shared.write_lock.lock().unwrap();
+        if !self.shared.running.load(Ordering::Acquire) {
+            return Err(crate::Error::Session("session is closed".into()));
+        }
         // Announce the intent to write BEFORE contending for the device lock,
         // so the RX loop stops reacquiring it and this write gets through.
         let _intent = WriteIntent::new(&self.shared.writers_waiting);
         let device = self.device.lock().unwrap();
+        let device = device
+            .as_ref()
+            .ok_or_else(|| crate::Error::Session("session is closed".into()))?;
         for report in &reports {
             let _ = device.write(report);
         }
@@ -467,6 +485,9 @@ impl Session {
         let (lock, cvar) = event;
         let mut fired = lock.lock().unwrap();
         while !*fired {
+            if !self.shared.running.load(Ordering::Acquire) {
+                return WaitOutcome::Closed;
+            }
             let remaining = deadline.saturating_duration_since(Instant::now());
             if remaining.is_zero() {
                 return WaitOutcome::TimedOut;
@@ -516,7 +537,10 @@ impl Session {
             .insert(request_id, waiter.clone());
 
         // Send.
-        self.send(message_type, payload)?;
+        if let Err(error) = self.send(message_type, payload) {
+            self.shared.pending.lock().unwrap().remove(&request_id);
+            return Err(error);
+        }
 
         // Wait for the reply, the budget, or the device going quiet.
         match self.wait_or_silence(&event, timeout) {
@@ -550,6 +574,10 @@ impl Session {
                     return Err(crate::Error::ReadTimeout(timeout));
                 }
             }
+            WaitOutcome::Closed => {
+                self.shared.pending.lock().unwrap().remove(&request_id);
+                return Err(crate::Error::Session("session is closed".into()));
+            }
         }
 
         let slot = waiter.slot.lock().unwrap().take();
@@ -565,7 +593,7 @@ impl Session {
     pub fn await_broadcast(
         &self,
         expected_type: MessageType,
-        trigger: impl FnOnce(),
+        trigger: impl FnOnce() -> crate::Result<()>,
         timeout: Duration,
         predicate: impl Fn(&InboundMessage) -> bool + Send + Sync + 'static,
     ) -> crate::Result<InboundMessage> {
@@ -583,7 +611,11 @@ impl Session {
             .lock()
             .unwrap()
             .push(waiter.clone());
-        trigger();
+        if let Err(error) = trigger() {
+            let mut waiters = self.shared.type_waiters.lock().unwrap();
+            waiters.retain(|w| !Arc::ptr_eq(w, &waiter));
+            return Err(error);
+        }
 
         // Wait for a match, the budget, or the device going quiet.
         let outcome = self.wait_or_silence(&event, timeout);
@@ -601,6 +633,7 @@ impl Session {
             }
             return match outcome {
                 WaitOutcome::Silent(seconds) => Err(crate::Error::DeviceSilent(seconds)),
+                WaitOutcome::Closed => Err(crate::Error::Session("session is closed".into())),
                 _ => Err(crate::Error::ReadTimeout(timeout)),
             };
         }
@@ -620,7 +653,7 @@ impl Session {
     /// Unlike a waiter, a collector does NOT consume messages - they still
     /// reach any waiter or other collector.
     ///
-    /// Note this always blocks for the full `window`: there is no
+    /// Note this blocks for the full `window` while the session is open: there is no
     /// total-count field on the wire, so "have we got them all?" is
     /// unanswerable. Callers that can define completion in domain terms
     /// should poll instead (see the client's `wait_for_listing`).
@@ -629,13 +662,13 @@ impl Session {
     ///
     /// # Errors
     ///
-    /// Currently always returns `Ok`. The error variant is kept for forward
-    /// compatibility; an empty `Vec` means nothing matched, which is a
-    /// domain-level outcome rather than a transport failure.
+    /// Returns a session error if the trigger fails or the session closes.
+    /// An empty `Vec` means nothing matched, which is a domain-level outcome
+    /// rather than a transport failure.
     pub fn collect(
         &self,
         expected_type: MessageType,
-        trigger: impl FnOnce(),
+        trigger: impl FnOnce() -> crate::Result<()>,
         window: Duration,
         predicate: impl Fn(&InboundMessage) -> bool + Send + Sync + 'static,
     ) -> crate::Result<Vec<InboundMessage>> {
@@ -652,9 +685,27 @@ impl Session {
             .lock()
             .unwrap()
             .push(collector.clone());
-        trigger();
+        if let Err(error) = trigger() {
+            self.shared
+                .collectors
+                .lock()
+                .unwrap()
+                .retain(|c| !Arc::ptr_eq(c, &collector));
+            return Err(error);
+        }
 
-        thread::sleep(window);
+        let deadline = Instant::now() + window;
+        while Instant::now() < deadline {
+            if !self.shared.running.load(Ordering::Acquire) {
+                self.shared
+                    .collectors
+                    .lock()
+                    .unwrap()
+                    .retain(|c| !Arc::ptr_eq(c, &collector));
+                return Err(crate::Error::Session("session is closed".into()));
+            }
+            thread::sleep(SILENCE_POLL.min(deadline.saturating_duration_since(Instant::now())));
+        }
 
         // Deregister, then drain. Deregistering first means a push landing
         // during the drain cannot be silently dropped between the two steps.
@@ -706,9 +757,7 @@ impl Session {
         let read = encode_read_message(MessageType::Version);
         match self.await_broadcast(
             MessageType::Version,
-            || {
-                let _ = self.send(MessageType::Version, &read);
-            },
+            || self.send(MessageType::Version, &read),
             timeout,
             |m| !m.body.is_empty(),
         ) {
@@ -742,9 +791,7 @@ impl Session {
         trace!("handshake 4/8: ModelRepo READ");
         match self.await_broadcast(
             MessageType::ModelRepo,
-            || {
-                let _ = self.send(MessageType::ModelRepo, payload);
-            },
+            || self.send(MessageType::ModelRepo, payload),
             timeout,
             // Only the real catalog, not an echo: it is tens of kilobytes.
             |m| m.body.len() > 1024,
@@ -965,7 +1012,9 @@ impl Session {
     /// not hide an unplug merely because it needs no wire round trip.
     #[must_use]
     pub fn is_responsive(&self) -> bool {
-        self.has_heard_from_device() && self.seconds_since_last_message() < SILENCE_LIMIT.as_secs()
+        self.shared.running.load(Ordering::Acquire)
+            && self.has_heard_from_device()
+            && self.seconds_since_last_message() < SILENCE_LIMIT.as_secs()
     }
 
     /// The most recent CPU load pushed by the device, if any has arrived.
@@ -1018,6 +1067,38 @@ impl Session {
             let _ = handle.join();
         }
     }
+
+    /// Announce disconnect, stop workers, and destroy the owned device link.
+    ///
+    /// Returning guarantees that the HID handle has been dropped even while
+    /// other `Arc<Session>` references still exist. Calling this more than
+    /// once is harmless.
+    pub fn close(&self) {
+        {
+            let _write = self.shared.write_lock.lock().unwrap();
+            if self.shared.running.load(Ordering::Acquire) {
+                let message = ConnectionMessage {
+                    request_id: None,
+                    connected: Some(crate::proto::connection_message::Connected::Connected(
+                        false,
+                    )),
+                };
+                let reports = encode_message(
+                    MessageType::Connection as u16,
+                    &prost::Message::encode_to_vec(&message),
+                );
+                let _intent = WriteIntent::new(&self.shared.writers_waiting);
+                if let Some(device) = self.device.lock().unwrap().as_ref() {
+                    for report in &reports {
+                        let _ = device.write(report);
+                    }
+                }
+                self.shared.running.store(false, Ordering::Release);
+            }
+        }
+        self.stop();
+        drop(self.device.lock().unwrap().take());
+    }
 }
 
 impl Drop for Session {
@@ -1038,8 +1119,7 @@ impl Drop for Session {
         // This covers normal drops and error returns. It does NOT cover
         // SIGINT or SIGTERM, which terminate without running destructors -
         // see the signal handler in the CLI.
-        self.disconnect();
-        self.stop();
+        self.close();
     }
 }
 
@@ -1131,7 +1211,7 @@ impl Drop for WriteIntent<'_> {
 }
 
 /// The background RX loop: read frames, reassemble, decode, dispatch.
-fn rx_loop(device: Arc<Mutex<dyn crate::link::HidLink>>, shared: Arc<Shared>) {
+fn rx_loop(device: Arc<Mutex<Option<Box<dyn crate::link::HidLink>>>>, shared: Arc<Shared>) {
     let mut reassembler = FrameReassembler::new();
     let mut report_count: usize = 0;
     let mut partial_started = Instant::now();
@@ -1152,6 +1232,9 @@ fn rx_loop(device: Arc<Mutex<dyn crate::link::HidLink>>, shared: Arc<Shared>) {
 
         let n = {
             let device = device.lock().unwrap();
+            let Some(device) = device.as_ref() else {
+                break;
+            };
             if let Ok(n) = device.read_timeout(&mut buf, timeout_ms) {
                 n
             } else {
@@ -1366,7 +1449,7 @@ fn dispatch(msg: &InboundMessage, shared: &Shared) {
 
 /// The background keepalive loop: send KeepAlive{UPDATE} every
 /// [`DEFAULT_KEEPALIVE_INTERVAL`].
-fn keepalive_loop(device: Arc<Mutex<dyn crate::link::HidLink>>, shared: Arc<Shared>) {
+fn keepalive_loop(device: Arc<Mutex<Option<Box<dyn crate::link::HidLink>>>>, shared: Arc<Shared>) {
     while shared.running.load(Ordering::Relaxed) {
         // Sleep in short slices rather than one 5 s block. `stop()` joins
         // this thread, so a plain sleep makes every teardown wait up to a
@@ -1409,6 +1492,9 @@ fn keepalive_loop(device: Arc<Mutex<dyn crate::link::HidLink>>, shared: Arc<Shar
         // state when they are too sparse.
         let _intent = WriteIntent::new(&shared.writers_waiting);
         let device = device.lock().unwrap();
+        let Some(device) = device.as_ref() else {
+            return;
+        };
         for report in &reports {
             let _ = device.write(report);
         }
@@ -1783,6 +1869,91 @@ mod link_tests {
     use super::*;
     use crate::link::FakeLink;
 
+    struct DropTrackedLink {
+        inner: FakeLink,
+        dropped: Arc<AtomicBool>,
+    }
+
+    impl crate::link::HidLink for DropTrackedLink {
+        fn write(&self, report: &[u8]) -> crate::Result<usize> {
+            self.inner.write(report)
+        }
+
+        fn read_timeout(&self, buf: &mut [u8], timeout_ms: i32) -> crate::Result<usize> {
+            self.inner.read_timeout(buf, timeout_ms)
+        }
+    }
+
+    impl Drop for DropTrackedLink {
+        fn drop(&mut self) {
+            self.dropped.store(true, Ordering::Release);
+        }
+    }
+
+    #[test]
+    fn close_releases_the_link_while_other_session_references_exist() {
+        let dropped = Arc::new(AtomicBool::new(false));
+        let session = Arc::new(
+            Session::over(DropTrackedLink {
+                inner: FakeLink::new(),
+                dropped: dropped.clone(),
+            })
+            .unwrap(),
+        );
+        let retained = session.clone();
+        session.close();
+        assert!(dropped.load(Ordering::Acquire));
+        assert!(retained.send(MessageType::KeepAlive, &[]).is_err());
+    }
+
+    #[test]
+    fn close_terminates_an_existing_broadcast_wait() {
+        let session = Arc::new(session_over(&FakeLink::new()));
+        let waiting = session.clone();
+        let (registered_tx, registered_rx) = std::sync::mpsc::channel();
+        let waiter = thread::spawn(move || {
+            waiting.await_broadcast(
+                MessageType::GlobalTempo,
+                || {
+                    registered_tx.send(()).unwrap();
+                    Ok(())
+                },
+                Duration::from_secs(30),
+                |_| true,
+            )
+        });
+        registered_rx.recv().unwrap();
+        session.close();
+        assert!(matches!(
+            waiter.join().unwrap(),
+            Err(crate::Error::Session(_))
+        ));
+    }
+
+    #[test]
+    fn close_terminates_an_existing_collection() {
+        let session = Arc::new(session_over(&FakeLink::new()));
+        let collecting = session.clone();
+        let (registered_tx, registered_rx) = std::sync::mpsc::channel();
+        let collector = thread::spawn(move || {
+            collecting.collect(
+                MessageType::File,
+                || {
+                    registered_tx.send(()).unwrap();
+                    Ok(())
+                },
+                Duration::from_secs(30),
+                |_| true,
+            )
+        });
+        registered_rx.recv().unwrap();
+        session.close();
+        assert!(matches!(
+            collector.join().unwrap(),
+            Err(crate::Error::Session(_))
+        ));
+    }
+
     /// One complete inbound report carrying `body` plus the 8-byte trailer.
     fn inbound(message_type: u16, body: &[u8]) -> Vec<u8> {
         let mut msg = body.to_vec();
@@ -1795,8 +1966,7 @@ mod link_tests {
     }
 
     fn session_over(link: &FakeLink) -> Session {
-        let device: Arc<Mutex<dyn crate::link::HidLink>> = Arc::new(Mutex::new(link.clone()));
-        Session::over(device).expect("session over a fake link")
+        Session::over(link.clone()).expect("session over a fake link")
     }
 
     /// The bug that cost the most: a reader holding the device lock across a
@@ -1838,7 +2008,10 @@ mod link_tests {
 
         let got = session.await_broadcast(
             MessageType::GlobalTempo,
-            || link.push_inbound(inbound(MessageType::GlobalTempo as u16, &[])),
+            || {
+                link.push_inbound(inbound(MessageType::GlobalTempo as u16, &[]));
+                Ok(())
+            },
             Duration::from_secs(3),
             |_| true,
         );
@@ -1895,7 +2068,10 @@ mod link_tests {
         link.push_inbound(vec![0xFF, 0xFF, 0xFF]); // not our framing
         let got = session.await_broadcast(
             MessageType::GlobalTempo,
-            || link.push_inbound(inbound(MessageType::GlobalTempo as u16, &[])),
+            || {
+                link.push_inbound(inbound(MessageType::GlobalTempo as u16, &[]));
+                Ok(())
+            },
             Duration::from_secs(3),
             |_| true,
         );
@@ -1921,7 +2097,10 @@ mod link_tests {
         link.push_inbound(vec![0x01, 3, 0xC0, 0x01, 0x02, 0x03]);
         let got = session.await_broadcast(
             MessageType::GlobalTempo,
-            || link.push_inbound(inbound(MessageType::GlobalTempo as u16, &[])),
+            || {
+                link.push_inbound(inbound(MessageType::GlobalTempo as u16, &[]));
+                Ok(())
+            },
             Duration::from_secs(3),
             |_| true,
         );

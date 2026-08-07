@@ -148,9 +148,9 @@ With constructor methods `cc(channel, cc, value)`, `pc(channel, preset)`.
 3. Start the session (RX + keepalive threads).
 4. Run the handshake (`session.connect(timeout, settle)`).
 5. Construct `QuadCortex { session: Arc::new(session), catalog_cache: Mutex::new(None) }`.
-6. Register the teardown order: disconnect, stop session, close transport (so `close()` pops in reverse).
+6. Register the teardown order: disconnect, join session workers, explicitly take and drop the session-owned link.
 
-`close()` runs the teardown in reverse order. `Drop` calls `close()` so a dropped client releases the device. The session is held in `Arc` so the MCP server can share it across tool invocations.
+`close()` delegates to `Session::close()`. The session is held in `Arc` so the daemon can share it across tool invocations; therefore `QuadCortex` does not close on drop, because dropping one short-lived wrapper must not disconnect its siblings. `Session::Drop` remains the final fallback, while explicit close proves the link is gone before reconnect even if other session references remain.
 
 ---
 
@@ -243,7 +243,7 @@ Name resolution belongs to `QuadCortex::set_parameter`, not a host surface. It r
 | Module-per-concern file layout                  | `navigation.rs`, `grid_write.rs`, `file_ops.rs`, ...        | A single 3000-line `client.rs` (like pyquadcortex's `client.py`) is unreadable; splitting by concern keeps each file navigable.                                        |
 | Constants in a dedicated module                 | `constants.rs`                                               | The wire constants (model ids, param indices, TEMPO_PARAMS map) are measured, not invented; centralising them makes the provenance clear.                          |
 | Value objects are pure                          | `#[derive(Clone, Debug, Serialize)]`, no I/O                 | `Block`, `Split`, `Folder`, `MidiOut` cross every host boundary (CLI, MCP, Tauri); they must serialize and never carry I/O.                                          |
-| `Drop` calls `close()`                          | Implicit teardown                                           | A client dropped without explicit close still releases the device (the exclusive HID ownership matters).                                                            |
+| `Session::Drop` calls `close()`                 | Final implicit teardown                                     | The physical owner releases the device; dropping one shared `QuadCortex` wrapper does not disconnect sibling callers.                                                |
 | Domain traps in rustdoc AND MCP descriptions     | Double documentation                                         | The MCP server exposes these methods to agents; the traps must be in the tool description so an agent does not silently edit the wrong row.                         |
 | `_read_state` matches on field presence          | Not just "any push of this type"                             | State pushes can be PARTIAL; a push following an UPDATE may carry only what changed. Matching on the needed field prevents a stale/partial read.                  |
 | Name resolution via catalog, not hardcoded indices | `param="THRESHOLD"` -> catalog -> wire index              | Indices are positional and not every one is a visible knob; naming is the safer route. The catalog is device-specific (covers installed plugins + captures).        |

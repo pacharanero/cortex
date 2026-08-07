@@ -216,6 +216,81 @@ fn folder_key(info: &crate::proto::FolderInfo) -> Option<&str> {
     Some(key.trim_end_matches('/'))
 }
 
+fn is_preset_file_message(message: &FileMessage) -> bool {
+    message.r#type.as_ref().is_none_or(|kind| {
+        let crate::proto::file_message::Type::Type(value) = kind;
+        *value == 0
+    })
+}
+
+fn complete_setlist_folder(folder: &crate::proto::FolderInfo, wanted: &str) -> bool {
+    if folder_key(folder) != Some(wanted) || folder.files.len() != SETLIST_SLOTS as usize {
+        return false;
+    }
+    let mut seen = vec![false; SETLIST_SLOTS as usize];
+    for file in &folder.files {
+        let Some(crate::proto::product_data::Index::Index(index)) = file.index else {
+            return false;
+        };
+        let Ok(index) = usize::try_from(index) else {
+            return false;
+        };
+        if index >= seen.len() || std::mem::replace(&mut seen[index], true) {
+            return false;
+        }
+    }
+    seen.into_iter().all(std::convert::identity)
+}
+
+fn matches_setlist_listing(message: &FileMessage, wanted: &str) -> bool {
+    if message.action != MessageAction::Update as i32 || !is_preset_file_message(message) {
+        return false;
+    }
+    let Some(crate::proto::file_message::Folder::Folder(folder)) = message.folder.as_ref() else {
+        return false;
+    };
+    complete_setlist_folder(folder, wanted)
+}
+
+fn matches_save_ack(message: &FileMessage, setlist: &str, index: u32) -> bool {
+    if message.action != MessageAction::Create as i32
+        || !is_preset_file_message(message)
+        || message.to_folder.is_some()
+    {
+        return false;
+    }
+    let Some(crate::proto::file_message::Folder::Folder(folder)) = message.folder.as_ref() else {
+        return false;
+    };
+    if folder_key(folder) != Some(setlist) || folder.files.len() != 1 {
+        return false;
+    }
+    matches!(
+        folder.files[0].index,
+        Some(crate::proto::product_data::Index::Index(value))
+            if u32::try_from(value).ok() == Some(index)
+    )
+}
+
+fn matches_delete_ack(message: &FileMessage, setlist: &str, key: &str) -> bool {
+    if message.action != MessageAction::Delete as i32
+        || !is_preset_file_message(message)
+        || message.to_folder.is_some()
+    {
+        return false;
+    }
+    let Some(crate::proto::file_message::Folder::Folder(folder)) = message.folder.as_ref() else {
+        return false;
+    };
+    if folder_key(folder) != Some(setlist) || folder.files.len() != 1 {
+        return false;
+    }
+    matches!(
+        folder.files[0].key.as_ref(),
+        Some(crate::proto::product_data::Key::Key(value)) if value == key
+    )
+}
+
 /// Convert one complete folder listing into the stable preset-entry view.
 fn preset_entries(folder: &crate::proto::FolderInfo, include_empty: bool) -> Vec<PresetEntry> {
     let mut entries: Vec<PresetEntry> = folder
@@ -504,9 +579,7 @@ impl QuadCortex {
         let payload = prost::Message::encode_to_vec(&request);
         let reply = self.session.await_broadcast(
             MessageType::RecallPreset,
-            || {
-                let _ = self.session.send(MessageType::RecallPreset, &payload);
-            },
+            || self.session.send(MessageType::RecallPreset, &payload),
             timeout,
             move |m| m.request_id == Some(rid),
         )?;
@@ -555,9 +628,7 @@ impl QuadCortex {
         let recall = build_recall(setlist_path, position, is_factory, Some(rid))?;
         let reply = self.session.await_broadcast(
             MessageType::RecallPreset,
-            || {
-                let _ = self.session.send(MessageType::SetlistPosition, &recall);
-            },
+            || self.session.send(MessageType::SetlistPosition, &recall),
             timeout,
             move |m| m.request_id == Some(rid),
         )?;
@@ -612,8 +683,9 @@ impl QuadCortex {
     /// returned; pass `include_empty = true` for the complete slot map (e.g.
     /// to find a free slot to save into).
     ///
-    /// `setlist` is any folder KEY the device reports, not only the two
-    /// setlists: plugin artist folders and the Captures Library work too.
+    /// `setlist` must be a 256-slot factory or user setlist key. Variable-length
+    /// plugin and capture folders have no observed completion marker, so this
+    /// method deliberately does not accept a partial update as their listing.
     ///
     /// Note the trailing-slash asymmetry this absorbs: recalls need the
     /// factory path WITH its trailing slash, but the device reports that same
@@ -658,22 +730,17 @@ impl QuadCortex {
         let payload = prost::Message::encode_to_vec(&request);
 
         let match_key = wanted.clone();
-        let reply = self.session.await_broadcast(
-            MessageType::File,
-            || {
-                let _ = self.session.send(MessageType::File, &payload);
-            },
-            timeout,
-            move |m| {
-                prost::Message::decode(m.body.as_ref())
-                    .ok()
-                    .and_then(|f: FileMessage| f.folder)
-                    .is_some_and(|crate::proto::file_message::Folder::Folder(folder)| {
-                        folder_key(&folder).is_some_and(|k| k == match_key)
-                            && !folder.files.is_empty()
-                    })
-            },
-        )?;
+        let reply =
+            self.session.await_broadcast(
+                MessageType::File,
+                || self.session.send(MessageType::File, &payload),
+                timeout,
+                move |m| {
+                    prost::Message::decode(m.body.as_ref()).ok().is_some_and(
+                        |message: FileMessage| matches_setlist_listing(&message, &match_key),
+                    )
+                },
+            )?;
 
         let decoded: FileMessage = prost::Message::decode(reply.body.as_ref())
             .map_err(|e| crate::Error::Decode(format!("FileMessage: {e}")))?;
@@ -744,11 +811,13 @@ impl QuadCortex {
 
         let messages = self.session.collect(
             MessageType::File,
-            || {
-                let _ = self.session.send(MessageType::File, &payload);
-            },
+            || self.session.send(MessageType::File, &payload),
             window,
-            |_| true,
+            |message| {
+                prost::Message::decode(message.body.as_ref())
+                    .ok()
+                    .is_some_and(|file: FileMessage| file.action == MessageAction::Update as i32)
+            },
         )?;
 
         let mut folders: Vec<Folder> = Vec::new();
@@ -761,8 +830,13 @@ impl QuadCortex {
                 let Some(folder) = Folder::from_proto(&f) else {
                     continue;
                 };
-                // The device re-announces folders; keep the first sighting.
-                if !folders.iter().any(|existing| existing.key == folder.key) {
+                // The device re-announces folders; retain the fullest valid
+                // listing rather than a shorter partial sighting.
+                if let Some(existing) = folders.iter_mut().find(|item| item.key == folder.key) {
+                    if folder.slots > existing.slots {
+                        *existing = folder;
+                    }
+                } else {
                     folders.push(folder);
                 }
             }
@@ -806,9 +880,7 @@ impl QuadCortex {
 
         let reply = self.session.await_broadcast(
             MessageType::ModelRepo,
-            || {
-                let _ = self.session.send(MessageType::ModelRepo, &payload);
-            },
+            || self.session.send(MessageType::ModelRepo, &payload),
             timeout,
             // The device emits ModelRepo messages without a payload too;
             // only a payload-bearing one is the catalog.
@@ -905,16 +977,19 @@ impl QuadCortex {
             ..Default::default()
         };
         let payload = prost::Message::encode_to_vec(&request);
+        let wanted = setlist.trim_end_matches('/').to_string();
 
         // Wait for the acknowledging File reply rather than firing and
         // hoping. This is the one operation where "did it land" matters.
         self.session.await_broadcast(
             MessageType::File,
-            || {
-                let _ = self.session.send(MessageType::File, &payload);
-            },
+            || self.session.send(MessageType::File, &payload),
             timeout,
-            |m| !m.body.is_empty(),
+            move |message| {
+                prost::Message::decode(message.body.as_ref())
+                    .ok()
+                    .is_some_and(|file: FileMessage| matches_save_ack(&file, &wanted, index))
+            },
         )?;
         Ok(())
     }
@@ -947,10 +1022,9 @@ impl QuadCortex {
             )));
         }
 
+        let target_key = format!("{setlist}/{name}.pb");
         let entry = crate::proto::ProductData {
-            key: Some(crate::proto::product_data::Key::Key(format!(
-                "{setlist}/{name}.pb"
-            ))),
+            key: Some(crate::proto::product_data::Key::Key(target_key.clone())),
             ..Default::default()
         };
         let folder = crate::proto::FolderInfo {
@@ -966,14 +1040,19 @@ impl QuadCortex {
             ..Default::default()
         };
         let payload = prost::Message::encode_to_vec(&request);
+        let wanted = setlist.trim_end_matches('/').to_string();
 
         self.session.await_broadcast(
             MessageType::File,
-            || {
-                let _ = self.session.send(MessageType::File, &payload);
-            },
+            || self.session.send(MessageType::File, &payload),
             timeout,
-            |m| !m.body.is_empty(),
+            move |message| {
+                prost::Message::decode(message.body.as_ref())
+                    .ok()
+                    .is_some_and(|file: FileMessage| {
+                        matches_delete_ack(&file, &wanted, &target_key)
+                    })
+            },
         )?;
         Ok(())
     }
@@ -986,8 +1065,7 @@ impl QuadCortex {
 
     /// Send `Connection{connected: false}` and stop the session.
     pub fn close(&mut self) {
-        self.disconnect();
-        self.session.stop();
+        self.session.close();
     }
 }
 
@@ -1385,9 +1463,7 @@ impl QuadCortex {
 
         let echoed = self.session.await_broadcast(
             MessageType::Grid,
-            || {
-                let _ = self.session.send(MessageType::Grid, &payload);
-            },
+            || self.session.send(MessageType::Grid, &payload),
             timeout,
             move |m| grid_echoes_cell(m, wire_row, column, model_id),
         );
@@ -1533,6 +1609,88 @@ fn grid_echoes_cell(message: &InboundMessage, row: u32, column: u32, model_id: u
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn file_folder(key: &str, files: Vec<crate::proto::ProductData>) -> crate::proto::FolderInfo {
+        crate::proto::FolderInfo {
+            key: Some(crate::proto::folder_info::Key::Key(key.into())),
+            files,
+            ..Default::default()
+        }
+    }
+
+    fn indexed_file(index: i32) -> crate::proto::ProductData {
+        crate::proto::ProductData {
+            index: Some(crate::proto::product_data::Index::Index(index)),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn setlist_listing_requires_update_target_and_complete_unique_indices() {
+        let key = USER_SETLIST;
+        let files = (0..i32::try_from(SETLIST_SLOTS).unwrap())
+            .map(indexed_file)
+            .collect::<Vec<_>>();
+        let message = FileMessage {
+            action: MessageAction::Update as i32,
+            folder: Some(crate::proto::file_message::Folder::Folder(file_folder(
+                key,
+                files.clone(),
+            ))),
+            ..Default::default()
+        };
+        assert!(matches_setlist_listing(&message, key));
+
+        let mut mutation = message.clone();
+        mutation.action = MessageAction::Create as i32;
+        assert!(!matches_setlist_listing(&mutation, key));
+        let mut partial = message.clone();
+        let Some(crate::proto::file_message::Folder::Folder(folder)) = partial.folder.as_mut()
+        else {
+            unreachable!()
+        };
+        folder.files.pop();
+        assert!(!matches_setlist_listing(&partial, key));
+        let mut duplicate = message;
+        let Some(crate::proto::file_message::Folder::Folder(folder)) = duplicate.folder.as_mut()
+        else {
+            unreachable!()
+        };
+        folder.files[255] = indexed_file(254);
+        assert!(!matches_setlist_listing(&duplicate, key));
+    }
+
+    #[test]
+    fn file_mutation_acknowledgements_require_the_exact_operation_and_target() {
+        let key = USER_SETLIST;
+        let save = FileMessage {
+            action: MessageAction::Create as i32,
+            folder: Some(crate::proto::file_message::Folder::Folder(file_folder(
+                key,
+                vec![indexed_file(8)],
+            ))),
+            ..Default::default()
+        };
+        assert!(matches_save_ack(&save, key, 8));
+        assert!(!matches_save_ack(&save, key, 9));
+        assert!(!matches_delete_ack(&save, key, "anything"));
+
+        let target = format!("{key}/Fictional Preset.pb");
+        let delete = FileMessage {
+            action: MessageAction::Delete as i32,
+            folder: Some(crate::proto::file_message::Folder::Folder(file_folder(
+                key,
+                vec![crate::proto::ProductData {
+                    key: Some(crate::proto::product_data::Key::Key(target.clone())),
+                    ..Default::default()
+                }],
+            ))),
+            ..Default::default()
+        };
+        assert!(matches_delete_ack(&delete, key, &target));
+        assert!(!matches_delete_ack(&delete, key, "wrong.pb"));
+        assert!(!matches_save_ack(&delete, key, 8));
+    }
 
     #[test]
     fn slot_to_position_round_trips() {
@@ -1925,12 +2083,11 @@ mod save_tests {
 
     use super::*;
     use crate::link::FakeLink;
-    use std::sync::{Arc, Mutex};
+    use std::sync::Arc;
 
     fn client() -> QuadCortex {
-        let device: Arc<Mutex<dyn crate::link::HidLink>> = Arc::new(Mutex::new(FakeLink::new()));
         QuadCortex::new(Arc::new(
-            crate::Session::over(device).expect("session over a fake link"),
+            crate::Session::over(FakeLink::new()).expect("session over a fake link"),
         ))
     }
 

@@ -111,7 +111,7 @@ Linux users with a Quad Cortex, script writers, AI coding agents driving the CLI
 | FR-18 | `cortex session start` claims its owner-only Unix socket before opening the exclusive HID interface, performs one subscribed handshake, and serves line-delimited JSON requests until stopped. | Must Have |
 | FR-19 | Every ordinary device command uses the daemon when it is running and falls back to one direct session otherwise. Diagnostics that can use held state, including `device probe`, route through it; no command opens a second HID connection while the daemon owns the interface. | Must Have |
 | FR-20 | The daemon serves only responsive `Live` cache entries, falls back to explicit reads for missing state, and reports cache phase/generation/revision and reducer counters in `session status`. | Must Have |
-| FR-21 | A background liveness monitor invalidates state before replacing a silent session, closes the old handle before opening another, retries the full subscribed handshake with exponential backoff capped at 30 seconds, and exposes connected/reconnecting/failed status. | Must Have |
+| FR-21 | A background monitor invalidates state before replacing a silent or continuity-invalidated session, excludes and drains device operations, explicitly releases the old handle before opening another, retries the full subscribed handshake with exponential backoff capped at 30 seconds, and exposes connected/reconnecting/failed status. | Must Have |
 | FR-22 | Requests received during reconnect fail immediately with the attempt and last error; status and shutdown remain available. | Must Have |
 
 ### Non-Functional Requirements
@@ -137,7 +137,7 @@ Linux users with a Quad Cortex, script writers, AI coding agents driving the CLI
 - [x] Preset recall/show/list, scene, setlist, grid, block, row, catalog and device operations are implemented and delegate to the client layer.
 - [ ] `cortex --schema` emits a JSON Schema of command inputs.
 - [x] Every command honours `--format text|json`.
-- [x] A fake-link reconnect test fails the first open, succeeds on the second, swaps the session, and advances the retained cache generation.
+- [x] An exclusivity-aware reconnect test retains an old `Arc<Session>`, proves its lease drops before the first replacement attempt, fails that attempt, succeeds on the second, swaps the session, and advances the retained cache generation even when the old link remained responsive after continuity invalidation.
 
 ## Non-Goals
 

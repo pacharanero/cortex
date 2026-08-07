@@ -201,6 +201,9 @@ impl DeviceStateCache {
         if inner.generation != generation {
             return;
         }
+        if inner.phase == CachePhase::Invalidated {
+            return;
+        }
         inner.revision = inner.revision.saturating_add(1);
         inner.phase = if inner.current_preset.is_some() && inner.stream_valid {
             CachePhase::Live
@@ -1285,6 +1288,16 @@ mod tests {
         let (cache, _) = seeded_cache(false, false);
         assert_eq!(cache.status().phase, CachePhase::Live);
         assert_eq!(cache.current_preset().unwrap().value.chains.len(), 4);
+    }
+
+    #[test]
+    fn finishing_subscription_cannot_hide_a_stream_gap() {
+        let cache = DeviceStateCache::new();
+        let generation = cache.begin_generation();
+        cache.begin_subscription(generation);
+        cache.stream_gap(generation, "fictional lost report");
+        cache.finish_subscription(generation);
+        assert_eq!(cache.status().phase, CachePhase::Invalidated);
     }
 
     #[test]

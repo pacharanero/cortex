@@ -202,9 +202,15 @@ Record the cache generation, unplug the USB cable, wait for `cortex session stat
 
 - [ ] Cached state is invalidated immediately while disconnected
 - [ ] Status reports reconnect attempts and the latest error rather than claiming `connected`
+- [ ] No replacement attempt starts until any in-flight command has returned or failed
 - [ ] The full subscribed handshake succeeds after reconnect
 - [ ] The cache generation increases and returns to `live`
 - [ ] `cortex grid show` agrees with the unit after reconnect rather than showing pre-disconnect state
+- [ ] The first request after reconnect succeeds; a successful open alone is not evidence because overlapping HID ownership fails on the next request
+
+Prepare a scratch-slot save token before unplugging, but do not edit or commit it. After reconnect, attempt the commit with explicit confirmation.
+
+- [ ] The pre-reconnect token is refused because its physical-session generation is stale
 
 ```sh
 cortex session stop

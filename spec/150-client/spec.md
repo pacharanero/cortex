@@ -45,9 +45,9 @@ The protocol facts this zone encodes are hardware-verified via `pyquadcortex` ag
 | FR-1  | `QuadCortex::new(session)` constructs the client around a `Session`. | Must Have   |
 | FR-2  | `connect(timeout, settle)` is a convenience that opens the transport, starts the session, runs the handshake, and returns a `QuadCortex`. The Rust equivalent of `pyquadcortex.connect()`. | Must Have   |
 | FR-3  | `disconnect()` sends `Connection{connected: false}` (delegates to `Session::disconnect`). | Must Have   |
-| FR-4  | `close()` tears down in reverse order: disconnect, stop session, close transport. Safe to call more than once. | Must Have   |
+| FR-4  | `close()` delegates to `Session::close()`: announce disconnect, join workers, explicitly release the owned link. Safe to call more than once. | Must Have   |
 | FR-5  | `version(timeout)` reads the device's version info (`VersionMessage`: `app_fw_version`, `device_type`, `device_serial_number`, `comms_version`). Works without the full handshake. | Must Have   |
-| FR-6  | `Drop` implementation calls `close()` so a client dropped without explicit close still releases the device. | Should Have |
+| FR-6  | `Session::Drop` calls `close()` as a final fallback. `QuadCortex` itself has no closing `Drop`: short-lived wrappers share the daemon session and dropping one must not disconnect every caller. | Should Have |
 
 #### Catalog
 
@@ -62,7 +62,7 @@ The protocol facts this zone encodes are hardware-verified via `pyquadcortex` ag
 | FR-8  | `find_preset(name, setlist, timeout)` looks up a preset by display name (exact, case-insensitive). Returns the listing entry whose `index` is the slot position. | Must Have   |
 | FR-9  | `read_preset(setlist_path, position, is_factory, timeout)` recalls a preset and returns its full `BinaryPreset`. NOTE: this RECALLS the slot (side effect - it loads the preset onto the grid). Tags the recall with a fresh `request_id` and accepts only the `RecallPreset` push echoing it (skips the seed push). | Must Have   |
 | FR-10 | `read_current_preset(timeout)` returns the LIVE grid (`RecallPreset{READ}` with a `request_id`, matched on the echo). No side effects - unsaved edits survive; the active scene is untouched. | Must Have   |
-| FR-11 | `list_presets(setlist, timeout, include_empty)` lists presets in slot order. Sends a `File` READ and waits for the matching folder listing. Trailing-slash normalization on the key. | Must Have   |
+| FR-11 | `list_presets(setlist, timeout, include_empty)` lists presets in slot order. Sends a `File` READ and accepts only `File{UPDATE}` for the normalized target key with exactly one unique entry for every index 0-255. | Must Have   |
 | FR-12 | `list_folders(seconds)` enumerates every folder the device knows (uses `collect` for the folder flood). | Should Have |
 | FR-13 | `active_scene(timeout)` reads the current scene (`Scene{READ}`, matched on `request_id`). | Must Have   |
 | FR-14 | `captures(timeout)` lists every Neural Capture in the library (delegates to `list_presets(CAPTURES_LIBRARY)`). | Should Have |
@@ -133,8 +133,8 @@ The protocol facts this zone encodes are hardware-verified via `pyquadcortex` ag
 
 | ID    | Requirement                                                                                                       | Priority    |
 | ----- | ----------------------------------------------------------------------------------------------------------------- | ----------- |
-| FR-52 | `save_current_preset(setlist_path, position, name, instrument, default_scene, confirm)` sends `File{CREATE, type: 0}`. The device saves the grid it already has; it may de-duplicate the name. With `confirm`: re-lists to get the stored name. | Must Have   |
-| FR-53 | `delete_preset(setlist_path, name)` sends `File{DELETE}` addressed by file path (`<setlist>/<name>.pb`), NOT slot index. | Must Have   |
+| FR-52 | `save_current_preset(setlist_path, position, name, instrument, default_scene, confirm)` sends `File{CREATE, type: 0}` and accepts only a `CREATE` acknowledgement naming the exact setlist and slot. The device saves the grid it already has; it may de-duplicate the name. With `confirm`: re-lists to get the stored name. | Must Have   |
+| FR-53 | `delete_preset(setlist_path, name)` sends `File{DELETE}` addressed by file path (`<setlist>/<name>.pb`), NOT slot index, and accepts only a `DELETE` acknowledgement naming that exact setlist and path. | Must Have   |
 | FR-54 | `move_preset(setlist_path, name, to_position)` sends `File{MOVE}` (source by file path, destination by linear index). | Should Have |
 | FR-55 | `create_setlist(name)` sends `File{CREATE, type: 0, folder{key: USER_SETLIST_ROOT/<name>}}`. | Should Have |
 | FR-56 | `delete_setlist(name)` sends `File{DELETE}`. | Should Have |

@@ -330,7 +330,7 @@ impl SavePreparation {
     ) -> crate::Result<()> {
         if status.generation != self.generation
             || status.storage_revision != self.storage_revision
-            || status.phase == CachePhase::Invalidated
+            || status.phase != CachePhase::Live
         {
             return Err(crate::Error::UnsafeSave(
                 "the prepared target may have changed; prepare it again before saving".into(),
@@ -409,6 +409,13 @@ impl QuadCortex {
     ) -> crate::Result<SavePreparation> {
         let target = SaveTarget::new(setlist, slot)?;
         policy.authorize(&target, override_scratch)?;
+        let initial_status = self.state_cache().status();
+        if initial_status.phase != CachePhase::Live {
+            return Err(crate::Error::UnsafeSave(
+                "save preparation requires a live subscribed state stream; reconnect and prepare the target again"
+                    .into(),
+            ));
+        }
         let entries = self.list_presets(setlist, timeout, true)?;
         let entry = entries
             .into_iter()
@@ -454,6 +461,15 @@ impl QuadCortex {
             Some(entry.name.clone())
         };
         let status = self.state_cache().status();
+        if status.phase != CachePhase::Live
+            || status.generation != initial_status.generation
+            || status.storage_revision != initial_status.storage_revision
+        {
+            return Err(crate::Error::UnsafeSave(
+                "stored preset state changed while the target was being prepared; prepare it again"
+                    .into(),
+            ));
+        }
         Ok(SavePreparation {
             target,
             previous_name,
@@ -527,7 +543,8 @@ mod tests {
         cortex_message_type, file_message, folder_info, product_data, recall_preset_message,
         setlist_position_message,
     };
-    use std::sync::{Arc, Mutex};
+    use prost::Message as _;
+    use std::sync::Arc;
     use std::time::Instant;
 
     const USER: &str = "/media/p4/Presets/My Presets";
@@ -538,9 +555,28 @@ mod tests {
 
     fn client() -> (QuadCortex, Arc<crate::Session>, FakeLink) {
         let link = FakeLink::new();
-        let device: Arc<Mutex<dyn crate::link::HidLink>> = Arc::new(Mutex::new(link.clone()));
-        let session = Arc::new(crate::Session::over(device).unwrap());
+        let session = Arc::new(crate::Session::over(link.clone()).unwrap());
+        let state = session.state_cache();
+        let generation = state.status().generation;
+        state.begin_subscription(generation);
+        state.observe(
+            generation,
+            crate::proto::cortex_message_type::Enum::RecallPreset,
+            &RecallPresetMessage {
+                preset: Some(recall_preset_message::Preset::Preset(empty_grid())),
+                ..Default::default()
+            }
+            .encode_to_vec(),
+        );
+        state.finish_subscription(generation);
         (QuadCortex::new(session.clone()), session, link)
+    }
+
+    fn empty_grid() -> BinaryPreset {
+        BinaryPreset {
+            chains: vec![crate::proto::Chain::default(); 4],
+            ..Default::default()
+        }
     }
 
     fn wait_for_write(link: &FakeLink, index: usize) -> Vec<u8> {
@@ -720,7 +756,19 @@ mod tests {
         let mut status = crate::DeviceStateCache::new().status();
         status.generation = 4;
         status.storage_revision = 7;
+        status.phase = CachePhase::Live;
         assert!(preparation.validate_current(&status, &entry).is_ok());
+
+        for phase in [
+            CachePhase::Unsubscribed,
+            CachePhase::Seeding,
+            CachePhase::Incomplete,
+            CachePhase::Invalidated,
+        ] {
+            status.phase = phase;
+            assert!(preparation.validate_current(&status, &entry).is_err());
+        }
+        status.phase = CachePhase::Live;
 
         status.storage_revision = 8;
         assert!(preparation.validate_current(&status, &entry).is_err());
@@ -734,6 +782,77 @@ mod tests {
             ..entry
         };
         assert!(preparation.validate_current(&status, &occupied).is_err());
+    }
+
+    #[test]
+    fn preparation_refuses_an_unsubscribed_session_before_device_io() {
+        let link = FakeLink::new();
+        let session = Arc::new(crate::Session::over(link.clone()).unwrap());
+        let qc = QuadCortex::new(session.clone());
+        let Err(error) = qc.prepare_save_before_editing(
+            &policy(),
+            USER,
+            "31A",
+            ScratchOverride::ScratchOnly,
+            RecallConsent::DiscardWorkingCopy,
+            Duration::from_secs(1),
+        ) else {
+            panic!("an unsubscribed epoch cannot authorize preparation");
+        };
+        assert!(matches!(error, crate::Error::UnsafeSave(_)));
+        assert_eq!(link.write_count(), 0);
+        session.close();
+    }
+
+    #[test]
+    fn storage_mutation_during_preparation_invalidates_the_backup_epoch() {
+        let (qc, session, link) = client();
+        let fake = link.clone();
+        let responder = std::thread::spawn(move || {
+            wait_for_write(&fake, 0);
+            push_message(&fake, cortex_message_type::Enum::File, &listing(None));
+            let recall = wait_for_write(&fake, 1);
+            push_message(
+                &fake,
+                cortex_message_type::Enum::File,
+                &FileMessage {
+                    action: crate::proto::message_action::Enum::Create as i32,
+                    folder: Some(file_message::Folder::Folder(FolderInfo {
+                        key: Some(folder_info::Key::Key(USER.into())),
+                        files: vec![ProductData {
+                            index: Some(product_data::Index::Index(0)),
+                            ..Default::default()
+                        }],
+                        ..Default::default()
+                    })),
+                    ..Default::default()
+                },
+            );
+            let request_id = request_id(&recall);
+            push_message(
+                &fake,
+                cortex_message_type::Enum::RecallPreset,
+                &RecallPresetMessage {
+                    request_id: Some(recall_preset_message::RequestId::RequestId(request_id)),
+                    preset: Some(recall_preset_message::Preset::Preset(empty_grid())),
+                    ..Default::default()
+                },
+            );
+        });
+        let policy = SavePolicy::new(USER, vec![ScratchRange::new("1A", "1A").unwrap()]).unwrap();
+        let Err(error) = qc.prepare_save_before_editing(
+            &policy,
+            USER,
+            "1A",
+            ScratchOverride::ScratchOnly,
+            RecallConsent::DiscardWorkingCopy,
+            Duration::from_secs(1),
+        ) else {
+            panic!("a mutation during backup must stale the epoch");
+        };
+        assert!(matches!(error, crate::Error::UnsafeSave(_)));
+        responder.join().unwrap();
+        session.close();
     }
 
     #[test]
@@ -793,9 +912,7 @@ mod tests {
                 cortex_message_type::Enum::RecallPreset,
                 &RecallPresetMessage {
                     request_id: Some(recall_preset_message::RequestId::RequestId(request_id)),
-                    preset: Some(recall_preset_message::Preset::Preset(
-                        BinaryPreset::default(),
-                    )),
+                    preset: Some(recall_preset_message::Preset::Preset(empty_grid())),
                     ..Default::default()
                 },
             );
@@ -871,9 +988,7 @@ mod tests {
                 cortex_message_type::Enum::RecallPreset,
                 &RecallPresetMessage {
                     request_id: Some(recall_preset_message::RequestId::RequestId(request_id)),
-                    preset: Some(recall_preset_message::Preset::Preset(
-                        BinaryPreset::default(),
-                    )),
+                    preset: Some(recall_preset_message::Preset::Preset(empty_grid())),
                     ..Default::default()
                 },
             );
