@@ -1,14 +1,48 @@
 # SPDX-FileCopyrightText: 2026 Dr Marcus Baw
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
-version = 2
+version: 2
 updates:
   - package-ecosystem: "cargo"
-    directories:
-      - "/"
-      - "/crates/cortex-rs"
-      - "/crates/cortex-cli"
-      - "/crates/cortex-mcp"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    cooldown:
+      default-days: 7
+      semver-patch-days: 3
+      semver-minor-days: 7
+      semver-major-days: 14
+    groups:
+      routine-minor-and-patch:
+        applies-to: version-updates
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+
+  - package-ecosystem: "npm"
+    directory: "/gui"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    cooldown:
+      default-days: 7
+      semver-patch-days: 3
+      semver-minor-days: 7
+      semver-major-days: 14
+    groups:
+      routine-minor-and-patch:
+        applies-to: version-updates
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+
+  - package-ecosystem: "pip"
+    directory: "/"
     schedule:
       interval: "weekly"
       day: "monday"

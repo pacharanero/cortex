@@ -35,7 +35,7 @@ permissions:
 
 concurrency:
   group: pages
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   build:
@@ -59,7 +59,7 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Build
-        run: zensical build
+        run: zensical build --clean
 
       - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
 
