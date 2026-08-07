@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Dr Marcus Baw
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-//! `cortex session start`: one held session, served over a unix socket.
+//! `cortex session start`: one held session, served over local IPC.
 //!
 //! The device grants its HID interface exclusively, so exactly one process
 //! can own it. This is that process. Everything else talks to it.
@@ -11,15 +11,14 @@
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
-use std::os::unix::net::{UnixListener, UnixStream};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use cortex_host::{
-    CacheStatus, DAEMON_PROTOCOL_VERSION, DeviceHealth, PrepareSaveResult, Request, Response,
-    Status, log_path, socket_path,
+    CacheStatus, DAEMON_PROTOCOL_VERSION, DaemonClient, DeviceHealth, LocalConnection,
+    LocalEndpoint, LocalListener, PrepareSaveResult, Request, Response, Status, log_path,
 };
 use cortex_rs::{DeviceKind, QuadCortex, Session};
 
@@ -35,7 +34,7 @@ const HEALTH_POLL: Duration = Duration::from_secs(1);
 /// Reconnect starts quickly, then backs off to this ceiling while unplugged.
 const MAX_RECONNECT_BACKOFF: Duration = Duration::from_secs(30);
 
-/// Bound a caller waiting on a wedged daemon socket.
+/// Bound a caller waiting on a wedged local IPC connection.
 #[cfg(test)]
 const SOCKET_REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
 
@@ -797,27 +796,9 @@ fn reconnect_loop<F>(
 
 /// Run the daemon until told to stop.
 pub fn run() -> Result<()> {
-    let path = socket_path();
+    let endpoint = LocalEndpoint::daemon();
 
-    // A socket left by a dead daemon would make bind() fail. Probe it first:
-    // if something answers, another daemon is live and this one must not
-    // start, because two processes cannot both own the HID interface.
-    if path.exists() {
-        if UnixStream::connect(&path).is_ok() {
-            anyhow::bail!(
-                "a cortex daemon is already running on {}. Stop it with \
-                 `cortex session stop`, or use the existing one.",
-                path.display()
-            );
-        }
-        eprintln!(
-            "cortex session: removing a stale socket at {} (nothing was listening)",
-            path.display()
-        );
-        std::fs::remove_file(&path)?;
-    }
-
-    // Claim the socket BEFORE the handshake, not after.
+    // Claim local IPC BEFORE the handshake, not after.
     //
     // Hardware-verified, and the ordering is the whole point: the handshake
     // took 33 s on an already-unsettled device, and for that entire window
@@ -830,31 +811,37 @@ pub fn run() -> Result<()> {
     // Binding first makes the claim visible for the daemon's whole life.
     // Clients that arrive mid-handshake wait in the listen backlog and are
     // served once the session is up, which is the right answer for them too.
-    let listener = UnixListener::bind(&path)?;
-    // The socket carries full control of the device, so restrict it to the
-    // owner rather than relying on the directory's permissions.
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
+    let claim = LocalListener::bind(&endpoint).map_err(|error| {
+        if error.kind() == std::io::ErrorKind::AddrInUse {
+            anyhow::anyhow!(
+                "a cortex daemon is already running on {endpoint}. Stop it with \
+                 `cortex session stop`, or use the existing one."
+            )
+        } else {
+            anyhow::Error::new(error).context(format!("claiming local endpoint {endpoint}"))
+        }
+    })?;
+    if claim.removed_stale_endpoint {
+        eprintln!("cortex session: removed a stale endpoint at {endpoint} (nothing was listening)");
     }
+    let listener = claim.listener;
 
-    // The socket now exists, so a failed handshake must clear it on the way
+    // The endpoint now exists, so a failed handshake must clear it on the way
     // out; otherwise the next start finds a file it has to treat as stale.
     let daemon = match Daemon::connect() {
         Ok(daemon) => daemon,
         Err(e) => {
-            let _ = std::fs::remove_file(&path);
+            let _ = listener.cleanup_endpoint();
             return Err(e);
         }
     };
 
-    eprintln!("cortex session: listening on {}", path.display());
+    eprintln!("cortex session: listening on {endpoint}");
     eprintln!("cortex session: stop with `cortex session stop`, or Ctrl-C if attached");
     daemon.start_reconnect_monitor();
 
-    for stream in listener.incoming() {
-        let stream = match stream {
+    loop {
+        let stream = match listener.accept() {
             Ok(s) => s,
             Err(e) => {
                 eprintln!("cortex session: accept failed: {e}");
@@ -885,11 +872,11 @@ pub fn run() -> Result<()> {
     });
 
     daemon.shutdown();
-    // Last, so the socket never outlives our claim on the device: while it
+    // Last, so the endpoint never outlives our claim on the device: while it
     // answers, other commands correctly refuse to open the device for
     // themselves. A file left behind by a forced exit is inert - nothing is
     // listening on it - and the next start clears it as stale.
-    let _ = std::fs::remove_file(&path);
+    let _ = listener.cleanup_endpoint();
     Ok(())
 }
 
@@ -901,7 +888,7 @@ enum Control {
 }
 
 /// Serve one connection. A client may send several requests on one stream.
-fn serve(daemon: &Daemon, stream: UnixStream) -> Control {
+fn serve(daemon: &Daemon, stream: LocalConnection) -> Control {
     let peer = match stream.try_clone() {
         Ok(s) => s,
         Err(e) => {
@@ -946,7 +933,7 @@ fn serve(daemon: &Daemon, stream: UnixStream) -> Control {
     Control::Continue
 }
 
-fn write_response(writer: &mut UnixStream, response: &Response) -> std::io::Result<()> {
+fn write_response(writer: &mut LocalConnection, response: &Response) -> std::io::Result<()> {
     let mut line = serde_json::to_string(response)
         .unwrap_or_else(|e| format!(r#"{{"status":"error","message":"{e}"}}"#));
     line.push('\n');
@@ -954,7 +941,7 @@ fn write_response(writer: &mut UnixStream, response: &Response) -> std::io::Resu
     writer.flush()
 }
 
-/// Whether a daemon is listening and answering on the socket.
+/// Whether a daemon is listening on the local endpoint.
 ///
 /// This is the guard for direct device access. The device grants its HID
 /// interface to one owner: opening it while the daemon holds it does not
@@ -964,7 +951,7 @@ fn write_response(writer: &mut UnixStream, response: &Response) -> std::io::Resu
 /// for the path.
 #[must_use]
 pub fn is_running() -> bool {
-    UnixStream::connect(socket_path()).is_ok()
+    cortex_host::is_running()
 }
 
 // `setsid`, used to detach from the terminal so closing it does not kill the
@@ -1067,24 +1054,10 @@ pub fn start_detached() -> Result<()> {
 /// During startup those differ for several seconds, which is exactly the
 /// window this has to tell apart.
 fn answers_status(timeout: Duration) -> bool {
-    let Ok(stream) = UnixStream::connect(socket_path()) else {
-        return false;
-    };
-    if stream.set_read_timeout(Some(timeout)).is_err() {
-        return false;
-    }
-    let Ok(mut writer) = stream.try_clone() else {
-        return false;
-    };
-    let Ok(mut line) = serde_json::to_string(&Request::Status) else {
-        return false;
-    };
-    line.push('\n');
-    if writer.write_all(line.as_bytes()).is_err() || writer.flush().is_err() {
-        return false;
-    }
-    let mut reply = String::new();
-    BufReader::new(stream).read_line(&mut reply).is_ok() && !reply.trim().is_empty()
+    DaemonClient::default()
+        .with_timeout(timeout)
+        .require_compatible()
+        .is_ok()
 }
 
 /// Send one request to a running daemon, if there is one.
@@ -1100,7 +1073,7 @@ pub fn request(request: &Request) -> Option<Result<serde_json::Value>> {
 }
 
 #[cfg(test)]
-fn request_on(stream: UnixStream, request: &Request) -> Result<serde_json::Value> {
+fn request_on(stream: LocalConnection, request: &Request) -> Result<serde_json::Value> {
     stream.set_read_timeout(Some(SOCKET_REQUEST_TIMEOUT))?;
     stream.set_write_timeout(Some(SOCKET_REQUEST_TIMEOUT))?;
     let mut writer = stream.try_clone()?;
@@ -1157,7 +1130,7 @@ mod tests {
     //! The daemon over a fake session.
     //!
     //! Everything here is independent of how the session was obtained: the
-    //! socket protocol, the shape of a status, and how a call that cannot be
+    //! local IPC protocol, the shape of a status, and how a call that cannot be
     //! answered is reported. Those were previously verified only by hand
     //! against real hardware, which is why this file sat at 0% coverage
     //! through several rewrites of its shutdown and readiness logic.
@@ -1168,7 +1141,6 @@ mod tests {
 
     use super::*;
     use cortex_rs::link::{FakeLink, HidLink};
-    use std::net::Shutdown;
     use std::sync::atomic::AtomicUsize;
 
     struct ExclusiveLink {
@@ -1217,11 +1189,11 @@ mod tests {
 
     /// A client sends a line; the daemon answers on the same connection.
     fn round_trip(daemon: &Daemon, request: &Request) -> (Control, String) {
-        let (mut client, server) = UnixStream::pair().expect("socket pair");
+        let (mut client, server) = LocalConnection::pair().expect("local IPC pair");
         let mut line = serde_json::to_string(request).expect("encode");
         line.push('\n');
         client.write_all(line.as_bytes()).expect("write");
-        client.shutdown(Shutdown::Write).expect("half close");
+        client.shutdown_write().expect("half close");
 
         let control = serve(daemon, server);
         let mut reply = String::new();
@@ -1244,9 +1216,9 @@ mod tests {
     #[test]
     fn a_malformed_request_is_answered_rather_than_dropped() {
         let daemon = fake_daemon();
-        let (mut client, server) = UnixStream::pair().expect("socket pair");
+        let (mut client, server) = LocalConnection::pair().expect("local IPC pair");
         client.write_all(b"this is not json\n").expect("write");
-        client.shutdown(Shutdown::Write).expect("half close");
+        client.shutdown_write().expect("half close");
 
         let control = serve(&daemon, server);
         let mut reply = String::new();
@@ -1436,12 +1408,12 @@ mod tests {
     #[test]
     fn one_connection_serves_several_requests() {
         let daemon = fake_daemon();
-        let (mut client, server) = UnixStream::pair().expect("socket pair");
+        let (mut client, server) = LocalConnection::pair().expect("local IPC pair");
         let mut line = serde_json::to_string(&Request::Status).expect("encode");
         line.push('\n');
         client.write_all(line.as_bytes()).expect("first");
         client.write_all(line.as_bytes()).expect("second");
-        client.shutdown(Shutdown::Write).expect("half close");
+        client.shutdown_write().expect("half close");
 
         serve(&daemon, server);
 
@@ -1457,7 +1429,7 @@ mod tests {
     #[test]
     fn client_version_check_and_request_share_one_connection() {
         let daemon = fake_daemon();
-        let (client, server) = UnixStream::pair().expect("socket pair");
+        let (client, server) = LocalConnection::pair().expect("local IPC pair");
         std::thread::scope(|scope| {
             let worker = scope.spawn(|| serve(&daemon, server));
             let status = request_on(client, &Request::Status).expect("status request");
@@ -1473,9 +1445,9 @@ mod tests {
     #[test]
     fn a_blank_line_is_ignored_rather_than_answered() {
         let daemon = fake_daemon();
-        let (mut client, server) = UnixStream::pair().expect("socket pair");
+        let (mut client, server) = LocalConnection::pair().expect("local IPC pair");
         client.write_all(b"\n\n").expect("write");
-        client.shutdown(Shutdown::Write).expect("half close");
+        client.shutdown_write().expect("half close");
 
         serve(&daemon, server);
         let replies = BufReader::new(client).lines().count();

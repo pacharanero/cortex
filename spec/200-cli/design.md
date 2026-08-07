@@ -69,7 +69,7 @@ clap's `subcommand_required = true` exits with a non-zero code and a "missing su
 
 ### Device routing
 
-`cortex session start` owns one subscribed connection and serves typed line-delimited requests over an owner-only Unix socket. Ordinary commands use it when available and otherwise open one bounded direct session. The socket is claimed before the handshake so a second process cannot race startup and wedge the device. Cached values are served only while their generation is usable; missing values fall back to explicit reads.
+`cortex session start` owns one subscribed connection and serves typed line-delimited requests over local IPC. Ordinary commands use it when available and otherwise open one bounded direct session. The endpoint is claimed before the handshake so a second process cannot race startup and wedge the device. `cortex-host` owns the platform seam: an owner-only Unix domain socket today, and a future current-user Windows named pipe. Cached values are served only while their generation is usable; missing values fall back to explicit reads.
 
 ### Design choice: `--format` as a global flag
 
@@ -174,5 +174,5 @@ The schema is generated from the same `Cli::command()` tree that drives parsing 
 
 - **No `--schema` yet.** Machine discoverability is planned but not implemented.
 - **No uniform `--dry-run`.** Mutating commands are guarded according to their risk, but there is no global plan-only mode.
-- **The daemon is Unix-socket based.** Linux is the verified CLI host; a cross-platform host/IPC strategy is still needed for Windows GUI support.
+- **Only the Unix local-IPC adapter is operational.** The daemon/client no longer expose Unix socket types outside `cortex-host::ipc`; `cortex-host` and `cortex-mcp` cross-check for Windows. A reviewed safe named-pipe adapter, current-user pipe ACLs, Windows detached-process lifecycle and hardware verification remain before Windows is supported.
 - **The command implementation remains concentrated in `main.rs`.** Behaviour is in the crate, but command-family modules may become worthwhile as the surface grows.

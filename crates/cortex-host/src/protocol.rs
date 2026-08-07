@@ -4,7 +4,7 @@
 //! The wire contract between `cortex session start` and its clients.
 //!
 //! `cortex session start` holds one subscribed session and owns the HID interface;
-//! everything else talks to it over a unix socket. This module defines what
+//! everything else talks to it over local IPC. This module defines what
 //! they say to each other, and lives in the crate rather than the CLI so the
 //! MCP server and the Tauri backend can speak the same protocol rather than
 //! growing their own.
@@ -31,46 +31,15 @@
 //! @see spec/roadmap.md PROT-008.6
 //! @see spec/140-session/spec.md
 
-use std::path::PathBuf;
-
 use cortex_rs::{RecallConsent, ScratchOverride};
 
-/// The daemon socket protocol version, checked by clients to detect skew
+/// The daemon protocol version, checked by clients to detect skew
 /// after an upgrade leaves an old daemon running.
 ///
 /// Bump this whenever a `Request` variant changes shape or a new variant is
 /// added. A client that sees a mismatch refuses with an actionable message
 /// rather than sending a request the daemon will misparse.
 pub const DAEMON_PROTOCOL_VERSION: u32 = 2;
-
-/// Where the daemon listens.
-///
-/// `$XDG_RUNTIME_DIR` is the right home: it is user-owned, `0700`, and
-/// cleared on logout, so a stale socket cannot outlive a session. Falls back
-/// to a uid-qualified path under the temp directory when it is unset, which
-/// is the case on some minimal systems.
-#[must_use]
-pub fn socket_path() -> PathBuf {
-    if let Some(dir) = std::env::var_os("XDG_RUNTIME_DIR") {
-        return PathBuf::from(dir).join("cortex.sock");
-    }
-    // Qualify by uid so two users on one machine cannot collide, and so a
-    // socket left by another user is not mistaken for ours.
-    let uid = std::env::var("UID").unwrap_or_else(|_| "0".into());
-    std::env::temp_dir().join(format!("cortex-{uid}.sock"))
-}
-
-/// Where a backgrounded session writes its log.
-///
-/// Beside the socket, and for the same reasons: user-owned, `0700`, and
-/// cleared on logout. A session log is worthless after the session that
-/// produced it has gone, so it should not outlive one.
-#[must_use]
-pub fn log_path() -> PathBuf {
-    let mut path = socket_path();
-    path.set_extension("log");
-    path
-}
 
 /// A request from a client to the daemon.
 ///
@@ -493,16 +462,6 @@ mod tests {
                 timeout_seconds: 15,
             } if name == "GAIN"
         ));
-    }
-
-    #[test]
-    fn socket_path_follows_xdg_runtime_dir() {
-        // Not asserting the fallback, which depends on the environment; the
-        // XDG case is the one that matters and the one we control.
-        if let Some(dir) = std::env::var_os("XDG_RUNTIME_DIR") {
-            let expected = PathBuf::from(dir).join("cortex.sock");
-            assert_eq!(socket_path(), expected);
-        }
     }
 
     #[test]

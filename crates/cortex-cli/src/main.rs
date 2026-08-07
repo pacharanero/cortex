@@ -1117,7 +1117,7 @@ fn cmd_version(fmt: Format) -> Result<()> {
 
     // Still guarded: a daemon could have started between the probe above and
     // the open below.
-    ensure_device_free()?;
+    let _claim = claim_device()?;
     let transport = Transport::open(DeviceKind::QuadCortex)?;
 
     // Build a VersionMessage with action = READ. The version command works
@@ -1202,6 +1202,8 @@ fn print_preset_entries(entries: &Vec<PresetSlot>) {
 /// session at a time.
 static ACTIVE_SESSION: std::sync::Mutex<Option<std::sync::Arc<cortex_rs::Session>>> =
     std::sync::Mutex::new(None);
+static ACTIVE_DEVICE_CLAIM: std::sync::Mutex<Option<cortex_host::LocalClaim>> =
+    std::sync::Mutex::new(None);
 
 /// Tell the device we are going away, if a session is open.
 ///
@@ -1212,6 +1214,9 @@ fn release_session() {
     if let Some(session) = held {
         session.disconnect();
         session.stop();
+    }
+    if let Ok(mut claim) = ACTIVE_DEVICE_CLAIM.lock() {
+        claim.take();
     }
 }
 
@@ -1261,24 +1266,29 @@ fn connected() -> Result<(std::sync::Arc<cortex_rs::Session>, cortex_rs::QuadCor
 ///
 /// This is the CLI-side expression of the exclusive-access invariant in
 /// AGENTS.md: one owning process per device, not one connection per call.
-fn ensure_device_free() -> Result<()> {
-    if connect::is_running() {
-        anyhow::bail!(
-            "a `cortex session` is already holding the device.\n\
-             Opening it again here would wedge that session - the device \
-             stops answering both of us.\n\
-             Use the running session, or stop it with `cortex session stop`."
-        );
-    }
-    Ok(())
+fn claim_device() -> Result<cortex_host::LocalClaim> {
+    cortex_host::LocalClaim::acquire(&cortex_host::LocalEndpoint::daemon()).map_err(|error| {
+        if error.kind() == std::io::ErrorKind::AddrInUse {
+            anyhow::anyhow!(
+                "another cortex process is already holding the device.\n\
+                 Opening it again here would wedge both sessions - the device \
+                 stops answering both of them.\n\
+                 If it is a held session, use it or stop it with `cortex session stop`."
+            )
+        } else {
+            anyhow::Error::new(error).context("claiming exclusive Cortex device access")
+        }
+    })
 }
 
 /// Open the device for a one-shot command, refusing if a daemon holds it.
 fn open_device() -> Result<std::sync::Arc<cortex_rs::Session>> {
-    ensure_device_free()?;
-    Ok(std::sync::Arc::new(cortex_rs::Session::open(
-        DeviceKind::QuadCortex,
-    )?))
+    let claim = claim_device()?;
+    let session = std::sync::Arc::new(cortex_rs::Session::open(DeviceKind::QuadCortex)?);
+    *ACTIVE_DEVICE_CLAIM
+        .lock()
+        .map_err(|_| anyhow::anyhow!("exclusive device claim lock was poisoned"))? = Some(claim);
+    Ok(session)
 }
 
 fn open_session(

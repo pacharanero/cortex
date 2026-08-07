@@ -38,7 +38,7 @@ tested. See `spec/roadmap.md` for the exact current state and next milestone.
   drive every host surface without depending on one.
 - `cortex-cli` - a thin CLI over the crate, including a persistent daemon that
   owns the one device connection and reconnects without serving stale state.
-- `cortex-host` - the shared synchronous daemon contract and Unix-socket client used by host surfaces; it has no HID feature and cannot open the device.
+- `cortex-host` - the shared synchronous daemon contract and local IPC facade used by host surfaces; it has no HID feature and cannot open the device. Unix sockets are the current adapter, with Windows named pipes planned behind the same API.
 - `cortex-mcp` - an MCP server for agentic patch editing through `cortex session`. Its read, recall, scene and working-copy tools are hardware-verified; persistent writes remain deliberately unavailable.
 - `gui/` - a Tauri 2 + React + Mantine first draft. It is currently an
   interactive, fixture-backed read-only demo; daemon/device integration and
@@ -89,7 +89,7 @@ cargo run -p cortex-cli -- device version
 crates/
   cortex-rs/    The leaf crate (transport, framing, session, client, live state,
                 save safety, typed domain model, vendored protobuf schema).
-  cortex-host/  Shared held-session daemon contract and Unix-socket client.
+  cortex-host/  Shared held-session daemon contract and local IPC facade.
   cortex-cli/   The `cortex` CLI - a thin surface over the crate.
   cortex-mcp/   Non-persistent MCP read, recall, scene and live-grid tools.
 gui/           Tauri 2 + React + Mantine demo (fixture-backed, no device IPC).

@@ -4,36 +4,34 @@
 //! Synchronous client for the held-session daemon.
 
 use std::io::{BufRead, BufReader, Write};
-use std::os::unix::net::UnixStream;
-use std::path::PathBuf;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
 use serde::de::DeserializeOwned;
 
-use crate::{DAEMON_PROTOCOL_VERSION, Request, Response, Status, socket_path};
+use crate::{DAEMON_PROTOCOL_VERSION, LocalConnection, LocalEndpoint, Request, Response, Status};
 
 const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// A reusable client configuration for short-lived daemon connections.
 #[derive(Debug, Clone)]
 pub struct DaemonClient {
-    path: PathBuf,
+    endpoint: LocalEndpoint,
     timeout: Duration,
 }
 
 impl Default for DaemonClient {
     fn default() -> Self {
-        Self::new(socket_path())
+        Self::new(LocalEndpoint::daemon())
     }
 }
 
 impl DaemonClient {
-    /// Create a client for an explicit socket path.
+    /// Create a client for an explicit local IPC endpoint.
     #[must_use]
-    pub fn new(path: PathBuf) -> Self {
+    pub fn new(endpoint: LocalEndpoint) -> Self {
         Self {
-            path,
+            endpoint,
             timeout: DEFAULT_REQUEST_TIMEOUT,
         }
     }
@@ -45,10 +43,10 @@ impl DaemonClient {
         self
     }
 
-    /// Whether anything is listening at this client's socket path.
+    /// Whether a daemon is listening or has claimed the endpoint while starting.
     #[must_use]
     pub fn is_running(&self) -> bool {
-        UnixStream::connect(&self.path).is_ok()
+        LocalConnection::connect(&self.endpoint).is_ok() || self.endpoint.has_active_claim()
     }
 
     /// Require a compatible held session and return its status.
@@ -58,10 +56,10 @@ impl DaemonClient {
     /// Returns an error when no daemon is listening, socket I/O fails, the
     /// response is malformed, or the daemon protocol version is incompatible.
     pub fn require_compatible(&self) -> Result<Status> {
-        let stream = UnixStream::connect(&self.path).with_context(|| {
+        let stream = LocalConnection::connect(&self.endpoint).with_context(|| {
             format!(
                 "no held cortex session is listening at {}; start one with `cortex session start`",
-                self.path.display()
+                self.endpoint
             )
         })?;
         let (mut writer, mut reader) = self.prepare(stream)?;
@@ -75,8 +73,8 @@ impl DaemonClient {
     /// Returns an error for socket I/O, protocol-version mismatch, a malformed
     /// response, or an error returned by the held session.
     pub fn request_value(&self, request: &Request) -> Result<serde_json::Value> {
-        let stream = UnixStream::connect(&self.path)
-            .with_context(|| format!("connecting to cortex session at {}", self.path.display()))?;
+        let stream = LocalConnection::connect(&self.endpoint)
+            .with_context(|| format!("connecting to cortex session at {}", self.endpoint))?;
         let (mut writer, mut reader) = self.prepare(stream)?;
         Self::read_compatible_status(&mut writer, &mut reader)?;
         write_request(&mut writer, request)?;
@@ -94,7 +92,10 @@ impl DaemonClient {
         serde_json::from_value(value).context("decoding cortex session response")
     }
 
-    fn prepare(&self, stream: UnixStream) -> Result<(UnixStream, BufReader<UnixStream>)> {
+    fn prepare(
+        &self,
+        stream: LocalConnection,
+    ) -> Result<(LocalConnection, BufReader<LocalConnection>)> {
         stream.set_read_timeout(Some(self.timeout))?;
         stream.set_write_timeout(Some(self.timeout))?;
         let writer = stream.try_clone()?;
@@ -102,8 +103,8 @@ impl DaemonClient {
     }
 
     fn read_compatible_status(
-        writer: &mut UnixStream,
-        reader: &mut BufReader<UnixStream>,
+        writer: &mut LocalConnection,
+        reader: &mut BufReader<LocalConnection>,
     ) -> Result<Status> {
         write_request(writer, &Request::Status)?;
         let value = read_response(reader)?;
@@ -118,14 +119,14 @@ impl DaemonClient {
     }
 }
 
-fn write_request(writer: &mut UnixStream, request: &Request) -> Result<()> {
+fn write_request(writer: &mut LocalConnection, request: &Request) -> Result<()> {
     serde_json::to_writer(&mut *writer, request)?;
     writer.write_all(b"\n")?;
     writer.flush()?;
     Ok(())
 }
 
-fn read_response(reader: &mut BufReader<UnixStream>) -> Result<serde_json::Value> {
+fn read_response(reader: &mut BufReader<LocalConnection>) -> Result<serde_json::Value> {
     let mut reply = String::new();
     let read = reader.read_line(&mut reply)?;
     if read == 0 || reply.trim().is_empty() {
@@ -137,7 +138,7 @@ fn read_response(reader: &mut BufReader<UnixStream>) -> Result<serde_json::Value
     }
 }
 
-/// Whether the default daemon socket accepts a connection.
+/// Whether the default local daemon endpoint accepts a connection.
 #[must_use]
 pub fn is_running() -> bool {
     DaemonClient::default().is_running()

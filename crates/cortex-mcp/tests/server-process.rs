@@ -1,13 +1,17 @@
 // SPDX-FileCopyrightText: 2026 Dr Marcus Baw
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+#![cfg(unix)]
+
 use std::io::{BufRead, BufReader, Write};
-use std::os::unix::net::{UnixListener, UnixStream};
 use std::process::Stdio;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
-use cortex_host::{CacheStatus, DeviceHealth, Request, Response, Status};
+use cortex_host::{
+    CacheStatus, DeviceHealth, LocalConnection, LocalEndpoint, LocalListener, Request, Response,
+    Status,
+};
 use rmcp::ServiceExt;
 use rmcp::model::CallToolRequestParams;
 use rmcp::transport::{ConfigureCommandExt, TokioChildProcess};
@@ -21,7 +25,8 @@ async fn official_client_discovers_and_calls_the_real_server() -> anyhow::Result
     ));
     std::fs::create_dir(&runtime_dir)?;
     let socket = runtime_dir.join("cortex.sock");
-    let listener = UnixListener::bind(&socket)?;
+    let endpoint = LocalEndpoint::at(socket);
+    let listener = LocalListener::bind(&endpoint)?.listener;
     let daemon = std::thread::spawn(move || serve_daemon(listener, 2));
 
     let transport = TokioChildProcess::builder(
@@ -52,18 +57,18 @@ async fn official_client_discovers_and_calls_the_real_server() -> anyhow::Result
     );
     client.cancel().await?;
     daemon.join().expect("fake daemon thread");
-    let _ = std::fs::remove_file(socket);
     let _ = std::fs::remove_dir(runtime_dir);
     Ok(())
 }
 
-fn serve_daemon(listener: UnixListener, connections: usize) {
-    for stream in listener.incoming().take(connections) {
-        serve_connection(stream.expect("accept fake daemon connection"));
+fn serve_daemon(listener: LocalListener, connections: usize) {
+    for _ in 0..connections {
+        serve_connection(listener.accept().expect("accept fake daemon connection"));
     }
+    listener.cleanup_endpoint().expect("clean fake endpoint");
 }
 
-fn serve_connection(stream: UnixStream) {
+fn serve_connection(stream: LocalConnection) {
     let mut writer = stream.try_clone().expect("clone fake daemon stream");
     for line in BufReader::new(stream).lines() {
         let request: Request = serde_json::from_str(&line.expect("read fake daemon request"))

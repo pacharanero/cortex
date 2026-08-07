@@ -17,3 +17,4 @@ cortex-rs = { path = "../cortex-rs", default-features = false }
 anyhow = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+fs4 = { workspace = true }

@@ -14,7 +14,7 @@
 //! private output types, which would have left the GUI reimplementing the
 //! same decisions against the same protobuf.
 //!
-//! Serialisable both ways: these cross the daemon socket as well as being
+//! Serialisable both ways: these cross local daemon IPC as well as being
 //! rendered.
 //!
 //! @see spec/roadmap.md PROT-004

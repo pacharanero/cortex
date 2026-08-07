@@ -64,7 +64,7 @@ hidapi -> /dev/hidraw7 -> Quad Cortex (USB, interface 5)
 | Protocol source | Port from `pyquadcortex` (MIT) | Hardware-verified, excellent docs, recovered .proto files; not re-deriving from scratch |
 | Protobuf | `prost` with vendored .proto files | Compile-time typed Rust; no runtime protobuf dependency |
 | HID backend | `hidapi` crate (hidraw on Linux) | Cross-platform; the same backend pyquadcortex uses |
-| Transport model | One background session owns HID; ordinary commands route through its daemon socket or one bounded direct session | The device does not enforce exclusivity; opening twice wedges the held owner |
+| Transport model | One background session owns HID; ordinary commands route through transport-neutral local IPC or one bounded direct session | The device does not enforce exclusivity; opening twice wedges the held owner. Unix uses an owner-only domain socket; Windows will use a current-user named pipe behind `cortex-host`'s endpoint/listener/connection facade |
 | Planned multi-device model | `DeviceKind::{QuadCortex, NanoCortex}` with Nano failing closed | The schema has QC=0 and ATMA=1, but that does not establish a shared transport; the Nano variant retains a non-matching PID until hardware proves compatibility |
 | License | AGPL-3.0-or-later (code), CC-BY-SA-4.0 (content) | Not available for proprietary subsumption; MIT/Apache prior art ported with attribution |
 
@@ -74,7 +74,7 @@ hidapi -> /dev/hidraw7 -> Quad Cortex (USB, interface 5)
 crates/
   cortex-rs/    Leaf crate: transport, framing, proto, domain, session, client
   cortex-cli/   The `cortex` binary: thin main.rs over the crate
-  cortex-host/  Shared typed daemon contract and synchronous socket client
+  cortex-host/  Shared typed daemon contract and synchronous local IPC facade
   cortex-mcp/   Hardware-verified non-persistent agent tools over the daemon
 spec/           AFX zone specs (this tree)
 s/              Repo scripts: test, lint, hardware smoke, docs, GUI dev, release

@@ -50,7 +50,7 @@ The non-persistent MCP host is hardware-verified against a real Quad Cortex thro
 
 Implement a useful MCP server without persistent writes:
 
-1. Extract a reusable host/daemon client boundary from `cortex-cli::connect`; do not put Unix sockets or an async runtime into the leaf crate.
+1. Extract a reusable host/daemon client boundary from `cortex-cli::connect`; keep platform-specific local IPC and async runtimes out of the leaf crate.
 2. Serve stdio through `rmcp` and require/reuse the existing held `cortex session` daemon so MCP, CLI and GUI never compete for HID ownership.
 3. Wire read tools: `get_device_version`, `list_presets`, `read_current_preset`, `read_preset`, `list_blocks`, `list_folders`, `get_cpu_load` and catalog search.
 4. Wire transient and working-copy tools: `recall_preset`, `switch_scene`, `set_block`, `set_param`, `set_bypass`, `remove_block` and routing, with the row, recall and DSP-capacity traps in their descriptions.
@@ -128,7 +128,7 @@ AI coding agents editing patches via MCP, and the maintainers who gate what an a
 | FR-41 | Every tool delegates through the typed daemon request contract to the sole held `QuadCortex` session. | Must Have |
 | FR-42 | The server runs on stdio (the MCP transport) via `rmcp`. | Must Have |
 | FR-43 | The server logs safety-relevant events (refused save, slot backup, scratch-range override) to stderr. | Should Have |
-| FR-44 | When no daemon socket exists, the installed MCP server starts the sibling `cortex session` owner before serving stdio. It never silently replaces a running incompatible daemon, and concurrent starts converge on the daemon's socket claim. | Should Have |
+| FR-44 | When no daemon endpoint exists, the installed MCP server starts the sibling `cortex session` owner before serving stdio. It never silently replaces a running incompatible daemon, and concurrent starts converge on the local IPC claim. | Should Have |
 
 ### Non-Functional Requirements
 
@@ -168,7 +168,7 @@ AI coding agents editing patches via MCP, and the maintainers who gate what an a
 ## Dependencies
 
 - **`cortex-rs`** (workspace path) - the crate whose `QuadCortex` client the tools delegate to.
-- **Reusable host boundary** (to be extracted from `cortex-cli::connect`) - typed daemon requests and lifecycle access without duplicating Unix-socket logic in each host.
+- **`cortex-host`** - extracted typed daemon requests and lifecycle access with platform IPC behind one facade.
 - **`rmcp`** (workspace) - the MCP server framework (server + transport-io features).
 - **`tokio`** (workspace) - the async runtime `rmcp` requires.
 - **`anyhow`** - error handling in the binary.

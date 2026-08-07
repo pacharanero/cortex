@@ -164,7 +164,7 @@ Per AGENTS.md, publishing to crates.io, cutting a release tag, and any externall
 
 ### Design choice: `cargo-dist` for binaries
 
-`cargo-dist` produces distributable binaries from a release tag. The product surface is the pair: `cortex` owns the held USB session and `cortex-mcp` gives local agent harnesses a bounded stdio adapter to it. The first preview is Linux x86_64 only, matching the actual Unix-socket implementation and hardware evidence. Linux aarch64 follows validation; macOS and Windows wait for a cross-platform host boundary and hardware testing. The Tauri GUI will use Tauri's bundler once its backend is connected.
+`cargo-dist` produces distributable binaries from a release tag. The product surface is the pair: `cortex` owns the held USB session and `cortex-mcp` gives local agent harnesses a bounded stdio adapter to it. The first preview is Linux x86_64 only, matching the operational Unix IPC adapter and hardware evidence. Linux aarch64 follows validation. The host boundary now has a Windows named-pipe seam, but Windows waits for that adapter, detached-process lifecycle and hardware testing. The Tauri GUI will use Tauri's bundler once its backend is connected.
 
 ### Alternatives considered
 

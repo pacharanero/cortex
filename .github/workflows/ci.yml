@@ -35,6 +35,9 @@ jobs:
       - name: Install protoc (for prost-build)
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
 
+      - name: Install Windows cross-check target
+        run: rustup target add x86_64-pc-windows-gnu
+
       - name: No real device data
         run: s/lint-no-device-data
 
@@ -52,6 +55,11 @@ jobs:
 
       - name: Tests (leaf engine, no default features)
         run: cargo test --all --no-default-features
+
+      - name: Windows host-boundary cross-check
+        run: |
+          cargo check -p cortex-host --target x86_64-pc-windows-gnu
+          cargo check -p cortex-mcp --target x86_64-pc-windows-gnu
 
   reuse:
     name: REUSE licence lint

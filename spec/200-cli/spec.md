@@ -108,7 +108,7 @@ Linux users with a Quad Cortex, script writers, AI coding agents driving the CLI
 
 | ID | Requirement | Priority |
 | --- | --- | --- |
-| FR-18 | `cortex session start` claims its owner-only Unix socket before opening the exclusive HID interface, performs one subscribed handshake, and serves line-delimited JSON requests until stopped. | Must Have |
+| FR-18 | `cortex session start` claims its owner-only local IPC endpoint before opening the exclusive HID interface, performs one subscribed handshake, and serves line-delimited JSON requests until stopped. Unix uses a domain socket; Windows will use a current-user named pipe behind the same host facade. | Must Have |
 | FR-19 | Every ordinary device command uses the daemon when it is running and falls back to one direct session otherwise. Diagnostics that can use held state, including `device probe`, route through it; no command opens a second HID connection while the daemon owns the interface. | Must Have |
 | FR-20 | The daemon serves only responsive `Live` cache entries, falls back to explicit reads for missing state, and reports cache phase/generation/revision and reducer counters in `session status`. | Must Have |
 | FR-21 | A background monitor invalidates state before replacing a silent or continuity-invalidated session, excludes and drains device operations, explicitly releases the old handle before opening another, retries the full subscribed handshake with exponential backoff capped at 30 seconds, and exposes connected/reconnecting/failed status. | Must Have |

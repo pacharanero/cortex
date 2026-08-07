@@ -187,7 +187,7 @@ Two client-side faults caused the 2-102 second spread:
 
 ### Why commands were slow, and what fixed it (2026-08-02)
 
-The writer-starvation and handshake-pacing fixes removed the wild variance, but a one-shot command still paid a correct multi-second handshake for milliseconds of work. The structural fix is `cortex session start`: one subscribed owner pays that handshake once and serves later commands over a Unix socket.
+The writer-starvation and handshake-pacing fixes removed the wild variance, but a one-shot command still paid a correct multi-second handshake for milliseconds of work. The structural fix is `cortex session start`: one subscribed owner pays that handshake once and serves later commands over local IPC.
 
 Measured through the held session, `scene` takes about 0.07 seconds, `grid` 0.14 seconds, status 0.005 seconds, and the already-fetched catalog 0.02 seconds. This is also the correct architecture for the MCP server and GUI because the HID interface permits only one effective owner.
 

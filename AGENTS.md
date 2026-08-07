@@ -75,7 +75,9 @@ crates/
                 message envelope, typed domain model, vendored protobuf schema
                 built via prost.
   cortex-cli/   The `cortex` binary: thin main.rs, all behaviour in the crate.
-  cortex-host/  Shared synchronous daemon contract and Unix-socket client.
+  cortex-host/  Shared synchronous daemon contract and local IPC facade.
+                 Unix sockets are implemented; Windows named pipes are planned
+                 behind the same endpoint/listener/connection API.
   cortex-mcp/   The `cortex-mcp` MCP server: hardware-verified read, recall,
                 scene and live-grid tools; no persistent save/delete tools.
 gui/           Tauri 2 + React + Mantine first draft. Interactive and
