@@ -19,7 +19,7 @@ authors = ["Dr Marcus Baw"]
 license = "AGPL-3.0-or-later"
 repository = "https://github.com/pacharanero/cortex"
 homepage = "https://pacharanero.github.io/cortex/"
-description = "Unofficial, Linux-first Cortex Control USB HID toolkit for the Neural DSP Quad Cortex; Nano Cortex support is planned."
+description = "Unofficial Neural DSP Quad Cortex toolkit developing a cross-platform desktop GUI alongside a CLI, MCP server and reusable Rust core."
 
 [workspace.dependencies]
 # Leaf engine (crates/cortex-rs): keeps a minimal dependency surface so the

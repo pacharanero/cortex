@@ -1,12 +1,8 @@
-# cortex-rs
+# cortex
 
-An unofficial, Linux-first toolkit for the Neural DSP **Quad Cortex** over the
-Cortex Control USB HID protocol. **Nano Cortex** support is planned, but its
-transport compatibility is not yet established. The core deliverable is a
-low-level Rust crate (`cortex-rs`) that speaks the protocol and exposes a typed
-domain model - presets, scenes, grid, blocks. The planned product has three
-surfaces over that crate: the `cortex` CLI, a `cortex-mcp` server for agentic
-patch editing, and a cross-platform Tauri desktop GUI.
+An unofficial toolkit for the Neural DSP **Quad Cortex**, built around a cross-platform Tauri desktop GUI target in active development, a hardware-backed `cortex` CLI, a `cortex-mcp` server for agentic patch editing, and the reusable `cortex-rs` Rust crate beneath them. The CLI and MCP server already share the crate's typed model of presets, scenes, the grid and blocks over the Cortex Control USB HID protocol; connecting the GUI to that same model is its next backend milestone.
+
+**Nano Cortex** support is planned, but its transport compatibility is not yet established.
 
 > **Unofficial.** This project is not affiliated with, endorsed by, or
 > sponsored by Neural DSP Technologies. "Neural DSP", "Quad Cortex", "Nano
@@ -18,31 +14,24 @@ patch editing, and a cross-platform Tauri desktop GUI.
 
 ## Status
 
-**Pre-alpha and actively changing.** The Quad Cortex core and CLI are usable on
-Linux and passed a 37-check hardware smoke against CorOS 4.0.1, including live
-state, grid editing, prepared save, recall and delete. This is not a finished
-editor: much of the wider device API remains unimplemented, some reconnect and
-file-operation edge-case coverage remains tracked, and releases are not yet distributed.
+**Pre-alpha and actively changing.** The Quad Cortex core and CLI are usable on Linux and passed a 37-check hardware smoke against CorOS 4.0.1, including live state, grid editing, prepared save, recall and delete. This is not a finished editor: much of the wider device API remains unimplemented, some reconnect and file-operation edge-case coverage remains tracked, and releases are not yet distributed.
 
-The MCP server exposes hardware-verified read, recall, scene and unsaved live-grid editing tools through the held-session daemon; it deliberately exposes no save or delete tool. Source installation now installs both binaries and the [agent setup guide](https://pacharanero.github.io/cortex/agent-setup/) covers Claude Code and generic stdio harnesses. Prebuilt Linux releases remain the next distribution milestone. The Tauri GUI has an
-interactive read-only, fixture-backed first draft, but it is not connected to
-the device. Linux is the only hardware-verified host today; the GUI is intended
-to support Linux, Windows and macOS once those platforms are implemented and
-tested. See `spec/roadmap.md` for the exact current state and next milestone.
+The MCP server exposes hardware-verified read, recall, scene and unsaved live-grid editing tools through the held-session daemon; it deliberately exposes no save or delete tool. Source installation now installs both binaries and the [agent setup guide](https://pacharanero.github.io/cortex/agent-setup/) covers Claude Code and generic stdio harnesses. The Tauri GUI has an interactive read-only, fixture-backed first draft, but it is not connected to the device yet. The desktop target is Linux, Windows and macOS; Linux is the only implemented and hardware-verified host today, and prebuilt Linux binaries are the next distribution milestone. See `spec/roadmap.md` for the exact current state and next milestone.
 
 ## What it is
 
-- `cortex-rs` - a leaf Rust crate: USB HID transport, Cortex Control framing and
-  protobuf envelope, session/correlation, typed domain and client APIs,
-  subscribed state reduction, and shared prepared-save safety. Designed to
-  drive every host surface without depending on one.
+- `gui/` - the Tauri 2 + React + Mantine desktop editor, targeting Linux, Windows and macOS. Its first draft is an interactive, fixture-backed read-only shell; daemon/device integration and cross-platform packaging remain outstanding.
 - `cortex-cli` - a thin CLI over the crate, including a persistent daemon that
   owns the one device connection and reconnects without serving stale state.
-- `cortex-host` - the shared synchronous daemon contract and local IPC facade used by host surfaces; it has no HID feature and cannot open the device. Unix sockets are the current adapter, with Windows named pipes planned behind the same API.
 - `cortex-mcp` - an MCP server for agentic patch editing through `cortex session`. Its read, recall, scene and working-copy tools are hardware-verified; persistent writes remain deliberately unavailable.
-- `gui/` - a Tauri 2 + React + Mantine first draft. It is currently an
-  interactive, fixture-backed read-only demo; daemon/device integration and
-  cross-platform packaging are planned.
+- `cortex-rs` - a leaf Rust crate providing the USB HID transport, Cortex Control framing and protobuf envelope, session/correlation, typed domain and client APIs, subscribed state reduction, and shared prepared-save safety.
+- `cortex-host` - the shared synchronous daemon contract and local IPC facade used by host surfaces; it has no HID feature and cannot open the device. Unix sockets are the current adapter, with Windows named pipes planned behind the same API.
+
+## Why the community is building it
+
+Neural DSP provides Cortex Control for macOS and Windows but has not provided a Linux editor. This project began because Linux players still need full access to hardware they own, so the community is building that support for itself. Today that community effort is maintained by one person.
+
+Linux is therefore the project's origin, its first implementation and its only hardware-verified host so far, not the intended boundary of the product. The shared Rust core, local IPC seam and Tauri frontend are being built toward a GUI that runs on Linux, Windows and macOS, alongside the CLI and MCP interfaces.
 
 ## What it is not
 
@@ -52,9 +41,11 @@ tested. See `spec/roadmap.md` for the exact current state and next milestone.
   device-rooting route (OpenCortex) carries warranty risk that the USB route
   does not.
 
-## Setup
+## Current Developer Setup
 
-### 1. udev rule (Linux)
+The working hardware path is currently Linux. Windows and macOS setup will be documented once those paths are implemented and tested.
+
+### 1. udev rule
 
 The Quad Cortex presents as USB `152a:880a` on HID interface 5. By default
 `/dev/hidraw*` is root-only, so install a udev rule granting the locally
@@ -92,7 +83,8 @@ crates/
   cortex-host/  Shared held-session daemon contract and local IPC facade.
   cortex-cli/   The `cortex` CLI - a thin surface over the crate.
   cortex-mcp/   Non-persistent MCP read, recall, scene and live-grid tools.
-gui/           Tauri 2 + React + Mantine demo (fixture-backed, no device IPC).
+gui/           Cross-platform Tauri 2 + React + Mantine desktop editor
+               (interactive first draft, fixture-backed, no device IPC yet).
 docs/          Protocol notes, runbooks, GUI docs.
 spec/          Living spec/design per zone; roadmap and completed work ledgers.
 s/             Repo scripts: s/test, s/lint, s/gui-dev, s/version++ ...

@@ -1,7 +1,7 @@
-site_name: cortex-rs
+site_name: cortex
 site_description: >-
-  An unofficial, Linux-first toolkit for the Neural DSP Quad Cortex. A Rust
-  crate speaking the Cortex Control USB HID protocol, with a CLI on top.
+  An unofficial Neural DSP Quad Cortex toolkit developing a cross-platform
+  desktop GUI alongside a CLI, MCP server and reusable Rust core.
 site_url: https://pacharanero.github.io/cortex/
 
 repo_url: https://github.com/pacharanero/cortex
@@ -27,6 +27,7 @@ extra_css:
 
 nav:
   - Home: index.md
+  - Cross-platform GUI: gui/first-draft.md
   - Install: install.md
   - Agent setup: agent-setup.md
   - Walkthrough: walkthrough.md
