@@ -1,0 +1,8 @@
+# SPDX-FileCopyrightText: 2026 Dr Marcus Baw
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+[advisories]
+# Tauri 2.11.5 still requires the GTK3 bindings and glib 0.18 on Linux. The
+# affected VariantStrIter API is not used by this project. Remove this exception
+# when Tauri's GTK4 migration lands: https://github.com/tauri-apps/tauri/issues/12562
+ignore = ["RUSTSEC-2024-0429"]

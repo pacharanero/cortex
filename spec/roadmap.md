@@ -291,6 +291,7 @@ The visual design goal is a **hardware-faithful rendering of the Quad Cortex fro
 - [x] **GUI-001.1**: `gui/` with Tauri 2 + React + Mantine + Vite, `s/gui-dev` script. Implemented as an interactive, fixture-backed read-only first draft
 - [~] **GUI-001.2**: A demo Tauri command and mockable TypeScript API boundary exist. Outstanding: daemon-backed typed snapshots from `cortex-rs`, one managed Rust `AppState`, and no protocol/domain logic in TypeScript. Follow the prior-art boundary ([prior-art.md](prior-art.md#for-gui-001-to-gui-005))
 - [ ] **GUI-001.3**: Wire Tauri MCP for the dev feedback loop - drive the GUI from the MCP server to test Tauri commands without manual clicking
+- [ ] **GUI-001.4**: Remove the temporary `RUSTSEC-2024-0429` audit exception when stable Tauri moves its Linux runtime from the unmaintained GTK3/glib 0.18 stack to GTK4/glib 0.20 or later. Tauri 2.11.5 is the latest stable release and still pins GTK3; upstream migration is tracked in [tauri-apps/tauri#12562](https://github.com/tauri-apps/tauri/issues/12562) and [PR #14684](https://github.com/tauri-apps/tauri/pull/14684). Do not force two incompatible glib generations or ship the GUI from an unreleased Tauri branch
 
 ### GUI-002: Hardware-faithful control surface
 
