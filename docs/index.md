@@ -31,9 +31,9 @@ Linux is the first implementation and the only hardware-verified host today, but
 
 The project's central discipline is being honest about what has actually run against real hardware. Throughout these docs:
 
-<span class="status verified">verified</span> means exercised against a real Quad Cortex (CorOS 4.0.1, firmware `d14e`) from this crate's own code.
+<span class="status verified">verified</span> means exercised against a real Quad Cortex running CorOS 4.0.1 from this project's own code.
 
-<span class="status provisional">provisional</span> means implemented and unit-tested, but never run against a device.
+<span class="status provisional">provisional</span> means implemented but not yet verified against the applicable hardware or production integration boundary.
 
 <span class="status planned">planned</span> means specified but not built.
 
@@ -47,17 +47,17 @@ The project's central discipline is being honest about what has actually run aga
 | Grid: place block, set parameter, remove block | <span class="status verified">verified</span> |
 | Grid: bypass, routing, per-scene values, splits | <span class="status verified">verified</span> |
 | Prepared save, stored read-back and delete | <span class="status verified">verified</span> |
-| Capture and IR export/import | <span class="status planned">planned</span> |
+| Capture and IR export/import | <span class="status provisional">investigation; no working export/import</span> |
 | MCP server read, recall, scene and live-grid tools | <span class="status verified">verified; no save/delete tools</span> |
 | Desktop GUI shell | <span class="status provisional">interactive fixture-backed first draft; no device IPC yet</span> |
 | Windows and macOS hardware paths and packaging | <span class="status planned">planned; Linux is the only verified host</span> |
-| Nano Cortex | <span class="status planned">planned</span> |
+| Nano Cortex | <span class="status provisional">unverified target; transport compatibility unestablished</span> |
 
 ## Start here
 
 - **[Install](install.md)** - the udev rule, building, and your first command.
 - **[GUI first draft](gui/first-draft.md)** - the current desktop shell and its verification boundary.
-- **[Walkthrough](walkthrough.md)** - a tour of the CLI with real captured output.
+- **[Walkthrough](walkthrough.md)** - a tour of the CLI with hardware-captured output shapes and fictionalised identifiers/preset names.
 - **[CLI reference](cli-reference.md)** - every command.
 - **[The protocol](protocol.md)** - what we know about the wire, and how we know it.
 

@@ -19,5 +19,5 @@ pub use client::{DaemonClient, is_running, request};
 pub use ipc::{BindResult, LocalClaim, LocalConnection, LocalEndpoint, LocalListener, log_path};
 pub use protocol::{
     CacheStatus, DAEMON_PROTOCOL_VERSION, DeviceHealth, PrepareSaveResult, Request, Response,
-    SavePolicySpec, Status,
+    Status,
 };

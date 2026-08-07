@@ -99,10 +99,9 @@ fn emit<T: serde::Serialize>(value: &T, format: Format, text: impl FnOnce(&T)) -
 enum Command {
     /// Hold a persistent connection to the device, serving other commands.
     ///
-    /// The device grants its USB interface exclusively, so exactly one
-    /// process can own it. This is that process: it performs the handshake
-    /// ONCE and every other command then talks to it over a socket instead
-    /// of connecting for itself.
+    /// The protocol requires one effective USB owner, although a damaging
+    /// second open may succeed. This process claims ownership, performs the
+    /// handshake ONCE, and serves every other command through local IPC.
     ///
     /// That matters for more than speed. A held session SUBSCRIBES to device
     /// state, which is how the unit reports edits you make on the hardware -
@@ -117,7 +116,7 @@ enum Command {
         #[command(subcommand)]
         command: SessionCmd,
     },
-    /// Presets: list a setlist, show one, or load one onto the unit.
+    /// Presets: list, inspect, recall, prepare/save, or delete.
     #[command(alias = "p")]
     Preset {
         #[command(subcommand)]
@@ -165,11 +164,11 @@ enum Command {
         #[arg(long, value_name = "0-7")]
         index: u32,
     },
-    /// Fetch the device model catalog and write the raw payload to a file.
+    /// Search or inspect the device model catalog, or save its raw payload.
     ///
     /// The catalog is what turns the integer model ids stored in a preset
-    /// into names. It comes from the device, so it covers this unit's
-    /// purchased plugins and the player's own Neural Captures.
+    /// into names. It comes from the device, so it reflects installed model
+    /// content rather than a hard-coded factory table.
     ///
     /// Read-only.
     #[command(alias = "c")]
@@ -294,9 +293,31 @@ enum PresetCmd {
         #[arg(long, value_name = "PATH", default_value = cortex_rs::client::USER_SETLIST)]
         setlist: String,
     },
+    /// Move a preset to an empty slot in the same setlist.
+    ///
+    /// WRITES TO THE UNIT. The command requests a fresh complete listing and
+    /// refuses an empty source, an occupied destination, a no-op move, the
+    /// factory library, and malformed slots.
+    #[command(
+        after_help = "Examples:\n  cortex preset list --include-empty\n  cortex preset move --from 2A --to 2B --yes"
+    )]
+    Move {
+        /// Occupied source slot: bank number then letter, e.g. `2A`.
+        #[arg(long, value_name = "BANK+LETTER")]
+        from: String,
+        /// Empty destination slot: bank number then letter, e.g. `2B`.
+        #[arg(long, value_name = "BANK+LETTER")]
+        to: String,
+        /// Absolute device path of the setlist.
+        #[arg(long, value_name = "PATH", default_value = cortex_rs::client::USER_SETLIST)]
+        setlist: String,
+        /// Explicitly confirm this destructive storage mutation.
+        #[arg(long)]
+        yes: bool,
+    },
     /// Prepare a save destination before editing the working grid.
     #[command(
-        after_help = "Examples:\n  cortex session start\n  cortex preset prepare-save --slot 7A --scratch-range 7A-7H"
+        after_help = "Examples:\n  cortex session start\n  cortex preset prepare-save --slot 7A"
     )]
     PrepareSave {
         /// Target slot: bank number then letter, e.g. `7A`.
@@ -305,15 +326,6 @@ enum PresetCmd {
         /// Absolute device path of the setlist.
         #[arg(long, value_name = "PATH", default_value = cortex_rs::client::USER_SETLIST)]
         setlist: String,
-        /// Scratch setlist path. Defaults to --setlist.
-        #[arg(long, value_name = "PATH")]
-        scratch_setlist: Option<String>,
-        /// Inclusive scratch slot range, e.g. `7A-7H`.
-        #[arg(long, value_name = "START-END", num_args = 1..)]
-        scratch_range: Vec<String>,
-        /// Allow a USER target outside the configured scratch range.
-        #[arg(long)]
-        allow_outside_scratch: bool,
     },
     /// Commit the working grid to a destination prepared before editing.
     ///
@@ -557,7 +569,7 @@ enum RowCmd {
     /// Re-point a grid row's input.
     ///
     /// CHANGES THE WORKING GRID. Nothing is saved.
-    #[command(after_help = "Examples:\n  cortex row input --row 1 --port 0")]
+    #[command(after_help = "Examples:\n  cortex row input --row 1 --port 1")]
     Input {
         /// Grid row as shown on the unit, 1-4.
         #[arg(long, value_name = "1-4")]
@@ -638,11 +650,12 @@ enum DeviceCmd {
         after_help = "Examples:\n  cortex device cpu   # needs a running: cortex session start"
     )]
     Cpu,
-    /// Run the connect handshake and report the state the device pushes back.
+    /// Probe the core session read paths and report their state.
     ///
-    /// This is the hardware smoke test for the session layer. It performs the
-    /// full handshake, holds the session open for a window so device pushes
-    /// can arrive, prints a tally of what came back, then disconnects.
+    /// Without a held daemon this performs a subscribed handshake, reads the
+    /// core scene/current-preset/preset-list paths, then disconnects. With a
+    /// held daemon it probes those paths through the existing owner and leaves
+    /// that session running.
     ///
     /// Read-only: the handshake sends READs and a connect announcement. It
     /// never writes preset data and never saves.
@@ -705,20 +718,15 @@ fn run(cli: Cli) -> Result<()> {
         },
         Some(Command::Preset { command }) => match command {
             PresetCmd::Delete { name, setlist } => cmd_preset_delete(&name, &setlist, fmt),
-            PresetCmd::PrepareSave {
-                slot,
+            PresetCmd::Move {
+                from,
+                to,
                 setlist,
-                scratch_setlist,
-                scratch_range,
-                allow_outside_scratch,
-            } => cmd_preset_prepare_save(
-                &slot,
-                &setlist,
-                scratch_setlist.as_deref(),
-                &scratch_range,
-                allow_outside_scratch,
-                fmt,
-            ),
+                yes,
+            } => cmd_preset_move(&from, &to, &setlist, yes, fmt),
+            PresetCmd::PrepareSave { slot, setlist } => {
+                cmd_preset_prepare_save(&slot, &setlist, fmt)
+            }
             PresetCmd::Save { token, name, yes } => {
                 cmd_preset_save(&token, name.as_deref(), yes, fmt)
             }
@@ -1341,15 +1349,7 @@ fn cmd_recall(slot: &str, setlist: &str, factory: bool, fmt: Format) -> Result<(
 }
 
 /// Prepare one target while the working grid is known clean.
-#[allow(clippy::too_many_arguments)]
-fn cmd_preset_prepare_save(
-    slot: &str,
-    setlist: &str,
-    scratch_setlist: Option<&str>,
-    scratch_ranges: &[String],
-    allow_outside_scratch: bool,
-    fmt: Format,
-) -> Result<()> {
+fn cmd_preset_prepare_save(slot: &str, setlist: &str, fmt: Format) -> Result<()> {
     if cortex_rs::client::is_factory_setlist(setlist) {
         anyhow::bail!("{setlist} is the factory library and is not writable");
     }
@@ -1358,39 +1358,9 @@ fn cmd_preset_prepare_save(
             "{slot} is not a slot. Slots are a bank number 1-32 then a letter A-H, e.g. 2B"
         );
     }
-    if scratch_ranges.is_empty() {
-        anyhow::bail!(
-            "saving requires a scratch range. Use --scratch-range START-END to declare which \
-             USER slots are disposable, e.g. --scratch-range 31A-32H. The crate supplies no \
-             default because only you know which of your 256 slots are disposable."
-        );
-    }
-    let scratch_setlist = scratch_setlist.unwrap_or(setlist);
-    let ranges: Vec<cortex_rs::ScratchRange> = scratch_ranges
-        .iter()
-        .map(|r| {
-            let parts: Vec<&str> = r.splitn(2, '-').collect();
-            if parts.len() != 2 {
-                anyhow::bail!("--scratch-range expects START-END, e.g. 31A-32H; got {r:?}");
-            }
-            cortex_rs::ScratchRange::new(parts[0], parts[1]).map_err(|e| anyhow::anyhow!("{e}"))
-        })
-        .collect::<Result<_>>()?;
-    let policy = cortex_host::SavePolicySpec {
-        scratch_setlist: scratch_setlist.to_string(),
-        scratch_ranges: ranges.clone(),
-    };
-    let override_scratch = if allow_outside_scratch {
-        cortex_rs::ScratchOverride::AllowOutsideScratch
-    } else {
-        cortex_rs::ScratchOverride::ScratchOnly
-    };
-
     let Some(result) = connect::request(&cortex_host::Request::PrepareSave {
         setlist: setlist.to_string(),
         slot: slot.to_string(),
-        policy,
-        override_scratch,
         recall_consent: cortex_rs::RecallConsent::RequireClean,
         timeout_seconds: 40,
     }) else {
@@ -1452,6 +1422,52 @@ fn cmd_preset_delete(name: &str, setlist: &str, fmt: Format) -> Result<()> {
     session.stop();
     result?;
     report_edit("delete", detail, fmt)
+}
+
+/// Move a preset from one slot to an empty slot in the same setlist.
+fn cmd_preset_move(
+    from_slot: &str,
+    to_slot: &str,
+    setlist: &str,
+    yes: bool,
+    fmt: Format,
+) -> Result<()> {
+    if !yes {
+        anyhow::bail!(
+            "preset moves change stored content; inspect `preset list --include-empty` and pass \
+             --yes to confirm"
+        )
+    }
+    let detail = format!("{from_slot} to {to_slot} in {setlist}");
+    if let Some(result) = connect::request(&cortex_host::Request::MovePreset {
+        setlist: setlist.to_string(),
+        from_slot: from_slot.to_string(),
+        to_slot: to_slot.to_string(),
+        confirmed: true,
+    }) {
+        result?;
+        return report_edit("move", detail, fmt);
+    }
+
+    let (session, qc) = connected()?;
+    let policy = cortex_rs::SavePolicy::new(
+        setlist,
+        vec![
+            cortex_rs::ScratchRange::new(from_slot, from_slot)?,
+            cortex_rs::ScratchRange::new(to_slot, to_slot)?,
+        ],
+    )?;
+    let result = qc.move_preset(
+        &policy,
+        setlist,
+        from_slot,
+        to_slot,
+        Duration::from_secs(30),
+    );
+    qc.disconnect();
+    session.stop();
+    result?;
+    report_edit("move", detail, fmt)
 }
 
 /// Switch the active scene.

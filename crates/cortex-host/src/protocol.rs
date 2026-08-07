@@ -11,7 +11,7 @@
 //!
 //! ## Why a daemon at all
 //!
-//! The device grants its HID interface exclusively, so exactly one process
+//! The protocol requires one effective HID owner, so exactly one process
 //! can own it. Until now every CLI command opened its own session, which
 //! meant paying a handshake per command - measured at 2-4 s on a rested
 //! device, and far worse when a subscribed handshake left the device busy.
@@ -31,7 +31,7 @@
 //! @see spec/roadmap.md PROT-008.6
 //! @see spec/140-session/spec.md
 
-use cortex_rs::{RecallConsent, ScratchOverride};
+use cortex_rs::RecallConsent;
 
 /// The daemon protocol version, checked by clients to detect skew
 /// after an upgrade leaves an old daemon running.
@@ -39,7 +39,7 @@ use cortex_rs::{RecallConsent, ScratchOverride};
 /// Bump this whenever a `Request` variant changes shape or a new variant is
 /// added. A client that sees a mismatch refuses with an actionable message
 /// rather than sending a request the daemon will misparse.
-pub const DAEMON_PROTOCOL_VERSION: u32 = 2;
+pub const DAEMON_PROTOCOL_VERSION: u32 = 4;
 
 /// A request from a client to the daemon.
 ///
@@ -188,10 +188,6 @@ pub enum Request {
         setlist: String,
         /// Target slot, e.g. `2B`.
         slot: String,
-        /// The host's save policy, configured by the user.
-        policy: SavePolicySpec,
-        /// Whether to allow a save outside the configured scratch range.
-        override_scratch: ScratchOverride,
         /// Whether the host accepts discarding the current working grid to
         /// back up an occupied (or apparently-empty) target.
         recall_consent: RecallConsent,
@@ -219,6 +215,17 @@ pub enum Request {
         /// The preset's stored name, as the device reports it.
         name: String,
     },
+    /// Move a preset to an empty slot in the same setlist. **Destructive.**
+    MovePreset {
+        /// Absolute device path of the user setlist.
+        setlist: String,
+        /// Occupied source slot, e.g. `7A`.
+        from_slot: String,
+        /// Empty destination slot, e.g. `7B`.
+        to_slot: String,
+        /// Explicit confirmation from the host. Must be `true`.
+        confirmed: bool,
+    },
     /// The most recent CPU load pushed by the device.
     ///
     /// Only meaningful on a subscribed session, which is the daemon's: a
@@ -226,29 +233,6 @@ pub enum Request {
     CpuLoad,
     /// Ask the daemon to shut down, announcing the disconnect first.
     Shutdown,
-}
-
-/// A serialisable save policy specification, sent by the client and converted
-/// to a [`cortex_rs::safety::SavePolicy`] by the daemon. This exists because
-/// `SavePolicy` does not derive `Deserialize` - it validates at construction
-/// time, and a socket value should not bypass that.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct SavePolicySpec {
-    /// The setlist configured as scratch space.
-    pub scratch_setlist: String,
-    /// Inclusive slot ranges within that setlist.
-    pub scratch_ranges: Vec<cortex_rs::safety::ScratchRange>,
-}
-
-impl SavePolicySpec {
-    /// Convert to a validated `SavePolicy`.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`cortex_rs::Error::UnsafeSave`] if the spec is invalid.
-    pub fn to_policy(&self) -> cortex_rs::Result<cortex_rs::safety::SavePolicy> {
-        cortex_rs::safety::SavePolicy::new(&self.scratch_setlist, self.scratch_ranges.clone())
-    }
 }
 
 /// The result of a `PrepareSave` request: an opaque token and a safe view.
@@ -461,6 +445,27 @@ mod tests {
                 promote: true,
                 timeout_seconds: 15,
             } if name == "GAIN"
+        ));
+    }
+
+    #[test]
+    fn a_confirmed_preset_move_round_trips() {
+        let request = Request::MovePreset {
+            setlist: cortex_rs::client::USER_SETLIST.into(),
+            from_slot: "2A".into(),
+            to_slot: "2B".into(),
+            confirmed: true,
+        };
+        let text = serde_json::to_string(&request).unwrap();
+        let back: Request = serde_json::from_str(&text).unwrap();
+        assert!(matches!(
+            back,
+            Request::MovePreset {
+                from_slot,
+                to_slot,
+                confirmed: true,
+                ..
+            } if from_slot == "2A" && to_slot == "2B"
         ));
     }
 

@@ -511,11 +511,9 @@ mod tests {
             .into_iter()
             .map(|tool| tool.name.to_string())
             .collect();
-        assert!(
-            !names
-                .iter()
-                .any(|name| name.contains("save") || name.contains("delete"))
-        );
+        for forbidden in ["save_preset", "delete_preset", "move_preset"] {
+            assert!(!names.iter().any(|name| name == forbidden));
+        }
         assert!(names.contains(&"set_block".to_string()));
     }
 

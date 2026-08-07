@@ -164,6 +164,17 @@ impl SavePolicy {
         &self.scratch_ranges
     }
 
+    /// Whether a setlist and linear slot position are inside the configured
+    /// scratch boundary.
+    #[must_use]
+    pub fn contains_scratch_slot(&self, setlist: &str, position: u32) -> bool {
+        setlist.trim_end_matches('/') == self.scratch_setlist.trim_end_matches('/')
+            && self
+                .scratch_ranges
+                .iter()
+                .any(|range| range.contains(position))
+    }
+
     fn authorize(
         &self,
         target: &SaveTarget,
@@ -181,12 +192,7 @@ impl SavePolicy {
                 target.setlist
             )));
         }
-        let in_scratch = target.setlist.trim_end_matches('/')
-            == self.scratch_setlist.trim_end_matches('/')
-            && self
-                .scratch_ranges
-                .iter()
-                .any(|range| range.contains(target.position));
+        let in_scratch = self.contains_scratch_slot(&target.setlist, target.position);
         if !in_scratch && override_scratch != ScratchOverride::AllowOutsideScratch {
             return Err(crate::Error::UnsafeSave(format!(
                 "{} in {} is outside the configured scratch range; choose a scratch slot or explicitly allow an outside-scratch save",

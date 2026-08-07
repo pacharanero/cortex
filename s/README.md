@@ -117,7 +117,7 @@ It was a capture of our *own* client that found the writer starvation in `sessio
 
 ## `s/hardware-smoke`
 
-Run deterministic end-to-end CLI checks against a real Quad Cortex. It reads every write back through a separate command, saves only within one explicitly disposable scratch bank, and restores the named starting slot even after a failed check or Ctrl-C.
+Run deterministic end-to-end CLI checks against a real Quad Cortex. It reads every write back through a separate command, saves only within one explicitly disposable scratch bank, moves the created fixture to the next scratch slot and back, deletes it, and restores the named starting slot even after a failed check or Ctrl-C.
 
 - `s/hardware-smoke --scratch-bank 31 --restore-slot 1A --discard-working-copy`
 - `s/hardware-smoke --scratch-bank 31 --restore-slot 1A --discard-working-copy --setlist "/media/p4/Presets/My Presets"`

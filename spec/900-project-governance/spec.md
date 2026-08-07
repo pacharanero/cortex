@@ -28,7 +28,7 @@ tags: ["governance", "license", "agpl", "spdx", "reuse", "notice", "trademark", 
 This is an unofficial, reverse-engineered interoperability client for hardware whose vendor ships no Linux editor. That posture carries legal-hygiene obligations the project must satisfy from day one:
 
 1. **A deliberate license choice.** AGPL-3.0-or-later for code (not available for proprietary subsumption), CC-BY-SA-4.0 for written content. The MIT- and Apache-2.0-licensed prior art we port from remains under its own terms; attribution is recorded, not relicensed.
-2. **Attribution of prior art.** `NOTICE` and `THIRD-PARTY-NOTICES.md` record the copyright and licence of every project we derive from (`pyquadcortex` MIT, `deskop-nano-cortex` Apache-2.0, `qc-stomp-tools` MIT) and the projects we study but do not incorporate (the four reference-only repos without a clear repository-wide licence).
+2. **Attribution of prior art.** `NOTICE` and `THIRD-PARTY-NOTICES.md` record the copyright and licence of projects whose work is incorporated or adapted (`pyquadcortex` MIT and `deskop-nano-cortex` Apache-2.0), licensed projects retained only as references (`qc-stomp-tools` and the indirect `nano-cortex-web-editor` BLE provenance), and the four studied repositories without a clear repository-wide licence.
 3. **Trademark and unaffiliation.** "Neural DSP", "Quad Cortex", "Nano Cortex", and "Cortex Control" are trademarks of Neural DSP Technologies. The project is unaffiliated and says so in `README.md`, `AGENTS.md`, and `NOTICE`.
 4. **SPDX headers on every source file.** `SPDX-FileCopyrightText` and `SPDX-License-Identifier` on every `.rs`, `.toml`, `.yml`, `.sh`, etc. `REUSE.toml` covers the header-less files (markdown, JSON, lockfiles, `.gitignore`, `.editorconfig`).
 5. **REUSE compliance.** `reuse lint` passes in CI and locally; the repo is REUSE-compliant.
@@ -41,14 +41,15 @@ This zone owns the files that encode these obligations.
 | Claim | Status | Evidence |
 | --- | --- | --- |
 | Code license is AGPL-3.0-or-later | Implemented | `LICENSE` (full AGPL text), `Cargo.toml` `license = "AGPL-3.0-or-later"`, SPDX headers on source files |
-| Written content license is CC-BY-SA-4.0 | Implemented | `NOTICE`, `README.md` licensing section |
+| Written content license is CC-BY-SA-4.0 | Implemented | final matching Markdown annotation in `REUSE.toml` and `LICENSES/CC-BY-SA-4.0.txt` |
 | `LICENSES/AGPL-3.0-or-later.txt` is present | Implemented | Full license text in `LICENSES/` |
+| `LICENSES/CC-BY-SA-4.0.txt` is present | Implemented | Full written-content license text in `LICENSES/` |
 | `LICENSES/MIT.txt` is present (for the vendored .proto) | Implemented | MIT license text in `LICENSES/` |
 | `NOTICE` records attribution for `pyquadcortex` (MIT) | Implemented | `NOTICE` -> Recovered schema provenance |
 | `NOTICE` records attribution for `deskop-nano-cortex` (Apache-2.0) | Implemented | `NOTICE` -> architectural precedent |
-| `THIRD-PARTY-NOTICES.md` records full attribution + licence texts | Implemented | `THIRD-PARTY-NOTICES.md` (pyquadcortex MIT, deskop-nano-cortex Apache-2.0, qc-stomp-tools MIT, plus the four repositories studied but not incorporated) |
+| `THIRD-PARTY-NOTICES.md` matches the current prior-art table | Implemented | Distinguishes incorporated/adapted, MIT reference, indirect Nano BLE provenance, mixed file-level notices, and no-licence reference projects |
 | `REUSE.toml` covers header-less files | Implemented | `REUSE.toml` bulk annotations for `**/*.md`, `**/*.txt`, `**/*.json`, `**/Cargo.lock`, `LICENSE`, `.gitignore`, `.editorconfig`, etc. |
-| SPDX headers on every source file | Implemented | Every `.rs`, `.toml`, `.yml`, `.sh` has `SPDX-FileCopyrightText` / `SPDX-License-Identifier` |
+| Every file is REUSE-covered | Implemented | Source files use inline SPDX where supported; generated/headerless files use bulk annotations |
 | Vendored `.proto` files keep their own MIT SPDX header | Implemented | `crates/cortex-rs/proto/*.proto` carry `SPDX-FileCopyrightText: 2026 Stokes` / `SPDX-License-Identifier: MIT` |
 | Trademark and unaffiliation notice in `README.md` | Implemented | `README.md` -> Unofficial blockquote |
 | Trademark and unaffiliation notice in `AGENTS.md` | Implemented | `AGENTS.md` -> Legal hygiene |
@@ -86,11 +87,11 @@ Maintainers, downstream consumers, and anyone auditing the project's legal postu
 
 | ID | Requirement | Priority |
 | --- | --- | --- |
-| FR-1 | The project license is **AGPL-3.0-or-later** for code and **CC-BY-SA-4.0** for written content. `LICENSE` contains the full AGPL text; `LICENSES/AGPL-3.0-or-later.txt` is present. | Must Have |
+| FR-1 | The project license is **AGPL-3.0-or-later** for code and **CC-BY-SA-4.0** for written content. `LICENSES/` contains both canonical texts; `LICENSE` carries the project code license. | Must Have |
 | FR-2 | Every source file carries an SPDX header: `SPDX-FileCopyrightText: 2026 Dr Marcus Baw` and `SPDX-License-Identifier: AGPL-3.0-or-later`, using the language's comment prefix. | Must Have |
-| FR-3 | `REUSE.toml` carries bulk annotations for files that cannot carry an inline header (`**/*.md`, `**/*.txt`, `**/*.json`, `**/Cargo.lock`, `LICENSE`, `.gitignore`, `.editorconfig`, etc.), with the same copyright and license. | Must Have |
+| FR-3 | `REUSE.toml` first covers headerless assets/config as AGPL, then applies a final matching CC-BY-SA annotation to Markdown. Matching order is part of the contract. | Must Have |
 | FR-4 | `NOTICE` records the project copyright, the AGPL+CC-BY-SA license decision, and the attribution for `pyquadcortex` (MIT, vendored .proto) and `deskop-nano-cortex` (Apache-2.0, architectural precedent). | Must Have |
-| FR-5 | `THIRD-PARTY-NOTICES.md` records full attribution and licence texts for every incorporated project (`pyquadcortex` MIT, `deskop-nano-cortex` Apache-2.0, `qc-stomp-tools` MIT) and the reference-only repositories without a clear repository-wide licence (`OpenCortex`, `qc-extras`, `quad-cortex-usb-re-notes`, `toneparse`). | Must Have |
+| FR-5 | `THIRD-PARTY-NOTICES.md` records full attribution and applicable licence text or link for incorporated/adapted work (`pyquadcortex` MIT and `deskop-nano-cortex` Apache-2.0), the licensed projects currently retained as references (`qc-stomp-tools` and the indirect `nano-cortex-web-editor` BLE provenance), and the reference-only repositories without a clear repository-wide licence (`OpenCortex`, `qc-extras`, `quad-cortex-usb-re-notes`, `toneparse`). | Must Have |
 | FR-6 | `LICENSES/MIT.txt` is present, covering the vendored `.proto` files' license. | Must Have |
 | FR-7 | The vendored `.proto` files in `crates/cortex-rs/proto/` keep their own MIT SPDX header (`SPDX-FileCopyrightText: 2026 Stokes` / `SPDX-License-Identifier: MIT`) above the recovery note. | Must Have |
 | FR-8 | `reuse lint` passes (CI-enforced in zone 600, locally in zone 500). | Must Have |
@@ -112,12 +113,12 @@ Maintainers, downstream consumers, and anyone auditing the project's legal postu
 ## Acceptance Criteria
 
 - [x] `LICENSE` contains the full AGPL-3.0 text.
-- [x] `LICENSES/AGPL-3.0-or-later.txt` and `LICENSES/MIT.txt` are present.
-- [x] Every `.rs`, `.toml`, `.yml`, `.sh` has an SPDX header.
+- [x] `LICENSES/AGPL-3.0-or-later.txt`, `LICENSES/CC-BY-SA-4.0.txt`, and `LICENSES/MIT.txt` are present.
+- [x] Every file has inline SPDX metadata where supported or an applicable REUSE annotation.
 - [x] `REUSE.toml` covers the header-less files.
 - [x] The vendored `.proto` files keep their own MIT SPDX header.
 - [x] `NOTICE` records attribution for `pyquadcortex` and `deskop-nano-cortex`.
-- [x] `THIRD-PARTY-NOTICES.md` records full attribution + license texts for all incorporated and reference-only projects.
+- [x] `THIRD-PARTY-NOTICES.md` matches the current AGENTS/prior-art licensing table and distinguishes each project's actual use and licensing posture.
 - [x] `reuse lint` passes in CI.
 - [x] Trademark/unaffiliation notice in `README.md`, `AGENTS.md`, `NOTICE`.
 - [x] Reverse-engineering legal basis cited in `README.md` and `NOTICE`.
@@ -140,7 +141,7 @@ Maintainers, downstream consumers, and anyone auditing the project's legal postu
 ## Future
 
 - **Dual licensing.** If a closed derivative needs to exist, a dual-license boilerplate and a `DUAL-LICENSE.md` may be added. Requires approval (AGENTS.md).
-- **`qc-stomp-tools` incorporation.** Currently reference-only (on-device ioctls). If we ever target on-device builds, `qc-stomp-tools` (MIT) code may be adapted; it will carry its upstream copyright and a `NOTICE`/`THIRD-PARTY-NOTICES.md` entry.
+- **`qc-stomp-tools` incorporation.** It is studied but not incorporated. If on-device builds ever become justified, its MIT code may be adapted with upstream copyright and an approved notice update.
 - **Human-rights clause.** The `README.md` licensing section notes "The project's own work is not to be used in weaponry, immigration enforcement, or other activities which infringe human rights." This is a statement of intent, not a license term; the AGPL is the enforceable grant.
 
 ## Glossary

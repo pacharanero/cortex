@@ -22,13 +22,14 @@ The design is a direct port of `pyquadcortex/pyquadcortex/transport.py::Transpor
 
 ## [DES-SES-ARCH] Architecture
 
-### File Map (planned)
+### File Map
 
 ```text
 crates/cortex-rs/src/
+├── link.rs                — transport-neutral `HidLink` seam and fake-link support
 ├── session.rs             — handshake, RX/keepalive threads, correlation and dispatch
 ├── state.rs               — subscribed-state cache, transactional sparse reducer, revisions
-└── transport.rs           — (zone 100) the transport trait + HID impl
+└── transport.rs           — (zone 100) hidapi report I/O implementation
 ```
 
 ### Flow Map: `[Flow.Session]`
@@ -38,17 +39,17 @@ crates/cortex-rs/src/
         │ calls session.connect() / session.request() / session.await_broadcast()
         ▼
 [Session (this zone)]
-  ├── handshake.rs:  ResetCommsBuffers → Version READ → Version UPDATE
+  ├── session.rs:    ResetCommsBuffers → Version READ → Version UPDATE
   │                  → ModelRepo READ+wait → Connection{true}
   │                  → 22 subscribe READs → CPULoad CREATE → settle
-  ├── keepalive.rs: every 1s, KeepAlive{UPDATE} (swallow failures)
-  ├── correlation.rs: request_id counter, pending waiters, type waiters, collectors
+  ├── keepalive:     every 1s, KeepAlive{UPDATE} (swallow failures)
+  ├── correlation:   request_id counter, pending waiters, type waiters, collectors
   └── dispatch:      decode → liveness → state reducer → collectors/waiters
         │                         │
         │                         └─ DeviceStateCache snapshots + revision watch
         │
         ▼
-[Transport trait (zone 100)]
+[HidLink (this zone), implemented by Transport (zone 100)]
         │  read_report() / write_report() (swallowing the benign STALL)
         ↕  USB HID
 [Quad Cortex hardware]
@@ -58,51 +59,9 @@ crates/cortex-rs/src/
 
 ## [DES-SES-DATA] Data Model
 
-### `Session` struct
+### `Session` and waiter state
 
-Holds the session state. `Send` but not `Clone`; owns the transport and the background thread handles.
-
-| Field                | Type                              | Description                                                              |
-| -------------------- | --------------------------------- | ------------------------------------------------------------------------ |
-| `transport`          | `Transport` (trait object or impl) | The framed transport; provides `read_report`, `write_report`, `stop`    |
-| `keepalive_interval` | `Duration`                        | Default 1 s; required to preserve device pushes                           |
-| `ids`                | `AtomicU64`                       | Monotonic request_id counter, starts at 1                                |
-| `pending`            | `Mutex<HashMap<u64, Waiter>>`     | `request_id -> Waiter`; guarded by `state_lock`                          |
-| `type_waiters`       | `Mutex<Vec<TypeWaiter>>`          | Unsolicited-broadcast waiters, matched by message type                   |
-| `collectors`         | `Mutex<Vec<Collector>>`           | `collect()` entries; do not consume messages                              |
-| `state_lock`         | `Mutex<()>`                       | Guards `pending` / `type_waiters` / `collectors` (state only, never I/O)  |
-| `write_lock`         | `Mutex<()>`                       | Serializes device writes per logical message                             |
-| `running`            | `AtomicBool`                      | RX/keepalive loop control                                                 |
-| `stop_event`         | `Condvar` / `AtomicBool`          | Interruptible sleep for keepalive                                         |
-| `rx_handle`          | `JoinHandle`                      | The RX/dispatch thread                                                    |
-| `ka_handle`          | `JoinHandle`                      | The keepalive thread                                                      |
-| `state`              | `DeviceStateCache`                | Stable cache handle fed before waiter delivery                            |
-| `generation`         | `u64`                             | Physical-session generation accepted by the cache                         |
-
-### `Waiter` (for `request()`)
-
-| Field            | Type                          | Description                                  |
-| ---------------- | ----------------------------- | -------------------------------------------- |
-| `event`          | `Event` (Condvar-based)       | Signalled when the reply lands               |
-| `slot`           | `Mutex<Option<Message>>`      | The reply, set before signalling             |
-| `expected_type`  | `CortexMessageType`           | The request's message type (for type match)  |
-
-### `TypeWaiter` (for `await_broadcast()`)
-
-| Field            | Type                          | Description                                  |
-| ---------------- | ----------------------------- | -------------------------------------------- |
-| `expected_type`  | `CortexMessageType`           | The broadcast type to wait for               |
-| `match_fn`       | `Box<dyn Fn(&Message) -> bool>` | Optional predicate; false = keep waiting  |
-| `event`          | `Event`                       | Signalled when a matching broadcast lands     |
-| `slot`           | `Mutex<Option<Message>>`      | The broadcast, set before signalling          |
-
-### `Collector` (for `collect()`)
-
-| Field            | Type                          | Description                                  |
-| ---------------- | ----------------------------- | -------------------------------------------- |
-| `expected_type`  | `CortexMessageType`           | The type to gather                           |
-| `match_fn`       | `Option<Box<dyn Fn(&Message) -> bool>>` | Optional filter                  |
-| `bucket`          | `Mutex<Vec<Message>>`         | Appended in arrival order; not consuming     |
+`Session` owns a removable `Box<dyn HidLink>`, shared request/broadcast/collector state, an optional `DeviceStateCache`, and mutex-protected RX/keepalive join handles. `close()` announces disconnect, stops and joins workers, then takes the boxed link so return proves the device lease is gone even when another `Arc<Session>` remains. Waiters use `Condvar`-based slots and raw `MessageType` tags; their synchronisation is separate from the link's writer-priority gate.
 
 ### Constants
 
@@ -146,16 +105,16 @@ This is because:
 
 `await_broadcast` ([FR-10]) is the companion for unsolicited device pushes that answer an action rather than a request. The `RecallPreset` push emitted after a preset is recalled is asynchronous and carries the recall's `request_id`; the seed push from the handshake carries none. The `match` predicate lets `read_preset` skip the seed and accept only the push echoing its own recall's id.
 
-`collect` ([FR-11]) is the fan-out variant: a single `File` READ makes the device enumerate every folder (~399 on the observed unit), arriving over 10-20 s. A collector gathers them all without consuming them (waiters and other collectors still receive copies).
+`collect` ([FR-11]) is the fan-out variant: a single `File` READ can make the device enumerate hundreds of folders. A collector gathers them without consuming waiter or other collector delivery.
 
 ---
 
 ## [DES-SES-DISPATCH] RX/Dispatch Loop
 
-`dispatch.rs` is the background thread that reads reports, reassembles, decodes, and routes. Design invariants:
+`rx_loop` and `dispatch` in `session.rs` read reports, reassemble, decode, and route. Design invariants:
 
 - **The loop never dies.** Every per-message decode/parse is wrapped; a malformed frame, unknown type, or non-protobuf raw payload is logged at debug and skipped. The reassembly buffer is reset on failure.
-- **A FIRST-flagged report begins a new message.** If a partial buffer exists, it is dropped (routine: the device interleaves bursts). Recovery is automatic.
+- **A FIRST-flagged report begins a new message.** If a partial buffer exists, framing resynchronises and session invalidates cache continuity.
 - **Reassembly is capped** at `MAX_MESSAGE_BODY` (1 MiB). A lost LAST flag leaves the buffer unable to complete; the cap lets the loop reset rather than accumulate forever. No legitimate message reaches the cap.
 - **Frame-level gzip** (`1f 8b` prefix) is decompressed before protobuf decode. Field-level gzip inside `bytes` fields is a domain-layer concern (zone 130).
 - **Write serialization.** A `write_lock` serializes the reports of a single logical message so a keepalive cannot interleave. Encoding happens outside the lock to keep the critical section to device I/O only. The `state_lock` is never held across blocking I/O.
@@ -203,12 +162,9 @@ The keepalive loop runs a background thread that sends `KeepAlive{UPDATE}` every
 
 **In-crate unit tests** (`session.rs`, `#[cfg(test)]`), no hardware:
 
-- `test_type_first_no_id`: a READ reply with no `request_id` satisfies the pending same-type waiter.
-- `test_id_consistency_check`: a same-type reply with a matching `request_id` satisfies the waiter; a non-matching id does not.
-- `test_cascade_ignored`: an other-type message echoing the request's id is NOT delivered to the waiter (cascade is skipped).
-- `test_broadcast_match_predicate`: a `RecallPreset` push with no `request_id` (the seed) is rejected by the match predicate; the push echoing the recall's id is accepted.
-- `test_race_window_grace`: simulate a reply landing after the wait() timeout but before pending removal; the grace window delivers it.
-- `test_reassembly_cap`: a buffer exceeding `MAX_MESSAGE_BODY` resets.
+- Correlation tests cover id-less type-first matching, id consistency, cascade rejection, broadcast predicates, oldest-first fallback and the timeout race grace.
+- Fake-link tests cover reassembled delivery, continuity invalidation with continued RX, writer priority under a saturated reader, keepalive cadence and never-heard liveness.
+- Direct frame injection for the 1 MiB cap and FIRST-over-partial branches remains the narrow coverage gap.
 - State reducer tests cover full seeding, global/per-scene parameter and bypass updates, promotion, removal, malformed and structural invalidation, folder mutation invalidation, old-generation rejection, explicit invalidation, empty-Version protection, and a 135-message knob burst.
 - Dispatch tests prove one `Scene` message updates the cache and satisfies its pending waiter; fake-link tests prove a malformed report invalidates the cache while RX continues.
 

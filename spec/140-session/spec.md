@@ -28,7 +28,7 @@ tags: ["session", "connect", "keepalive", "correlation", "broadcast"]
 
 The Quad Cortex will not push state to a client that has merely opened the USB pipe. A host must perform a specific connect handshake before the device treats it as a connected editor and starts broadcasting. This zone owns the session state machine that sits above raw framed transport and below the ergonomic client: it knows how to bring a session up, keep it alive, correlate replies to requests, and wait for unsolicited device pushes.
 
-This zone does NOT own the ergonomic API (zone 150), the HID device handle (zone 100), or the framing/decode layer (zones 110/120). It consumes a transport-like trait that exposes `send`, `request`, and the reassembled-message stream, and it provides the correlated request/response and broadcast-wait primitives the client is built on.
+This zone does NOT own the ergonomic API (zone 150) or hidapi open/enumeration (zone 100). It owns the transport-neutral `HidLink` seam, the removable link lifetime, background report loop, correlated request/broadcast primitives, and subscribed state continuity.
 
 The protocol facts and this Rust session implementation are hardware-verified against a real Quad Cortex running CorOS 4.0.1. The verification includes the paced handshake, one-second keepalive, correlation, broadcast waiting, CPU-load subscription, clean shutdown, and a held idle session.
 
@@ -53,12 +53,12 @@ The protocol facts and this Rust session implementation are hardware-verified ag
 | FR-11 | `collect(expected_type, trigger, seconds, match)` fires `trigger` and gathers EVERY matching message for `seconds`, returning them in arrival order. A collector does NOT consume messages - they still reach any waiter or other collector. Used for the folder-enumeration flood a single `File` READ produces. | Should Have |
 | FR-12 | The RX/dispatch loop must never die. Per-message decode/parse errors are logged and skipped; the reassembly buffer is reset on a malformed frame or a lost LAST flag so one bad frame cannot wedge the stream. Unknown message types and non-protobuf "raw payload" pushes (e.g. `License`, `CloudLogin`) are logged at debug and dropped. | Must Have   |
 | FR-13 | Frame-level gzip decompression: if a reassembled payload starts with `1f 8b`, decompress it before protobuf decode. Field-level gzip inside protobuf `bytes` fields is handled at the domain layer (zone 130), not here. | Must Have   |
-| FR-14 | A FIRST-flagged report always begins a new logical message: drop any stale partial reassembly buffer so the new message reassembles cleanly. This is routine (the device interleaves bursts of pushes); recovery is automatic. | Must Have   |
+| FR-14 | A FIRST-flagged report begins a new logical message. If it abandons a partial body, reassembly continues but cache continuity is invalidated because a state update may have been lost. | Must Have   |
 | FR-15 | Reassembly is capped at 1 MiB of reassembled body (`_MAX_MESSAGE_BODY = 1 << 20`). A legitimate message never reaches the cap (the `ModelRepo` reply, ~47 KB gzipped across ~371 reports, is the largest observed). A wedged buffer exceeding the cap is reset so the stream resyncs instead of accumulating forever. | Must Have   |
 | FR-16 | Writes are serialized so one logical message's reports are written as an atomic group (a keepalive cannot interleave between a multi-report message's header and its continuation reports, which carry no header). The write lock is SEPARATE from the state lock; the state lock is never held across blocking device I/O. | Must Have   |
 | FR-17 | After a `request` wait() times out, a reply can still land in the race window between the timeout and removing the pending entry. Whoever pops the entry "wins": if the RX thread already popped it, it is committed to delivering, so wait a short grace (0.5 s) for that to complete rather than dropping a reply that actually arrived. | Should Have |
 | FR-18 | `Session::stop()` signals the background RX and keepalive threads to exit and joins them. `Session::close()` announces disconnect, joins both workers, then explicitly takes and drops the owned link so returning proves the HID handle is gone even if other `Arc<Session>` references remain. Both are idempotent. Joining before dropping matters: closing the handle while the RX thread is inside `read()` can crash. | Must Have   |
-| FR-19 | The session holds the exclusive HID ownership for its lifetime (one owning process per device). The MCP server especially must hold a single session. | Must Have   |
+| FR-19 | The session holds one link for its lifetime. Effective process ownership is claimed by `cortex-host` before opening because a second hidapi open can succeed and wedge the first owner. | Must Have   |
 | FR-20 | No protocol-version field exists on the wire: a CorOS update can silently break the handshake. Read and cache the device `Version` before announcing the client version, while no other same-type request can race its id-less reply, and surface that cached identity to callers. | Should Have |
 | FR-21 | `DeviceStateCache` observes each state-bearing inbound message before collectors or waiters. Observation is non-consuming: the same message both updates the cache and satisfies normal correlation. | Must Have |
 | FR-22 | A complete four-row `RecallPreset` replaces the live-preset baseline. Sparse keyed `Grid` messages merge only for established routing, split, parameter, bypass, scene-mode promotion, and removal shapes; an ambiguous or unsupported delta invalidates the live preset rather than guessing. | Must Have |
@@ -74,26 +74,25 @@ The protocol facts and this Rust session implementation are hardware-verified ag
 | NFR-1 | The session layer adds no async runtime dependency; it uses std threads + channels so the leaf crate stays embeddable in the CLI, MCP server, and Tauri backend without dragging in tokio. | Architectural invariant |
 | NFR-2 | A healthy subscribed handshake completes in 3.8-3.9 s and remains below 10 s. Each awaited reply is bounded by `timeout`; the adaptive settle has a 2 s floor and 30 s ceiling. | Hardware-observed       |
 | NFR-3 | The keepalive interval is 1 s, matching Cortex Control's measured 1.04 s cadence. At 1 s a held session remained continuously live for 90 s; at 5 s pushes stopped silently after about 40 s. | Hardware-observed       |
-| NFR-4 | Pending waiters (`request_id -> (Event, slot, expected_type)`) and the type-waiter/collector lists are guarded by a single `Mutex`; no lock is held across blocking device I/O or channel waits. | Code invariant          |
+| NFR-4 | Pending request waiters, broadcast waiters and collectors use their own synchronisation; no waiter lock is held across blocking device I/O or waits. | Code invariant          |
 | NFR-5 | Unit tests for correlation logic (type-first matching, the id-less READ-reply fallback, the race-window grace, the stale-seed-push skip) run in CI without hardware. | CI-enforced             |
-| NFR-6 | The session struct is `Send` but not `Clone`; it owns the transport and the background threads. Callers hold it by reference or behind an `Arc<Mutex<Session>>` at the host layer. | Code invariant          |
+| NFR-6 | `Session` is shared behind `Arc`, owns its removable boxed `HidLink` and worker handles, and is not itself cloned. Explicit `close()` proves link release before replacement. | Code invariant          |
 | NFR-7 | The RX thread is the sole cache writer. It never invokes caller callbacks and never performs a refresh read while reducing; snapshots use a mutex and revision waiters use a condition variable. | Code invariant |
 
 ---
 
 ## Acceptance Criteria
 
-- [ ] `Session::connect()` performs the paced 8-step subscribed handshake and the device begins pushing state (a `RecallPreset` seed push arrives after settle).
-- [ ] `Session::disconnect()` sends `Connection{connected: false}` and swallows the expected write STALL.
-- [ ] Keepalive sends `KeepAlive{UPDATE}` about once a second and survives a send failure (thread stays alive).
-- [ ] `request()` correlates a `Version` READ reply (no `request_id` echo) by type alone.
-- [ ] `request()` correlates a `SetlistPosition` UPDATE echo by type AND `request_id`.
-- [ ] `await_broadcast()` skips a stale/seed `RecallPreset` push (no `request_id`) and accepts only the push echoing the recall's `request_id`.
-- [ ] `collect()` gathers multiple `File` folder-listing pushes from a single READ.
-- [ ] The RX thread survives a malformed frame (buffer resets, thread continues).
-- [ ] A FIRST-flagged report arriving mid-reassembly drops the stale partial and starts clean.
-- [ ] `Session::stop()` joins the RX and keepalive threads within the join timeout.
-- [ ] Unit tests for correlation, the race-window grace, and the stale-seed skip pass under `cargo test` (no hardware required).
+- [x] `Session::connect()` performs the paced subscribed handshake and the device begins pushing state.
+- [x] `Session::disconnect()` sends `Connection{connected: false}` best effort.
+- [x] Keepalive sends `KeepAlive{UPDATE}` about once a second and survives a send failure.
+- [x] `request()` correlates id-less READ replies by type and state-changing replies by type plus consistent `request_id`.
+- [x] `await_broadcast()` skips a stale seed push and accepts the push matching the trigger.
+- [x] `collect()` gathers multiple matching pushes without consuming waiter delivery.
+- [x] The RX thread survives malformed input while invalidating continuity.
+- [ ] Direct frame-injection coverage for FIRST-over-partial and the 1 MiB cap remains outstanding; production behavior is implemented.
+- [x] `Session::stop()` and `close()` join workers, and `close()` explicitly releases the link.
+- [x] Correlation, race-window, stale-seed, writer-priority, keepalive and fake-link tests pass without hardware.
 - [x] Cache reduction is non-consuming, sparse updates apply transactionally, ambiguous updates invalidate, old generations cannot repopulate new state, and a 135-update burst retains only the latest value.
 - [x] The fake-link RX test proves a malformed report invalidates continuity without killing later message delivery.
 - [x] Full handshake and a 90-second held idle session verified against a real Quad Cortex (CorOS 4.0.1).
@@ -103,17 +102,17 @@ The protocol facts and this Rust session implementation are hardware-verified ag
 ## Non-Goals
 
 - The ergonomic `QuadCortex` client API (zone 150) - this zone provides the primitives, the client builds on them.
-- USB HID device open/close and the raw read/write loop (zone 100). This zone consumes a transport trait.
+- USB HID enumeration/open and the minimal synchronous diagnostic (zone 100). This zone consumes `HidLink` and owns session-level link lifetime.
 - Framing, flag-driven reassembly, and the trailer-tagged envelope decode (zone 110). This zone receives reassembled payloads.
 - The protobuf schema and `prost` build (zone 120). This zone imports the generated types.
 - The typed domain model - `BinaryPreset`, `Block`, `Split` (zone 130). This zone passes raw protobuf messages.
-- MCP safety surface (zone 300) - the save-confirmation and scratch-slot policy lives there; this zone just provides `send`.
+- MCP safety surface (zone 300) - exact-target preparation and save confirmation live there; this zone just provides `send`.
 
 ---
 
 ## Dependencies
 
-- **Crate-internal**: zone 100 (transport trait), zone 110 (framing/decode), zone 120 (generated proto types + `CortexMessageType` registry).
+- **Crate-internal**: zone 100 (hidapi transport implementation), zone 110 (framing), zone 120 (generated proto types), and `link.rs` (this zone's transport-neutral seam).
 - **External (leaf)**: `std::sync` (threads, `Mutex`, `mpsc`), `flate2` (frame-level gzip), the generated `prost` types. No async runtime.
 - **Prior art**: `pyquadcortex/pyquadcortex/transport.py` (`Transport` class) and `pyquadcortex/pyquadcortex/client.py::_hello` - ported under MIT with attribution; see `THIRD-PARTY-NOTICES.md`.
 
@@ -149,7 +148,7 @@ The "device gates push behaviour on a valid `cortex_control_version`" finding an
 
 The Rust implementation has passed the full hardware smoke: handshake, paced catalog transfer, subscriptions, one-second keepalive, correlation, broadcast waits, CPU-load pushes, and clean shutdown against CorOS 4.0.1. Re-run that smoke after a firmware update because the wire carries no protocol-version field.
 
-### Hardware findings (2026-08-02, CorOS 4.0.1 / firmware d14e / QA00AB123)
+### Hardware findings (CorOS 4.0.1)
 
 First contact between this crate's session layer and a real Quad Cortex. Captured with `CORTEX_TRACE=1 cortex device version --session`.
 

@@ -2,20 +2,20 @@
 
 CI has no Quad Cortex, so anything touching the wire is unverified until a human runs this against a real unit. Run it before a release, and after any change to the transport, session, or grid layers.
 
-Sections 1 and 3-10 below are also scripted, with read-back assertions instead of a checklist: `s/hardware-smoke --scratch-bank N --restore-slot SLOT --discard-working-copy` (ENG-006). It needs one designated scratch bank (all 8 slots disposable), the slot to restore when it exits, and an explicit acknowledgement that preparing the scratch target recalls it and may discard the starting working-grid edit. The script starts one held session, prepares and backs up the scratch target before editing, then commits with the resulting opaque token, so every later working-grid change remains within declared disposable content. It is the faster way to run this repeatedly - after a CorOS update, for instance, where it also diffs the result against the last run on a different version. This page stays the source of truth for WHY each step is safe and for the physical disconnect/reconnect portion of section 11, which remains manual.
+Sections 1-10, the non-physical start/status/routed-command/stop parts of section 11, and the move/restore path in section 12 are scripted with read-back assertions: `s/hardware-smoke --scratch-bank N --restore-slot SLOT --discard-working-copy` (ENG-006). It requires one designated scratch bank, an explicit restore slot, and acknowledgement that preparation recalls a target and can discard a starting working-grid edit. It cross-checks direct and held-session identity, prepares and backs up before editing, commits with the returned opaque token, moves that created fixture to the next scratch slot and back, then deletes it. This page remains the source of truth for why each step is safe and for physical controls and disconnect/reconnect.
 
 Record the CorOS version, firmware, and serial from step 1 alongside the result: a pass on `d14e` says nothing about `d15x`.
 
 ## Before you start
 
-- Quit Cortex Control. It holds the HID interface exclusively.
+- Quit Cortex Control. A second effective HID owner can silently wedge the first even though the open succeeds.
 - Connect the unit by USB and power it on.
 - **Headphones or nothing.** Several steps change what is heard.
-- Note what is currently loaded, so you can restore it: `cortex grid show`.
+- Declare `SCRATCH_BANK`, `SCRATCH_SLOT`, `RESTORE_SLOT`, `ROW`, and `COLUMN`. Every slot in the scratch bank must be disposable; choose an empty grid cell after inspecting `cortex grid show`. The provisional move check additionally requires `MOVE_NAME`, its current `MOVE_FROM` slot, and a confirmed-empty `MOVE_TO` slot in that bank.
 
 !!! info "Why this is safe"
 
-    Save and delete exist. The CLI grid edits below stay in the working copy until a recall discards them. Step 11 separately asks the tester to save an unchanged USER preset, but only in a slot they have explicitly designated disposable; no step deletes content or writes to the factory library.
+    Save, delete, and same-setlist move exist. Every write below is confined to the explicitly declared scratch bank, and the restore slot is recalled on exit. No step writes to the factory library. Recall and preparation can discard an unsaved working copy, which is why consent and the restore target are prerequisites.
 
 ## 1. Device is reachable
 
@@ -78,7 +78,7 @@ cortex catalog --model 1001
 Changes what is heard. Note the starting slot first.
 
 ```sh
-cortex preset recall --slot 1B
+cortex preset recall --slot "$SCRATCH_SLOT"
 cortex grid show                    # confirm the grid changed
 cortex scene --index 1
 cortex device probe                   # confirm active_scene: 1
@@ -90,7 +90,7 @@ cortex device probe                   # confirm active_scene: 1
 ## 7. Stored preset read
 
 ```sh
-cortex preset show --slot 1A
+cortex preset show --slot "$SCRATCH_SLOT"
 ```
 
 - [ ] Returns the preset with blocks named through the catalog
@@ -100,7 +100,7 @@ Then check the documented trap:
 
 ```sh
 cortex scene --index 1
-cortex preset show --slot 1A
+cortex preset show --slot "$SCRATCH_SLOT"
 cortex device probe                   # active_scene should be back to 0
 ```
 
@@ -114,12 +114,11 @@ Before editing, prepare the destination while the working grid is clean. The pre
 
 ```sh
 cortex session start
-cortex preset prepare-save --slot 31A --scratch-range 31A-31H
-# Retain the reported token, then make the edits below.
+SAVE_TOKEN=$(cortex preset prepare-save --slot "$SCRATCH_SLOT" --format json | jq -r '.token')
 ```
 
 ```sh
-cortex block set --row 2 --column 0 --model 1
+cortex block set --row "$ROW" --column "$COLUMN" --model 1
 cortex grid show --params
 ```
 
@@ -128,7 +127,7 @@ cortex grid show --params
 - [ ] The screen row you asked for is the row it landed on
 
 ```sh
-cortex block param --row 2 --column 0 --param GAIN --value 0.9
+cortex block param --row "$ROW" --column "$COLUMN" --param GAIN --value 0.9
 cortex grid show --params
 ```
 
@@ -136,7 +135,7 @@ cortex grid show --params
 - [ ] Untouched parameters sit at their catalog defaults
 
 ```sh
-cortex block param --row 2 --column 0 --param WOBBLE --value 0.5
+cortex block param --row "$ROW" --column "$COLUMN" --param WOBBLE --value 0.5
 ```
 
 - [ ] Refused, listing the model's real parameter names
@@ -144,14 +143,14 @@ cortex block param --row 2 --column 0 --param WOBBLE --value 0.5
 To retain the edited grid, commit the preparation made before editing:
 
 ```sh
-cortex preset save --token save-1 --name "My preset" --yes
+cortex preset save --token "$SAVE_TOKEN" --name "Smoke Test" --yes
 ```
 
 - [ ] The saved preset still contains the edits after recall
 - [ ] An unknown or reused token is refused
 
 ```sh
-cortex block remove --row 2 --column 0
+cortex block remove --row "$ROW" --column "$COLUMN"
 cortex grid show
 ```
 
@@ -160,7 +159,7 @@ cortex grid show
 ## 9. Restore
 
 ```sh
-cortex preset recall --slot <the slot you started on>
+cortex preset recall --slot "$RESTORE_SLOT"
 cortex grid show
 ```
 
@@ -212,14 +211,40 @@ Prepare a scratch-slot save token before unplugging, but do not edit or commit i
 
 - [ ] The pre-reconnect token is refused because its physical-session generation is stale
 
+## 12. Preset move and restore
+
+Use two slots wholly inside the disposable test bank. Confirm `MOVE_FROM` contains `MOVE_NAME` and `MOVE_TO` is empty in a freshly requested complete listing before continuing. The command refuses an occupied destination, but listings are eventually consistent and cannot eliminate the final race with another storage mutation.
+
+```sh
+cortex preset list --include-empty
+cortex preset move --from "$MOVE_FROM" --to "$MOVE_TO" --yes
+cortex preset list --include-empty
+```
+
+- [ ] The command succeeds only after fresh complete listings prove the source is empty and `MOVE_NAME` occupies the destination, whether or not a `File{MOVE}` acknowledgement arrived
+- [ ] A fresh listing eventually shows `MOVE_NAME` at `MOVE_TO` and `MOVE_FROM` empty
+- [ ] `cache.storage_revision` advances and the previous cached listing is not served as current
+
+Move it back before leaving the scratch bank:
+
+```sh
+cortex preset move --from "$MOVE_TO" --to "$MOVE_FROM" --yes
+cortex preset list --include-empty
+```
+
+- [ ] A fresh listing eventually shows the preset restored at `MOVE_FROM` and `MOVE_TO` empty
+
 ```sh
 cortex session stop
 ```
 
 - [ ] The session exits and releases the HID interface
 
-## Known gaps
+## Out of scope
 
 Not covered by this runbook:
 
+- MCP protocol/discovery behavior beyond the same daemon/core operations.
+- GUI integration and interaction.
+- The wider unimplemented device API, capture/IR transfer, and most physical control paths.
 - Everything on the Nano Cortex.

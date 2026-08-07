@@ -76,7 +76,7 @@ cat >&2 <<'EOF'
 
 Installed. Try:
 
-  cortex version                   # confirm the device answers
+  cortex device version            # confirm the device answers
   cortex catalog --search marshall # explore the model catalog
   cortex --help
 EOF

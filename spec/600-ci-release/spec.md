@@ -11,7 +11,7 @@ tags: ["ci", "release", "github-actions", "dependabot", "cargo-dist", "crates-io
 
 # 600 CI / Release - Spec
 
-> The GitHub Actions CI workflow, Dependabot config, and the planned release pipeline (auto-tag, crates.io publish, `cargo-dist`). Owns the externally-visible automation: a green CI run is the gate to merge, and a release tag is the gate to publish.
+> The Rust CI and documentation deployment workflows, Dependabot config, implemented auto-tagging, and planned crates.io/cargo-dist release pipeline.
 
 ## References
 
@@ -26,7 +26,7 @@ tags: ["ci", "release", "github-actions", "dependabot", "cargo-dist", "crates-io
 
 ## Problem Statement
 
-CI runs the full gate on every push and PR: formatting, clippy (all-features and no-default-features, both with `-D warnings`), tests (all-features and no-default-features), and the REUSE license lint. A green CI run is the gate to merge. The workflow uses pinned action SHAs with `# vX.Y.Z` comments (house-style), cached dependencies, and the minimal permissions (`contents: read`).
+CI runs formatting, clippy on all-feature and no-default workspace configurations, default-feature and no-default workspace tests, real-device-data lint, Windows host/MCP cross-checks, and REUSE. Documentation has a separate path-filtered Zensical Pages workflow. Actions are SHA-pinned with version comments and use minimal permissions.
 
 Release is only partly wired. `s/version++` and the auto-tag workflow exist; crates.io publishing, `cargo-dist`, GitHub Release generation and GUI bundles do not. The first binary release is deliberately Linux x86_64 and installs the `cortex` and `cortex-mcp` pair; other host platforms remain unsupported until their daemon boundary and hardware behaviour are verified. All release actions are externally visible and require explicit approval before first use.
 
@@ -37,11 +37,12 @@ Release is only partly wired. `s/version++` and the auto-tag workflow exist; cra
 | CI runs `cargo fmt --all --check` | Implemented | `.github/workflows/ci.yml` "Formatting" step |
 | CI runs `cargo clippy --all-targets --all-features -- -D warnings` | Implemented | `.github/workflows/ci.yml` "Clippy (all features)" step |
 | CI runs `cargo clippy --all-targets --no-default-features -- -D warnings` | Implemented | `.github/workflows/ci.yml` "Clippy (no default features)" step |
-| CI runs `cargo test --all` (all-features) | Implemented | `.github/workflows/ci.yml` "Tests (all features)" step |
-| CI runs `cargo test --all --no-default-features` | Implemented | `.github/workflows/ci.yml` "Tests (leaf engine, no default features)" step |
+| CI runs `cargo test --all` (workspace default features) | Implemented | `.github/workflows/ci.yml` default-feature test step |
+| CI runs `cargo test --all --no-default-features` | Implemented | `.github/workflows/ci.yml` no-default workspace test step |
 | CI runs the REUSE license lint | Implemented | `.github/workflows/ci.yml` `reuse` job via `fsfe/reuse-action` |
 | Actions are pinned to SHA with `# vX.Y.Z` comments | Implemented | `actions/checkout@3d3c42e...# v7.0.1`, `dtolnay/rust-toolchain@e97e2d8...# v1`, `Swatinem/rust-cache@c193711...# v2.9.1`, `fsfe/reuse-action@676e2d5...# v6.0.0` |
-| Dependabot: cargo + github-actions, weekly, cooldown, grouping | Implemented | `.github/dependabot.yml` |
+| Dependabot: Cargo, npm, pip and GitHub Actions, weekly, cooldown, grouping | Implemented | `.github/dependabot.yml` |
+| Zensical Pages deployment | Implemented and deployed | `.github/workflows/docs.yml` |
 | Auto-tag workflow | Implemented | `.github/workflows/auto-tag.yml` |
 | crates.io publish workflow | Planned | Not implemented (requires approval per AGENTS.md) |
 | `cargo-dist` release pipeline | Planned | Not implemented |
@@ -81,14 +82,16 @@ Maintainers merging PRs, and the downstream consumers who install the crate or t
 | FR-1 | CI runs on `push` to `main`, on `pull_request`, and on `workflow_dispatch`. | Must Have |
 | FR-2 | CI runs `cargo fmt --all --check` (fail on any unformatted file). | Must Have |
 | FR-3 | CI runs `cargo clippy --all-targets --all-features -- -D warnings` and `cargo clippy --all-targets --no-default-features -- -D warnings` (both paths). | Must Have |
-| FR-4 | CI runs `cargo test --all` (all-features) and `cargo test --all --no-default-features` (leaf engine only). | Must Have |
+| FR-4 | CI runs `cargo test --all` with workspace default features and `cargo test --all --no-default-features`. | Must Have |
 | FR-5 | CI runs the REUSE license lint (`fsfe/reuse-action`) as a separate job. | Must Have |
 | FR-6 | Actions are pinned to specific SHA hashes with a `# vX.Y.Z` semver comment. | Must Have |
 | FR-7 | CI uses `permissions: contents: read` (least privilege). | Must Have |
-| FR-8 | CI installs `protoc` (for `prost-build`) via `protobuf-compiler`. | Must Have |
+| FR-8 | CI installs `protoc`, hidapi/udev prerequisites, and Tauri Linux system dependencies. | Must Have |
 | FR-9 | CI caches the cargo registry/target via `Swatinem/rust-cache`. | Must Have |
-| FR-10 | Dependabot watches `cargo` (workspace + each crate) and `github-actions`, weekly, with a cooldown and routine-update grouping. | Must Have |
-| FR-20 | Auto-tag workflow: a version bump on `main` (via `s/version++`) produces a `vX.Y.Z` tag, which triggers the future release cascade. | Must Have |
+| FR-10 | Dependabot watches Cargo at the workspace root, npm under `gui`, pip at the root, and GitHub Actions, weekly with cooldown and routine-update grouping. | Must Have |
+| FR-11 | CI rejects real device identifiers and cross-checks `cortex-host` and `cortex-mcp` for `x86_64-pc-windows-gnu`. | Must Have |
+| FR-12 | The path-filtered docs workflow builds Zensical and deploys through GitHub Pages artifacts. | Must Have |
+| FR-20 | Auto-tag workflow is implemented: a version bump on `main` creates `vX.Y.Z` and directly invokes future release workflows rather than relying on tag-event recursion. Its first live release remains unevidenced. | Must Have |
 
 #### Planned
 
@@ -107,18 +110,19 @@ Maintainers merging PRs, and the downstream consumers who install the crate or t
 | --- | --- | --- |
 | NFR-1 | No secrets are committed to the repo; crates.io publishing uses a secret stored in GitHub. | Review-enforced |
 | NFR-2 | Action SHAs are pinned; Dependabot opens PRs to bump them (with the version comment updated). | Review-enforced |
-| NFR-3 | CI runs on `ubuntu-latest` (the project is Linux-first); no macOS/Windows matrix until the GUI lands. | Implemented |
-| NFR-4 | The CI workflow and the local gate (`s/test`, zone 500) run the same steps; a green local run means a green CI run. | Review-enforced |
+| NFR-3 | Jobs run on Linux today, with a Windows host-boundary cross-compile. Native Windows/macOS and hardware verification remain future gates. | Implemented |
+| NFR-4 | The local gate documents its subset of CI; remote-only no-default workspace and platform checks are not implied by local green. | Review-enforced |
 | NFR-5 | Release actions are externally visible and require explicit approval before first use (AGENTS.md). | Process-enforced |
 
 ## Acceptance Criteria
 
 - [x] CI runs fmt + clippy (both feature paths) + tests (both feature paths) + REUSE on every push/PR.
 - [x] Actions are pinned to SHAs with `# vX.Y.Z` comments.
-- [x] Dependabot watches cargo + github-actions, weekly, with cooldown and grouping.
+- [x] Dependabot watches Cargo, npm, pip and GitHub Actions, weekly, with cooldown and grouping.
 - [x] CI uses `permissions: contents: read`.
-- [x] CI installs `protoc` and caches cargo.
-- [x] Auto-tag workflow produces a `vX.Y.Z` tag on a version bump.
+- [x] CI installs Rust native prerequisites, rejects real device data, cross-checks the Windows host boundary and caches Cargo.
+- [x] Auto-tag workflow is implemented for a `vX.Y.Z` tag on a version bump; no first live tag is claimed.
+- [x] Documentation builds and deploys through the artifact-based Pages workflow.
 - [ ] crates.io publish workflow publishes on the release tag (requires approval before first use).
 - [ ] `cargo-dist` produces distributable Linux x86_64 `cortex` and `cortex-mcp` binaries on the release tag.
 - [ ] The release tag produces a GitHub Release with changelog notes.
@@ -134,7 +138,7 @@ Maintainers merging PRs, and the downstream consumers who install the crate or t
 ## Dependencies
 
 - **GitHub Actions**: `actions/checkout@v7.0.1`, `dtolnay/rust-toolchain@v1`, `Swatinem/rust-cache@v2.9.1`, `fsfe/reuse-action@v6.0.0` (all SHA-pinned).
-- **Dependabot**: cargo + github-actions ecosystems.
+- **Dependabot**: Cargo, npm, pip and GitHub Actions ecosystems.
 - **`protoc`**: installed via `protobuf-compiler` for `prost-build`.
 - **Zone 500 (DX tooling)**: the local gate that mirrors this zone's CI workflow.
 - **Zone 900 (governance)**: the license/REUSE config this zone lints.

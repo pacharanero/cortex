@@ -11,7 +11,7 @@ tags: ["framing", "hid", "report", "frame", "reassembler", "encode", "quad-corte
 
 # cortex-rs - HID Frame Codec
 
-> Owns the pure-logic conversion between logical messages (`message_type` + protobuf bytes) and the 129-byte HID reports the device exchanges. No I/O: this zone is bytes-in, bytes-out, and is the layer the transport (`100`), the message envelope (`120`/`130`), and every higher surface build on. Ported from `pyquadcortex/framing.py` (MIT, attribution in `NOTICE`); hardware-verified against a real Quad Cortex (CorOS 4.0.1, firmware `d14e`).
+> Owns the pure-logic conversion between logical messages (`message_type` + protobuf bytes) and the 129-byte HID reports the device exchanges. No I/O: this zone is bytes-in, bytes-out. Ported from `pyquadcortex/framing.py` (MIT, attribution in `NOTICE`) and hardware-verified against CorOS 4.0.1.
 
 ## References
 
@@ -50,7 +50,7 @@ The framing layer is deliberately I/O-free. It does not know about `hidapi`, gzi
 | No sequence numbers, no total-length field; reassembly is flag-driven | Hardware-verified | Confirmed by `pyquadcortex` and by multi-frame RecallPreset pushes on this machine |
 | `CHUNK_SIZE = 126` (128-byte body minus 2-byte `[len][flags]` prefix) | Hardware-verified | Matches `pyquadcortex` `CHUNK_SIZE = REPORT_SIZE - 2` |
 | 8-byte trailer = `[message_type u16 LE][6 bytes: zeros from host, device-filled, ignored]` | Hardware-verified | Matches `pyquadcortex` `TRAILER_SIZE = 8`; the 6 trailing bytes are observed device-filled on input but have no documented meaning |
-| A `FIRST` frame arriving mid-partial drops the stale buffer | Hardware-verified | Observed: the device interleaves unsolicited pushes (RecallPreset, parameter changes) with replies; a new `FIRST` mid-message is routine, not an error |
+| A `FIRST` frame arriving mid-partial drops the stale buffer | Decoder recovery rule | The reassembler resynchronises, while the session treats the abandoned partial as a continuity gap and invalidates cached state |
 | `encode_message` output round-trips through `Frame::parse` + `FrameReassembler` + `Message::parse` | Hardware-verified | The `encode_then_decode_round_trips` unit test passes; `cortex device version` exercises the full path on hardware |
 
 The `pyquadcortex` offline test suite is a conformance reference but not a substitute for a hardware smoke run. Agent-generated tests must not be the sole basis for accepting framing behaviour.
@@ -96,15 +96,15 @@ The transport layer (`100`), the message/domain layers (`120`/`130`), the CLI (`
 | FR-5 | `FrameReassembler::new() -> FrameReassembler` creates a fresh state machine with an empty buffer and `in_progress = false`. `FrameReassembler` implements `Default` delegating to `new`. | Must Have |
 | FR-6 | `FrameReassembler::feed(&Frame) -> Result<Option<Vec<u8>>>` returns `Ok(Some(body))` when a frame completes a message, `Ok(None)` when more frames are expected, and `Error::Framing` on a `MIDDLE` or `LAST` frame without a preceding `FIRST`. | Must Have |
 | FR-7 | On a `COMPLETE` frame, `feed` resets the state machine and returns `Ok(Some(frame.data.clone()))` without touching the buffer. | Must Have |
-| FR-8 | On a `FIRST` frame, `feed` resets the state machine, copies `frame.data` into the buffer, sets `in_progress = true`, and returns `Ok(None)`. A `FIRST` arriving mid-partial silently drops the stale buffer (the device interleaves pushes). | Must Have |
+| FR-8 | On a `FIRST` frame, `feed` resets the state machine, copies `frame.data` into the buffer, sets `in_progress = true`, and returns `Ok(None)`. The caller separately records whether an existing partial was abandoned so state continuity can be invalidated. | Must Have |
 | FR-9 | On a `MIDDLE` frame, `feed` appends `frame.data` to the buffer and returns `Ok(None)`. Returns `Error::Framing` if `in_progress` is false. | Must Have |
 | FR-10 | On a `LAST` frame, `feed` appends `frame.data`, takes the buffer as the returned body, sets `in_progress = false`, and returns `Ok(Some(body))`. Returns `Error::Framing` if `in_progress` is false. | Must Have |
 | FR-11 | On any flag value other than `FIRST`, `LAST`, `COMPLETE`, or `MIDDLE`, `feed` returns `Error::Framing` with the offending byte. | Must Have |
 | FR-12 | `FrameReassembler::reset()` clears the buffer and sets `in_progress = false`. Used on transport reconnect and by the transport's reset-on-FIRST rule. | Must Have |
 | FR-13 | `encode_message(message_type: u16, payload: &[u8]) -> Vec<Vec<u8>>` appends the 8-byte trailer (`message_type.to_le_bytes()` ++ six zero bytes) to `payload`, splits the result into `CHUNK_SIZE`-byte chunks, and wraps each chunk as a 129-byte report: `[ReportId::Output][len][flags][chunk, zero-padded to 126]`. The first chunk carries `FIRST`, the last carries `LAST`, a single chunk carries `COMPLETE`, middle chunks carry `MIDDLE`. | Must Have |
-| FR-14 | `CHUNK_SIZE = 126` is exported as a public constant, defined as `transport::HID_BODY_LEN - 2`. It is the single source of truth for the per-report data capacity; no other module hard-codes `126`. | Must Have |
-| FR-15 | `encode_message` zero-pads each report to `transport::HID_REPORT_LEN` (129 bytes); the `len` byte reflects the valid chunk length, not the padded length. | Must Have |
-| FR-16 | The framing module has no dependency on `hidapi`, `flate2`, or any async runtime. It depends only on `serde` (for `ReportId`/`Flags` derive) and the crate's own `transport` constants and `message::TRAILER_LEN`. | Must Have |
+| FR-14 | `HID_BODY_LEN = 128`, `HID_REPORT_LEN = 129`, and `CHUNK_SIZE = HID_BODY_LEN - 2` are framing-owned public constants. | Must Have |
+| FR-15 | `encode_message` zero-pads each report to `HID_REPORT_LEN`; the `len` byte reflects the valid chunk length, not the padded length. | Must Have |
+| FR-16 | The framing module has no dependency on `hidapi`, `flate2`, transport I/O, or any async runtime. | Must Have |
 | FR-17 | The framing module compiles under `default-features = false` (i.e. with the `hid` feature off). It is not behind the `hid` feature gate. | Must Have |
 
 ### Non-Functional Requirements
@@ -117,7 +117,7 @@ The transport layer (`100`), the message/domain layers (`120`/`130`), the CLI (`
 | NFR-4 | `ReportId` and `Flags` are `Copy`, `Debug`, `Clone`, `PartialEq`, `Eq`, `Serialize`, `Deserialize`. `Frame` is `Debug`, `Clone`, `PartialEq`, `Eq`. | Code invariant |
 | NFR-5 | Unit tests cover: single-frame round-trip, multi-frame in-order assembly, middle-without-first error, last-without-first error, flag decode of all four flag values, encode-then-decode symmetry, single-frame encode is `COMPLETE`, multi-frame encode sets `FIRST` on the first and `LAST` on the last. Tests run in `cargo test` with no hardware. | CI-enforced |
 | NFR-6 | No other module hard-codes the report IDs (`0x01`/`0x02`), the flag bits (`0x40`/`0x80`/`0xC0`/`0x00`), the chunk size (`126`), or the trailer length (`8`). All go through this zone's or the transport/message zone's exported constants. | Review-enforced |
-| NFR-7 | Leaf-crate discipline: the framing module depends only on `serde` and the crate's own `transport` and `message` modules. It pulls in no host app, no async runtime, and (behind the feature gate) no `hidapi`. | Architectural invariant |
+| NFR-7 | Leaf-crate discipline: framing pulls in no host app, async runtime, or `hidapi`, and remains available without default features. | Architectural invariant |
 
 ## Acceptance Criteria
 
@@ -134,8 +134,8 @@ The transport layer (`100`), the message/domain layers (`120`/`130`), the CLI (`
 - [x] `encode_message(10, &[0xAB; CHUNK_SIZE + 10])` returns more than one report; the first parsed `Frame` has `is_first()` and not `is_last()`; the last parsed `Frame` has `is_last()` and not `is_first()`.
 - [x] `encode_message` output round-trips through `Frame::parse` + `FrameReassembler` + `Message::parse` to the original `message_type` and `payload` (the `encode_then_decode_round_trips` test).
 - [x] `cargo build --no-default-features -p cortex-rs` compiles `framing.rs` with no `hidapi` in the dependency graph.
-- [x] The 10 unit tests pass under `cargo test -p cortex-rs` with no hardware.
-- [ ] A manual hardware smoke runbook exists for this layer (owned by `500-dx-tooling`).
+- [x] The eight in-file unit tests pass under `cargo test -p cortex-rs` with no hardware.
+- [x] The hardware smoke runbook exercises full encode/decode round trips.
 
 ## Non-Goals
 
@@ -143,14 +143,13 @@ The transport layer (`100`), the message/domain layers (`120`/`130`), the CLI (`
 - **Protobuf decode and the `CortexMessageType` tag enum.** Owned by zones `120-proto-schema` and `130-domain-model` (`message.rs`). This layer appends and yields the raw 8-byte trailer; it does not interpret the tag.
 - **Frame-level gzip decompression.** Owned by `100-transport` (`Transport::request`); the framing layer operates on raw frames, not decompressed bodies.
 - **Field-level gzip (inside protobuf `bytes` fields).** Owned by the domain layer (`130`).
-- **`request_id` correlation and unsolicited-push dispatch.** Owned by the planned session layer (`140-session`).
-- **Background RX thread.** A future concern for the session layer; the reassembler is a synchronous state machine a caller drives.
+- **`request_id` correlation, continuity policy, and unsolicited-push dispatch.** Owned by the implemented session layer (`140-session`).
 - **Nano Cortex framing.** No shared shape has been demonstrated. Third-party observation reports 65-byte Nano HID reports rather than the Quad Cortex's 129; define Nano framing only after a real exchange is captured.
 
 ## Dependencies
 
 - **`serde`** - `ReportId` and `Flags` derive `Serialize`/`Deserialize` for the IPC/CLI surface. No other external crate.
-- **Zone `100-transport`** - `transport::HID_BODY_LEN` (128) and `transport::HID_REPORT_LEN` (129), the constants `CHUNK_SIZE` and the report buffer size derive from. The dependency arrow is framing -> transport constants, not framing -> transport I/O.
+- **Zone `100-transport`** consumes and re-exports the framing-owned HID size constants; framing does not depend on transport I/O.
 - **Zone `130-domain-model`** - `message::TRAILER_LEN` (8), the constant `encode_message` uses to size the trailer. The dependency arrow is framing -> message constant, not framing -> message decode.
 - **Consuming zones**: `100-transport` (`Frame::parse`, `FrameReassembler`, `encode_message`), `130-domain-model` (indirectly, via the reassembled body), `200-cli` and `300-mcp` (via `encode_message`).
 
@@ -161,12 +160,10 @@ The framing logic in `crates/cortex-rs/src/framing.rs` is a Rust port of
 terms of the MIT license. The wire format constants, the flag semantics, the
 flag-driven reassembly state machine, and the 8-byte trailer layout all
 originate in that module and are re-verified against a real Quad Cortex on
-this machine (CorOS 4.0.1, firmware `d14e`). The derivation is recorded in
+this project against CorOS 4.0.1. The derivation is recorded in
 `NOTICE` and `THIRD-PARTY-NOTICES.md`.
 
-The Python reference is the source of truth for the wire format; this Rust
-port is the source of truth for the typed API. The two are kept in lock-step
-by the `pyquadcortex` offline test suite as a conformance reference.
+The Python project is prior art and an offline conformance reference. Current measured behaviour and the repository-local protocol reference win whenever evidence differs.
 
 ## Glossary
 
@@ -182,12 +179,12 @@ by the `pyquadcortex` offline test suite as a conformance reference.
 | Reassembler | The flag-driven state machine that appends frame data until a `LAST`/`COMPLETE` frame yields the full body |
 | Logical message | `message_type: u16` + `payload: &[u8]` - the input to `encode_message` and the output of `Message::parse` |
 | Flag-driven reassembly | No sequence numbers, no total-length field; a `FIRST` starts a buffer, `MIDDLE` appends, `LAST`/`COMPLETE` yields |
-| Interleaved push | An unsolicited device-to-host message (RecallPreset, parameter change) arriving mid-reply; a new `FIRST` frame drops the stale buffer |
-| Hardware-verified | Confirmed against a real Quad Cortex on this machine (CorOS 4.0.1, firmware `d14e`) |
+| Abandoned partial | A new `FIRST` arrives before `LAST`; framing resynchronises, while session invalidates cache continuity because bytes may have been lost |
+| Hardware-verified | Confirmed by this project against a real Quad Cortex on CorOS 4.0.1 |
 | Provisional | Not yet verified against real hardware by this project; may work but is not confirmed |
 
 ## Agent Entry Map
 
 | Owned file | Local anchors | Key functions / types | Tests | Dependencies | Out of scope |
 | --- | --- | --- | --- | --- | --- |
-| `crates/cortex-rs/src/framing.rs` | [FR-1]-[FR-17], [NFR-1]-[NFR-7] | `ReportId`, `Flags`, `Frame`, `FrameReassembler`, `encode_message`, `CHUNK_SIZE` | 10 in-file unit tests (round-trip, multi-frame, errors, encode/decode symmetry) | `serde`, `crate::transport::HID_BODY_LEN`/`HID_REPORT_LEN`, `crate::message::TRAILER_LEN` | hidapi I/O, gzip, protobuf decode, `CortexMessageType` enum, session correlation |
+| `crates/cortex-rs/src/framing.rs` | [FR-1]-[FR-17], [NFR-1]-[NFR-7] | `ReportId`, `Flags`, `Frame`, `FrameReassembler`, `encode_message`, HID size constants | Eight in-file unit tests | `serde`, `crate::message::TRAILER_LEN` | hidapi I/O, gzip, protobuf decode, session correlation and continuity policy |

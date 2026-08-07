@@ -737,6 +737,13 @@ fn apply_file(inner: &mut StateInner, revision: u64, message: FileMessage) -> Ap
             return Apply::Ignored;
         };
         if is_complete_preset_listing(&folder) {
+            if inner
+                .folders
+                .get(&key)
+                .is_some_and(|previous| previous.value != folder)
+            {
+                inner.storage_revision = inner.storage_revision.saturating_add(1);
+            }
             inner.folders.insert(key, cached(inner, revision, folder));
         } else {
             inner.folders.remove(&key);
@@ -1488,6 +1495,53 @@ mod tests {
         );
         assert!(cache.folder("/fictional/list").is_none());
         assert_eq!(cache.status().storage_revision, 1);
+    }
+
+    #[test]
+    fn a_materially_changed_complete_listing_advances_storage_revision() {
+        let (cache, generation) = seeded_cache(false, false);
+        let mut folder = FolderInfo {
+            key: Some(crate::proto::folder_info::Key::Key(
+                "/fictional/list".into(),
+            )),
+            files: (0..i32::try_from(crate::client::SETLIST_SLOTS).unwrap())
+                .map(|index| ProductData {
+                    index: Some(crate::proto::product_data::Index::Index(index)),
+                    ..Default::default()
+                })
+                .collect(),
+            ..Default::default()
+        };
+        let update = |folder| FileMessage {
+            action: MessageAction::Update as i32,
+            folder: Some(crate::proto::file_message::Folder::Folder(folder)),
+            ..Default::default()
+        };
+        observe(
+            &cache,
+            generation,
+            MessageType::File,
+            &update(folder.clone()),
+        );
+        assert_eq!(cache.status().storage_revision, 0);
+
+        folder.files[1].name = Some(crate::proto::product_data::Name::Name(
+            "Fictional Moved".into(),
+        ));
+        observe(
+            &cache,
+            generation,
+            MessageType::File,
+            &update(folder.clone()),
+        );
+        assert_eq!(cache.status().storage_revision, 1);
+
+        observe(&cache, generation, MessageType::File, &update(folder));
+        assert_eq!(
+            cache.status().storage_revision,
+            1,
+            "an identical refresh is not another storage mutation"
+        );
     }
 
     #[test]

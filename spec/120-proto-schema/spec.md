@@ -11,7 +11,7 @@ tags: ["proto-schema", "protobuf", "prost", "build-script", "cortex-rs", "quad-c
 
 # cortex-rs - Protobuf Schema (Zone 120)
 
-> Owns the vendored Cortex Control `.proto` files and the `prost` build script that compiles them into typed Rust types. The generated `cortex_protobuf_v2` module is the single source of truth for the on-wire message and enum shapes; every higher layer (domain model, session, client) decodes against these types.
+> Owns the vendored Cortex Control `.proto` files and the `prost` build script that compiles them into the public `cortex_rs::proto` module. The protobuf package and generated filename are `cortex_protobuf_v2`; that name is not an additional public Rust module layer.
 
 ## References
 
@@ -41,8 +41,8 @@ Maintainers, AI coding agents, and downstream crate consumers who decode or enco
 **So that** I can write a typed decode for a new message flow without re-deriving the schema.
 
 **As a** crate consumer
-**I want** `cortex-rs` to build with only `protoc` on the system, no runtime protobuf dependency
-**So that** I can embed the typed schema in my own tooling without pulling in `protobuf` or `protoc` at runtime.
+**I want** `cortex-rs` to require `protoc` only while building
+**So that** I can embed the generated `prost` types without shipping `protoc` or a dynamic schema parser.
 
 **As a** maintainer
 **I want** the `.proto` files to carry their own MIT SPDX header and provenance note
@@ -68,7 +68,7 @@ Maintainers, AI coding agents, and downstream crate consumers who decode or enco
 | FR-8 | `build.rs` emits `cargo::rerun-if-changed=proto/Preset.proto` and `cargo::rerun-if-changed=proto/ProductionAutomation.proto`. | Must Have |
 | FR-9 | Both `.proto` files carry an SPDX-FileCopyrightText / SPDX-License-Identifier header (MIT, copyright 2026 Stokes) and a provenance note pointing to `pyquadcortex`. | Must Have |
 | FR-10 | `build.rs` itself carries the project AGPL-3.0-or-later SPDX header and a module doc-comment linking to this spec. | Must Have |
-| FR-11 | The build script does not require network access; `protoc` is the only system dependency. | Must Have |
+| FR-11 | The build script does not require network access; `protoc` is its only system dependency. Default HID builds have separate platform prerequisites owned by zone 100. | Must Have |
 | FR-12 | `Preset.proto` defines `BinaryPreset`, `Chain`, `Model`, `Param`, `ParamValue`, `Bypass`, `ColBypass`, `SceneBypass`, `SplitControlPoints`, `Expression`, `ExpressionBypassInfo`, `MidiMessageInfo`, `LegacyStompModeStompData`, `StompModeAssignment`, `SlotNotification`. | Must Have |
 | FR-13 | `ProductionAutomation.proto` defines the full message set referenced by `CortexMessageType`: `VersionMessage`, `GridMessage`, `RecallPresetMessage`, `SceneMessage`, `FileMessage`, `IOSettingsMessage`, `DiagnosticsMessage`, `ModeMessage`, `KeepAliveMessage`, `ConnectionMessage`, `ModelRepoMessage`, `ResetCommsBuffersMessage`, `SuspendConnectionMessage`, and the remaining production-automation messages. | Must Have |
 
@@ -85,22 +85,22 @@ Maintainers, AI coding agents, and downstream crate consumers who decode or enco
 
 - [x] `crates/cortex-rs/proto/Preset.proto` and `crates/cortex-rs/proto/ProductionAutomation.proto` exist with SPDX headers.
 - [x] `crates/cortex-rs/build.rs` compiles both files via `prost_build` and emits `rerun-if-changed` for both.
-- [x] `cortex_rs::proto::cortex_protobuf_v2::CortexMessageType` exposes an `Enum` with 72 variants (`Undefined=0` through `NumberOfMessageTypes=71`).
-- [x] `cortex_rs::proto::cortex_protobuf_v2::MessageAction` exposes an `Enum` with 9 variants.
-- [x] `cortex_rs::proto::cortex_protobuf_v2::VersionMessage::DeviceType` exposes `QC=0` and `ATMA=1`.
+- [x] `cortex_rs::proto::CortexMessageType` exposes 72 generated variants (`Undefined=0` through `NumberOfMessageTypes=71`).
+- [x] `cortex_rs::proto::MessageAction` exposes 9 generated variants.
+- [x] `cortex_rs::proto::version_message::DeviceType` exposes `Qc=0` and `Atma=1`.
 - [x] `cargo build -p cortex-rs --no-default-features` succeeds with `protoc` present and no HID hardware.
 - [x] `reuse lint` passes for the proto directory and the build script.
 
 ## Non-Goals
 
 - The typed domain model that wraps these proto types (owned by [130-domain-model](../130-domain-model/spec.md)).
-- Frame-level and field-level gzip decompression (owned by [110-framing](../110-framing/spec.md) and the future client layer).
+- Frame-level gzip decompression (transport/session) and field-level catalog decompression (zone 130).
 - On-the-fly schema recovery or runtime `.proto` parsing; the schema is compile-time only.
 - Re-deriving the schema from Cortex Control binaries. The schema is vendored as-is from `pyquadcortex`; this zone only maintains the build glue.
 
 ## Dependencies
 
-- **System**: `protoc` (the Protocol Buffers compiler). CI installs `protobuf-compiler`; local setup is documented in the README.
+- **System**: `protoc` (the Protocol Buffers compiler). CI installs `protobuf-compiler`; local setup is documented in the installation guide.
 - **Rust**: `prost` (runtime) and `prost-build` (build-time), both via the workspace.
 - **Upstream**: the MIT-licensed `stokes-audio/pyquadcortex` recovered schema. Recorded in `NOTICE` and `THIRD-PARTY-NOTICES.md`.
 - **Downstream**: [130-domain-model](../130-domain-model/spec.md) wraps the generated `BinaryPreset` / `Model` / `Param` types; [140-session](../140-session/spec.md) and [150-client](../150-client/spec.md) decode envelope bodies against the generated message structs.
@@ -109,7 +109,7 @@ Maintainers, AI coding agents, and downstream crate consumers who decode or enco
 
 ### CortexMessageType variants (72)
 
-The enum in `ProductionAutomation.proto` is the authoritative list. Values are stable identifiers, not array indices: a CorOS update can add values, so callers must handle unknown values gracefully (see [DES-VERSION]).
+The enum in `ProductionAutomation.proto` is the authoritative list. Values are stable identifiers, not array indices: a CorOS update can add values, so callers must handle unknown values gracefully (see [DES-VERSION](design.md#des-version)).
 
 ```text
 Undefined=0  Grid=1  SetlistPosition=2  IOSettings=3  File=4  IOMeter=5
@@ -155,7 +155,7 @@ ATMA=1    ATMA variant (identified by prior art as the Nano codename; proves onl
 
 | Term | Definition |
 | --- | --- |
-| `cortex_protobuf_v2` | The protobuf package name both `.proto` files declare; also the generated Rust module name. |
+| `cortex_protobuf_v2` | The protobuf package name and generated filename; public Rust types are exposed directly under `cortex_rs::proto`. |
 | `CortexMessageType` | The 72-variant enum tagging every reassembled message in the trailer. |
 | `MessageAction` | The 9-variant CRUD-ish enum carried by most request/response messages. |
 | `DeviceType` | The 2-variant enum on `VersionMessage` distinguishing Quad Cortex from Nano Cortex. |

@@ -10,7 +10,7 @@ tags: ["mcp", "cortex-mcp", "safety-surface", "tool-model", "rmcp", "provisional
 spec: spec.md
 ---
 
-# 300 MCP - Design (next workstream)
+# 300 MCP - Design
 
 > Design for the `cortex-mcp` MCP server. The interesting part is not the tool list - it is the **safety surface** that gates destructive operations and surfaces the silent-failure traps an agent would not notice. The tool model is a thin wrapper over the client layer (150).
 
@@ -22,7 +22,7 @@ spec: spec.md
 - [001-overview design](../001-overview/design.md) [DES-ARCH] - the flow map this surface sits at (`[Flow.MCP]`).
 - [100-transport design](../100-transport/design.md) [DES-EXCLUSIVE] - the exclusive-HID-access invariant.
 - [150-client design](../150-client/design.md) - the `QuadCortex` API the tools delegate to.
-- Owned source: `crates/cortex-mcp/src/main.rs`; shared safety implementation: `crates/cortex-rs/src/safety.rs`.
+- Owned source: `crates/cortex-mcp/src/{main,server,transport}.rs`, process tests; shared host and safety implementations: `crates/cortex-host/src/`, `crates/cortex-rs/src/safety.rs`.
 
 ## [DES-SAFETY] The Safety Surface
 
@@ -33,8 +33,8 @@ The safety surface is the set of rules that gate destructive operations and surf
 The five invariants (from AGENTS.md and the protocol research note):
 
 1. **Read and recall are free; saving is always explicitly confirmed.**
-2. **Never write to the factory setlist; restrict saves to a designated scratch range of USER slots unless overridden.**
-3. **Prepare and back up an occupied target before editing, and keep the blob.** A target first chosen after unsaved edits exist must be empty, because reading an occupied target recalls it and discards those edits.
+2. **Never write to the factory setlist; require one explicitly named USER target.**
+3. **Prepare every target before editing, and retain any backup.** Listings cannot prove emptiness because file state is eventually consistent; a target first chosen after unsaved edits exist cannot be prepared without losing those edits.
 4. **Surface the row-numbering trap (0-based in the API, 1-4 on screen; a wrong-row edit succeeds silently) in tool descriptions.**
 5. **Single owning process for the USB interface.**
 
@@ -46,7 +46,7 @@ The proposed tool surface has four tiers, each with a different safety posture:
 | --- | --- | --- |
 | Read | `list_presets`, `read_preset`, `list_blocks`, `get_device_version`, `read_current_preset`, `list_folders` | Unrestricted. (But note: `read_preset` has a recall side effect - surface it in the description.) |
 | Transient write | `recall_preset`, `switch_scene` | Free. Changes what is heard; nothing persistent is lost. |
-| Working-copy write | `set_block`, `set_param`, `set_routing` | Free. Edits the recalled preset in device RAM; persists only on save. Surface the traps (`set_block` DSP refusal, `set_param(scene=)` 3-message rule, row numbering). |
+| Working-copy write | `set_block`, `set_param`, `set_bypass`, `remove_block`, `set_chain_input`, `set_chain_output`, `set_split` | Free. Edits device RAM; persists only on save. Surface per-operation traps. |
 | Destructive | `save_preset` | **Gated.** Require explicit slot, refuse FACTORY, require confirmation, and consume a matching pre-edit backup or empty-target preparation. |
 
 This tiering is the design that matters. The tool list is a thin wrapper over the client layer; the tiering is what stops an agent from destroying a patch.
@@ -57,11 +57,11 @@ This tiering is the design that matters. The tool list is a thin wrapper over th
 
 ### Design choice: refuse FACTORY, always
 
-`save_preset` refuses a slot in the FACTORY setlist regardless of the caller's request. The refusal is a structured error naming the safe alternative ("save to a USER slot"). There is no override for the factory setlist; the scratch-range override (next) applies only to USER slots.
+`save_preset` refuses a slot in the FACTORY setlist regardless of the caller's request. The refusal is a structured error naming the safe alternative ("save to a USER slot"). There is no override for the factory setlist.
 
-### Design choice: scratch range with explicit override
+### Design choice: exact target, not a range
 
-The scratch range is a host-configured set of valid USER slots within the unit's actual 1A-32H range. The shared library deliberately has no built-in default: only the user knows which slots are disposable. Saving outside the configured range requires an explicit, logged override.
+Each preparation names one USER slot within the unit's actual 1A-32H range. The host authorises only that slot for the resulting opaque token; neither the MCP schema nor the daemon request accepts a range or broad override. This keeps the agent's authority equal to the destination the user reviewed.
 
 ### Design choice: backup before overwrite
 
@@ -75,7 +75,7 @@ The safe workflow has a preparation phase before editing starts:
 4. Recall/build the intended source and perform working-copy edits.
 5. `save_preset` re-lists the target, rejects any reconnect, stored-preset mutation, invalidated stream, or changed listing entry, then consumes the matching preparation plus an explicit confirmation. A stale preparation, a preparation for another slot, or no preparation for an occupied target is refused.
 
-If the user chooses an occupied target only after the grid is dirty, the safe choices are to select an empty scratch slot or abandon/replay the edits after preparing that target. Silently recalling it to make a backup is not a safety feature; it loses the work being saved.
+If the user chooses an occupied target only after the grid is dirty, the safe choices are to select and prepare another target or abandon/replay the edits after preparing the original target. Silently recalling it to make a backup is not a safety feature; it loses the work being saved.
 
 ### Design choice: surface traps in tool descriptions
 
@@ -90,7 +90,7 @@ The traps are not errors - the device does not refuse a wrong-row edit or a too-
 
 - **Gate every write, not just saves.** Rejected: recall and scene-switch are transient (nothing persistent lost). Gating them would make the server unusable for exploration. Working-copy writes (`set_block`, `set_param`, `set_routing`) edit device RAM but do not persist; they are free, with traps surfaced.
 - **Allow FACTORY saves with a stronger confirmation.** Rejected: a factory preset is never the right target for an agent experiment. The refusal is absolute, not a higher bar.
-- **Backup to a file, always.** Rejected for the default: in-memory backup is enough for session-scoped rollback. A configurable backup path is a future option for cross-session audit.
+- **Describe retained bytes as rollback.** Rejected: an unkeyed whole-preset write is ignored. Retention supports audit and a future verified restoration path, not automatic rollback today.
 - **Trap-surfacing as runtime warnings, not descriptions.** Rejected: the agent does not read warnings it does not ask for. The description is what an agent reads to decide how to call the tool.
 
 ## [DES-OWNER] Single Owning Process
@@ -105,7 +105,7 @@ The MCP process opens no `Transport`. It connects to the held `cortex session` d
 
 ### Design choice: agent-triggered daemon lifecycle, not systemd
 
-The installed stdio server starts a missing daemon on demand. The daemon is not a child whose lifetime is tied to one MCP connection: CLI, GUI and another harness may share it. A request-based idle timeout will eventually release the device after all host activity stops. This avoids a systemd user-service dependency and its installation/environment complexity while preserving one stable HID owner.
+The planned installed stdio lifecycle starts a missing daemon on demand. This is not implemented today: the current server fails clearly if no compatible daemon exists. The daemon will not be tied to one MCP connection because CLI, GUI and another harness may share it; request-based idle shutdown avoids a systemd user-service dependency.
 
 ### Design choice: no per-tool-call reconnect
 
@@ -123,7 +123,7 @@ The shared `cortex session` owner reconnects with a surfaced health state, gener
 
 Each tool is a thin wrapper over a `QuadCortex` method. The tool parses its input (validated against `inputSchema`), calls the client method, and returns the result as JSON. The safety surface (above) gates the destructive tier.
 
-The first implementation milestone deliberately omits the destructive tier. Read, transient and working-copy tools are sufficient to research and build a preset in the live grid, and a recall reverses the experiment. `save_preset` appears only after the remaining PROT-009 correctness gaps and the MCP preparation-token registry pass hardware smoke.
+The implemented first milestone deliberately omits the destructive tier. Read, transient and working-copy tools are sufficient to research and build a preset in the live grid, and a recall reverses the experiment. `save_preset` appears only after MCP-specific policy, token lifecycle, restoration semantics, typed failures and hardware smoke are complete.
 
 ### Design choice: one tool per client method, grouped by tier
 
@@ -137,16 +137,17 @@ The tool list mirrors the client API (zone 150), grouped by the destructive tier
 | `list_blocks` | (derived from `read_current_preset`) | Read |
 | `list_folders` | `QuadCortex::list_folders` | Read |
 | `get_device_version` | `QuadCortex::version` | Read |
+| `get_status`, `get_active_scene`, `get_cpu_load`, `search_catalog` | daemon/cache/client reads | Read |
 | `recall_preset` | `QuadCortex::recall_preset` | Transient write |
 | `switch_scene` | `QuadCortex::switch_scene` | Transient write |
 | `set_block` | `QuadCortex::set_block` | Working-copy write |
-| `set_param` | `QuadCortex::set_param` | Working-copy write |
-| `set_routing` | `QuadCortex::set_chain_input` / `set_chain_output` | Working-copy write |
+| `set_param`, `set_bypass`, `remove_block` | corresponding `QuadCortex` methods | Working-copy write |
+| `set_chain_input`, `set_chain_output`, `set_split` | corresponding `QuadCortex` methods | Working-copy write |
 | `save_preset` | `QuadCortex::prepare_save_before_editing` + `QuadCortex::save_prepared` | Destructive |
 
 ### Design choice: `inputSchema` matches CLI `--schema`
 
-Where a tool corresponds to a CLI command (e.g. `list_presets`, `recall_preset`, `get_device_version`), the `inputSchema` is the same contract the CLI's `--schema` emits. This keeps humans, scripts, and agents on one contract rather than three drifting copies (house-style rust-cli.md).
+Tool schemas are explicit, bounded JSON Schemas maintained in the MCP registry. CLI `--schema` does not exist yet; CLI-007.1 will introduce one typed registry and migrate both surfaces to it.
 
 ### Design choice: `save_preset` is a distinct tool, not a flag
 
@@ -165,7 +166,7 @@ The server uses the `rmcp` crate on a `tokio` runtime. Stable `rmcp` 3.1.0 still
 
 ### Design choice: rmcp over a hand-rolled JSON-RPC server
 
-`rmcp` is the Rust MCP server framework. Using it avoids hand-rolling the JSON-RPC transport and keeps the server on the standard MCP protocol. The workspace pins `rmcp` with `default-features = false` and only the `server` + `transport-io` features, to keep the dependency surface minimal.
+`rmcp` is the selected Rust MCP server framework. Using it avoids hand-rolling the JSON-RPC transport and keeps the server on the standard MCP protocol. The workspace pins `rmcp` with `default-features = false` and only the required server/transport features.
 
 ### Design choice: tokio runtime
 
@@ -174,14 +175,14 @@ The server uses the `rmcp` crate on a `tokio` runtime. Stable `rmcp` 3.1.0 still
 ### Alternatives considered
 
 - **Hand-rolled JSON-RPC over stdio.** Rejected: the MCP protocol is standard; `rmcp` keeps us on it without the maintenance burden.
-- **A different MCP framework.** None considered; `rmcp` is the Rust standard.
+- **A different MCP framework.** None selected; `rmcp` currently meets the protocol and integration needs.
 
 ## [DES-LIMITS] Known Limitations
 
 - **The non-persistent slice is hardware-verified.** Read, recall, scene and unsaved live-grid tools passed an official-client hardware smoke against CorOS 4.0.1 on 2026-08-06. Persistent writes remain absent.
-- **The client and persistent-session foundations now exist.** Tool wiring remains unimplemented, but it is no longer blocked on zone 150.
-- **No scratch-range host configuration mechanism yet.** `SavePolicy` validates host-supplied 1A-32H ranges without guessing a default; the MCP process still needs to obtain that policy from the user.
+- **The client, persistent-session foundations and non-persistent tool wiring exist.** Wider operations and destructive tools remain incremental.
+- **No destructive MCP token registry yet.** The daemon can retain an exact-slot preparation, but the MCP process still needs a proposal/confirmation flow and its own hardware smoke before exposing save.
 - **Prepared-save token and backup retention are implemented in the shared crate.** The MCP server still needs an opaque token registry so it can retain `SavePreparation` between tool calls without serialising raw backups.
 - **Automatic restoration is not implemented.** The retained `BinaryPreset` can be persisted, but the device ignores an unkeyed whole-preset grid write. Restoration needs a separately verified device-side copy, import, or keyed replay path; hosts must not present the retained blob as one-click rollback yet.
 - **The reusable host boundary is extracted.** `cortex-host` owns the typed daemon protocol and synchronous short-lived local IPC client. It has no HID feature; CLI and MCP share it without putting host IPC into the leaf crate. Platform details stay behind `LocalEndpoint`, `LocalListener` and `LocalConnection`.
-- **Destructive MCP save is intentionally deferred.** PROT-009.1, PROT-009.5, PROT-009.6 and PROT-009.9 must close before the server exposes it.
+- **Destructive MCP save is intentionally deferred.** The former core PROT-009 blockers are closed; MCP still needs configured policy, opaque token lifecycle, restoration semantics, typed failures and its own hardware smoke.

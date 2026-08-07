@@ -14,7 +14,7 @@ spec: spec.md
 
 ## [DES-OVR] Overview
 
-This zone is a thin build-time shim: two vendored `.proto` files plus a `prost` build script that compiles them into typed Rust. The generated `cortex_protobuf_v2` module is the wire-shape contract for the entire crate; nothing above this layer re-parses `.proto` or hand-rolls message structs. The design goal is to keep the shim as small as possible so that schema provenance and attribution stay legible.
+This zone is a thin build-time shim: two vendored `.proto` files plus a `prost` build script that compiles them into typed Rust exposed as `cortex_rs::proto`. `cortex_protobuf_v2` is the protobuf package and generated filename, not a nested public module.
 
 The schema is vendored, not re-derived. We do not run a recovery pass against Cortex Control binaries in this project; we trust the `pyquadcortex` recovery and re-verify the protocol behaviour against real hardware at the transport/session layer (see [100-transport](../100-transport/spec.md), [140-session](../140-session/spec.md)). A schema change here is a protocol-version event, not a routine edit.
 
@@ -52,7 +52,7 @@ println!("cargo::rerun-if-changed=proto/ProductionAutomation.proto");
 
 ### System dependency: `protoc`
 
-`prost-build` shells out to `protoc` (the Protocol Buffers compiler). On Linux this is the `protobuf-compiler` package. CI installs it; the README documents the local requirement. This is the only system dependency the leaf crate has, and it is build-time only - the runtime `prost` dependency has no `protoc` requirement.
+`prost-build` shells out to `protoc` (the Protocol Buffers compiler). On Linux this is the `protobuf-compiler` package. CI installs it; the installation guide documents the local requirement. This is the only system dependency of the no-HID leaf build, and it is build-time only. Default HID builds have additional platform prerequisites; the runtime `prost` dependency has no `protoc` requirement.
 
 ## [DES-PKG] Package and Import Design
 
@@ -77,8 +77,8 @@ The `#[allow]` block is intentional: `prost`-generated code does not carry rustd
 
 There is no version field on the wire (see AGENTS.md). A CorOS update can add `CortexMessageType` variants or new fields to existing messages without bumping anything we can detect. The design response:
 
-- **Unknown enum values are preserved, not errored.** `prost` generates enums as `#[non_exhaustive]`-style with a catch-all `Unknown` variant in some configurations; we treat any `message_type` value outside `0..=71` as "unknown, log and skip" at the domain layer (130), not as a hard error here.
-- **Missing fields default.** Proto3 semantics: unknown or missing fields take their default values. Adding a field on the device side does not break decode; it just shows up as `None` in the generated `oneof` accessors.
+- **Unknown enum field values remain raw integers.** Prost stores enum-valued fields as `i32`; converting with `try_from` can fail. Unknown trailer message tags remain raw `u16` in `Message` and are logged or skipped by higher layers.
+- **Unknown fields are ignored; known absent fields default.** Proto3 decode remains forward-compatible with additional fields, while optional and oneof accessors are `None` only when a known field is absent.
 - **Schema edits are events.** Any change to a `.proto` file (beyond the SPDX header and the `package` line on `Preset.proto`) is a protocol-version event and must be recorded in [roadmap.md](../roadmap.md) under PROT-003, with the CorOS version that introduced it.
 
 ## [DES-LICENSING] Licensing and Attribution Design
@@ -113,7 +113,7 @@ Layer 3: Proto (120)       - prost-generated types from .proto files (compile-ti
        ^
        |  (cortex_rs::proto::* types)
        |
-Layer 4: Domain (130)      - Message, DeviceKind, Preset, Grid, Block, Scene, Catalog
+Layer 4: Domain (130)      - Message, DeviceKind, Preset, Grid, Block, Catalog; Scene planned
 ```
 
 This zone is Layer 3. It has no dependency on any higher layer; the dependency arrow points *down* into the generated types from the domain model.

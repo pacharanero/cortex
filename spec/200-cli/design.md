@@ -19,7 +19,7 @@ spec: spec.md
 - [spec.md](spec.md) - the requirements this design satisfies.
 - [001-overview design](../001-overview/design.md) [DES-ARCH] - the flow map this surface sits at the top of (`[Flow.CLI]`).
 - [house-style rust-cli.md](https://github.com/marcus-pacharanero/house-style/blob/main/rust-cli.md) - the shape rules.
-- Owned source: `crates/cortex-cli/src/main.rs`.
+- Owned source: `crates/cortex-cli/src/{main,connect,decode}.rs`; shared host boundary: `crates/cortex-host/src/`.
 
 ## [DES-MAIN] Thin main.rs
 
@@ -51,13 +51,13 @@ Ordinary commands call `QuadCortex` directly or send typed requests to the persi
 ### Alternatives considered
 
 - **Builder API for clap.** Rejected: house style is `#[derive(Parser)]` / `#[derive(Subcommand)]`, never the builder. Derive keeps the command tree declarative and lets `clap_complete` generate from it.
-- **A `lib.rs` in `cortex-cli`.** Rejected for now: the CLI has no behaviour worth embedding (the crate already owns it). If a host CLI ever needs to embed `cortex` as a subcommand (like `gitehr calc` embeds `clincalc`), a `cli::run()` module will appear; until then, `main.rs` is enough.
+- **A reusable CLI library.** Rejected: reusable daemon protocol and IPC moved into `cortex-host`, while clap parsing remains binary-specific.
 
 ## [DES-CLI] Command tree
 
 ### Behaviour
 
-The clap derive tree is noun-then-verb: `session`, `preset`, `setlist`, `grid`, `block`, `row` and `device` group the operations a player recognises. `catalog`, `scene`, `completions`, `version` and trace decoding complete the current surface. The generated [CLI reference](../../docs/cli-reference.md) is the authoritative command inventory.
+The clap derive tree is noun-then-verb: `session`, `preset`, `setlist`, `grid`, `block`, `row` and `device` group the operations a player recognises. Destructive preset storage commands require explicit confirmation where their safety contract calls for it; `preset move` names exact source and destination slots and refuses an occupied destination from a fresh listing. `scene` is a deliberate direct action; `catalog`, `completions` and trace decoding complete the current surface. The generated [CLI reference](../../docs/cli-reference.md) is the authoritative command inventory.
 
 ### Design choice: `arg_required_else_help = true`
 
@@ -92,7 +92,7 @@ The device answers a plain Version READ without the full connect handshake. Keep
 
 ### Design choice: YAML-like text, not structured YAML
 
-The current `print_version` function prints `label: value` lines, one per field, extracting oneof-wrapped strings by Debug-formatting the variant and stripping the wrapper (`AppFwVersion("d14e")` -> `d14e`). This is human-readable and does not pull in a YAML serializer. Once `--format json` lands, the JSON path uses `serde_json::to_string_pretty` on a serialisable struct.
+Text prints flat `label: value` lines from the shared `cortex_rs::view::DeviceVersion`; JSON serialises the same stable view. Hosts do not expose prost wire structs or depend on vendor field names as their public contract.
 
 ### Alternatives considered
 
@@ -149,7 +149,7 @@ Data goes on stdout; everything else (hints, progress, errors) goes on stderr. `
 
 ### Design choice: `eprintln` for errors, `println` for data
 
-This is the single most important composability rule. Text and JSON results go to stdout; connection phases, progress and warnings go to stderr. The 37-check hardware smoke parses JSON output through `jq`, so this contract is exercised end to end.
+This is the single most important composability rule. Text and JSON results go to stdout; connection phases, progress and warnings go to stderr. The 42-check hardware smoke parses JSON output through `jq`, so this contract is exercised end to end.
 
 ### Alternatives considered
 

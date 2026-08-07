@@ -9,7 +9,7 @@ updated_at: "2026-08-01T17:30:00.000Z"
 tags: ["mcp", "cortex-mcp", "safety-surface", "agentic", "provisional"]
 ---
 
-# 300 MCP - Spec (next workstream)
+# 300 MCP - Spec
 
 > The `cortex-mcp` MCP server is a hardware-verified agentic surface over the Quad Cortex for reading, recall, scene switching and unsaved live-grid editing. Nano Cortex support is deferred until its transport is established, and destructive saving remains deferred.
 
@@ -27,7 +27,7 @@ tags: ["mcp", "cortex-mcp", "safety-surface", "agentic", "provisional"]
 
 ## Problem Statement
 
-An MCP server exposes the Quad Cortex to an AI coding agent for patch editing: recall a preset, switch a scene, set a block parameter, save the result. The state is small and structured, the operations are enumerable, and verification is possible (read back what you wrote). This is a genuinely good MCP use case.
+The MCP server exposes structured device reads, recall, scene switching and unsaved live-grid editing to an agent. Persistent save/delete tools are deliberately absent. The implemented surface lets an agent inspect the actual grid, perform typed edits and read the result back without becoming a second HID owner.
 
 The hard part is not the tool list. It is the **safety surface**. An agent with a `save_preset` tool can overwrite a factory preset or clobber a slot the user cared about, and the device will not stop it - a wrong-row edit succeeds silently. The MCP server must be the boundary that refuses the dangerous case, backs up the target before overwriting, and surfaces the traps an agent would not notice.
 
@@ -37,25 +37,18 @@ This zone owns the thin MCP tool wrappers and enforces the shared safety surface
 
 | Claim | Status | Evidence |
 | --- | --- | --- |
-| Shared save policy (explicit confirmation, absolute factory refusal, configured scratch ranges, pre-edit preparation/backup, stale-target refusal) | Implemented, fake-session tested, and prepare/edit/commit ordering hardware-verified through the CLI; MCP save remains deliberately absent | `crates/cortex-rs/src/safety.rs`; ENG-006.3 |
+| Shared save policy (explicit target and confirmation, absolute factory refusal, pre-edit preparation/backup, stale-target refusal) | Implemented, fake-session tested, and prepare/edit/commit ordering hardware-verified through the CLI; MCP save remains deliberately absent | `crates/cortex-rs/src/safety.rs`; ENG-006.3 |
 | MCP tool descriptions and single owning process | Implemented and hardware-verified | `crates/cortex-mcp/src/server.rs`; 2026-08-06 hardware smoke |
 | Read, transient and working-copy tiers | Implemented and hardware-verified | `crates/cortex-mcp/src/server.rs`; official-client process test and hardware smoke |
-| Destructive tier | Deliberately absent | Blocked on PROT-009.1/.5/.6/.9 |
+| Destructive tier | Deliberately absent | Core correctness blockers are closed; MCP-specific policy configuration, token lifecycle, restoration semantics, typed errors and hardware smoke remain |
 | Bounded official-SDK stdio transport | Implemented and tested | `crates/cortex-mcp/src/transport.rs`; stable `rmcp` 3.1.0 remains affected by upstream #1030 |
 | The `rmcp` crate is the MCP server framework | Implemented | Process-tested with the official SDK client and hardware-smoked through that client |
 
-The non-persistent MCP host is hardware-verified against a real Quad Cortex through the official SDK client. Persistent save remains absent until the MCP token registry, host-configured scratch policy and their own hardware smoke exist.
+The non-persistent MCP host is hardware-verified against a real Quad Cortex through the official SDK client. Persistent save remains absent until the MCP token registry, exact-target confirmation flow, and its own hardware smoke exist.
 
-## Next Milestone
+## Current Boundary
 
-Implement a useful MCP server without persistent writes:
-
-1. Extract a reusable host/daemon client boundary from `cortex-cli::connect`; keep platform-specific local IPC and async runtimes out of the leaf crate.
-2. Serve stdio through `rmcp` and require/reuse the existing held `cortex session` daemon so MCP, CLI and GUI never compete for HID ownership.
-3. Wire read tools: `get_device_version`, `list_presets`, `read_current_preset`, `read_preset`, `list_blocks`, `list_folders`, `get_cpu_load` and catalog search.
-4. Wire transient and working-copy tools: `recall_preset`, `switch_scene`, `set_block`, `set_param`, `set_bypass`, `remove_block` and routing, with the row, recall and DSP-capacity traps in their descriptions.
-5. Hardware-smoke the MCP tools by building a live-grid preset from a plain-English brief and reading every write back. Stop short of saving.
-6. Do not expose `save_preset` until PROT-009.1, PROT-009.5, PROT-009.6 and PROT-009.9 are closed and the MCP token registry has its own hardware smoke.
+The non-persistent milestone is complete and hardware-verified through an official SDK client. Current distribution still requires a separately started compatible daemon. The next MCP work is typed daemon failures and read-back/typed-routing hardening, followed by self-starting daemon lifecycle. Destructive save is a later independent milestone.
 
 ## User Stories
 
@@ -95,7 +88,7 @@ AI coding agents editing patches via MCP, and the maintainers who gate what an a
 | --- | --- | --- |
 | FR-1 | Read and recall are free; **saving is always explicitly confirmed.** A `save_preset` tool call must include an explicit confirmation token/flag from the caller, not a default-yes. | Must Have |
 | FR-2 | **Never write to the factory setlist.** `save_preset` refuses a slot in the FACTORY setlist regardless of the caller's request. Refusal message names the safe alternative (save to a USER slot). | Must Have |
-| FR-3 | **Restrict saves to a configured scratch range of USER slots unless overridden.** The library has no guessed default; a host must configure valid slots within 1A-32H. An override requires an explicit, logged opt-in. | Must Have |
+| FR-3 | **Name the exact USER target.** A persistent tool accepts one explicit 1A-32H slot and authorises only that target for the prepared operation. | Must Have |
 | FR-4 | **Prepare every target before editing, and retain its backup.** `read_preset` recalls the target, so doing this immediately before save would destroy the unsaved working grid. A listing can be stale even when it reports an empty slot, so preparation always recalls/reads the target before edits begin. The preparation is bound to the physical-session generation, stored-preset mutation epoch, and exact listing entry; reconnects or target changes make it stale. | Must Have |
 | FR-5 | **Surface the row-numbering trap in tool descriptions.** Rows are 0-based in the API, 1-4 on screen; a wrong-row edit succeeds silently. Every row-accepting tool (`set_param`, `set_block`, `set_bypass`, `set_chain_input`) notes this in its `inputSchema` description. | Must Have |
 | FR-6 | **Single owning process for the USB interface.** The first MCP milestone uses the held daemon through the shared host boundary and never opens HID. Every tool call reuses that owner. | Must Have |
@@ -115,7 +108,7 @@ AI coding agents editing patches via MCP, and the maintainers who gate what an a
 | FR-25 | `switch_scene(scene)` - switch the active scene. Write, transient. | Must Have |
 | FR-26 | `set_block(row, column, model, verify)` - place a model in a cell. Write, working copy only (edits the recalled preset in device RAM). | Must Have |
 | FR-27 | `set_param(row, column, param_index, value, scene, ...)` - set one block parameter. Write, working copy only. | Must Have |
-| FR-28 | `set_routing(row, in_portid, out_portid)` - re-point a row's input/output. Write, working copy only. | Must Have |
+| FR-28 | `set_chain_input`, `set_chain_output`, and `set_split` expose routing operations separately. Raw port integers remain provisional until typed enums land. | Must Have |
 | FR-29 | `save_preset(setlist, slot, preparation, confirm)` - save the working copy to a slot. **Destructive and deferred beyond the first MCP milestone.** Gate this: require explicit slot, refuse FACTORY (FR-2), require confirmation (FR-1), and require a matching pre-edit preparation (FR-4). | Must Have |
 | FR-30 | `read_current_preset()` - read the live grid without recalling (no side effect). Read, unrestricted. | Should Have |
 | FR-31 | `list_folders()` - list all folders the device knows. Read, unrestricted. | Should Have |
@@ -127,7 +120,7 @@ AI coding agents editing patches via MCP, and the maintainers who gate what an a
 | FR-40 | The server connects once to the reusable host/daemon client and never opens HID directly. | Must Have |
 | FR-41 | Every tool delegates through the typed daemon request contract to the sole held `QuadCortex` session. | Must Have |
 | FR-42 | The server runs on stdio (the MCP transport) via `rmcp`. | Must Have |
-| FR-43 | The server logs safety-relevant events (refused save, slot backup, scratch-range override) to stderr. | Should Have |
+| FR-43 | The server logs safety-relevant events (refused save, prepared target, and slot backup) to stderr. | Should Have |
 | FR-44 | When no daemon endpoint exists, the installed MCP server starts the sibling `cortex session` owner before serving stdio. It never silently replaces a running incompatible daemon, and concurrent starts converge on the local IPC claim. | Should Have |
 
 ### Non-Functional Requirements
@@ -136,8 +129,8 @@ AI coding agents editing patches via MCP, and the maintainers who gate what an a
 | --- | --- | --- |
 | NFR-1 | The MCP process opens zero HID transports; the held daemon remains the sole owner. | Review-enforced |
 | NFR-2 | A `save_preset` refusal is a structured error, not a silent no-op. The agent sees the refusal and the safe alternative. | Review-enforced |
-| NFR-3 | Tool `inputSchema` matches the CLI `--schema` output for shared commands, so humans, scripts, and agents share one contract. | Design-enforced |
-| NFR-4 | The server is provisional until exercised against a real Quad Cortex from this crate. Safety-surface behaviour is labelled provisional in docs and release notes. | Docs-enforced |
+| NFR-3 | Tool schemas are explicit and bounded today. They converge with a future shared CLI/MCP registry under CLI-007.1; no CLI `--schema` contract exists yet. | Design-enforced |
+| NFR-4 | The non-persistent server is hardware-verified. Destructive save and each newly added operation remain provisional until their own hardware smoke. | Docs-enforced |
 | NFR-5 | Agent-generated tests must not be the sole basis for accepting safety-surface behaviour. Cross-check against the client layer (150) and a real device. | AGENTS.md assurance |
 
 ## Acceptance Criteria
@@ -147,7 +140,7 @@ AI coding agents editing patches via MCP, and the maintainers who gate what an a
 - [ ] An occupied save target is read and retained before working-copy edits begin; attempting to create that backup after edits is refused because recall would discard them.
 - [ ] Every target is recalled/read before edits begin even when its listing says empty; the retained preparation is bound to that exact setlist and slot.
 - [ ] A reconnect, intervening stored-preset mutation, or changed target listing makes the preparation stale and refuses the save.
-- [ ] `save_preset` is restricted to a designated scratch range of USER slots unless an explicit override is supplied.
+- [ ] `save_preset` names and authorises one exact USER target; its schema exposes no range or broad override.
 - [x] Every row-accepting tool notes the row-numbering trap (0-based API, 1-4 on screen) in its description and row schema.
 - [x] `read_preset` notes the recall side effect; `read_current_preset` notes it has no side effect.
 - [x] `set_block` notes the DSP-capacity refusal trap and exposes `verify` (default `true`).
@@ -182,7 +175,7 @@ AI coding agents editing patches via MCP, and the maintainers who gate what an a
 - **Scratch-range configuration.** Choose the host mechanism (GUI setting, config file, or MCP startup argument). `SavePolicy` validates supplied ranges but deliberately provides no default because the crate cannot know which slots are disposable.
 - **Backup retention and restoration.** The slot-backup blob (FR-4) could be written to a configurable backup directory with a timestamp. Restoring it still needs a verified device-side copy, import, or keyed replay path because an unkeyed whole-preset grid write is ignored; retention alone must not be presented as one-click rollback.
 - **Read-back verification.** After a `save_preset`, the server could `read_preset` the same slot and confirm it matches the working copy, surfacing a mismatch as a structured error.
-- **Session persistence.** The server could keep the session alive across tool calls (it must - FR-40) and expose a `disconnect`/`reconnect` tool for recovery after a device glitch.
+- **Daemon lifecycle.** The server already reuses the persistent daemon across tool calls. Remaining work is starting a missing compatible daemon and allowing request-based idle shutdown without owning a second lifecycle manager.
 - **Prepared-token registry.** MCP calls cannot carry the opaque Rust `SavePreparation` directly. The server must retain preparations under short-lived opaque IDs and expose only `SavePreparationView`; raw backups never cross into tool arguments.
 
 ## Glossary

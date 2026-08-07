@@ -2,7 +2,7 @@
 
 What we know about the Cortex Control wire protocol, and how we know it.
 
-Almost all of this was established by [`stokes-audio/pyquadcortex`](https://github.com/stokes-audio/pyquadcortex) against real hardware. Findings marked **measured here** are this project's own, made against a Quad Cortex running CorOS 4.0.1 / firmware `d14e` on 2026-08-02.
+Almost all of this was established by [`stokes-audio/pyquadcortex`](https://github.com/stokes-audio/pyquadcortex) against real hardware. Findings marked **measured here** are this project's own, collected across several hardware runs against a Quad Cortex running CorOS 4.0.1.
 
 ## Transport
 
@@ -28,9 +28,9 @@ Every host-to-device `SET_REPORT` is acted upon and *then* deliberately stalled 
 
 A client must **swallow write errors** and detect a dead device via read timeouts instead. `cortex` does this in `Transport::write`.
 
-### Exclusive access
+### One effective owner
 
-The device grants the HID interface to one process at a time. Quit Cortex Control before using anything else, and expect the reverse to hold while `cortex` has a session open.
+The protocol requires one effective owner. Quit Cortex Control before using anything else, and expect the reverse while `cortex` has a session open.
 
 **Nothing enforces this, and violating it fails silently.** On Linux a second process opens the device without error. The held session then stops working - every subsequent read on it times out - while the offending command appears to succeed. Nothing errors at the moment of collision; the damage shows on the *next* request.
 
@@ -54,11 +54,11 @@ This project has not tested a Nano Cortex, and nobody has shown one exchanging t
 
 There are **no sequence numbers, no offsets, and no total-length field anywhere**. Reassembly is purely flag-driven: a FIRST frame starts a buffer, middles append, a LAST or COMPLETE emits.
 
-A FIRST frame arriving mid-reassembly means the previous message was lost; drop the stale partial and start clean. This is routine rather than exceptional - the device interleaves bursts of pushes.
+A FIRST frame arriving mid-reassembly means the previous message was lost. The decoder can drop the stale partial and resynchronise, but a subscribed client must invalidate cached continuity because the missing body may have contained state.
 
 ## Message envelope
 
-A reassembled message is `protobuf ++ 8-byte trailer`, and **the message-type tag lives in the trailer, not a header**: a little-endian `uint16` `CortexMessageType`. 71 types are declared.
+A reassembled message is `protobuf ++ 8-byte trailer`, and **the message-type tag lives in the trailer, not a header**: a little-endian `uint16` `CortexMessageType`. The generated enum has 72 variants, numbered 0 through the terminal sentinel value 71.
 
 Two independent kinds of gzip are in play, and a client needs both in different places:
 
@@ -104,7 +104,7 @@ On a capture it looks like this:
 
 The device answers control transfers in about 220 microseconds. Releasing the lock and yielding is not sufficient - the mutex is unfair, and with a backlog to read the reader wins the race. The writer must be able to make the reader stand aside.
 
-Measured effect of fixing it: handshake from a 2.2-102.7 s spread to a flat 2.2 s; preset listing from 5.4-18.2 s to 5.33-5.38 s. The best case did not change in either.
+Measured effect of fixing it in the intermediate handshake: a 2.2-102.7 s spread became a flat 2.2 s; preset listing changed from 5.4-18.2 s to 5.33-5.38 s. The current subscribed handshake is 3.8-3.9 s because it additionally reads Version and deliberately paces the catalog.
 
 ### Pace the handshake
 
@@ -184,9 +184,9 @@ Two traps in the capture itself, each of which makes a capture look one-sided ra
 
 Use the binary usbmon interface, via `dumpcap` or `tshark`. The text interface at `/sys/kernel/debug/usb/usbmon/<bus>u` truncates payload data, which drops bytes from the middle of a 128-byte body while still looking like a successful capture.
 
-## Saving, renaming and deleting a preset
+## Saving, renaming, deleting and moving a preset
 
-**Measured** from a capture of Cortex Control performing each operation, `CorOS` 4.0.1.
+Save and delete were measured from this project's Cortex Control captures on `CorOS` 4.0.1. The move shape below comes from the MIT-licensed `pyquadcortex` project's Cortex Control capture and was hardware-verified from this Rust implementation on `CorOS` 4.0.1 with a prepared scratch preset moved `7A -> 7B -> 7A`, listing convergence in both directions, storage-revision advancement, and final deletion.
 
 All of them are `FileMessage` with a `FolderInfo` naming the setlist and a single `ProductData` naming the target. Two things are worth knowing before writing any of it:
 
@@ -230,11 +230,36 @@ FileMessage {
 
 Delete addresses its target by **full path**, not by slot index - the opposite of save. A `.pb` extension is appended to the preset name.
 
+### Move
+
+```text
+FileMessage {
+  action: MOVE             // 4
+  type:   0
+  folder: FolderInfo {
+    key: "/media/p4/Presets/My Presets"
+    files: [ ProductData {
+      key: "/media/p4/Presets/My Presets/Fictional Source.pb"
+    } ]
+  }
+  to_folder: FolderInfo {
+    key: "/media/p4/Presets/My Presets"
+    files: [ ProductData {
+      index: 9             // linear slot; 9 is 2B
+    } ]
+  }
+}
+```
+
+Move addresses the source by **full path** and the destination by **linear slot index**. Only same-setlist moves have been observed. The raw protocol's behaviour when the destination is occupied is unestablished. `cortex-rs` requests a fresh complete listing, resolves the explicitly named source slot to its stored path, and refuses observed occupancy, empty sources, no-op moves, and the factory library before sending `MOVE`. Eventual consistency means the listing cannot prove emptiness, so callers should treat both exact slots as mutable and require explicit confirmation.
+
 ### Handling the reply
 
 Each of these is answered by a `File` reply, and a save is followed by a `RecallPreset` push carrying `reason: SAVE` (`RecallPresetReason.SAVE = 2`). That reason is the only thing distinguishing it from an ordinary recall, which matters for a client keeping a cache: a save changes the stored slot without the user having recalled anything.
 
-Do not correlate these replies by message type or non-empty body alone. On CorOS 4.0.1, targeted setlist reads return `File{UPDATE}` with exactly 256 unique indices; save acknowledgements return `File{CREATE}` with the target folder and slot index; delete acknowledgements return `File{DELETE}` with the target folder and full preset path. This project now requires those operation and target fields. An unrelated folder announcement or one-item mutation must not report a destructive operation as successful. These broadcasts carry no usable request ID, so a delayed acknowledgement from an earlier identical operation cannot be distinguished from the current operation; serialize file mutations and verify the resulting listing rather than blindly retrying a timed-out mutation.
+Do not correlate these replies by message type or non-empty body alone. On CorOS 4.0.1, targeted setlist reads return `File{UPDATE}` with exactly 256 unique indices; save acknowledgements return `File{CREATE}` with the target folder and slot index; delete acknowledgements return `File{DELETE}` with the target folder and full preset path. An unrelated folder announcement or one-item mutation must not report a destructive operation as successful. These broadcasts carry no usable request ID, so a delayed acknowledgement from an earlier identical operation cannot be distinguished from the current operation.
+
+Move does not rely on a `File{MOVE}` acknowledgement: prior-art hardware evidence shows that file mutations can land without a reply. After sending, the client polls fresh complete listings until the source slot is empty and the named preset occupies the destination. A materially changed complete listing advances the cache's storage revision even when no mutation acknowledgement arrived, so previously prepared save epochs fail closed. If storage does not converge before the deadline, the move outcome is explicitly unconfirmed and must be inspected rather than retried blindly.
 
 File mutations are **eventually consistent**. `pyquadcortex` observed eleven successful deletes still present in a listing five seconds later; a fresh listing eventually reflected all of them. Do not use a fixed post-write sleep as verification. Poll until the expected listing state appears or a real deadline expires. The device may also de-duplicate a colliding name by truncating it and appending `_N`, so read the stored name back before issuing a later name-addressed delete.
 
@@ -355,7 +380,7 @@ An accepted and stored value is not proof that the device supports it. One mode-
 
 Field 5's value is 32 hex characters, which is MD5 length; a git SHA-1 would be 40. So neither field holds a git hash, and the two are **not** swapped - each simply carries something its name does not describe. pyquadcortex renders them identically.
 
-The names are the vendor's and presumably historical. `cortex` keeps them so output maps to the schema, but annotates them.
+The generated protobuf structs retain the vendor's historical names. Public CLI/JSON views expose descriptive `coros_version` and `wireless_firmware_checksum` fields and document the wire-name mapping.
 
 ## No version field on the wire
 

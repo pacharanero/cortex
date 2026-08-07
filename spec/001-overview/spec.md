@@ -24,9 +24,9 @@ tags: ["overview", "cortex-rs", "rust", "usb-hid", "quad-cortex", "nano-cortex",
 
 ## Problem Statement
 
-cortex-rs is an unofficial, Linux-first Rust toolkit for the Neural DSP Quad Cortex (and, in time, the Nano Cortex). The core deliverable is a low-level leaf crate that speaks the Cortex Control USB HID protocol and exposes a typed domain model - presets, scenes, grid, blocks. A shared `cortex-host` daemon IPC boundary serves three host surfaces: the hardware-verified `cortex` CLI; the hardware-verified, non-persistent `cortex-mcp` server; and a Tauri desktop GUI whose interactive first draft is fixture-backed and not yet connected to the device. The GUI target is cross-platform, while Linux is the only verified host today.
+cortex-rs is an unofficial, Linux-first Rust toolkit for the Neural DSP Quad Cortex (and, in time, the Nano Cortex). The core deliverable is a low-level leaf crate that speaks the Cortex Control USB HID protocol and exposes a typed domain model for presets, the grid, blocks, and active-scene state. A richer `Scene` value remains planned. A shared `cortex-host` daemon IPC boundary serves three host surfaces: the hardware-verified `cortex` CLI; the hardware-verified, non-persistent `cortex-mcp` server; and a Tauri desktop GUI whose interactive first draft is fixture-backed and not yet connected to the device. The GUI target is cross-platform, while Linux is the only verified host today.
 
-The project is a Rust port of the protocol behaviour established by the MIT-licensed `stokes-audio/pyquadcortex` Python library, re-verified against a real Quad Cortex on Linux (CorOS 4.0.1, firmware `d14e`). It is not affiliated with or endorsed by Neural DSP.
+The project is a Rust port of the protocol behaviour established by the MIT-licensed `stokes-audio/pyquadcortex` Python library, with the implemented core paths re-verified against a real Quad Cortex on Linux running CorOS 4.0.1. It is not affiliated with or endorsed by Neural DSP.
 
 The spec tree must stay a living, 1:1 map of the as-built code so that a future agent making a surgical change can find the owning zone spec, its owned files, and its tests before reading implementation code.
 
@@ -60,13 +60,13 @@ Maintainers, AI coding agents, and downstream crate consumers.
 
 | ID | Requirement | Priority |
 | --- | --- | --- |
-| FR-1 | All non-trivial source files carry a top-level `@see` doc-comment linking to their governing zone `spec.md` + `design.md`. | Must Have |
+| FR-1 | All non-trivial source files should carry a top-level `@see` doc-comment linking to their governing zone. Coverage is incomplete and tracked under ENG-004. | Should Have |
 | FR-2 | Spec folders use 3-digit ranged numbering by category (see Appendix), spaced to allow insertion without renumbering. | Must Have |
-| FR-3 | Each zone spec owns a disjoint set of source files; the routing index below is the authoritative owner map. | Must Have |
+| FR-3 | Each source surface has one primary owning zone; the routing index below is the authoritative owner map. Cross-cutting files may be consumed by several zones. | Must Have |
 | FR-4 | Node IDs are zone-local: `[FR-x]`/`[NFR-x]` restart per `spec.md`, `[DES-*]` anchors are unique within a `design.md`. | Must Have |
 | FR-5 | Project progress is tracked only in `spec/roadmap.md` and `spec/completed.md`; zone folders contain no `tasks.md`. | Must Have |
 | FR-6 | Cross-cutting living behaviour uses numbered `900-999` specs; one-off decisions use `docs/adr/` (none yet). | Should Have |
-| FR-7 | Code/spec alignment is bidirectional: code `@see` resolves to existing zone IDs, and zone specs list their owned files. | Must Have |
+| FR-7 | Code/spec alignment is bidirectional: existing code `@see` links resolve, and zone specs list their owned files. Complete source coverage remains planned under ENG-004. | Should Have |
 | FR-8 | Provisional surfaces (Nano Cortex specifics, MCP safety surface, unverified message types) are labelled as such in code, spec, UI, and release notes. | Must Have |
 | FR-9 | The crate is a leaf: `default-features = false` builds only the protocol/domain surface (no hidapi, no async runtime). | Must Have |
 | FR-10 | The same crate drives the CLI, MCP server, and Tauri backend; none reimplements protocol or domain logic. | Must Have |
@@ -82,7 +82,7 @@ Maintainers, AI coding agents, and downstream crate consumers.
 
 ## Acceptance Criteria
 
-- [x] Every owned `.rs` file resolves to exactly one zone via the routing index.
+- [ ] Every owned `.rs` file resolves to exactly one primary zone and carries a valid `@see`; ENG-004 tracks the remaining coverage and CI gate.
 - [x] Inserting a zone between `100` and `110` uses `105`, never renumbers.
 - [x] `001-overview` is the singleton routing/rules doc.
 - [x] Provisional surfaces are flagged in code + spec (e.g. `DeviceKind::NanoCortex` is labelled provisional in `device.rs`).
@@ -127,8 +127,8 @@ The finer granularity was not paying for itself either. The task files also carr
 
 Deleting the files did not mean deleting their content:
 
-- **Task state** was reconciled into `roadmap.md`, including outstanding items that existed nowhere else - notably the governance decisions now tracked as ENG-003.1 to ENG-003.5.
-- **Design divergences** moved to the owning zone's `design.md`, which is where a decision about how something is built belongs: see [DES-SES-DIVERGENCE](../140-session/design.md) and [DES-CLI-DIVERGENCE](../150-client/design.md).
+- **Task state** was reconciled into `roadmap.md`, including outstanding items that existed nowhere else - notably the governance decisions tracked as ENG-003.1 to ENG-003.6.
+- **Design divergences** moved to the owning zone's `design.md`, which is where a decision about how something is built belongs: see [DES-SES-DIVERGENCE](../140-session/design.md) and [DES-CLIENT-DIVERGENCE](../150-client/design.md).
 
 ### Consequence for agents
 
@@ -144,7 +144,7 @@ To answer "where are we up to", read `roadmap.md`. To answer "what must this do"
   100      - USB HID transport (hidapi, write STALL, exclusive access)
   110      - framing (report IDs, flags, reassembly, encode/decode)
   120      - proto schema (vendored .proto files, prost build, message types)
-  130      - domain model (DeviceKind, presets, scenes, grid, blocks, catalog)
+  130      - domain model (DeviceKind, presets, grid, blocks, catalog)
   140      - session (connect handshake, keepalive, subscription, correlation)
   150      - client (the ergonomic QuadCortex API surface)
 200-299    - CLI (cortex binary)
@@ -152,7 +152,7 @@ To answer "where are we up to", read `roadmap.md`. To answer "what must this do"
 300-399    - MCP server (cortex-mcp binary)
   300      - MCP safety surface and tool list
 400-499    - GUI (cross-platform Tauri desktop app; first draft in progress)
-  400      - Tauri 2 + React + Mantine + Vite
+  400      - Tauri 2 + React + Mantine + Vite (interactive fixture-backed first draft)
 500-599    - DX (linting, formatting, testing)
 600-699    - CI / release
 900-999    - reserved for cross-cutting living behaviour
@@ -165,12 +165,12 @@ To answer "where are we up to", read `roadmap.md`. To answer "what must this do"
 | [100-transport](../100-transport/spec.md) | USB HID transport | `crates/cortex-rs/src/transport.rs` | Implemented and hardware-verified |
 | [110-framing](../110-framing/spec.md) | HID frame codec | `crates/cortex-rs/src/framing.rs` | Implemented |
 | [120-proto-schema](../120-proto-schema/spec.md) | Protobuf schema | `crates/cortex-rs/{build.rs,proto/}` | Implemented |
-| [130-domain-model](../130-domain-model/spec.md) | Domain model | `crates/cortex-rs/src/{device,message,catalog,state,view,safety}.rs` | Partial; core typed views implemented |
-| [140-session](../140-session/spec.md) | Session handshake | `crates/cortex-rs/src/session.rs` | Implemented and hardware-verified |
-| [150-client](../150-client/spec.md) | Client API | `crates/cortex-rs/src/client.rs` | Partial; core read/edit/save paths hardware-verified |
-| [200-cli](../200-cli/spec.md) | CLI surface | `crates/cortex-cli/src/{main,connect}.rs` | Usable pre-alpha; core paths hardware-verified |
-| [300-mcp](../300-mcp/spec.md) | MCP server | `crates/cortex-mcp/src/` | Non-persistent tools hardware-verified; save/delete absent |
-| [400-gui](../400-gui/spec.md) | Tauri GUI | `gui/` | Interactive fixture-backed first draft |
+| [130-domain-model](../130-domain-model/spec.md) | Domain model and pure grid builders | `crates/cortex-rs/src/{device,message,catalog,grid,view,safety}.rs` | Partial; core typed views and builders implemented |
+| [140-session](../140-session/spec.md) | HID link seam, session and subscribed state | `crates/cortex-rs/src/{link,session,state}.rs` | Implemented; core paths hardware-verified |
+| [150-client](../150-client/spec.md) | Client API | `crates/cortex-rs/src/client.rs` | Partial; implemented core read/edit/save paths hardware-verified |
+| [200-cli](../200-cli/spec.md) | CLI and shared host boundary | `crates/cortex-cli/src/{main,connect,decode}.rs`, `crates/cortex-host/src/` | Linux usable pre-alpha; Windows IPC adapter planned |
+| [300-mcp](../300-mcp/spec.md) | MCP server | `crates/cortex-mcp/src/{main,server,transport}.rs`, process tests | Non-persistent tools hardware-verified; save/delete absent |
+| [400-gui](../400-gui/spec.md) | Tauri GUI | `gui/` | Interactive fixture-backed first draft; daemon IPC absent |
 | [500-dx-tooling](../500-dx-tooling/spec.md) | DX/tests | `s/`, `.editorconfig`, lint configs | Partial |
 | [600-ci-release](../600-ci-release/spec.md) | CI/release | `.github/workflows/`, `dependabot.yml` | Partial |
 | [900-project-governance](../900-project-governance/spec.md) | Governance | `AGENTS.md`, `NOTICE`, `THIRD-PARTY-NOTICES.md`, `LICENSE` | Implemented |
@@ -195,7 +195,7 @@ At least one `@see` MUST point at a `spec.md` or `design.md` under `spec/`.
 | Zone spec | A `spec/XXX-name/` folder with `spec.md` and `design.md`; progress lives in the repository-wide roadmap and completed record |
 | Living document | `spec.md`/`design.md` representing current truth, not logs |
 | `@see` | Doc-comment linking a source file to its governing zone spec |
-| Honest state | Protocol behaviour is hardware-verified (via pyquadcortex) or labelled provisional |
+| Honest state | Each operation and host path is labelled according to this project's evidence; prior-art evidence alone does not make this implementation verified |
 | Leaf crate | `cortex-rs` with `default-features = false`: no hidapi, no async runtime |
 | Write STALL | The benign USB status-stage stall on every `SET_REPORT`; `hid_write()` returns `-1` on a write that worked |
 | Trailer | The 8-byte suffix on a reassembled message carrying the `CortexMessageType` tag as a LE u16 |

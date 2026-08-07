@@ -22,16 +22,15 @@
 # your 256 USER slots are disposable, and neither does this script.
 #
 #   s/hardware-smoke --scratch-bank 31 --restore-slot 1A --discard-working-copy
-#   s/hardware-smoke --scratch-bank 31 --restore-slot 1A --discard-working-copy
 #   s/hardware-smoke --scratch-bank 31 --restore-slot 1A --discard-working-copy --setlist "/media/p4/Presets/My Presets"
 #
 # A failed check is logged and the run continues, so one bad step does not
 # hide the others - see the summary at the end for a full tally.
 #
-# Scope, deliberately: read-only checks, plus write/read-back inside the
-# scratch bank through one held daemon session. A physical unplug/replug still
-# needs its own manual pass (runbook section 11), and this does not attempt an
-# IR/capture round trip
+# Scope, deliberately: read-only checks, plus grid edit, prepared save,
+# same-setlist move/restore, delete, and read-back inside the scratch bank
+# through one held daemon session. A physical unplug/replug still needs its
+# own manual pass (runbook section 11), and this does not attempt an IR/capture round trip
 # (PROT-007 is unimplemented). Physical unplug/replug is not scripted at
 # all: this project has already recorded a case (OpenCortex, spec/prior-art.md)
 # of a USB link dying under repeated large writes and needing a power cycle,
@@ -130,7 +129,7 @@ if ! [[ "$MODEL_ID" =~ ^[1-9][0-9]*$ ]]; then
 fi
 
 SAVE_SLOT="${SCRATCH_BANK}A"
-SCRATCH_RANGE="${SCRATCH_BANK}A-${SCRATCH_BANK}H"
+MOVE_SLOT="${SCRATCH_BANK}B"
 STARTED_DAEMON=false
 
 if ! command -v "$BIN" >/dev/null 2>&1; then
@@ -342,8 +341,7 @@ fi
 # target and silently save the wrong grid (PROT-009.3).
 SAVE_TOKEN=""
 for _ in {1..5}; do
-  run_cli preset prepare-save --slot "$SAVE_SLOT" --setlist "$SETLIST" \
-    --scratch-setlist "$SETLIST" --scratch-range "$SCRATCH_RANGE"
+  run_cli preset prepare-save --slot "$SAVE_SLOT" --setlist "$SETLIST"
   SAVE_TOKEN="$(jq -r '.token // empty' <<<"$LAST_OUT" 2>/dev/null || true)"
   [[ "$LAST_CODE" -eq 0 && -n "$SAVE_TOKEN" ]] && break
   sleep 1
@@ -440,6 +438,70 @@ else
   jq_check "save preserved the edited working grid" "$LAST_OUT" \
     ".blocks | any(.screen_row == $FREE_ROW and .column == $FREE_COL and .model_id == $MODEL_ID)"
 
+  # The saved fixture is now a real source for the same-setlist MOVE path.
+  # Both slots are inside the operator-declared disposable bank. Move to B,
+  # verify convergence through a fresh listing and cache epoch, then move it
+  # back before the existing recall/read/delete checks continue from A.
+  if [[ -n "$STORED_NAME" ]]; then
+    run_cli session status
+    MOVE_REVISION_BEFORE="$(jq -r '.cache.storage_revision // 0' <<<"$LAST_OUT")"
+
+    expect_ok "preset move ($SAVE_SLOT -> $MOVE_SLOT)" \
+      preset move --from "$SAVE_SLOT" --to "$MOVE_SLOT" --setlist "$SETLIST" --yes
+
+    MOVED=false
+    for _ in {1..10}; do
+      run_cli preset list --setlist "$SETLIST" --include-empty
+      if jq -e --arg from "$SAVE_SLOT" --arg to "$MOVE_SLOT" --arg name "$STORED_NAME" \
+        'any(.[]; .slot == $from and .name == "") and
+         any(.[]; .slot == $to and .name == $name)' \
+        >/dev/null 2>&1 <<<"$LAST_OUT"; then
+        MOVED=true
+        break
+      fi
+      sleep 1
+    done
+    if [[ "$MOVED" == true ]]; then
+      log_pass "move converged at $MOVE_SLOT with $SAVE_SLOT empty"
+    else
+      log_fail "move converged at $MOVE_SLOT with $SAVE_SLOT empty" \
+        "source/destination listing did not converge"
+    fi
+
+    run_cli session status
+    MOVE_REVISION_AFTER="$(jq -r '.cache.storage_revision // 0' <<<"$LAST_OUT")"
+    if [[ "$MOVE_REVISION_AFTER" -gt "$MOVE_REVISION_BEFORE" ]]; then
+      log_pass "move advances cache storage revision"
+    else
+      log_fail "move advances cache storage revision" \
+        "$MOVE_REVISION_BEFORE -> $MOVE_REVISION_AFTER"
+    fi
+
+    expect_ok "preset move restore ($MOVE_SLOT -> $SAVE_SLOT)" \
+      preset move --from "$MOVE_SLOT" --to "$SAVE_SLOT" --setlist "$SETLIST" --yes
+
+    MOVE_RESTORED=false
+    for _ in {1..10}; do
+      run_cli preset list --setlist "$SETLIST" --include-empty
+      if jq -e --arg from "$MOVE_SLOT" --arg to "$SAVE_SLOT" --arg name "$STORED_NAME" \
+        'any(.[]; .slot == $from and .name == "") and
+         any(.[]; .slot == $to and .name == $name)' \
+        >/dev/null 2>&1 <<<"$LAST_OUT"; then
+        MOVE_RESTORED=true
+        break
+      fi
+      sleep 1
+    done
+    if [[ "$MOVE_RESTORED" == true ]]; then
+      log_pass "move restore converged at $SAVE_SLOT with $MOVE_SLOT empty"
+    else
+      log_fail "move restore converged at $SAVE_SLOT with $MOVE_SLOT empty" \
+        "source/destination listing did not restore"
+    fi
+  else
+    log_fail "preset move" "save produced no stored source name"
+  fi
+
   expect_ok "preset recall ($SAVE_SLOT)" preset recall --slot "$SAVE_SLOT" --setlist "$SETLIST"
 
   run_cli grid show
@@ -483,17 +545,20 @@ else
     SLOT_EMPTY=false
     for _ in {1..10}; do
       run_cli preset list --setlist "$SETLIST" --include-empty
-      if jq -e --arg slot "$SAVE_SLOT" \
-        'any(.[]; .slot == $slot and .name == "")' >/dev/null 2>&1 <<<"$LAST_OUT"; then
+      if jq -e --arg save "$SAVE_SLOT" --arg move "$MOVE_SLOT" --arg name "$STORED_NAME" \
+        'any(.[]; .slot == $save and .name == "") and
+         any(.[]; .slot == $move and .name == "") and
+         all(.[]; .name != $name)' >/dev/null 2>&1 <<<"$LAST_OUT"; then
         SLOT_EMPTY=true
         break
       fi
       sleep 1
     done
     if [[ "$SLOT_EMPTY" == true ]]; then
-      log_pass "$SAVE_SLOT is empty after delete"
+      log_pass "$SAVE_SLOT and $MOVE_SLOT are empty after delete"
     else
-      log_fail "$SAVE_SLOT is empty after delete" "slot remained occupied after 10 seconds"
+      log_fail "$SAVE_SLOT and $MOVE_SLOT are empty after delete" \
+        "scratch move fixture remained after 10 seconds"
     fi
   else
     log_fail "preset delete (cleanup)" "no stored name captured; scratch slot $SAVE_SLOT may still hold test content"

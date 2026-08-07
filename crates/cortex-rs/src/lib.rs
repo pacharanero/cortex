@@ -188,6 +188,14 @@ pub enum Error {
     #[error("unsafe save refused: {0}")]
     UnsafeSave(String),
 
+    /// A preset move could overwrite or otherwise endanger stored content.
+    #[error("unsafe preset move refused: {0}")]
+    UnsafeMove(String),
+
+    /// A preset move may have landed, but storage did not converge in time.
+    #[error("preset move outcome unconfirmed: {0}")]
+    MoveUnconfirmed(String),
+
     /// The device was not found on the USB bus. On Linux, check the udev
     /// rule and that the device is powered on (see README -> Setup).
     #[cfg(feature = "hid")]

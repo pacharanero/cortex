@@ -63,7 +63,9 @@ impl DaemonClient {
             )
         })?;
         let (mut writer, mut reader) = self.prepare(stream)?;
-        Self::read_compatible_status(&mut writer, &mut reader)
+        let status = Self::read_status(&mut writer, &mut reader)?;
+        ensure_compatible(&status, &Request::Status)?;
+        Ok(status)
     }
 
     /// Send one request and return its untyped success payload.
@@ -76,7 +78,8 @@ impl DaemonClient {
         let stream = LocalConnection::connect(&self.endpoint)
             .with_context(|| format!("connecting to cortex session at {}", self.endpoint))?;
         let (mut writer, mut reader) = self.prepare(stream)?;
-        Self::read_compatible_status(&mut writer, &mut reader)?;
+        let status = Self::read_status(&mut writer, &mut reader)?;
+        ensure_compatible(&status, request)?;
         write_request(&mut writer, request)?;
         read_response(&mut reader)
     }
@@ -102,21 +105,25 @@ impl DaemonClient {
         Ok((writer, BufReader::new(stream)))
     }
 
-    fn read_compatible_status(
+    fn read_status(
         writer: &mut LocalConnection,
         reader: &mut BufReader<LocalConnection>,
     ) -> Result<Status> {
         write_request(writer, &Request::Status)?;
         let value = read_response(reader)?;
         let status: Status = serde_json::from_value(value).context("decoding daemon status")?;
-        let daemon_version = status.daemon_version.parse::<u32>().unwrap_or(0);
-        if daemon_version != DAEMON_PROTOCOL_VERSION {
-            anyhow::bail!(
-                "daemon protocol version mismatch: client expects {DAEMON_PROTOCOL_VERSION}, daemon reports {daemon_version}. Run `cortex session stop` to stop the old daemon, then retry."
-            );
-        }
         Ok(status)
     }
+}
+
+fn ensure_compatible(status: &Status, request: &Request) -> Result<()> {
+    let daemon_version = status.daemon_version.parse::<u32>().unwrap_or(0);
+    if daemon_version != DAEMON_PROTOCOL_VERSION && !matches!(request, Request::Shutdown) {
+        anyhow::bail!(
+            "daemon protocol version mismatch: client expects {DAEMON_PROTOCOL_VERSION}, daemon reports {daemon_version}. Run `cortex session stop` to stop the old daemon, then retry."
+        );
+    }
+    Ok(())
 }
 
 fn write_request(writer: &mut LocalConnection, request: &Request) -> Result<()> {
@@ -155,4 +162,27 @@ pub fn request(request: &Request) -> Option<Result<serde_json::Value>> {
         return None;
     }
     Some(client.request_value(request))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn status(version: u32) -> Status {
+        Status {
+            daemon_version: version.to_string(),
+            uptime_seconds: 0,
+            device: crate::DeviceHealth::Failed {
+                error: "fixture".into(),
+            },
+            cache: crate::CacheStatus::default(),
+        }
+    }
+
+    #[test]
+    fn shutdown_remains_available_across_protocol_versions() {
+        let old = status(DAEMON_PROTOCOL_VERSION.saturating_sub(1));
+        assert!(ensure_compatible(&old, &Request::Shutdown).is_ok());
+        assert!(ensure_compatible(&old, &Request::Status).is_err());
+    }
 }

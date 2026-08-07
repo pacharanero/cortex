@@ -1,6 +1,6 @@
 # Prior art: what is already known, and where
 
-The workspace holds seven vendored reference projects, and one additional non-vendored project is an upstream source for the Nano Cortex BLE work. This page records **what each one knows that we do not**, so the next question gets asked of a document before it gets asked of the hardware.
+The workspace holds seven local reference clones, and one additional non-local project is an upstream source for the Nano Cortex BLE work. These gitignored study clones are not vendored into the product. This page records **what each one knows that we do not**, so the next question gets asked of a document before it gets asked of the hardware.
 
 It exists because of a specific mistake. We spent a session capturing Cortex Control performing a preset save, decoding the bytes, and implementing from them - and `pyquadcortex` had implemented the same operation, with the wire shape written in its docstring, all along. The capture was good verification. It was an expensive way to learn something already written down.
 
@@ -27,7 +27,7 @@ Anything ported or adapted from the clearly MIT/Apache-2.0-licensed projects car
 
 ## `pyquadcortex` - the one to check first
 
-A Python library for the Quad Cortex over USB HID, MIT, verified against **the same firmware we target** (`CorOS` 4.0.1 / `d14e`). It is the origin of our framing, the write-STALL model, and the recovered `.proto` files.
+A Python library for the Quad Cortex over USB HID, MIT, verified against CorOS 4.0.1. It is the origin of our framing, the write-STALL model, and the recovered `.proto` files. Method counts and coverage refer to the pinned local clone and may change upstream.
 
 **It implements roughly 75 client methods and documents the wire shape and verification level of each exposed operation.** Its `docs/protocol.md` carries an "Operation coverage" table, while `docs/manual-coverage.md` distinguishes supported, partial, unsupported, and inapplicable manual features. Together they are the starting checklist for PROT-006.7 through PROT-006.14; they remove most blank-sheet reverse engineering, but do not turn partial or negative results into completed methods.
 
@@ -165,9 +165,9 @@ Both are now summarised in full. Re-reading them will not yield more.
 
 ---
 
-## `toneparse` - our description of it is wrong
+## `toneparse` - not Quad Cortex prior art
 
-**Correction: this is not a Quad Cortex preset parser.** Our instructions previously described it as "preset-file parser logic" among the Quad Cortex projects. It parses **Neural DSP desktop *plugin* presets** and **Logic Pro channel strips** - a different format entirely from the Quad Cortex's protobuf presets. Anyone reading the old table would believe QC preset-file parsing is solved somewhere. It is not.
+It parses **Neural DSP desktop *plugin* presets** and **Logic Pro channel strips**, a different format from Quad Cortex protobuf presets. It does not solve any current Quad Cortex roadmap item.
 
 Its own scope is stated in `toneparse/README.md`, `toneparse/docs/neural_dsp.md`, and `toneparse/docs/logic_pro_cst.md`.
 

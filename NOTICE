@@ -18,11 +18,14 @@ distribution terms and carries its own SPDX header in crates/cortex-rs/proto/;
 protocol behaviour is re-verified against hardware where this project's
 documentation says so.
 
-The architectural precedent for the Tauri desktop app (Rust device I/O,
-honest verified-vs-provisional labelling, AFX spec layout) was informed by the
-Apache-2.0-licensed project rixrix/deskop-nano-cortex
+The architectural precedent for the Tauri desktop app (Rust-owned device I/O,
+React webview interaction, honest verified-vs-provisional labelling, managed
+state, bounded device release, AFX spec layout, and release/DX tooling) was
+informed by the Apache-2.0-licensed project rixrix/deskop-nano-cortex
 (<https://github.com/rixrix/deskop-nano-cortex>, (c) 2026 Richard Sentino),
-reviewed for structure; no source code was copied from it.
+reviewed and adapted as design guidance for this project's independently
+implemented fixture-backed GUI and supporting plans; no source code was copied
+from it.
 
 Third-party copyrights, licence texts, and repository links are recorded in
 THIRD-PARTY-NOTICES.md.

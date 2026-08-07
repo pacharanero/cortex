@@ -22,7 +22,7 @@ tags: ["cli", "cortex", "clap", "completions", "version", "format", "rust-cli"]
 - [150-client spec](../150-client/spec.md) - the implemented `QuadCortex` API the command surface calls.
 - [house-style rust-cli.md](https://github.com/marcus-pacharanero/house-style/blob/main/rust-cli.md) - the CLI shape rules this surface follows.
 - [pyquadcortex qcctl](https://github.com/stokes-audio/pyquadcortex) - the MIT-licensed CLI whose command surface informs the planned commands.
-- Owned source: `crates/cortex-cli/src/main.rs`, `crates/cortex-cli/Cargo.toml`.
+- Owned source: `crates/cortex-cli/src/{main,connect,decode}.rs`, `crates/cortex-cli/Cargo.toml`; shared host contract and IPC: `crates/cortex-host/src/`.
 
 ## Problem Statement
 
@@ -34,7 +34,7 @@ The interesting requirements are not "parse args and print" but the house-style 
 
 | Claim | Status | Evidence |
 | --- | --- | --- |
-| `cortex device version` round-trips a Version READ over USB HID | Hardware-verified | Succeeds on this machine, CorOS 4.0.1 / firmware `d14e`, prints all `VersionMessage` fields |
+| `cortex device version` returns the shared typed identity over direct or held-session paths | Hardware-verified | Succeeds against CorOS 4.0.1 and both paths agree |
 | `cortex --version` / `-V` prints the crate version | Implemented | clap `#[command(version)]` + `propagate_version` |
 | `cortex completions <shell>` prints to stdout for bash, zsh, fish, powershell, elvish | Implemented | `clap_complete::generate` from the live `Cli::command()` |
 | SIGPIPE reset on Unix | Implemented | `libc_sigpipe_reset()` in `main()` before `Cli::parse()` |
@@ -78,7 +78,7 @@ Linux users with a Quad Cortex, script writers, AI coding agents driving the CLI
 | ID | Requirement | Priority |
 | --- | --- | --- |
 | FR-1 | The binary is `cortex` (`[[bin]] name = "cortex"`), built from a thin `main.rs` that delegates all behaviour to the crate. | Must Have |
-| FR-2 | `cortex device version` opens a `Transport` for `DeviceKind::QuadCortex`, sends a `VersionMessage{action: READ}`, decodes the reply, and prints all fields as YAML-like text to stdout. | Must Have |
+| FR-2 | `cortex device version` uses the held daemon when available or the bounded minimal direct diagnostic otherwise, and prints the shared typed `DeviceVersion` view. | Must Have |
 | FR-3 | `cortex completions <shell>` prints shell completions to stdout via `clap_complete::generate`, supporting bash, zsh, fish, powershell, and elvish. | Must Have |
 | FR-4 | `cortex --version` / `cortex -V` prints the crate version (clap `#[command(version)]` + `propagate_version`). | Must Have |
 | FR-5 | SIGPIPE is reset to `SIG_DFL` on Unix at startup so output pipes into `head`/`less` without a panic on a closed pipe. | Must Have |
@@ -92,7 +92,7 @@ Linux users with a Quad Cortex, script writers, AI coding agents driving the CLI
 | --- | --- | --- |
 | FR-10 | A global `--format text\|json` flag (default `text`) is honoured by every command. `text` is for humans; `json` is for scripts and agents. `cortex device version --format json` emits structured version output. | Must Have |
 | FR-11 | `cortex preset recall --setlist <path> --slot <slot>` recalls a preset on the device (delegates to `QuadCortex::recall_preset`). | Must Have |
-| FR-12 | `cortex scene --index <n>` switches the active scene (delegates to `QuadCortex::switch_scene`). | Must Have |
+| FR-12 | `cortex scene --index <n>` is the deliberate direct-action exception to noun-then-verb grouping and delegates to `QuadCortex::switch_scene`. | Must Have |
 | FR-13 | `cortex preset show --setlist <path> --slot <slot>` recalls a preset and prints a typed summary (text by default, JSON with `--format json`). | Must Have |
 | FR-14 | `cortex preset list --setlist <path>` lists presets in a setlist (delegates to `QuadCortex::list_presets`). | Must Have |
 | FR-15 | `cortex setlist list` lists folders the device knows (delegates to `QuadCortex::list_folders`). | Should Have |
@@ -113,6 +113,7 @@ Linux users with a Quad Cortex, script writers, AI coding agents driving the CLI
 | FR-20 | The daemon serves only responsive `Live` cache entries, falls back to explicit reads for missing state, and reports cache phase/generation/revision and reducer counters in `session status`. | Must Have |
 | FR-21 | A background monitor invalidates state before replacing a silent or continuity-invalidated session, excludes and drains device operations, explicitly releases the old handle before opening another, retries the full subscribed handshake with exponential backoff capped at 30 seconds, and exposes connected/reconnecting/failed status. | Must Have |
 | FR-22 | Requests received during reconnect fail immediately with the attempt and last error; status and shutdown remain available. | Must Have |
+| FR-23 | `cortex preset move --from <slot> --to <slot> --yes` routes through daemon protocol v4 when held, otherwise uses one direct client session. It requires explicit confirmation and delegates source-path resolution, occupancy refusal, and listing-convergence checks to `QuadCortex::move_preset`; MCP exposes no corresponding tool. | Must Have |
 
 ### Non-Functional Requirements
 
@@ -148,7 +149,8 @@ Linux users with a Quad Cortex, script writers, AI coding agents driving the CLI
 
 ## Dependencies
 
-- **`cortex-rs`** (workspace path) - the crate whose `QuadCortex`, `Session`, daemon contract, state cache, save policy and typed views the CLI calls.
+- **`cortex-rs`** (workspace path) - `QuadCortex`, `Session`, state cache, save policy and typed views.
+- **`cortex-host`** (workspace path) - daemon protocol, bounded client, local endpoint/listener/connection facade and ownership claim.
 - **`clap`** (derive) - argument parsing.
 - **`clap_complete`** - shell completions from the live command tree.
 - **`anyhow`** - the binary's error type.

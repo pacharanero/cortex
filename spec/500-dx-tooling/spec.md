@@ -11,7 +11,7 @@ tags: ["dx", "tooling", "lint", "format", "test", "scripts", "editorconfig"]
 
 # 500 DX Tooling - Spec
 
-> The repo scripts and lint/format/test configuration that make the local workflow match CI. `s/test` and `s/lint` are the canonical gates; `.editorconfig` and `cargo fmt`/`clippy` keep the style uniform. Owns the developer-experience surface that a maintainer or agent runs before every commit.
+> The repo scripts and lint/format/test configuration. `s/test` and `s/lint` are the canonical local gates; CI additionally runs no-default tests, device-data lint, Windows cross-checks and platform setup that are not all duplicated locally.
 
 ## References
 
@@ -25,7 +25,7 @@ tags: ["dx", "tooling", "lint", "format", "test", "scripts", "editorconfig"]
 
 ## Problem Statement
 
-A maintainer or agent running `s/test` locally should get the same gate CI runs: `cargo fmt --check`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test --all`, and `reuse lint`. If the local gate is green, CI is green. The `s/` scripts are the canonical entry point so no one has to remember the exact incantations.
+A maintainer or agent runs `s/test` for Rust formatting, all-feature clippy and workspace tests, then `s/lint` for formatting, clippy, the no-HID crate check, REUSE when installed, and real-device-data lint. CI remains broader: it adds no-default workspace clippy/tests and Windows host/MCP cross-checks. Closing that parity gap is planned rather than falsely promising that local green guarantees CI green.
 
 This zone owns the scripts, the `.editorconfig`, and the lint/format config. The CI workflow itself is owned by zone 600; this zone mirrors it locally. `s/gui-dev` and `s/version++` exist. The version script synchronizes the Rust workspace, npm lock/package metadata and Tauri configuration in one release commit.
 
@@ -34,7 +34,7 @@ This zone owns the scripts, the `.editorconfig`, and the lint/format config. The
 | Claim | Status | Evidence |
 | --- | --- | --- |
 | `s/test` runs fmt + clippy + tests | Implemented | `s/test` runs `cargo fmt --all --check`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test --all` |
-| `s/lint` runs fmt + clippy + REUSE | Implemented | `s/lint` runs `cargo fmt --all --check`, `cargo clippy --all-targets --all-features -- -D warnings`, `reuse lint` (with a fallback message if `reuse` is not installed) |
+| `s/lint` runs fmt + clippy + no-HID check + REUSE + device-data lint | Implemented | See `s/lint`; REUSE has a fallback message when unavailable |
 | `.editorconfig` enforces UTF-8, LF, 4-space indent (2 for md/yaml/json), final newline | Implemented | `.editorconfig` at repo root |
 | `cargo fmt` and `cargo clippy` run in CI | Implemented | `.github/workflows/ci.yml` (owned by zone 600) |
 | `s/gui-dev` | Implemented | Runs the Tauri dev server from the repository-independent entry point |
@@ -50,8 +50,8 @@ Maintainers and AI coding agents running the local gate before a commit.
 ### Stories
 
 **As a** maintainer
-**I want** `s/test` to run the same gate CI runs
-**So that** a green local run means a green CI run.
+**I want** the local gate's deliberate differences from CI to be explicit
+**So that** I know which checks still run only remotely.
 
 **As an** agent
 **I want** `s/lint` to catch SPDX header and style issues before I commit
@@ -73,8 +73,8 @@ Maintainers and AI coding agents running the local gate before a commit.
 
 | ID | Requirement | Priority |
 | --- | --- | --- |
-| FR-1 | `s/test` runs `cargo fmt --all --check`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test --all`. It mirrors `.github/workflows/ci.yml` so a green local run means a green CI run. | Must Have |
-| FR-2 | `s/lint` runs `cargo fmt --all --check`, `cargo clippy --all-targets --all-features -- -D warnings`, and `reuse lint` (with a stderr fallback message if `reuse` is not installed). | Must Have |
+| FR-1 | `s/test` runs `cargo fmt --all --check`, all-feature clippy and `cargo test --all`. | Must Have |
+| FR-2 | `s/lint` runs formatting, all-feature clippy, `cargo check --no-default-features -p cortex-rs`, `reuse lint` when available, and `s/lint-no-device-data`. | Must Have |
 | FR-3 | `.editorconfig` enforces UTF-8 charset, LF line endings, 4-space indent (2 for `*.md`/`*.yaml`/`*.yml`/`*.json`/`*.toml`, 4 for `*.rs`), final newline, and trailing-whitespace trim. | Must Have |
 | FR-4 | The `s/` scripts carry an SPDX header (`SPDX-FileCopyrightText` / `SPDX-License-Identifier`) and a one-line description of what they do. | Must Have |
 | FR-5 | The `s/` scripts `set -euo pipefail` and `cd` to the repo root via `git rev-parse --show-toplevel`, so they run from any working directory. | Must Have |
@@ -84,7 +84,7 @@ Maintainers and AI coding agents running the local gate before a commit.
 
 | ID | Requirement | Priority |
 | --- | --- | --- |
-| FR-11 | Extend the existing `s/version++` so it bumps the canonical version across `Cargo.toml`, `gui/package.json`, and `tauri.conf.json` in one release commit. | Must Have |
+| FR-11 | `s/version++` synchronises the canonical version across Cargo, npm package/lock and Tauri configuration before the release commit. | Must Have |
 | FR-12 | Markdown lint (e.g. `markdownlint` or equivalent) runs in `s/lint` and CI, enforcing prose style (line wrapping, heading style, etc.). | Should Have |
 | FR-13 | `s/install-hooks` installs the `.githooks/` directory as the git hooks path. | Should Have |
 | FR-14 | `.githooks/pre-commit` runs `s/lint` (or a fast subset) and refuses the commit on failure. | Should Have |
@@ -97,7 +97,7 @@ Maintainers and AI coding agents running the local gate before a commit.
 | NFR-2 | The `s/` scripts do not depend on the current working directory; they `cd` to the repo root first. | Review-enforced |
 | NFR-3 | `s/lint` degrades gracefully when `reuse` is not installed (stderr message, not a hard failure). | Implemented |
 | NFR-4 | `.editorconfig` is `root = true` so no parent `.editorconfig` is consulted. | Implemented |
-| NFR-5 | The local gate (`s/test`) mirrors CI exactly; if CI adds a step, the local script adds it in the same PR. | Review-enforced |
+| NFR-5 | Local and CI gates document their differences. No-default workspace tests and host-platform cross-checks should move local when they are practical and deterministic. | Review-enforced |
 
 ## Acceptance Criteria
 
@@ -107,7 +107,7 @@ Maintainers and AI coding agents running the local gate before a commit.
 - [x] The `s/` scripts run from any working directory.
 - [x] The `s/` scripts carry SPDX headers.
 - [x] `s/gui-dev` runs the Tauri dev server.
-- [ ] `s/version++` bumps the version across all surfaces in one commit (when the release pipeline is wired).
+- [x] `s/version++` bumps the version across all current surfaces in one commit.
 - [ ] Markdown lint runs in `s/lint` and CI.
 - [ ] `s/install-hooks` and `.githooks/pre-commit` are wired.
 
@@ -121,7 +121,7 @@ Maintainers and AI coding agents running the local gate before a commit.
 ## Dependencies
 
 - **`cargo`** (fmt, clippy, test) - the Rust toolchain.
-- **`reuse`** (FSFE REUSE tool) - the SPDX header lint. Optional; `s/lint` degrades gracefully.
+- **`reuse`** (FSFE REUSE tool) - required by the maintainer pre-commit gate; `s/lint` degrades for contributors but CI always enforces it.
 - **`git`** - the `s/` scripts use `git rev-parse --show-toplevel` to find the repo root.
 - **Zone 600 (CI)** - the workflow this zone mirrors locally.
 - **Zone 400 (GUI)** - supplies the manifests `s/gui-dev` runs and `s/version++` must keep in sync.
@@ -137,6 +137,6 @@ Maintainers and AI coding agents running the local gate before a commit.
 | Term | Definition |
 | --- | --- |
 | `s/` scripts | Repo scripts (`s/test`, `s/lint`, `s/gui-dev`, `s/version++`) that are the canonical entry points for the local workflow |
-| Local gate | `s/test` + `s/lint`; mirrors CI so a green local run means a green CI run |
+| Local gate | `s/test` + `s/lint`; a documented local subset of CI with additional device-data lint |
 | REUSE lint | The FSFE REUSE tool that checks SPDX headers are present and correct on every file |
 | `.editorconfig` | Editor-agnostic config enforcing charset, line endings, indent style, and final newline |

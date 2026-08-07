@@ -11,7 +11,7 @@ tags: ["domain-model", "device", "message", "preset", "grid", "block", "scene", 
 
 # cortex-rs - Domain Model (Zone 130)
 
-> Owns the typed domain model that sits above the generated protobuf types (zone 120). This is the layer callers actually use: `DeviceKind`, `Message`, and the planned `Preset`, `Grid`, `Block`, `Scene`, `Catalog`, plus the helper functions that navigate the grid's row/column trap. The domain model is the ergonomic surface; the proto types are the wire-shape contract underneath.
+> Owns the typed views, pure grid builders, catalog, and save-safety value types above the generated protobuf shapes. Zone 140 owns the subscribed state reducer. `Scene` and several richer navigation helpers remain planned.
 
 ## References
 
@@ -26,7 +26,7 @@ tags: ["domain-model", "device", "message", "preset", "grid", "block", "scene", 
 
 The generated protobuf types are correct but unergonomic: `BinaryPreset` is a flat bag of `oneof` fields, `Chain` carries rows as optional `uint32`, and the grid's row numbering is 0-based in the API but 1-4 on the device screen. A wrong-row edit succeeds silently - the device does not push back. This zone owns the typed wrappers and helper functions that make the domain safe to navigate, and that surface the row-numbering trap to every caller (CLI, MCP server, GUI) rather than letting each one re-derive it.
 
-The model is split into implemented surfaces (`DeviceKind`, `Message`) and planned surfaces (`Preset`, `Grid`, `Block`, `Scene`, `Catalog`, and the navigation helpers). The implemented surfaces are hardware-verified; the planned surfaces are tracked as tasks and labelled provisional until verified against a real Quad Cortex.
+Implemented surfaces include `DeviceKind`, `Message`, `Catalog`, `view::Preset`/`Row`/`Block`/`Bypass`, checked row and slot conversion, pure grid message builders, and prepared-save policy. `DeviceStateCache` consumes these values under zone 140's session contract. Remaining work is tracked in the roadmap and labelled per operation rather than treating the whole layer as either verified or provisional.
 
 ## User Stories
 
@@ -69,12 +69,12 @@ Maintainers, AI coding agents, and the CLI/MCP/GUI surfaces that consume the cra
 | FR-5 | `message.rs` exposes `TRAILER_LEN = 8` as a public constant. | Must Have |
 | FR-6 | `Message::parse` reads the message-type tag as a little-endian `u16` from the first two bytes of the trailer; the remaining 6 bytes are currently unused and undocumented. | Must Have |
 | FR-7 | `Message::parse` returns `Error::Trailer` if the buffer is shorter than `TRAILER_LEN`. | Must Have |
-| FR-8 | A `Preset` wrapper around `proto::BinaryPreset` exposes ergonomic access to: name, hash, chains, scenes (labels, colors, tempo), bypass, tags, metadata (created/modified/oldest-compatible versions). | Should Have |
-| FR-9 | A `Grid` model exposes the row/column layout and documents the row-numbering trap: rows are 0-based in the API, 1-4 on screen. | Should Have |
-| FR-10 | A `Block` model exposes a model's hash, column position, and params. | Should Have |
+| FR-8 | `view::Preset::from_binary` returns an owned serialisable host view containing metadata, rows and occupied blocks without exposing protobuf oneofs. | Must Have |
+| FR-9 | `grid::Row` validates zero-based wire rows and one-based screen rows; `view::Preset` exposes the read-side row/column layout. A distinct dense `Grid` abstraction is optional and must add value beyond these views. | Must Have |
+| FR-10 | `view::Block` exposes row, screen row, column, model identity/name, vendor attribution, parameters and bypass state. | Must Have |
 | FR-11 | A `Scene` model exposes index, label, color, and per-block bypass. | Should Have |
-| FR-12 | A `Catalog` parses the `ModelRepo` gzip blob (~47KB) the device pushes into a `model_id -> {name, category, parameters}` map. The catalog covers purchased models and captures, not just factory. | Should Have |
-| FR-13 | Helper functions `blocks()`, `splits()`, `slot_to_position()`, `position_to_slot()` are ported from `pyquadcortex` with attribution, and their doc-comments surface the row-numbering trap. | Should Have |
+| FR-12 | `Catalog::parse` eagerly and boundedly parses `gzip(tar(ModelRepo.xml))` into model/category/parameter metadata while retaining positional placeholders and the vendor's attribution verbatim. | Must Have |
+| FR-13 | Checked row and slot conversions plus input-level scaling are implemented once in the crate. Richer helpers such as `splits`, `free_rows`, and `row_status` remain roadmap work. | Should Have |
 | FR-14 | A recalled preset carries NO explicit row; writing it back wholesale does nothing. The `Preset` wrapper documents this and the client layer (150) must set the row before writing. | Should Have |
 | FR-15 | Splitters and mixers exist only on rows 0 and 2. The `Grid` model enforces or at least documents this invariant. | Should Have |
 | FR-16 | The `UNITY_LEVEL` constant (10/13 = 0.76923077, representing 0 dB on the -100..+30 dB span) is exposed for parameter scaling. | Should Have |
@@ -89,8 +89,8 @@ Maintainers, AI coding agents, and the CLI/MCP/GUI surfaces that consume the cra
 | NFR-1 | The domain model builds with `default-features = false` (no `hidapi`). | CI-enforced |
 | NFR-2 | No `async` runtime dependency in this layer; the domain model is synchronous. | Review-enforced |
 | NFR-3 | The row-numbering trap is documented in every helper that takes or returns a row, not just one place. | Review-enforced |
-| NFR-4 | Catalog parsing handles the ~47KB gzip blob without unbounded allocation; field-level gzip inside `bytes` is decompressed lazily where possible. | Review-enforced |
-| NFR-5 | Provisional surfaces (`NanoCortex`, unverified message-type decodes, the catalog shape) are labelled provisional in doc-comments and in the GUI/release notes downstream. | Review-enforced |
+| NFR-4 | Catalog parsing bounds compressed and expanded input, then eagerly parses the runtime XML once; no real catalog fixture is committed. | Review-enforced |
+| NFR-5 | Provisional surfaces (`NanoCortex`, unverified message types and untested helpers) are labelled by capability; the hardware-verified catalog shape is not described as provisional. | Review-enforced |
 
 ## Acceptance Criteria
 
@@ -98,12 +98,12 @@ Maintainers, AI coding agents, and the CLI/MCP/GUI surfaces that consume the cra
 - [x] `Message::parse` splits body and trailer, reads the LE `u16` type, and rejects short buffers.
 - [x] `TRAILER_LEN = 8` is public.
 - [x] `device.rs` and `message.rs` carry `@see` links to this spec.
-- [ ] `Preset` wrapper exists with ergonomic access to chains, scenes, bypass, metadata.
-- [ ] `Grid` model exists and documents the row-numbering trap.
-- [ ] `Block`, `Scene` models exist.
-- [ ] `Catalog` parses the `ModelRepo` blob.
-- [ ] `blocks()`, `splits()`, `slot_to_position()`, `position_to_slot()` are ported with attribution.
-- [ ] `UNITY_LEVEL` and `input_level_db` helpers are exposed.
+- [x] `view::Preset`, `view::Row`, `view::Block`, `ParamValue`, and `Bypass` provide shared serialisable read views.
+- [x] `grid::Row` makes the row-numbering trap explicit and rejects invalid rows.
+- [ ] A richer `Scene` view remains planned.
+- [x] `Catalog` parses the `ModelRepo` container and preserves parameter wire positions.
+- [~] Slot conversion and scaling helpers are implemented; richer grid-navigation helpers remain planned.
+- [x] `UNITY_LEVEL`, `input_level_db`, and `db_to_input_level` are exposed.
 
 ## Non-Goals
 
@@ -127,7 +127,7 @@ Maintainers, AI coding agents, and the CLI/MCP/GUI surfaces that consume the cra
 
 | Zone | Spec | Owns (primary source) | Status |
 | --- | --- | --- | --- |
-| [130-domain-model](./spec.md) | Domain model | `crates/cortex-rs/src/{device,message}.rs` (and future `preset.rs`, `grid.rs`, `block.rs`, `scene.rs`, `catalog.rs`, `helpers.rs`) | Partial |
+| [130-domain-model](./spec.md) | Domain model | `crates/cortex-rs/src/{device,message,catalog,grid,view,safety}.rs` | Partial; core views/builders/safety implemented |
 
 ### The row-numbering trap (authoritative statement)
 
@@ -148,7 +148,7 @@ Splitters and mixers exist only on rows 0 and 2 (the rows that feed the two para
 
 ### Catalog provenance
 
-The catalog comes FROM the device as a `ModelRepo` message containing a ~47KB gzip blob (`model_repo_payload` `bytes` field). It is field-level gzip, not frame-level. It covers purchased models and captures, not just factory content. Parsing it yields a `model_id -> {name, category, parameters}` map that the GUI uses to render human-readable block names.
+The catalog comes from the device as a `ModelRepo` message containing a gzip-compressed tar archive whose single relevant member is `ModelRepo.xml`. It is field-level gzip, distinct from frame-level gzip. It describes device-specific installed content; callers must not assume capture inclusion without evidence. Parsing yields model/category/parameter metadata used by every host surface.
 
 ### Glossary
 
@@ -164,7 +164,7 @@ The catalog comes FROM the device as a `ModelRepo` message containing a ~47KB gz
 | Row-numbering trap | Rows are 0-based in the API, 1-4 on screen; a wrong-row edit succeeds silently. |
 | `UNITY_LEVEL` | 10/13, the parameter value representing 0 dB on the -100..+30 dB span. |
 | Provisional | Not yet verified against real hardware by this project. |
-### Catalog: hardware findings (2026-08-02, CorOS 4.0.1 / d14e / QA00AB123)
+### Catalog: hardware-verified shape (CorOS 4.0.1)
 
 The `ModelRepo` container is confirmed as **`gzip(tar(ModelRepo.xml))`**, matching the research note. On the measured unit: 46,704 bytes gzipped, 558,592 bytes of tar holding a single `ModelRepo.xml`, 556,732 bytes of XML.
 

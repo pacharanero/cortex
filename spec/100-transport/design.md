@@ -12,7 +12,7 @@ spec: spec.md
 
 # cortex-rs - Transport Design
 
-> Design for the `Transport` struct and its four methods. The interesting parts are not the I/O itself but the two behaviours that make Cortex Control unlike a normal HID device: the benign write STALL and exclusive interface ownership.
+> Design for the synchronous `Transport` wrapper. The normal client path is `Session` over `HidLink`; `Transport::request` remains a minimal diagnostic path.
 
 ## References
 
@@ -82,7 +82,7 @@ We do not retry writes on `-1`, because the write succeeded. We do not issue a p
 
 ### Behaviour
 
-Linux (and the other OSes) allow one owning process per HID interface. A second `open_path` on the same node either fails or silently shares, depending on backend; either way, the MCP server opening one `Transport` per tool call would deadlock against itself or against the CLI.
+The device requires one effective owner, but neither Linux nor hidapi reliably enforces it. Hardware testing showed that a second process can open successfully and wedge the held owner on its next request.
 
 ### Design choice: one `Transport`, one `HidDevice`, held for the lifetime of the owner
 
@@ -98,7 +98,7 @@ pub struct Transport {
 
 ### Design choice: first matching device on the bus
 
-`Transport::open` does not filter by interface number or serial. It returns the first device whose VID:PID matches `DeviceKind::vid_pid`. On a machine with one Quad Cortex this is unambiguous (the device presents one HID interface at `/dev/hidraw7` on this machine). Multi-device scenarios are deferred; the API shape (take a `DeviceKind`, return one `Transport`) does not preclude a future `open_nth` or `open_all`.
+`Transport::open` does not filter by interface number or serial. It returns the first device whose VID:PID matches `DeviceKind::vid_pid`. Multi-device scenarios are deferred; the API shape does not preclude a future serial selector.
 
 ```rust
 let device = api
@@ -111,17 +111,17 @@ Ok(Self { device })
 
 ### Implications for the MCP server
 
-The MCP server (zone `300`) must construct a single `Transport` at startup and hold it for the process lifetime; every tool call reuses it. This is why the safety surface design (AGENTS.md) lists "single owning process for the USB interface" as a built-in invariant. Opening a transport per tool call is a bug, not a pattern.
+The MCP server opens no transport. It sends typed requests through `cortex-host` to the held `cortex session` daemon, which owns one `Session` and therefore one link.
 
 ### Implications for the CLI
 
-The CLI (zone `200`) opens a `Transport` for the duration of one command (e.g. `cortex device version`) and drops it on exit. This is fine: the process is short-lived, and there is no long-lived owner to contend with.
+Ordinary CLI commands route through the daemon when present and otherwise use one bounded direct session. Direct paths claim `LocalClaim` before opening HID and refuse while another owner is active.
 
 ### Alternatives considered
 
 - **Connection pool.** Rejected: the HID interface does not multiplex. A pool of one is just a held `Transport`.
 - **Reopen per call.** Rejected: it deadlocks or races with another owner (the MCP server's own tool calls, or a concurrently-running CLI).
-- **OS-level advisory lock.** Not needed: `hidapi` open already takes the interface; a second open fails. We rely on that, not on a lockfile.
+- **Rely on `hidapi` open.** Rejected by hardware: a second open can succeed and damage the existing session. `cortex-host::LocalClaim` provides the atomic host-level exclusion.
 
 ## [DES-REQUEST] Synchronous Request/Response
 
@@ -129,7 +129,7 @@ The CLI (zone `200`) opens a `Transport` for the duration of one command (e.g. `
 
 `Transport::request` is the full transport stack in one call: encode the message, write it (swallowing the STALL), read frames back, reassemble, strip the 8-byte trailer, gzip-decompress if the body starts with the gzip magic, and return a `Message`.
 
-It is the path the CLI's `version` command uses today. It is synchronous and blocking. It does not correlate by `request_id` (READ replies carry none); it returns the first reassembled message.
+It is a synchronous, blocking diagnostic path. The normal client path uses the background session so replies and unsolicited pushes are correlated and reduced safely.
 
 ### Design choice: deadline-shrinking read loop
 
@@ -149,7 +149,7 @@ loop {
 
 ### Design choice: reassembler reset on a new FIRST frame
 
-The device interleaves unsolicited pushes (e.g. RecallPreset, parameter changes) with replies. A new `FIRST` frame arriving mid-partial-message drops the stale buffer and starts a new message. This is routine, not an error:
+The pure reassembler can resynchronise when a new `FIRST` arrives mid-partial. At session level this proves that a message may have been lost, so the state cache is invalidated before processing continues:
 
 ```rust
 if frame.flags.is_first() {
@@ -196,7 +196,7 @@ Field-level gzip (inside protobuf `bytes` fields) is a separate concern owned by
 | `HID_REPORT_LEN` | `129` | Total hidapi report length (body + report ID). The buffer size passed to `read_timeout`. |
 | `DEFAULT_READ_TIMEOUT` | `2s` | The default liveness budget. Chosen to exceed the device's observed reply latency for a `version` round-trip while still failing fast on a dead device. |
 
-These are exported from `transport.rs` and re-used by the framing layer's size assertions and the CLI's timeout default. They are the single source of truth: no other module hard-codes `128`, `129`, or `2_000ms`.
+The HID size constants are defined in `framing.rs` and re-exported by `transport.rs`; the read timeout is transport-owned.
 
 ## [DES-FEATURE] Feature Gating
 
@@ -216,8 +216,7 @@ The dependency arrow points *into* the crate: the CLI, MCP server, and future Ta
 
 ## [DES-LIMITS] Known Limitations
 
-- **Synchronous only.** No background RX thread; `request` blocks the caller. The session layer (`140`) will introduce one.
-- **No `request_id` correlation.** `request` returns the first reassembled message. A concurrent command stream needs the session layer.
+- **The `Transport::request` diagnostic is synchronous and uncorrelated.** Concurrent and subscribed operation uses the implemented session layer.
 - **First matching device only.** Multi-device scenarios are deferred; `open` does not filter by interface number or serial.
 - **Nano Cortex transport is unestablished.** Third-party observation reports PID `0x88E7` and 65-byte HID reports, but no protobuf/trailer exchange. The code retains `0xFFFF` so it fails closed until hardware verifies compatibility.
-- **No protocol-version probe.** A CorOS update can silently break the wire format; the session layer will surface a probe.
+- **No protocol compatibility negotiation.** Session caches identity/version, but a CorOS update can still silently change the wire format.

@@ -11,7 +11,7 @@ tags: ["gui", "tauri", "react", "mantine", "vite", "in-progress", "accessible"]
 
 # 400 GUI - Spec (in progress)
 
-> The cross-platform Tauri 2 desktop app: a consumer of the `cortex-rs` crate, not a second implementation of the product. An interactive, read-only first draft exists with fixture data. It does not yet connect to the held session daemon or write to the device, and no `design.md` exists yet.
+> The cross-platform Tauri 2 desktop app: a consumer of the shared Rust engine and host boundary, not a second implementation. An interactive, read-only first draft exists with fixture data. It does not yet call the demo Tauri command, connect to the held daemon, or write to the device; an as-built `design.md` remains planned.
 
 ## References
 
@@ -20,27 +20,28 @@ tags: ["gui", "tauri", "react", "mantine", "vite", "in-progress", "accessible"]
 - [AGENTS.md](../../AGENTS.md) - the architecture and the "Rust owns behaviour; the webview owns interaction" rule.
 - [house-style tauri-gui.md](https://github.com/marcus-pacharanero/house-style/blob/main/tauri-gui.md) - the GUI stack, project shape, and rules this surface will follow.
 - [house-style ui.md](https://github.com/marcus-pacharanero/house-style/blob/main/ui.md) - the presentation and interaction standards the frontend will follow.
-- [300-mcp spec](../300-mcp/spec.md) - the safety surface design the GUI will reuse (factory-setlist refusal, scratch range, slot backup, trap-surfacing).
+- [300-mcp spec](../300-mcp/spec.md) - the safety surface design the GUI will reuse (factory-setlist refusal, exact target, slot backup, explicit confirmation, trap-surfacing).
 - [150-client spec](../150-client/spec.md) - the `QuadCortex` client API the Tauri backend will call.
 - Owned source: `gui/`, `docs/gui/`, `s/gui-dev`.
 
 ## Problem Statement
 
-The GUI is the interactive surface for a player who wants a desktop editor for the Quad Cortex. The project is Linux-first because Linux has no official editor and is the only host verified here today, but the intended Tauri product supports Linux, Windows and macOS once each platform is implemented, packaged and tested. It is a consumer of the `cortex-rs` crate: the Rust backend calls the crate and returns typed serialisable data to the frontend; the React webview renders it and owns view state, forms, layout, and keyboard interaction.
+The GUI is the interactive surface for a player who wants a desktop editor for the Quad Cortex. The project is Linux-first because Linux has no official editor and is the only host verified here today, but the intended Tauri product supports Linux, Windows and macOS once each platform is implemented, packaged and tested. The Tauri backend will call `cortex-host` for daemon-owned operations and use shared `cortex-rs` types and behavior; the React webview renders typed results and owns view state, forms, layout, and keyboard interaction.
 
-The live read/edit and shared save-safety foundations are now present: typed serialisable views and parameter inputs live in `cortex-rs`, every ordinary CLI operation routes through one held session, subscribed state is reduced into generation/revision snapshots, health/reconnect invalidates stale state, and `safety.rs` supplies validated scratch policy plus opaque prepared-save tokens. The CLI prepare/edit/commit sequence passed its hardware smoke. GUI save controls remain unimplemented and must stay disabled until the GUI has user-facing scratch-range configuration and the open save/reconnect correctness gaps in PROT-009 are closed.
+The live read/edit and shared save-safety foundations are present: typed serialisable views and parameter inputs live in `cortex-rs`, every ordinary CLI operation routes through one held session, subscribed state is reduced into generation/revision snapshots, health/reconnect invalidates stale state, and `safety.rs` supplies exact-target authorisation plus opaque prepared-save tokens. Core save/reconnect correctness blockers are closed. GUI save remains disabled until the GUI implements exact-target preparation and confirmation UX, restoration semantics, typed failures and its own hardware smoke.
 
-**`safety.rs` is now enforced by the daemon.** The CLI and daemon route through `PrepareSave`/`CommitSave` with server-held preparations and opaque tokens (fixed in `743692a`, PROT-009.2). The GUI must call the same prepared-save API and must not assume the layer beneath it is enforcing that policy.
+**`safety.rs` is enforced by the daemon.** The CLI routes through `PrepareSave`/`CommitSave` with server-held preparations and opaque tokens. The GUI must call that enforced API and present its policy clearly; it must never call the unsafe primitive directly.
 
-## Stack (implemented scaffold, per house-style tauri-gui.md)
+## Stack (per house-style tauri-gui.md)
 
 - **Tauri 2** - the desktop shell; Rust backend, webview frontend.
 - **React + TypeScript** - the frontend.
 - **Mantine** - UI primitives.
 - **Vite** - development and builds.
-- **`cortex-rs`** - the crate the Tauri backend calls (the single implementation of protocol and domain logic).
+- **`cortex-host`** - the planned daemon-facing command and local IPC boundary; not yet a GUI dependency.
+- **`cortex-rs`** - shared types, protocol, domain behavior and save policy beneath the daemon; not yet called by Tauri commands.
 
-## Project shape (implemented scaffold, per house-style tauri-gui.md)
+## Project shape (current scaffold, per house-style tauri-gui.md)
 
 ```text
 gui/
@@ -50,7 +51,7 @@ gui/
 `-- src-tauri/
     |-- Cargo.toml
     |-- tauri.conf.json
-    `-- src/       # Rust backend (Tauri commands calling cortex-rs)
+    `-- src/       # Rust backend (fixture demo command; host/core integration planned)
 docs/gui/         # how to use and run the GUI
 spec/400-gui/     # this zone
 s/gui-dev         # run the Tauri dev server from any working directory
@@ -64,7 +65,7 @@ The planned visual model:
 
 - **A faithful rendering of the Quad Cortex front panel** - the 10 footswitch/encoder positions, the colour OLED grid display, the scene LEDs, and the context strip along the top. The player sees a virtual Quad Cortex on screen, not a generic "editor window".
 - **Click-to-press and drag-to-turn** on each footswitch/encoder. A click toggles bypass (or recalls a scene, or navigates a menu, depending on mode). A vertical drag or scroll adjusts the encoder value. Keyboard equivalents for accessibility.
-- **The grid display** mirrors the device's OLED - the current signal chain, block icons, bypass state, and the active scene. This is the same `Grid` / `Block` / `Scene` domain model the crate owns (zone 130), rendered.
+- **The grid display** mirrors the device's OLED - the current signal chain, block icons, bypass state, and active scene. It will render the crate's existing preset/grid/block views and active-scene state; the richer `Scene` value remains planned in zone 130.
 - **Wrapper layers for common workflows** on top of the hardware-faithful view:
   - **Patch browser** - a setlist/slot grid for quick preset switching (the `list_presets` + `recall_preset` path), with search and favourites.
   - **Block palette** - a searchable list of available models (from the `Catalog`) to drag onto a grid cell.
@@ -80,43 +81,44 @@ The hardware-faithful view is the default; the wrapper panels are tabs or sideba
 
 The first draft establishes the stack, mockable frontend API boundary, a demo Tauri command, an accessible 4x8 grid and a basic inspector. The remaining requirements are:
 
-- **Rust owns behaviour.** Tauri commands call `cortex-rs` and return typed serialisable data; the frontend renders it. No protocol/domain logic in TypeScript.
+- **Rust owns behaviour.** Tauri commands call `cortex-host` and shared `cortex-rs` APIs, returning typed serialisable data. No protocol/domain logic lives in TypeScript.
 - **The webview owns interaction.** View state, forms, layout, keyboard interaction, copy/paste affordances, and presentation live in the React frontend.
 - **Hardware-faithful control surface.** The default view is a graphical emulation of the Quad Cortex front panel: 10 footswitch/encoder positions, the OLED grid, scene LEDs, and the context strip. Click-to-press, drag-to-turn, with keyboard equivalents.
 - **Wrapper panels for common workflows.** Patch browser, block palette, parameter inspector, scene manager, and IR/capture loader sit alongside the hardware view as tabs or sidebars.
 - **Mode-aware footswitch labels.** The virtual footswitches reflect the current device mode and label themselves accordingly.
 - **Honest verified-vs-provisional labelling.** The GUI labels hardware-verified behaviour vs provisional surfaces (Nano Cortex specifics, unknown message types) in the UI, following the `deskop-nano-cortex` discipline.
 - **Live state comes from the reducer.** The Rust backend owns one subscribed session and exposes typed cache snapshots plus generation/revision changes. The frontend does not pollute its interaction state with optimistic device state and never renders a pre-reconnect generation as current.
-- **Safety surface reuse.** The GUI reuses the same rules as the MCP server: absolute factory refusal, a user-configured scratch range, pre-edit preparation/backup for an occupied target, explicit confirmation, and trap-surfacing. If an occupied target was not prepared before the grid became dirty, the GUI offers an empty scratch slot rather than recalling the target and destroying the edits.
+- **Safety surface reuse.** The GUI reuses the same rules as the MCP server: absolute factory refusal, one exact target, pre-edit preparation/backup for that target, explicit confirmation, and trap-surfacing. If a target was not prepared before the grid became dirty, the GUI requires another target rather than recalling the original target and destroying the edits.
 - **`s/gui-dev`** runs the Tauri dev server from any working directory (house-style tauri-gui.md).
 - **Versioning with the repo.** `gui/package.json` and `tauri.conf.json` versions move with the canonical version via `s/version++`.
-- **Same terminology as `CONTEXT.md` and docs.** The UI uses the same terms as the CLI, MCP server, and docs (house-style tauri-gui.md).
+- **Same terminology as the domain specs and docs.** The UI uses the same terms as the CLI, MCP server, and public documentation. A future glossary may centralise them.
 
 ## Acceptance Criteria
 
 - [x] `gui/` exists with the Tauri 2 + React + Mantine + Vite stack.
 - [x] `s/gui-dev` runs the Tauri dev server from any working directory.
-- [ ] Tauri commands call `cortex-rs` and return typed serialisable data; no protocol/domain logic in TypeScript.
+- [ ] Tauri commands call the shared host/core boundary and return typed serialisable data; no protocol/domain logic in TypeScript. The current frontend is fixture-only.
 - [ ] One managed Rust connection exposes `DeviceStateCache` snapshots and revision changes; reconnecting/failed status is visible and old generations are never rendered as live.
 - [ ] The default view is a hardware-faithful rendering of the Quad Cortex front panel (10 footswitch/encoders, OLED grid, scene LEDs, context strip).
 - [ ] Footswitch/encoders are interactive: click-to-press (toggle/recall/navigate), drag-to-turn (adjust parameter), with keyboard equivalents.
 - [ ] The virtual panel reflects the current device mode and labels footswitches accordingly.
 - [ ] Wrapper panels (patch browser, block palette, parameter inspector, scene manager, IR/capture loader) are accessible as tabs or sidebars.
 - [ ] The GUI labels hardware-verified vs provisional surfaces in the UI.
-- [ ] A save action reuses the shared prepared-save surface (factory refusal, configured scratch range, pre-edit backup or empty-target proof, explicit confirmation).
-- [ ] `gui/package.json` and `tauri.conf.json` versions move with `s/version++`.
-- [ ] `docs/gui/` explains how to use and run the GUI.
+- [ ] A save action reuses the shared prepared-save surface (factory refusal, exact target, pre-edit backup, explicit confirmation).
+- [x] `gui/package.json`, `package-lock.json`, and `tauri.conf.json` versions move with `s/version++`.
+- [~] `docs/gui/` explains the first draft and local run modes; full user/device-integration documentation remains outstanding.
 
 ## Non-Goals
 
 - **Protocol or domain logic.** Owned by the crate (zones 100-150). The GUI is a consumer.
-- **Bypassing the prepared-save contract.** The shared API now exists; the Tauri backend retains `SavePreparation` and exposes only `SavePreparationView`. The frontend must never call `save_current_preset` directly or serialise the raw backup.
+- **Bypassing the prepared-save contract.** The daemon retains `SavePreparation` and exposes only opaque token/views. The Tauri backend and frontend must never serialise a raw backup or call `save_current_preset` directly.
 - **A second implementation of the safety surface.** The safety rules belong in a shared module the CLI, MCP server, and GUI all reuse.
 - **Mobile breakpoints.** The GUI is a desktop app; test the supported minimum, default, and large window sizes (house-style tauri-gui.md).
 
 ## Dependencies
 
-- **`cortex-rs`** - the crate the Tauri backend calls.
+- **`cortex-host`** - the typed daemon client and local IPC abstraction.
+- **`cortex-rs`** - shared types and behavior used beneath the daemon.
 - **Tauri 2** - the desktop shell.
 - **React + TypeScript** - the frontend.
 - **Mantine** - UI primitives.
@@ -141,7 +143,7 @@ The first draft establishes the stack, mockable frontend API boundary, a demo Ta
 | First draft | The stack and interactive fixture-backed shell exist; device integration and production workflows do not. |
 | Tauri command | A Rust function exposed to the webview; calls `cortex-rs` and returns typed serialisable data |
 | `s/gui-dev` | Repo script that runs the Tauri dev server from any working directory |
-| Safety surface reuse | The GUI gates saves through the same prepared-target contract as the MCP server (factory refusal, configured scratch range, pre-edit backup or empty-target proof) |
+| Safety surface reuse | The GUI gates saves through the same prepared-target contract as the MCP server (factory refusal, exact target, pre-edit backup, explicit confirmation) |
 ## Related roadmap items
 
 - **[DOCS-002](../roadmap.md)** - the factory preset reference (what each factory preset evokes, and how to set it up) is aimed at agents driving the MCP server, but the GUI wants the same data to annotate the patch browser. Build it as a shared, generated artefact rather than duplicating it per surface.

@@ -1,7 +1,8 @@
 # Third-Party Notices
 
-This project incorporates material from third-party projects. Each is listed
-below with its copyright, license, and a link to the upstream repository.
+This file records third-party material incorporated or used as an architectural
+precedent, followed by projects studied only as references. Each entry states
+what this repository actually uses and the applicable licensing posture.
 
 ## stokes-audio/pyquadcortex
 
@@ -12,11 +13,13 @@ below with its copyright, license, and a link to the upstream repository.
 - **Copyright:** (c) 2026 Stokes
 - **Use in cortex-rs:** The recovered Cortex Control protobuf schema
   (`Preset.proto`, `ProductionAutomation.proto`) is vendored into
-  `crates/cortex-rs/proto/` under the MIT license's distribution terms. The
-  protocol framing, the benign write-STALL gotcha, and the trailer-tagged
-  message envelope documented in this project are derived from
-  pyquadcortex's protocol documentation and verified against a real Quad
-  Cortex on Linux.
+  `crates/cortex-rs/proto/` under the MIT license's distribution terms. HID
+  framing, the trailer-tagged envelope, benign write-STALL handling,
+  handshake/session/correlation design, catalog parsing, client-operation wire
+  shapes, helper behaviour, and protocol documentation are derived from the
+  corresponding pyquadcortex work and adapted to Rust. This project records
+  hardware evidence per implemented operation; upstream verification is not
+  treated as verification of this implementation.
 
 ### MIT License (pyquadcortex)
 
@@ -51,13 +54,15 @@ SOFTWARE.
 - **Repository:** <https://github.com/rixrix/deskop-nano-cortex>
 - **License:** Apache-2.0 (see below)
 - **Copyright:** (c) 2026 Richard Sentino
-- **Use in cortex-rs:** Architectural precedent only, at this stage. The
-  Tauri app layout (Rust device I/O backend + React webview frontend, honest
-  verified-vs-provisional labelling, AFX spec zones, release/dx tooling) is
-  the model for the planned `gui/` surface in this project. No source code
-  has been copied from deskop-nano-cortex; the design is adapted and
-  re-implemented independently. Should code be adapted in future, it will be
-  recorded here and carry its upstream copyright.
+- **Use in cortex-rs:** Architectural and process precedent. Its Rust-owned
+  device I/O and React webview boundary, managed state, bounded release on
+  close, honest verified-vs-provisional capability model, mockable frontend
+  boundary, AFX spec zones, traceability approach, version synchronization,
+  release/DX tooling, and hardware-smoke evidence shape informed this
+  project's GUI, specs, and plans. The existing GUI is independently
+  implemented and currently fixture-backed; no source code has been copied
+  from deskop-nano-cortex. Any future source adaptation will be recorded here
+  and retain its upstream copyright and Apache-2.0 terms.
 
 ### Apache License 2.0 (deskop-nano-cortex)
 
@@ -76,16 +81,27 @@ A copy of the Apache License 2.0 is available at
   code has been copied. Should code be adapted in future, it will be recorded
   here and carry its upstream copyright.
 
+## choldy/nano-cortex-web-editor
+
+- **Project:** choldy/nano-cortex-web-editor - Web editor for the Neural DSP
+  Nano Cortex.
+- **Repository:** <https://github.com/choldy/nano-cortex-web-editor>
+- **License:** MIT
+- **Use in cortex-rs:** No material is currently used. This project is recorded
+  because deskop-nano-cortex credits its provisional Nano BLE field map to this
+  upstream. Any future adaptation of that decoder must attribute both projects
+  and retain their respective MIT and Apache-2.0 terms.
+
 ## Reference-only projects (no material incorporated)
 
 The following projects were studied for understanding but are **not
-incorporated** into this repository. They carry no declared license (GitHub
-reports `license: null`), so all rights are reserved by their authors; no
-code, scripts, or prose from them has been committed into this repo. Findings
-from them are cited in our own words in `quad-cortex-linux-editor-and-protocol.md`
-(at the parent workspace root) and link out.
+incorporated** into this repository. None provides a clear repository-wide
+licence permitting reuse: some contain file-level notices, while others
+declare no licence. No code, scripts, data, or prose from them has been
+committed here. Findings are cited in this project's own words and linked to
+their source, principally in `spec/prior-art.md` and `docs/protocol.md`.
 
-- **VanIseghemThomas/OpenCortex** - <https://github.com/VanIseghemThomas/OpenCortex> - device-rooting route (SD card, shadow swap, SSH). Not used; the USB route is preferred and carries no warranty risk.
-- **roelj/qc-extras** - <https://github.com/roelj/qc-extras> - cross-compilation notes for the QC (ARMv7, ADSP-SC58x). Reference only.
-- **hsaastamoinen/quad-cortex-usb-re-notes** - <https://github.com/hsaastamoinen/quad-cortex-usb-re-notes> - independent USB recon corroboration. Reference only.
-- **vian21/toneparse** - <https://github.com/vian21/toneparse> - preset-file parser. Reference only; reimplemented independently if needed.
+- **VanIseghemThomas/OpenCortex** - <https://github.com/VanIseghemThomas/OpenCortex> - no repository-wide licence; some decryptor files carry file-level GPL notices while other material remains unlicensed. It documents the device-rooting route and provisional pre-CorOS-3 capture-encryption findings. Reference only; copy nothing.
+- **roelj/qc-extras** - <https://github.com/roelj/qc-extras> - no repository-wide licence; source files carry GPL-3.0-or-later headers, but no root licence defines repository-wide scope. Its Quad Cortex cross-compilation notes are reference only until that scope is clarified.
+- **hsaastamoinen/quad-cortex-usb-re-notes** - <https://github.com/hsaastamoinen/quad-cortex-usb-re-notes> - no licence declared. Its independent USB observations corroborate report geometry and the write STALL. Findings are cited in our own words; no captures or prose are copied.
+- **vian21/toneparse** - <https://github.com/vian21/toneparse> - no licence declared. It parses Neural DSP desktop-plugin presets and Logic Pro channel strips, not Quad Cortex protobuf presets, and includes bundled third-party preset content. It is reference only and supplies no implementation material to this project.

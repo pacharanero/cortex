@@ -1,6 +1,6 @@
 # Walkthrough
 
-Every output on this page is real, captured from a Quad Cortex running CorOS 4.0.1 (firmware `d14e`). The *shapes* are exactly what your unit will produce.
+Every output shape on this page was captured from a Quad Cortex running CorOS 4.0.1. Device identifiers, build hashes and owner-specific preset names are fictionalised for publication.
 
 !!! note "Preset names and identifiers are fictional"
 
@@ -29,7 +29,7 @@ uboot                      U-Boot 2015.01 ADI-1.3.0 (Sep 30 2021 - 01:01:44)
 mac_address                02:00:5e:10:00:01
 ```
 
-`version` is the only command that does not need the connect handshake, which makes it the right first thing to try.
+The direct fallback for `device version` needs no full handshake, which makes it the right first command. If a held session is already running, the command correctly uses its cached identity instead of opening a second HID connection.
 
 !!! info "Two field names are the vendor's, and both are wrong"
 
@@ -44,12 +44,12 @@ cortex device probe
 ```text
 connect handshake:
   resetting comms buffers ...
-  announcing client version ...
+  reading and announcing versions ...
   requesting model catalog ...
   announcing connection ...
   subscribing to device state ...
   settling ...
-  done (2.2s)
+  done (3.8s)
 active_scene ... ok
 read_current_preset ... ok
 list_presets ... ok (11 occupied)
@@ -61,7 +61,7 @@ preset_count: 11
     ...
 ```
 
-`probe` runs the handshake then exercises every read path, so it is the one command that tells you the whole stack works.
+With no daemon, `probe` performs a subscribed handshake and exercises the core scene/current-preset/preset-list reads. With a held session, it exercises those reads through the existing owner and does not disconnect it.
 
 !!! tip "If the handshake seems to hang"
 
@@ -97,11 +97,11 @@ The factory library is just another setlist:
 cortex preset list --setlist "/opt/neuraldsp/Factory Library"
 ```
 
-And `cortex setlist list` lists every folder the device knows - 399 of them on the unit tested, including plugin artist packs and the captures library.
+`cortex setlist list` shows occupied folders by default. Use `--show-empty` to include every folder the device reports, which can be several hundred.
 
 ## Explore the model catalog
 
-This is the fun one. The catalog comes **from the device**, so it covers your unit's purchased plugins and your own Neural Captures.
+This is the fun one. The catalog comes **from the device**, so it reflects installed model content rather than a hard-coded factory table. Do not assume it enumerates every user capture; capture listing remains separate work.
 
 ```sh
 cortex catalog
@@ -208,8 +208,7 @@ If you intend to save the result, start a held session and prepare the destinati
 
 ```sh
 cortex session start
-cortex preset prepare-save --slot 31A --scratch-range 31A-31H
-# Keep the reported token, for example save-1.
+SAVE_TOKEN=$(cortex preset prepare-save --slot 31A --format json | jq -r '.token')
 ```
 
 ```sh
@@ -249,14 +248,14 @@ cortex block param --row 1 --column 1 --param THRESHOLD --real -20
     Every grid edit lives on the working grid until you save or recall another preset. A recall discards the edits. To keep them, explicitly commit the destination token you reviewed before editing:
 
     ```sh
-    cortex preset save --token save-1 --name "My preset" --yes
+    cortex preset save --token "$SAVE_TOKEN" --name "My preset" --yes
     ```
 
 `block set` **verifies**. A block that does not fit the preset's DSP budget is accepted on the wire and simply is not there afterwards, with no error of any kind. So `cortex` uses the device's echo as a fast path and reads the grid back when no echo arrives; it reports `BlockRefused` only when the grid confirms that the block is absent.
 
 ## Machine-readable output
 
-Every command takes `--format json`:
+Ordinary result-producing device commands support `--format json`:
 
 ```sh
 cortex preset list --format json | jq -r '.[] | "\(.slot)  \(.name)"'
@@ -271,4 +270,4 @@ Progress and warnings always go to stderr, so stdout stays clean for piping even
 CORTEX_TRACE=1 cortex device probe
 ```
 
-Traces every inbound message type, size, and correlation id to stderr, plus each handshake step. This is what to attach to a bug report.
+With no held daemon, that traces the direct probe. To trace commands routed through a held session, stop the background daemon and run `CORTEX_TRACE=1 cortex session start --foreground` in a separate terminal. Traces contain device data; sanitise them before sharing and never commit raw captures.

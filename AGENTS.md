@@ -3,7 +3,7 @@
 `cortex-rs` is the Rust workspace for an unofficial, Linux-first toolkit for
 the Neural DSP Quad Cortex (and, in time, the Nano Cortex). The core deliverable
 is a low-level leaf crate that speaks the Cortex Control USB HID protocol and
-exposes a typed domain model - presets, scenes, grid, blocks. On top of the
+exposes a typed domain model - presets, the grid, blocks, and active-scene state. On top of the
 crate sit a CLI (`cortex`), an MCP server (`cortex-mcp`) for agentic patch
 editing, and a Tauri desktop GUI whose first draft is now scaffolded. This project is not affiliated with
 or endorsed by Neural DSP; it is an interoperability client for hardware whose
@@ -104,12 +104,11 @@ s/             Repo scripts: s/test, s/lint, s/gui-dev, s/version++ ...
   typed serialisable data; the frontend renders it. See
   [tauri-gui.md](/home/marcus/code/house-style/tauri-gui.md).
 - **Honest verified-vs-provisional labelling.** Borrow the
-  `deskop-nano-cortex` product-truth discipline: the USB HID protocol for the
-  Quad Cortex is hardware-verified (via `pyquadcortex` and re-verified on this
-  machine, CorOS 4.0.1 / firmware d14e); anything we reverse-engineer
-  ourselves or extend (e.g. unknown message types, the MCP safety surface,
-  Nano Cortex specifics) is provisional until verified against real hardware.
-  Label it as such in UI, docs, and release notes.
+  `deskop-nano-cortex` product-truth discipline: apply evidence per operation
+  and host path. The implemented core Quad Cortex paths are hardware-verified
+  on CorOS 4.0.1; unimplemented operations, new host integrations, unknown
+  message types, and Nano Cortex specifics remain provisional until verified.
+  Label them as such in UI, docs, and release notes.
 - **Nano Cortex is a planned, unverified target.** The recovered Quad Cortex
   schema carries `QC = 0` and `ATMA = 1` (`ATMA` is the Nano codename), but an
   enum value does not prove a shared transport. Third-party macOS observation
@@ -140,21 +139,22 @@ From `quad-cortex-linux-editor-and-protocol.md` and
   timeouts. This is the single most important gotcha and is encoded in
   `crates/cortex-rs/src/transport.rs`.
 - Exclusive HID access: one owning process per device, not one connection per
-  call. The MCP server especially must hold a single connection.
+  call. The held `cortex session` daemon owns that connection; MCP opens none.
 - No version field on the wire: a CorOS update can silently break things.
   Surface a protocol-version probe, not a hard-coded assumption.
 
-## MCP safety surface (when we build it)
+## MCP safety surface
 
-The MCP server is greenfield - no MCP server for any Neural DSP hardware
-exists. The design that matters is the safety boundary, not the tool list.
-Build in from the start:
+The non-persistent MCP surface is implemented and hardware-verified; it opens
+no HID connection and exposes no save/delete tools. The design that matters for
+any future destructive tier is the safety boundary, not the tool count:
 
 - Read and recall are free; **saving is always explicitly confirmed**.
-- Never write to the factory setlist; restrict saves to a designated scratch
-  range of USER slots unless overridden.
-- Back up the target slot (`read_preset`) before overwriting, and keep the
-  blob.
+- Never write to the factory setlist; require one explicitly named USER target
+  for each persistent operation.
+- Prepare every target and retain any backup before working-copy edits begin.
+  A listing cannot prove emptiness, and reading a target after edits would
+  recall it and destroy the grid being saved.
 - Surface the row-numbering trap (zero-based in the API, 1-4 on screen; a
   wrong-row edit succeeds silently) in tool descriptions.
 - Single owning process for the USB interface.
@@ -198,10 +198,9 @@ existing projects:
 - **Record missing capabilities.** If a development agent or an agent using the MCP server needs a `cortex` capability that does not exist, add it to `spec/roadmap.md` with a stable ID and enough context for another agent to implement it. Do not improvise around the missing operation or leave it only in chat.
 - `s/test` - run `cargo test` across the workspace.
 - `s/lint` - `cargo fmt --check`, clippy `-D warnings`, `reuse lint`.
-- `s/gui-dev` - run the Tauri dev server from any working directory (once
-  `gui/` exists).
-- `s/version++` - bump the canonical version across `Cargo.toml` (and, once
-  they exist, `gui/package.json`, `tauri.conf.json`) in one release commit.
+- `s/gui-dev` - run the Tauri dev server from any working directory.
+- `s/version++` - bump the canonical version across Cargo, npm package/lock,
+  and Tauri configuration in one release commit.
 
 ## Before Every Commit
 

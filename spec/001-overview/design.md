@@ -16,14 +16,17 @@ spec: spec.md
 
 A Rust workspace with a leaf crate (`cortex-rs`) owning the Cortex Control USB HID protocol and typed domain model, a shared daemon IPC crate (`cortex-host`), and three host surfaces: the usable `cortex-cli`, the hardware-verified non-persistent `cortex-mcp`, and an interactive fixture-backed Tauri GUI first draft. The crate is a port of the protocol behaviour established by the MIT-licensed `stokes-audio/pyquadcortex` Python library, re-verified against a real Quad Cortex on Linux. The GUI target is cross-platform; Linux is the only verified host today.
 
-State honesty is the central invariant: the USB HID protocol for the Quad Cortex is hardware-verified (via pyquadcortex and re-verified on this machine); anything we reverse-engineer ourselves or extend (unknown message types, the MCP safety surface, Nano Cortex specifics) is labelled provisional until verified against real hardware.
+State honesty is the central invariant: verification is attached to each operation and host path. The implemented core Quad Cortex paths have been hardware-verified, while unimplemented operations, untested edge cases, new host platforms, and all Nano Cortex specifics remain provisional.
 
 ## [DES-ARCH] System Context and Flow Map
 
 ```text
-[Flow.CLI]      cortex binary + held daemon (200) -- calls crate API
-[Flow.MCP]      cortex-mcp binary (300) -- next: daemon-backed non-persistent tools
+[Flow.CLI]      cortex binary + held daemon (200)
+[Flow.MCP]      cortex-mcp binary (300) -- daemon-backed non-persistent tools
 [Flow.GUI]      Tauri backend (400) -- first draft; daemon/device IPC outstanding
+      |
+      v
+[Flow.Host]     cortex-host (200) -- typed daemon contract + platform local IPC
       |
       v
 [Flow.Client]   QuadCortex client (150) -- ergonomic API, builds protobuf messages
@@ -32,16 +35,19 @@ State honesty is the central invariant: the USB HID protocol for the Quad Cortex
 [Flow.Session]  Session (140) -- connect handshake, keepalive, correlation
       |
       v
+[Flow.Link]     HidLink (140) -- transport-neutral report read/write seam
+      |
+      v
 [Flow.Transport] Transport (100) -- hidapi open/read/write, STALL swallow
       |
       v
-[Flow.Framing]  Framing (110) -- report IDs, flags, reassembly, encode/decode
+[Flow.Framing]  Framing (110) -- report IDs, flags, reassembly, encode
       |
       v
 [Flow.Schema]   Proto schema (120) -- prost-generated types from .proto files
       |
       v
-hidapi -> /dev/hidraw7 -> Quad Cortex (USB, interface 5)
+hidapi -> Quad Cortex HID interface 5
 ```
 
 | Map ID | Owner zone | Owned files |
@@ -49,18 +55,18 @@ hidapi -> /dev/hidraw7 -> Quad Cortex (USB, interface 5)
 | `[Flow.Transport]` | 100 | `transport.rs` |
 | `[Flow.Framing]` | 110 | `framing.rs` |
 | `[Flow.Schema]` | 120 | `build.rs`, `proto/` |
-| `[Flow.Domain]` | 130 | `device.rs`, `message.rs`, `catalog.rs`, `state.rs`, `view.rs`, `safety.rs` |
-| `[Flow.Session]` | 140 | `session.rs` |
+| `[Flow.Domain]` | 130 | `device.rs`, `message.rs`, `catalog.rs`, `grid.rs`, `view.rs`, `safety.rs` |
+| `[Flow.Link]` / `[Flow.Session]` | 140 | `link.rs`, `session.rs`, `state.rs` |
 | `[Flow.Client]` | 150 | `client.rs` |
-| `[Flow.CLI]` | 200 | `crates/cortex-cli/src/main.rs`, `connect.rs` |
-| `[Flow.MCP]` | 300 | `crates/cortex-mcp/src/main.rs` |
+| `[Flow.Host]` / `[Flow.CLI]` | 200 | `crates/cortex-host/src/`, `crates/cortex-cli/src/{main,connect,decode}.rs` |
+| `[Flow.MCP]` | 300 | `crates/cortex-mcp/src/{main,server,transport}.rs`, process tests |
 | `[Flow.GUI]` | 400 | `gui/` (fixture-backed first draft) |
 
 ## [DES-DEC] Cross-Cutting Key Decisions
 
 | Decision | Choice | Rationale |
 | --- | --- | --- |
-| Leaf crate | `cortex-rs` with `default-features = false` depends only on serde/bytes/flate2/prost | Embeddable in CLI, MCP, Tauri, and crates.io; no hidapi without the `hid` feature |
+| Leaf crate | `cortex-rs` with `default-features = false` has protocol/domain dependencies only | Embeddable in CLI, MCP, Tauri, and crates.io; no hidapi or host IPC without the `hid` feature |
 | Protocol source | Port from `pyquadcortex` (MIT) | Hardware-verified, excellent docs, recovered .proto files; not re-deriving from scratch |
 | Protobuf | `prost` with vendored .proto files | Compile-time typed Rust; no runtime protobuf dependency |
 | HID backend | `hidapi` crate (hidraw on Linux) | Cross-platform; the same backend pyquadcortex uses |
@@ -87,15 +93,16 @@ docs/           Protocol reference, runbooks, CLI reference and GUI notes
 The crate is layered bottom-up. Each layer depends only on the layers below it:
 
 ```text
-Layer 6: Client (150)      - QuadCortex struct, ergonomic methods (version, recall, read_preset, ...)
-Layer 5: Session (140)     - connect handshake, keepalive, request_id correlation, broadcast waiting
-Layer 4: Domain (130)      - DeviceKind, Message, Preset, Grid, Block, Scene, Catalog (typed model)
-Layer 3: Proto (120)       - prost-generated types from .proto files (compile-time)
-Layer 2: Framing (110)     - encode_message/decode, Frame, FrameReassembler, Flags, ReportId
-Layer 1: Transport (100)   - Transport::open/write/read/request, STALL swallow, hidapi wrapper
+Layer 7: Client (150)      - QuadCortex ergonomic methods and validated operations
+Layer 6: State (130/140)   - subscribed cache, typed snapshots and revisions
+Layer 5: Session (140)     - handshake, keepalive, correlation and HidLink ownership
+Layer 4: Domain (130)      - typed views, catalog, grid builders and save safety
+Layer 3: Proto (120)       - prost-generated wire types
+Layer 2: Framing (110)     - reports, flags, reassembly and encoding
+Layer 1: Transport (100)   - hidapi open/read/write and minimal synchronous diagnostic
 ```
 
-All six layers are implemented for the core operations, and those paths passed the 37-check hardware smoke. The client remains intentionally incomplete relative to the device's wider API; each unimplemented operation is tracked in the roadmap rather than implied by the existence of the layer.
+All six layers are implemented for the core operations, and those paths passed the 42-check hardware smoke. The client remains intentionally incomplete relative to the device's wider API; each unimplemented operation is tracked in the roadmap rather than implied by the existence of the layer.
 
 ## [DES-TEST] Testing Strategy
 

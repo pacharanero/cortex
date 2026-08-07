@@ -19,13 +19,13 @@ Kept rather than deleted: many carry the measurement that settled a question, an
 - [x] `Frame::parse` - strip report ID / len / flags, validate
 - [x] `FrameReassembler::feed` - flag-driven reassembly state machine
 - [x] `encode_message(message_type, payload)` - trailer + chunk + wrap
-- [x] 10 unit tests (round-trip, multi-frame, error cases, encode/decode symmetry)
+- [x] Eight framing unit tests covering round-trip, multi-frame, errors, and encode/decode symmetry
 
 ### PROT-003: Proto schema (zone 120)
 - [x] Vendor `Preset.proto` and `ProductionAutomation.proto` (MIT, with SPDX headers)
 - [x] `build.rs` compiling via `prost-build`
 - [x] Add `package cortex_protobuf_v2` to `Preset.proto` so cross-file `Model` references resolve
-- [x] Generated `proto` module with all 71 `CortexMessageType` variants and all message structs
+- [x] Generated public `proto` module with 72 enum variants (`Undefined=0` through terminal value `NumberOfMessageTypes=71`) and all message structs
 
 ### PROT-004: Domain model - core (zone 130)
 - [x] `DeviceKind` enum (QuadCortex, NanoCortex) with `vid_pid()`
@@ -35,7 +35,7 @@ Kept rather than deleted: many carry the measurement that settled a question, an
 - [x] **PROT-004.7**: Constants: `UNITY_LEVEL`, `USER_SETLIST_ROOT`, `USER_SETLIST`, `SCENE_UNLABELLED`, `BANKS`, `SLOTS_PER_BANK`, `SETLIST_SLOTS`
 
 ### PROT-005: Session layer (zone 140)
-- [x] **PROT-005.1**: `Session` struct holding the shared `HidDevice`, a background RX thread, and the pending-request/broadcast-waiter maps
+- [x] **PROT-005.1**: `Session` owns a removable boxed `HidLink`, background RX/keepalive workers, and pending request/broadcast/collector state; `close()` joins workers and explicitly releases the link
 - [x] **PROT-005.2**: RX thread - read frames, reassemble, decode (gzip if needed), dispatch by type tag to waiters; never dies on a malformed message
 - [x] **PROT-005.3**: `request(message, timeout)` - assign request_id, register waiter, send, block for correlated reply (type-first, request_id consistency check)
 - [x] **PROT-005.4**: `await_broadcast(cls, trigger, timeout, match)` - register type waiter, fire trigger, block for matching broadcast
@@ -45,10 +45,10 @@ Kept rather than deleted: many carry the measurement that settled a question, an
 - [x] **PROT-005.8**: `disconnect()` - send `Connection{connected: false}` (best effort)
 - [x] **PROT-005.9**: Write serialization - a `Mutex` around device writes so a keepalive cannot interleave between a multi-report message's frames
 - [x] **PROT-005.10**: 1 MiB reassembly cap - if the buffer exceeds this without completing, reset (defense against a lost LAST frame)
-- [x] **PROT-005.11**: Hardware smoke test - VERIFIED 2026-08-02 against CorOS 4.0.1 / firmware d14e / QA00AB123. Handshake completed in 2.2 s; state pushes flowed; `active_scene`, `read_current_preset`, and `list_presets` all answered; disconnect and thread join clean. Run with `cortex device probe`
+- [x] **PROT-005.11**: Hardware smoke test - verified against CorOS 4.0.1. The initial handshake/state/read smoke passed; later runs verified the paced handshake, held cache, clean release and physical reconnect. Run with `cortex device probe` or the scripted smoke
 
 ### PROT-006: Client API (zone 150)
-- [x] **PROT-006.1**: `QuadCortex` struct wrapping `Arc<Session>`, lifecycle (connect/disconnect/close, Drop)
+- [x] **PROT-006.1**: `QuadCortex` wraps `Arc<Session>` and exposes connect/disconnect/close. It has no closing `Drop`, so dropping one short-lived wrapper cannot disconnect siblings sharing the session
 - [x] **PROT-006.2**: `version()` - wired through `Session::request` (correlated by type, no request_id echo)
 - [x] **PROT-006.3**: Catalog - `fetch_model_repo` + `Catalog::parse`. HARDWARE-VERIFIED 2026-08-02: parsed the real payload from CorOS 4.0.1 (533 models, 31 categories, 318 with vendor attribution). Container confirmed as `gzip(tar(ModelRepo.xml))` - 46,704 bytes gzipped, 558,592 tar, 556,732 XML. Wired into `cortex preset` so blocks show names, and into `cortex catalog` for search by model name OR by the gear it evokes
 
@@ -74,9 +74,9 @@ Kept rather than deleted: many carry the measurement that settled a question, an
 ### DOCS-001: Documentation site
 - [x] **DOCS-001.1**: Zensical 0.0.52 scaffold, `s/docs`, artifact-based Pages deploy with path filters. Builds clean
 - [x] **DOCS-001.2**: `docs/install.md` - udev rule with the reasoning, the exclusive-HID gotcha, `s/install`, completions, and a first check
-- [x] **DOCS-001.3**: `docs/walkthrough.md` - every output captured from real hardware, nothing invented. Plus `docs/cli-reference.md`, GENERATED from `--help` by `s/docs-cli-reference` so it cannot drift
+- [x] **DOCS-001.3**: `docs/walkthrough.md` - output shapes captured from hardware, with owner-specific names and identifiers replaced by fictional values. Plus generated `docs/cli-reference.md` from live clap help
 - [x] **DOCS-001.4**: `docs/protocol.md` - the wire, the handshake, correlation, the catalog, and the grid traps, with this project's own measurements marked as such
-- [x] **DOCS-001.5**: `docs/runbook-hardware-smoke.md` - ten checkpointed steps ending in a restore, with the known gaps listed
+- [x] **DOCS-001.5**: `docs/runbook-hardware-smoke.md` - twelve checkpointed sections covering restore, held-session/reconnect checks and preset move/restore, with known gaps listed
 
 ## CLI (CLI)
 
@@ -89,7 +89,7 @@ Kept rather than deleted: many carry the measurement that settled a question, an
 
 ### CLI-002: Format and output
 - [x] **CLI-002.1**: `--format text|json` global flag, honoured by every command
-- [x] **CLI-002.2**: `cortex device version --format json` - structured JSON. The output types are defined in the CLI rather than serialising the prost types, so the JSON is an interface with stable field names rather than a wire representation. Two fields are renamed to what they actually hold (`coros_version`, `wireless_firmware_checksum`), with the vendor's misleading names recorded in the type's docs
+- [x] **CLI-002.2**: `cortex device version --format json` - structured JSON through the shared `cortex-rs::view::DeviceVersion` contract rather than prost wire structs. The CLI, daemon, MCP and future GUI share descriptive stable field names
 - [x] **CLI-003.10**: `cortex grid show [--params]` - the LIVE grid, read without side effects. Distinct from `cortex preset show --slot X`, which reads a STORED slot and can only do so by recalling it, discarding unsaved edits
 - [x] **CLI-003.11**: `cortex block param` / `set-bypass` / `set-block` / `remove-block`, taking rows as the unit LABELS them (1-4)
 - [x] **CLI-002.4**: Data on stdout, hints on stderr - every command follows this; progress, warnings, and handshake steps all go to stderr so output stays pipeable
@@ -116,7 +116,7 @@ Kept rather than deleted: many carry the measurement that settled a question, an
 ### CLI-004: Distribution
 - [x] **CLI-004.1**: `s/version++` - bump the version, commit, and land it on `main`, choosing a direct push or a release PR by detecting branch protection. Adapted from the house-style example. Runs the full `s/lint` gate before the version moves, so a failed check leaves no half-bumped tree, and refuses on a dirty tree or off `main`. Does NOT tag: the workflow does that once the commit lands (CLI-004.2)
 - [x] **CLI-004.5**: `cortex completions install` - detects the shell, writes to `~/.zfunc` (zsh) or the conventional directory, prints the one-time setup, never edits startup files
-- [x] **CLI-004.6**: `s/install` - installs from `crates/cortex-cli` (the workspace root has no `[package]`, so `cargo install --path .` fails), with a udev-rule preflight
+- [x] **CLI-004.6**: `s/install` - installs both `cortex` and `cortex-mcp` from their package paths, with a udev-rule preflight
 
 ## Engineering (ENG)
 
@@ -128,16 +128,17 @@ Kept rather than deleted: many carry the measurement that settled a question, an
 
 ### ENG-002: CI
 - [x] `.github/workflows/ci.yml` - fmt, clippy (all + no-default-features), tests (both), REUSE lint, protoc install
-- [x] `.github/dependabot.yml` - cargo + github-actions, weekly, cooldown, grouping
+- [x] `.github/dependabot.yml` - Cargo, npm, pip and GitHub Actions, weekly with cooldown and grouping
 
 ### ENG-003: Governance
-- [x] AGPL-3.0-or-later LICENSE + LICENSES/ (AGPL, MIT for vendored .proto)
+- [x] AGPL-3.0-or-later code and CC-BY-SA-4.0 prose licensing, plus MIT for vendored `.proto`, asserted through `LICENSES/` and ordered REUSE annotations
 - [x] SPDX headers on every source file
 - [x] REUSE.toml + `reuse lint` passing
-- [x] NOTICE + THIRD-PARTY-NOTICES.md (pyquadcortex MIT, deskop-nano-cortex Apache-2.0, qc-stomp-tools MIT)
+- [x] NOTICE + THIRD-PARTY-NOTICES.md distinguish pyquadcortex-derived MIT material, the independently implemented deskop-nano-cortex Apache-2.0 architectural precedent, licensed references not yet used, indirect Nano BLE provenance, and projects without a clear repository-wide licence
 - [x] Trademark and unaffiliation notice in README, AGENTS.md, NOTICE
 - [x] AGENTS.md (repo-local, pointing at parent workspace)
 - [x] **ENG-003.1**: **Copyright holder confirmed as `Dr Marcus Baw`**, with no company, which is what every SPDX header already says. Revisit only if a company is formed; if it changes, every header and `REUSE.toml` move in ONE commit
+- [x] **ENG-003.6**: With explicit approval, synchronized `NOTICE` and `THIRD-PARTY-NOTICES.md` with the AGENTS/prior-art licensing table: corrected the mixed file-level licensing posture of OpenCortex and qc-extras, corrected toneparse's scope, recorded indirect `nano-cortex-web-editor` BLE provenance, and separated incorporated/adapted work from reference-only study
 
 ### ENG-005: `s/usb-trace` - observe Cortex Control on the wire
 - [x] **ENG-005.1**: `s/usb-trace` - preflight `usbmon` (module loaded, `/dev/usbmonN` present and readable) and `dumpcap`, identify the QC's bus and device address from `lsusb`, and start a capture to a gitignored `traces/`. Each preflight failure names its own fix rather than just refusing, because a setup error discovered halfway through a session with the official client wastes the whole session. Writes a sidecar `.txt` recording bus and device address: both are assigned at plug time, so a capture without them cannot be filtered afterwards with any confidence.
@@ -154,17 +155,17 @@ Kept rather than deleted: many carry the measurement that settled a question, an
 ### PROT-008.6 sub-items (parent still open)
   - [x] **008.6.1**: `cortex session start` holds a `ConnectMode::Subscribed` session and owns the HID interface. Subscribing is expensive per command and correct per session: it is how the device reports edits made by the player
   - [x] **008.6.2**: A unix socket at `$XDG_RUNTIME_DIR`, line-delimited JSON, reusing the existing `--format json` output types so client and daemon share one contract
-  - [x] **008.6.4**: **Measured health verdict plus reconnect with backoff.** A blocked request polls liveness and returns `DeviceSilent` after 10 s without inbound traffic instead of burning its full timeout. Independently, the daemon checks once a second, immediately invalidates cached state when the held session is silent, closes the old handle before opening another, repeats the complete subscribed handshake, and retries after 1, 2, 4, ... 30 s without giving up. `session status` distinguishes connected/reconnecting/failed and reports attempts plus the last error; ordinary requests fail fast while replacement is in progress. The session swap and retry path are fake-link tested; hardware unplug/replug verification remains outstanding.
+  - [x] **008.6.4**: **Measured health verdict plus reconnect with backoff.** A blocked request polls liveness and returns `DeviceSilent` after 10 s without inbound traffic instead of burning its full timeout. The daemon invalidates state, drains operations, closes the old link before opening another, repeats the subscribed handshake, and retries with bounded exponential backoff. Fake-link tests cover exclusivity and replacement; physical unplug/replug was verified on 2026-08-07 and the first post-reconnect grid read succeeded.
     - **The silence was ours before this became trustworthy.** Cortex Control sends a keepalive every 1.04 s (681 over 708 s) and its session was never quiet for more than 0.11 s across a 60 s idle. At this client's old 5 s cadence the device stopped pushing after about 40 s, so a healthy session looked dead. At 1 s, a 90 s idle reads `last_message_seconds: 0`; the 10 s verdict leaves headroom above the measured 4-5 s post-handshake lull.
     - The reconnect loop retains one `DeviceStateCache` handle across physical sessions. Each successful open starts a new generation, so an old RX thread racing teardown cannot repopulate the replacement's state.
   - [x] **008.6.5**: **Subscribed device-state cache in `cortex-rs`.** `DeviceStateCache` is observed synchronously before waiter delivery, so a message can satisfy an explicit read and update the cache without being consumed. Full four-row `RecallPreset` messages replace the baseline; sparse routing, split, parameter, bypass, scene-mode promotion, and block-removal `Grid` pushes merge transactionally. Ambiguous structural changes, malformed state messages, and unknown scene targets invalidate rather than guess. Scene, dirty state (including proto3 `false`), selected slot, per-folder listings, catalog, version, and CPU load are retained. Generation/revision tokens and `wait_for_change` coalesce a 135-message knob burst into the latest snapshot rather than a raw-message queue.
     - The daemon serves live grid, scene, setlist and static-data cache hits only while the cache phase is `live` and the device is responsive; explicit reads repair missing fields. Status reports phase, generation, revision, availability, applied/rejected counts, stream gaps, and the last rejection.
-    - Newly implemented reducer behaviour is provisional until the next hardware smoke. Its merge rules are cross-checked against the generated schema, the existing hardware-verified builders, and captured push shapes, not inferred from UI intent.
+    - Reducer paths exercised by the final CLI and MCP hardware smokes are hardware-verified. Malformed-stream edge cases and future message shapes remain provisional and fail closed.
   - [x] **008.6.6**: **Invalidate the cache wholesale before reconnecting.** A malformed/abandoned frame sequence or host-detected disconnect clears all values immediately. A replacement session starts a new generation and ignores delivery from old generations. This preserves the invariant that edits made while disconnected are unknowable and old state must never be resumed.
-  - [x] **008.6.7**: **Every ordinary device command addresses the daemon when it is running.** Routed reads: version, scene, live grid, stored preset, preset listing, folder listing, catalog, and CPU load. Routed writes: recall, scene switch, save/delete, parameter/bypass/block edits, remove, split, and row routing. Only `device probe` and the explicit `device version --session` diagnostic remain direct, and they refuse while the daemon owns the interface. Existing hardware measurements through the held session: catalog 1.97 s -> **0.02 s**, presets 6.44 s -> 2.35 s, recall instant, and grid edits **0.08-0.20 s** against 1.88 s direct.
+  - [x] **008.6.7**: **Every ordinary device command addresses the daemon when it is running.** Routed reads include version, probe, scene, live/stored presets, listings, catalog and CPU; routed writes include recall, scene, prepared save/delete and live-grid edits. Explicit unconnected diagnostics refuse while the daemon owns the interface. Existing hardware measurements through the held session: catalog 1.97 s -> **0.02 s**, presets 6.44 s -> 2.35 s, recall instant, and grid edits **0.08-0.20 s** against 1.88 s direct.
     - The daemon returns the same typed `DeviceVersion`, `Preset`, `PresetSlot`, `CpuLoad`, `Placement`, and `ParameterWrite` shapes as the direct path. `QuadCortex::set_parameter` owns name lookup, meter refusal, real-unit conversion, validation, and scene sequencing so hosts do not reimplement them.
     - Rows cross the socket as plain zero-based wire indices and are rebuilt with `Row::try_from_wire` on the far side. Deriving `Deserialize` on `Row` would let any integer off a socket become one, defeating the guard on a mistake that succeeds silently and edits the wrong row.
-    - **Correction, hardware-verified:** the original plan kept version direct because it needs no handshake. It cannot be direct while a held session exists: a second open wedges the device and only fails on the next request (008.6.9). Version now routes and emits byte-identical JSON on both paths. The newly completed folder/stored-preset/block/parameter routes pass fake-session and contract tests but still need their next hardware smoke run.
+    - **Correction, hardware-verified:** the original plan kept version direct because it needs no handshake. It cannot be direct while a held session exists: a second open wedges the device and only fails on the next request (008.6.9). Version now routes and emits byte-identical JSON on both paths. Folder, stored-preset, block and parameter routes subsequently passed the final CLI and MCP hardware smokes.
   - [x] **008.6.11**: **`Version` READ before announcing our own**, mirroring Cortex Control. Costs ~0.8 s (handshake 2.2 s -> 3.0 s, three consecutive runs) and buys two things: `connect --status` can report the unit's serial and `CorOS` version, which it previously left `None`, and `cortex device version` through the daemon is served from that cache in **0.002 s** rather than 2.86 s. It also removes a documented race - `Version` READ replies carry no `request_id`, so a later caller's reply is indistinguishable from the handshake's own announce.
   - [x] **008.6.12**: **`CpuLoad` for a live DSP-load display.** Added to the subscribe set and exposed as `Session::cpu_load()` and `cortex device cpu`, with a typed view carrying total load plus a per-column breakdown flagged by DSP core (`is_on_core2` - the QC splits the grid across two cores).
     - **Asked for with CREATE, not READ.** Every other subscribe is a plain READ and gets answered; a READ for `CPULoad` is silently ignored, and that cost an afternoon of looking for the difference elsewhere (keepalive rate, missing `CloudProduct`, a UI toggle). Cortex Control sends action `CREATE` with a `request_id`, which on the wire is a single field 2 and no action field at all - proto3 omits defaults, and `CREATE` is 0. Reading it as "create a subscription" rather than "read a value" also makes more sense of a message whose reply is a continuous stream.

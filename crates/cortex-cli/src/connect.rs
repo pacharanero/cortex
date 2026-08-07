@@ -3,7 +3,7 @@
 
 //! `cortex session start`: one held session, served over local IPC.
 //!
-//! The device grants its HID interface exclusively, so exactly one process
+//! The protocol requires one effective HID owner, so exactly one process
 //! can own it. This is that process. Everything else talks to it.
 //!
 //! @see spec/roadmap.md PROT-008.6
@@ -33,6 +33,17 @@ const HEALTH_POLL: Duration = Duration::from_secs(1);
 
 /// Reconnect starts quickly, then backs off to this ceiling while unplugged.
 const MAX_RECONNECT_BACKOFF: Duration = Duration::from_secs(30);
+
+fn policy_for_slots(
+    setlist: &str,
+    slots: &[&str],
+) -> cortex_rs::Result<cortex_rs::safety::SavePolicy> {
+    let ranges = slots
+        .iter()
+        .map(|slot| cortex_rs::ScratchRange::new(slot, slot))
+        .collect::<cortex_rs::Result<Vec<_>>>()?;
+    cortex_rs::safety::SavePolicy::new(setlist, ranges)
+}
 
 /// Bound a caller waiting on a wedged local IPC connection.
 #[cfg(test)]
@@ -460,12 +471,10 @@ impl Daemon {
             Request::PrepareSave {
                 setlist,
                 slot,
-                policy,
-                override_scratch,
                 recall_consent,
                 timeout_seconds,
             } => {
-                let validated_policy = match policy.to_policy() {
+                let validated_policy = match policy_for_slots(&setlist, &[&slot]) {
                     Ok(p) => p,
                     Err(e) => return Response::error(e.to_string()),
                 };
@@ -474,7 +483,7 @@ impl Daemon {
                     &validated_policy,
                     &setlist,
                     &slot,
-                    override_scratch,
+                    cortex_rs::ScratchOverride::ScratchOnly,
                     recall_consent,
                     Duration::from_secs(timeout_seconds),
                 );
@@ -538,6 +547,33 @@ impl Daemon {
                 c.delete_preset(&setlist, &name, REQUEST_TIMEOUT)
                     .map(|()| serde_json::json!({ "deleted": name }))
             }),
+            Request::MovePreset {
+                setlist,
+                from_slot,
+                to_slot,
+                confirmed,
+            } => {
+                if !confirmed {
+                    return Response::error(
+                        cortex_rs::Error::UnsafeMove("explicit confirmation is required".into())
+                            .to_string(),
+                    );
+                }
+                let policy = match policy_for_slots(&setlist, &[&from_slot, &to_slot]) {
+                    Ok(policy) => policy,
+                    Err(error) => return Response::error(error.to_string()),
+                };
+                self.respond(move |c| {
+                    c.move_preset(
+                        &policy,
+                        &setlist,
+                        &from_slot,
+                        &to_slot,
+                        Duration::from_secs(20),
+                    )
+                    .map(|()| serde_json::json!({ "from_slot": from_slot, "to_slot": to_slot }))
+                })
+            }
             Request::CpuLoad => match self.state.cpu_load() {
                 Some(load) if self.cache_is_usable() => {
                     Response::ok(&cortex_rs::view::CpuLoad::from(&load.value))
@@ -1259,6 +1295,24 @@ mod tests {
         assert!(
             message.contains("subscrib"),
             "the error should say why there is nothing yet: {message}"
+        );
+        daemon.shutdown();
+    }
+
+    #[test]
+    fn an_unconfirmed_preset_move_is_refused_before_device_io() {
+        let daemon = fake_daemon();
+        let Response::Error { message } = daemon.handle(Request::MovePreset {
+            setlist: cortex_rs::client::USER_SETLIST.into(),
+            from_slot: "2A".into(),
+            to_slot: "2B".into(),
+            confirmed: false,
+        }) else {
+            panic!("an unconfirmed move must be refused");
+        };
+        assert!(
+            message.contains("confirmation"),
+            "unexpected error: {message}"
         );
         daemon.shutdown();
     }

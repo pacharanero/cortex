@@ -112,7 +112,7 @@ pub struct FrameReassembler {
 `feed` dispatches on the flags in a fixed order:
 
 1. **`COMPLETE`** (`0xC0`): reset, return `Ok(Some(frame.data.clone()))`. No buffer involvement - a single-frame message has no partial state.
-2. **`FIRST`** (`0x40`): reset, copy `frame.data` into the buffer, set `in_progress = true`, return `Ok(None)`. A `FIRST` arriving mid-partial silently drops the stale buffer (see [DES-REASSEMBLY] Interleaved pushes below).
+2. **`FIRST`** (`0x40`): reset, copy `frame.data` into the buffer, set `in_progress = true`, return `Ok(None)`. The session records whether this abandoned a partial and invalidates state continuity.
 3. **`MIDDLE`** (`0x00`): if `!in_progress`, return `Error::Framing("middle frame without a preceding first frame")`; otherwise append, return `Ok(None)`.
 4. **`LAST`** (`0x80`): if `!in_progress`, return `Error::Framing("last frame without a preceding first frame")`; otherwise append, take the buffer as the body, set `in_progress = false`, return `Ok(Some(body))`.
 5. **Any other flag value**: return `Error::Framing("unknown flags byte: {:#04x}")`.
@@ -121,7 +121,7 @@ The `is_complete` check comes *before* `is_first` because `Flags(0xC0)` satisfie
 
 ### Design choice: `FIRST` mid-partial drops the stale buffer
 
-The device interleaves unsolicited pushes (RecallPreset, parameter changes) with replies to host commands. A new `FIRST` frame arriving while a previous message is still being assembled is routine, not an error: the device started sending a new message before the old one finished. `feed` handles this by resetting the state machine on every `FIRST` frame, whether or not `in_progress` is true:
+The wire has no message identifier with which to resume an interrupted body. `feed` therefore resynchronises on every `FIRST`, whether or not `in_progress` is true:
 
 ```rust
 if frame.flags.is_first() {
@@ -132,7 +132,7 @@ if frame.flags.is_first() {
 }
 ```
 
-This is the `pyquadcortex` behaviour and is confirmed on hardware. The transport layer's `request` loop also resets the reassembler on a new `FIRST` as belt-and-braces (see `100-transport/design.md` [DES-REQUEST]).
+This decoder recovery rule follows `pyquadcortex`. It does not prove the dropped body was harmless: the session marks a stream gap and invalidates cached state before continuing.
 
 ### Design choice: `MIDDLE`/`LAST` without `FIRST` is an error
 
@@ -149,7 +149,7 @@ If the reassembler is idle (`in_progress == false`) and receives a `MIDDLE` or `
 ### Alternatives considered
 
 - **Track a total-length or frame-count field.** Rejected: the wire has none. Adding one to the state machine would be dead state - it could never be populated from the wire and would invite bugs where the caller sets it wrong.
-- **Treat `FIRST` mid-partial as an error.** Rejected: the device does this routinely. Making it an error would break every multi-message session.
+- **Terminate the RX loop on `FIRST` mid-partial.** Rejected: the decoder can safely resynchronise. State continuity is invalidated at session level instead.
 - **Return the partial buffer on `reset()` so the caller can salvage it.** Rejected: a partial message with no `LAST` is not useful to any caller, and salvaging it would invite the caller to treat truncated data as complete. Drop it silently.
 - **Use a `nom`-style parser combinator.** Rejected: the state machine is four branches and a buffer, not a grammar. A combinator would add a dependency and obscure the logic.
 
@@ -188,7 +188,7 @@ pub fn encode_message(message_type: u16, payload: &[u8]) -> Vec<Vec<u8>> {
                     else                      { Flags::MIDDLE };
 
         // 3. Wrap each chunk as a 129-byte report.
-        let mut report = vec![0u8; crate::transport::HID_REPORT_LEN];
+        let mut report = vec![0u8; HID_REPORT_LEN];
         report[0] = ReportId::Output as u8;
         report[1] = chunk.len() as u8;
         report[2] = flags;
@@ -234,13 +234,14 @@ The 8-byte trailer is part of the reassembled body, so it is part of what gets c
 | `Flags::LAST` | `0x80` | Last frame of a multi-frame message. |
 | `Flags::COMPLETE` | `0xC0` | Single-frame message (`FIRST \| LAST`). |
 | `Flags::MIDDLE` | `0x00` | Middle frame of a multi-frame message. |
-| `CHUNK_SIZE` | `126` | Per-report data capacity: `transport::HID_BODY_LEN - 2`. Bounds the chunk size in `encode_message`. |
+| `HID_BODY_LEN` / `HID_REPORT_LEN` | `128` / `129` | Framing-owned report geometry, re-exported by transport. |
+| `CHUNK_SIZE` | `126` | Per-report data capacity: `HID_BODY_LEN - 2`. |
 
-These are the single source of truth for the framing constants. `transport::HID_BODY_LEN` (128) and `transport::HID_REPORT_LEN` (129) are owned by zone `100`; `message::TRAILER_LEN` (8) is owned by zone `130`. No other module hard-codes any of these values.
+These are the single source of truth for report geometry. `message::TRAILER_LEN` (8) remains owned by zone 130.
 
 ## [DES-TEST] Testing Strategy
 
-The 10 unit tests in `framing.rs` cover the behaviour, not the implementation:
+The eight unit tests in `framing.rs` cover the behaviour, not the implementation:
 
 | Test | What it asserts |
 | --- | --- |
@@ -252,14 +253,13 @@ The 10 unit tests in `framing.rs` cover the behaviour, not the implementation:
 | `encode_then_decode_round_trips` | `encode_message` output, fed through `Frame::parse` + `FrameReassembler` + `Message::parse`, recovers the original `message_type` and `payload`. The end-to-end symmetry test. |
 | `encode_single_frame_is_complete` | A short payload encodes to one report whose parsed `Frame` is `COMPLETE`. |
 | `encode_multi_frame_sets_flags` | A payload larger than `CHUNK_SIZE` encodes to multiple reports; the first is `FIRST`-but-not-`LAST`, the last is `LAST`-but-not-`FIRST`. |
-| *(2 more: see `framing.rs` `mod tests`)* | |
 
 These run in `cargo test -p cortex-rs` with no hardware. They are the CI gate for this zone. Hardware verification is a manual runbook owned by `500-dx-tooling` and is not a substitute for the unit tests - the unit tests guard the pure logic, the runbook guards the wire format.
 
 ## [DES-LIMITS] Known Limitations
 
 - **No detection of a lost `MIDDLE` or `LAST` frame.** Without sequence numbers, a dropped `MIDDLE` frame produces a shorter-but-plausible reassembled body that `Message::parse` may accept. The only signal is a protobuf decode failure downstream (zone `130`), not a framing error here. This is a wire-protocol limitation, not a code defect.
-- **No backpressure on the reassembler buffer.** A run of `MIDDLE` frames without a `FIRST` is an error, but a very long `FIRST` + `MIDDLE` + ... + `MIDDLE` sequence before a `LAST` grows the buffer unboundedly. The transport's deadline-shrinking read loop (zone `100`) bounds this in practice; a hard buffer cap is a future concern if hostile input becomes a threat model.
+- **The pure reassembler is uncapped.** The live session enforces a 1 MiB body cap and invalidates continuity on breach; offline callers must provide their own input bound.
 - **No streaming encode.** `encode_message` returns a `Vec<Vec<u8>>` holding all reports. For the CLI's short commands this is fine; a streaming encoder for very large writes is a future concern for the session layer (`140`).
 - **`Frame::parse` does not validate the report ID.** The caller (transport) is responsible for classifying the report direction. A test feeding a report with an arbitrary report ID byte to `Frame::parse` will succeed; this is deliberate.
 - **Nano Cortex framing is unknown.** Third-party observation reports 65-byte HID reports rather than 129 and no passive input traffic. The `ATMA` schema enum does not prove that the Nano uses these flags, trailer, or protobuf messages.

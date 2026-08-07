@@ -30,7 +30,7 @@ The session layer (zone 140) provides correlated request/response and broadcast-
 
 This zone knows NOTHING about hidapi, HID reports, framing, or the session state machine. It holds a `Session` reference and builds protobuf messages, handing them to the session's `send`/`request`/`await_broadcast`/`collect` primitives. That keeps this layer testable with a fake session and keeps all wire concerns below it.
 
-The protocol facts this zone encodes are hardware-verified via `pyquadcortex` against CorOS 4.0.1. The Rust implementation is provisional until exercised against a real Quad Cortex from this crate.
+Verification is per method. This project's implemented core read, navigation, grid-edit, save and delete paths are hardware-verified against CorOS 4.0.1; the wider pyquadcortex-derived requirements remain unimplemented or provisional until exercised from this crate.
 
 ---
 
@@ -92,13 +92,13 @@ The protocol facts this zone encodes are hardware-verified via `pyquadcortex` ag
 
 | ID    | Requirement                                                                                                       | Priority    |
 | ----- | ----------------------------------------------------------------------------------------------------------------- | ----------- |
-| FR-31 | `write_preset(p)` sends `Grid{UPDATE, preset: p}`. A recalled preset carries NO explicit `row`, so writing it back wholesale does nothing - use the keyed wrappers. | Must Have   |
+| FR-31 | A low-level whole-preset write, if retained for investigation, must document that a recalled preset has no row keys and therefore applies nothing useful. Host surfaces use keyed wrappers instead. | Should Have |
 | FR-32 | `set_chain_input(row, in_portid)` re-points a row's input (row-keyed update). The ONLY shape that actually moves an input. | Must Have   |
 | FR-33 | `set_chain_output(row, out_portid)` re-points a row's output (row-keyed update). | Must Have   |
 | FR-34 | `set_param(row, column, param_index, value)` is the low-level wire-index write. `set_parameter(row, column, target, input, scene, promote, timeout)` is the shared host-facing API: it validates rows/columns/scenes and normalised values, reads the cell's model when addressed by name, resolves through the device catalog, refuses meters, converts real units, and performs the 3-message scene sequence when requested. | Must Have   |
 | FR-35 | `set_param_scene_mode(row, column, param_index, enabled)` sets the scene-following flag (must travel ALONE). | Must Have   |
-| FR-36 | `set_bypass(row, column, bypassed, scene)` bypasses/enables a block. With `scene=`: switches scene first (visible side effect). | Must Have   |
-| FR-37 | `set_block(row, column, model, verify, timeout)` places a model in a cell. With `verify=true` (default): waits for the `Grid` echo naming the cell; raises `BlockRefused` if no echo (DSP capacity). | Must Have   |
+| FR-36 | `set_bypass(row, column, bypassed)` writes the bypass state across the block's stored scene slots. Scene-targeted bypass is not part of the implemented API. | Must Have   |
+| FR-37 | `set_block(row, column, model, verify, timeout)` treats a matching echo as a fast confirmation, then falls back to live-grid read-back. It returns `BlockRefused` only when read-back proves the model is absent; echo timeout alone is never proof of refusal. | Must Have   |
 | FR-38 | `remove_block(row, column)` sends `Grid{action: DELETE, ...}` (NOT UPDATE with hash:0, which is ignored). | Must Have   |
 | FR-39 | `move_block(from_row, from_col, to_row, to_col, drop)` sends `GridMove`. A cross-row move creates a parallel path. | Should Have |
 
@@ -133,9 +133,9 @@ The protocol facts this zone encodes are hardware-verified via `pyquadcortex` ag
 
 | ID    | Requirement                                                                                                       | Priority    |
 | ----- | ----------------------------------------------------------------------------------------------------------------- | ----------- |
-| FR-52 | `save_current_preset(setlist_path, position, name, instrument, default_scene, confirm)` sends `File{CREATE, type: 0}` and accepts only a `CREATE` acknowledgement naming the exact setlist and slot. The device saves the grid it already has; it may de-duplicate the name. With `confirm`: re-lists to get the stored name. | Must Have   |
+| FR-52 | `save_current_preset(setlist_path, position, name, timeout)` sends `File{CREATE, type: 0}` and accepts only a `CREATE` acknowledgement naming the exact setlist and slot. The device saves the grid it already has and may de-duplicate the name. Host surfaces enforce preparation and confirmation separately; an instrument argument remains planned. | Must Have   |
 | FR-53 | `delete_preset(setlist_path, name)` sends `File{DELETE}` addressed by file path (`<setlist>/<name>.pb`), NOT slot index, and accepts only a `DELETE` acknowledgement naming that exact setlist and path. | Must Have   |
-| FR-54 | `move_preset(setlist_path, name, to_position)` sends `File{MOVE}` (source by file path, destination by linear index). | Should Have |
+| FR-54 | `move_preset(policy, setlist_path, from_position, to_position)` authorises the exact source and destination through the caller's policy, then uses a fresh complete listing to refuse the factory library, empty sources, no-op moves, and observed occupancy. It resolves the source's listed file path, sends `File{MOVE}` with the same-setlist destination by linear index, then polls fresh listings for source-absent/destination-present convergence without requiring an acknowledgement. | Should Have |
 | FR-55 | `create_setlist(name)` sends `File{CREATE, type: 0, folder{key: USER_SETLIST_ROOT/<name>}}`. | Should Have |
 | FR-56 | `delete_setlist(name)` sends `File{DELETE}`. | Should Have |
 | FR-57 | `copy_preset(from_setlist, position, to_setlist, to_position, name)` - a composition: recalls the source, saves the grid into the destination. Changes what is loaded on the unit. | Should Have |
@@ -185,8 +185,8 @@ The protocol facts this zone encodes are hardware-verified via `pyquadcortex` ag
 | ID    | Requirement                                                                                                                                                                                                                              | Target                  |
 | ----- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------- |
 | NFR-1 | The client adds no async runtime dependency; it uses the session's blocking primitives directly. The leaf-crate discipline is preserved. | Architectural invariant |
-| NFR-2 | Domain types (`Block`, `Split`, `Folder`, `MidiOut`) are pure value objects: `Clone`, `Serialize`, `Debug`, no I/O. | Code invariant          |
-| NFR-3 | The catalog is fetched once and cached for the session; no method re-fetches it implicitly. | Code invariant          |
+| NFR-2 | Host-facing types in `view`, plus `PresetEntry`, `Folder`, parameter inputs and placement results, are pure serialisable value objects with no I/O. | Code invariant          |
+| NFR-3 | The handshake captures the catalog payload and held hosts cache parsed/static state; client methods do not repeat the load-bearing transfer unnecessarily. | Code invariant          |
 | NFR-4 | Unit tests for the helper functions (`blocks`, `splits`, `slot_to_position`, `input_level_db`, `field_present`) and the message-building logic run in CI without hardware, using fixture presets. | CI-enforced             |
 | NFR-5 | The ~60-method API surface mirrors pyquadcortex's method names (snake_case) so a porting caller recognises the surface; deviations are documented. | Architectural invariant |
 | NFR-6 | Every domain trap (see Domain Traps below) is documented in the method's rustdoc and surfaced in the MCP tool descriptions where relevant. | Code invariant          |
@@ -195,22 +195,23 @@ The protocol facts this zone encodes are hardware-verified via `pyquadcortex` ag
 
 ## Acceptance Criteria
 
-- [ ] `QuadCortex::connect()` returns a ready client; `version()` succeeds without the full handshake.
-- [ ] `read_preset()` recalls a slot and returns the `BinaryPreset`; the recall's `request_id` is echoed on the push.
-- [ ] `read_current_preset()` returns the live grid with no side effects.
-- [ ] `list_presets()` returns occupied slots in order; trailing-slash keys normalized.
-- [ ] `switch_scene()` / `set_param()` / `set_bypass()` / `set_block()` persist (survive a save and read-back).
-- [ ] `set_param(scene=D)` issues 3 messages (promote, switch, write) and lands on scene D.
-- [ ] `set_block(verify=true)` raises `BlockRefused` when DSP capacity is exhausted (no echo).
-- [ ] `remove_block()` uses action DELETE (not UPDATE with hash:0).
+- [x] `QuadCortex::connect()` returns a ready client; `version()` works on both minimal and held-session paths.
+- [x] `read_preset()` recalls a slot and returns the correlated `BinaryPreset`.
+- [x] `read_current_preset()` returns the live grid with no recall side effect.
+- [x] `list_presets()` accepts only complete unique 256-slot setlist updates and normalises keys.
+- [x] `switch_scene()` / `set_param()` / `set_bypass()` / `set_block()` passed live read-back and save/recall verification where persistence applies.
+- [x] `set_param(scene=D)` issues the promote/switch/write sequence and changes only the target scene.
+- [x] `set_block(verify=true)` uses echo or read-back confirmation and reports a hardware-verified genuine DSP refusal only after absence is read back.
+- [x] `remove_block()` uses action DELETE and passed read-back.
 - [ ] `set_splitter_param()` writes `combined_splitter` (not `splitter[]`).
-- [ ] `save_current_preset()` writes to the slot; `confirm=true` returns the device-stored (possibly de-duplicated) name.
-- [ ] `delete_preset()` addresses by file path, not slot index.
+- [x] `save_current_preset()` writes the working grid to the exact slot and exact `CREATE` acknowledgement is correlated; host surfaces gate it through prepared save.
+- [x] `delete_preset()` addresses by file path, correlates the exact `DELETE`, and passed disposable-slot hardware smoke.
+- [x] `move_preset()` validates scratch containment and a fresh complete listing, sends the captured same-setlist `MOVE` shape, and polls for listing convergence. Fake-link tested and hardware-verified through the held daemon on CorOS 4.0.1 with `7A -> 7B -> 7A`, storage-revision advancement, deletion and empty-slot cleanup.
 - [ ] `set_capture()` writes `file_name` = `<hash><name>`; params written after survive.
 - [ ] `set_ir()` writes the key to IR PATH and the name to IR NAME (two strings, not a path).
 - [ ] `set_input_port()` sends one field per message; uses `Input` enum ids (Return 1 is 4).
-- [ ] Helper functions: `blocks()`, `splits()`, `slot_to_position()`, `input_level_db()`, `field_present()` pass unit tests on fixture presets.
-- [ ] Full method surface verified against a real Quad Cortex (CorOS 4.0.1) - hardware-only.
+- [~] Implemented helpers and typed views pass fictional-fixture unit tests; `splits` and other richer helpers remain roadmap work.
+- [ ] The full wider method surface is not implemented or verified; verification remains per operation.
 
 ---
 
@@ -219,7 +220,7 @@ The protocol facts this zone encodes are hardware-verified via `pyquadcortex` ag
 - The session layer (zone 140): connect handshake, keepalive, correlation. This zone consumes `Session`.
 - USB HID transport (zone 100), framing (zone 110), protobuf schema (zone 120).
 - The typed domain model (zone 130): `BinaryPreset`, `Block`, `Split` definitions. This zone imports them.
-- MCP/GUI host integration (zones 300/400): token registries, scratch-range configuration, confirmation UI, and safety-event logging. The shared policy and prepared-save implementation live in `cortex-rs::safety`; hosts must use it rather than wrapping `save_current_preset` independently.
+- MCP/GUI host integration (zones 300/400): token registries, exact-target confirmation UI, and safety-event logging. The shared policy and prepared-save implementation live in `cortex-rs::safety`; hosts must use it rather than wrapping `save_current_preset` independently.
 - CLI surface (zone 200): `clap` commands, output formatting. This zone is the engine the CLI calls.
 - Tauri backend (zone 400): Tauri commands. This zone is the engine the backend calls.
 
@@ -227,7 +228,7 @@ The protocol facts this zone encodes are hardware-verified via `pyquadcortex` ag
 
 ## Dependencies
 
-- **Crate-internal**: zone 140 (`Session`), zone 130 (`BinaryPreset`, `Block`, `Split`, `Folder`, `MidiOut`), zone 120 (generated proto types), zone 110 (framing constants).
+- **Crate-internal**: zone 140 (`Session`), zone 130 (`view::*`, grid builders, `Catalog`, safety values), and zone 120 (generated proto types).
 - **External (leaf)**: `serde` (for the value objects), `uuid` (for the session_id in the handshake, if owned here), the generated `prost` types. No async runtime, no `clap`, no `tauri`.
 - **Prior art**: `pyquadcortex/pyquadcortex/client.py` (`QuadCortex` class, ~60 methods) and `pyquadcortex/pyquadcortex/catalog.py` (`ModelCatalog` parser) - ported under MIT with attribution; see `THIRD-PARTY-NOTICES.md`.
 
@@ -245,7 +246,7 @@ These are confirmed on hardware and are the primary source of silent wrong-row /
 
 4. **`set_param(scene=)` is 3 messages.** The flag (`scene_mode`) and a value CANNOT travel in the same message - sent together, the flag is silently dropped. So: promote scene_mode, switch scene, then write. Ordering over the pipe is enough; no settle delay needed. Naming a scene leaves the unit sitting on it (visible side effect).
 
-5. **`set_block` can be refused for DSP capacity.** The preset has a processing budget; a block that does not fit is accepted on the wire and simply absent afterwards. No per-block error message. `verify=true` (default) catches this by waiting for the `Grid` echo; no echo within timeout = `BlockRefused`.
+5. **`set_block` can be refused for DSP capacity.** The preset has a processing budget; a block that does not fit is accepted on the wire and simply absent afterwards. No per-block error message. A matching `Grid` echo is the fast path; after an echo timeout, live-grid read-back is ground truth and only confirmed absence is `BlockRefused`.
 
 6. **`remove_block` uses action DELETE.** An UPDATE carrying `hash: 0` is transmitted and ignored. The action is what marks the removal.
 
@@ -263,7 +264,7 @@ These are confirmed on hardware and are the primary source of silent wrong-row /
 
 13. **Each I/O port field is sent in its own message.** The device drops fields that share a port entry (mute + ground_lift on an output both fail when paired, both work alone). One field per message is the guarantee.
 
-14. **`read_preset` interleaved with scene-targeted writes silently retargets them.** A `read_preset` resets the active scene to the preset's default. A `set_bypass(scene=)` issued after a `read_preset` lands on the default scene, not the one you switched to. Inspect with `read_current_preset`, check `active_scene`.
+14. **`read_preset` interleaved with scene-targeted writes silently retargets them.** A `read_preset` resets the active scene to the preset's default. A later `set_param_in_scene` switches scenes as part of its sequence and leaves that scene active. Inspect with `read_current_preset` and check `active_scene` rather than assuming the prior selection survived a recall.
 
 15. **Loading a capture RESETS the block's other parameters.** Write parameters AFTER `set_capture`, or pass them via the `params` argument to be applied once the capture is in.
 
@@ -273,14 +274,14 @@ These are confirmed on hardware and are the primary source of silent wrong-row /
 
 ### Protocol Provenance & Attribution
 
-The `QuadCortex` client API is a port of `pyquadcortex/pyquadcortex/client.py` (MIT, (c) 2026 Stokes). The ~60 methods, the helper functions (`blocks`, `splits`, `slot_to_position`, `input_level_db`, `field_present`), and the domain-trap documentation all originate there, confirmed against real hardware (CorOS 4.0.1). The `ModelCatalog` parser is ported from `pyquadcortex/pyquadcortex/catalog.py`. Record any derivation in `NOTICE` / `THIRD-PARTY-NOTICES.md`.
+The implemented `QuadCortex` operations are derived from the corresponding parts of `pyquadcortex/pyquadcortex/client.py` (MIT, (c) 2026 Stokes), adapted to Rust and verified per operation rather than inheriting upstream's evidence wholesale. The implemented slot and level helpers have the same provenance; helpers and methods still listed as planned are not claimed as present. The `ModelCatalog` parser is ported from `pyquadcortex/pyquadcortex/catalog.py`. Record any derivation in `NOTICE` / `THIRD-PARTY-NOTICES.md`.
 
-The constants (`UNITY_LEVEL`, `USER_SETLIST_ROOT`, `SCENE_UNLABELLED`, `TEMPO_PARAMS`, `GLOBAL_EQ_BAND_STRIDE`, `CAPTURE_FILE_NAME_PARAM`, etc.) are wire values measured on the device, not invented.
+Implemented constants such as `UNITY_LEVEL`, `USER_SETLIST_ROOT`, and `SCENE_UNLABELLED` encode measured wire or device values. Any future operation-specific maps, ids, and indices named in the requirements must likewise come from evidence when that operation is implemented rather than being invented in advance.
 
 ### Provisional labelling
 
-The protocol facts are hardware-verified via `pyquadcortex`. The Rust implementation is **provisional** until each method has been exercised against a real Quad Cortex from this crate's own code. Label the client as "provisional" in docs and release notes until the hardware smoke run passes.
-### Hardware findings (2026-08-02, CorOS 4.0.1 / firmware d14e / QA00AB123)
+The implemented core subset is hardware-verified from this crate. Each unimplemented or newly added operation remains provisional until its own hardware smoke passes; do not apply one blanket label to the entire client.
+### Hardware findings (CorOS 4.0.1)
 
 First verification of the read paths against a real Quad Cortex, via `cortex device probe`, `cortex setlist list`, and `cortex preset list`.
 
@@ -325,7 +326,7 @@ Field 5's value is 32 hex characters, which is MD5 length; a git SHA-1 would be 
 
 The names are Neural DSP's own and are presumably historical. We keep them so output maps to the schema, but annotate them in the CLI (`zenos_git_hash (= CorOS version)`) rather than silently passing on a misleading label. Do not "fix" this by swapping the fields.
 
-#### Grid editing verified on hardware (2026-08-02, CorOS 4.0.1 / d14e / QA00AB123)
+#### Grid editing verified on hardware
 
 The first destructive surface, exercised end to end. Safe by construction at this stage: no save is implemented, so every grid edit is transient and a recall discards it. The unit was restored to `1A` unchanged afterwards.
 
@@ -335,7 +336,7 @@ The first destructive surface, exercised end to end. Safe by construction at thi
 | 2 | `set_param(--param GAIN --value 0.9)` | read-back showing `GAIN 0.9` |
 | 3 | `remove_block(screen row 2, col 0)` | read-back showing the row empty |
 
-**Echo verification works.** `set_block` reported "echo confirmed" and the read-back agreed, so `grid_echoes_cell` is neither over- nor under-matching on real traffic. A DSP refusal has not yet been provoked, so the negative path - no echo within the timeout - remains unverified against hardware; only the positive path is confirmed.
+**Evidence at this point in the chronology.** `set_block` reported "echo confirmed" and the read-back agreed, so `grid_echoes_cell` matched the positive real-traffic case. A DSP refusal had not yet been provoked in this first run; the later investigation below supersedes that limitation and verifies both read-back acceptance and genuine refusal.
 
 **The screen-row convention holds end to end.** `--row 2` landed on wire row 1, confirmed by a read-back that reports both numbers.
 

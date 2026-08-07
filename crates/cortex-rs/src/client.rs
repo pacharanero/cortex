@@ -33,7 +33,7 @@
 #![allow(clippy::missing_panics_doc, clippy::needless_pass_by_value)]
 
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 #[cfg(feature = "hid")]
 use crate::DeviceKind;
@@ -289,6 +289,92 @@ fn matches_delete_ack(message: &FileMessage, setlist: &str, key: &str) -> bool {
         folder.files[0].key.as_ref(),
         Some(crate::proto::product_data::Key::Key(value)) if value == key
     )
+}
+
+fn move_source(
+    policy: &crate::safety::SavePolicy,
+    setlist: &str,
+    entries: &[PresetEntry],
+    source: u32,
+    destination: u32,
+) -> crate::Result<(String, String)> {
+    let entry = entries
+        .iter()
+        .find(|entry| entry.index == source)
+        .ok_or_else(|| {
+            crate::Error::NotFound(format!(
+                "no preset occupies source slot {}",
+                position_to_slot(source)
+            ))
+        })?;
+    if source == destination {
+        return Err(crate::Error::UnsafeMove(format!(
+            "source and destination are both {}",
+            position_to_slot(destination)
+        )));
+    }
+    if let Some(occupied) = entries.iter().find(|entry| entry.index == destination) {
+        return Err(crate::Error::UnsafeMove(format!(
+            "destination {} is occupied by {:?}; moving onto occupied slots is not supported",
+            position_to_slot(destination),
+            occupied.name
+        )));
+    }
+    if !policy.contains_scratch_slot(setlist, source)
+        || !policy.contains_scratch_slot(setlist, destination)
+    {
+        return Err(crate::Error::UnsafeMove(format!(
+            "both source {} and destination {} must be inside the configured scratch range",
+            position_to_slot(source),
+            position_to_slot(destination)
+        )));
+    }
+    let key = entry.key.clone().ok_or_else(|| {
+        crate::Error::Decode(format!(
+            "listing entry for {:?} carried no device file path",
+            entry.name
+        ))
+    })?;
+    Ok((key, entry.name.clone()))
+}
+
+fn move_converged(entries: &[PresetEntry], name: &str, source: u32, destination: u32) -> bool {
+    let wanted = name.trim().to_lowercase();
+    entries
+        .iter()
+        .any(|entry| entry.index == destination && entry.name.trim().to_lowercase() == wanted)
+        && entries.iter().all(|entry| entry.index != source)
+}
+
+fn build_move_preset(setlist: &str, source_key: &str, destination: u32) -> FileMessage {
+    FileMessage {
+        action: MessageAction::Move as i32,
+        r#type: Some(crate::proto::file_message::Type::Type(0)),
+        folder: Some(crate::proto::file_message::Folder::Folder(
+            crate::proto::FolderInfo {
+                key: Some(crate::proto::folder_info::Key::Key(setlist.to_string())),
+                is_factory: Some(crate::proto::folder_info::IsFactory::IsFactory(false)),
+                files: vec![crate::proto::ProductData {
+                    key: Some(crate::proto::product_data::Key::Key(source_key.to_string())),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            },
+        )),
+        to_folder: Some(crate::proto::file_message::ToFolder::ToFolder(
+            crate::proto::FolderInfo {
+                key: Some(crate::proto::folder_info::Key::Key(setlist.to_string())),
+                files: vec![crate::proto::ProductData {
+                    index: Some(crate::proto::product_data::Index::Index(
+                        i32::try_from(destination).unwrap_or(i32::MAX),
+                    )),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            },
+        )),
+        ..Default::default()
+    }
 }
 
 /// Convert one complete folder listing into the stable preset-entry view.
@@ -1057,6 +1143,79 @@ impl QuadCortex {
         Ok(())
     }
 
+    /// Move a preset to an empty slot in the same setlist.
+    ///
+    /// **Destructive.** The raw protocol can target an occupied slot, but that
+    /// behaviour has not been established. This method first requests a fresh,
+    /// complete 256-slot listing and refuses occupied destinations, empty
+    /// sources, no-op moves, the factory library, and any source or destination
+    /// outside the caller's safety policy before sending anything.
+    ///
+    /// The source is addressed by its device file path and the destination by
+    /// linear slot index. Only same-setlist moves have been observed. File
+    /// listings are eventually consistent, so the empty-slot observation alone
+    /// is not a safety boundary; both slots must be declared disposable. After
+    /// sending, this polls fresh complete listings until the source is absent
+    /// and the source preset occupies the destination. A File acknowledgement
+    /// is not required because the device may mutate storage without one.
+    ///
+    /// The wire shape is derived from `pyquadcortex` (MIT), where it is backed
+    /// by a Cortex Control capture. Hardware-verified through the held daemon
+    /// on `CorOS` 4.0.1: a prepared scratch preset moved `7A -> 7B -> 7A`, both
+    /// listing-convergence checks passed, and cleanup restored both slots empty.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`crate::Error::InvalidSlot`] for a malformed source or destination,
+    /// [`crate::Error::NotFound`] when the source is absent,
+    /// [`crate::Error::UnsafeMove`] for the factory library, an occupied
+    /// destination, a no-op move, or slots outside the safety policy,
+    /// [`crate::Error::ReadTimeout`] if the preflight listing does not arrive,
+    /// and [`crate::Error::MoveUnconfirmed`] when the write was sent but fresh
+    /// listings did not prove convergence before the deadline.
+    pub fn move_preset(
+        &self,
+        policy: &crate::safety::SavePolicy,
+        setlist: &str,
+        from_slot: &str,
+        to_slot: &str,
+        timeout: Duration,
+    ) -> crate::Result<()> {
+        let setlist = setlist.trim_end_matches('/');
+        if is_factory_setlist(setlist) {
+            return Err(crate::Error::UnsafeMove(format!(
+                "{setlist} is the factory library and is not writable"
+            )));
+        }
+        let source = slot_to_position_checked(from_slot)
+            .ok_or_else(|| crate::Error::InvalidSlot(from_slot.to_string()))?;
+        let destination = slot_to_position_checked(to_slot)
+            .ok_or_else(|| crate::Error::InvalidSlot(to_slot.to_string()))?;
+        let entries = self.list_presets(setlist, timeout, false)?;
+        let (source_key, name) = move_source(policy, setlist, &entries, source, destination)?;
+        let request = build_move_preset(setlist, &source_key, destination);
+        let payload = prost::Message::encode_to_vec(&request);
+        self.session.send(MessageType::File, &payload)?;
+
+        let deadline = Instant::now() + timeout;
+        while Instant::now() < deadline {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            let listing_timeout = remaining.min(Duration::from_secs(10));
+            match self.list_presets(setlist, listing_timeout, false) {
+                Ok(entries) if move_converged(&entries, &name, source, destination) => {
+                    return Ok(());
+                }
+                Ok(_) | Err(crate::Error::ReadTimeout(_)) => {}
+                Err(error) => return Err(error),
+            }
+        }
+        Err(crate::Error::MoveUnconfirmed(format!(
+            "{name:?} was sent from {} to {}; do not retry blindly because the move may have landed - inspect a fresh preset listing",
+            position_to_slot(source),
+            position_to_slot(destination)
+        )))
+    }
+
     /// Tell the device this client is going away. Sends
     /// `Connection{connected: false}` (best effort).
     pub fn disconnect(&self) {
@@ -1438,10 +1597,10 @@ impl QuadCortex {
     /// reply says so - every host write is stalled and there is no per-block
     /// error message.
     ///
-    /// So this verifies, which is possible without saving: the device echoes
-    /// a `Grid` broadcast naming the cell it accepted, and a refused block
-    /// produces no echo at all. When none arrives within `timeout` this
-    /// returns [`crate::Error::BlockRefused`].
+    /// So this verifies, which is possible without saving: a matching `Grid`
+    /// broadcast is the fast path. If no echo arrives within `timeout`, it
+    /// reads the live grid back and returns [`crate::Error::BlockRefused`]
+    /// only when the cell is confirmed not to hold the requested model.
     ///
     /// Use [`QuadCortex::set_block_unverified`] to send and return
     /// immediately, in which case a save and read-back is the only way to
@@ -1449,8 +1608,9 @@ impl QuadCortex {
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::BlockRefused`] if no echo naming the cell
-    /// arrives within `timeout`.
+    /// Returns [`crate::Error::BlockRefused`] if neither an echo nor the
+    /// confirming read-back shows the model in the requested cell. A failed
+    /// read-back returns that read error rather than guessing.
     pub fn set_block(
         &self,
         row: Row,
@@ -1502,14 +1662,9 @@ impl QuadCortex {
                         }
                     }
                     // The read-back itself failed, so we genuinely cannot
-                    // tell. Say so rather than guessing either way.
-                    Err(e) => Err(crate::Error::BlockRefused(format!(
-                        "could not determine whether model {model_id} was placed at \
-                         wire row {wire_row} (screen row {}) column {column}: no echo \
-                         within {timeout:?}, and the confirming read-back also failed \
-                         ({e}). Check with `cortex grid`",
-                        row.screen()
-                    ))),
+                    // tell. Preserve that error rather than calling an
+                    // indeterminate placement a refusal.
+                    Err(e) => Err(e),
                 }
             }
             Err(e) => Err(e),
@@ -1609,6 +1764,10 @@ fn grid_echoes_cell(message: &InboundMessage, row: u32, column: u32, model_id: u
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::framing::{Frame, FrameReassembler, encode_message};
+    use crate::link::FakeLink;
+    use crate::message::Message;
+    use std::sync::Arc;
 
     fn file_folder(key: &str, files: Vec<crate::proto::ProductData>) -> crate::proto::FolderInfo {
         crate::proto::FolderInfo {
@@ -1623,6 +1782,65 @@ mod tests {
             index: Some(crate::proto::product_data::Index::Index(index)),
             ..Default::default()
         }
+    }
+
+    fn complete_listing(occupied: &[(i32, &str)]) -> FileMessage {
+        let files = (0..i32::try_from(SETLIST_SLOTS).unwrap())
+            .map(|index| {
+                let mut file = indexed_file(index);
+                if let Some((_, name)) = occupied.iter().find(|(slot, _)| *slot == index) {
+                    file.name = Some(crate::proto::product_data::Name::Name((*name).into()));
+                    file.key = Some(crate::proto::product_data::Key::Key(format!(
+                        "{USER_SETLIST}/{name}.pb"
+                    )));
+                }
+                file
+            })
+            .collect();
+        FileMessage {
+            action: MessageAction::Update as i32,
+            folder: Some(crate::proto::file_message::Folder::Folder(file_folder(
+                USER_SETLIST,
+                files,
+            ))),
+            ..Default::default()
+        }
+    }
+
+    fn push_file(link: &FakeLink, file: &FileMessage) {
+        for mut report in encode_message(
+            MessageType::File as u16,
+            &prost::Message::encode_to_vec(file),
+        ) {
+            report[0] = crate::ReportId::Input as u8;
+            link.push_inbound(report);
+        }
+    }
+
+    fn wait_for_file_write(link: &FakeLink, start: usize) -> (usize, FileMessage) {
+        let deadline = Instant::now() + Duration::from_secs(1);
+        let mut next = start;
+        let mut reassembler = FrameReassembler::new();
+        while Instant::now() < deadline {
+            let written = link.written();
+            while let Some(report) = written.get(next) {
+                next += 1;
+                let Ok(frame) = Frame::parse(report) else {
+                    continue;
+                };
+                let Ok(Some(body)) = reassembler.feed(&frame) else {
+                    continue;
+                };
+                let Ok(message) = Message::parse(&body) else {
+                    continue;
+                };
+                if message.message_type == MessageType::File as u16 {
+                    return (next, prost::Message::decode(message.body).unwrap());
+                }
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        panic!("timed out waiting for a File write from report {start}");
     }
 
     #[test]
@@ -1690,6 +1908,112 @@ mod tests {
         assert!(matches_delete_ack(&delete, key, &target));
         assert!(!matches_delete_ack(&delete, key, "wrong.pb"));
         assert!(!matches_save_ack(&delete, key, 8));
+
+        let move_message = build_move_preset(key, &target, 9);
+        assert_eq!(move_message.action, MessageAction::Move as i32);
+        let Some(crate::proto::file_message::Folder::Folder(source)) = move_message.folder.as_ref()
+        else {
+            panic!("move needs a source folder")
+        };
+        let Some(crate::proto::file_message::ToFolder::ToFolder(destination)) =
+            move_message.to_folder.as_ref()
+        else {
+            panic!("move needs a destination folder")
+        };
+        assert_eq!(folder_key(source), Some(key));
+        assert_eq!(folder_key(destination), Some(key));
+        assert!(matches!(
+            source.files[0].key.as_ref(),
+            Some(crate::proto::product_data::Key::Key(value)) if value == &target
+        ));
+        assert!(matches!(
+            destination.files[0].index,
+            Some(crate::proto::product_data::Index::Index(9))
+        ));
+        assert!(!matches_delete_ack(&move_message, key, &target));
+    }
+
+    #[test]
+    fn move_requires_an_occupied_source_and_an_empty_destination() {
+        let policy = crate::SavePolicy::new(
+            USER_SETLIST,
+            vec![crate::ScratchRange::new("2A", "2C").unwrap()],
+        )
+        .unwrap();
+        let source_key = format!("{USER_SETLIST}/Fictional Source.pb");
+        let entries = vec![
+            PresetEntry {
+                index: 8,
+                name: "Fictional Source".into(),
+                key: Some(source_key.clone()),
+                instrument: None,
+            },
+            PresetEntry {
+                index: 10,
+                name: "Occupied Target".into(),
+                key: Some(format!("{USER_SETLIST}/Occupied Target.pb")),
+                instrument: None,
+            },
+        ];
+
+        assert_eq!(
+            move_source(&policy, USER_SETLIST, &entries, 8, 9).unwrap(),
+            (source_key, "Fictional Source".into())
+        );
+        assert!(matches!(
+            move_source(&policy, USER_SETLIST, &entries, 7, 9),
+            Err(crate::Error::NotFound(_))
+        ));
+        assert!(matches!(
+            move_source(&policy, USER_SETLIST, &entries, 8, 8),
+            Err(crate::Error::UnsafeMove(_))
+        ));
+        assert!(matches!(
+            move_source(&policy, USER_SETLIST, &entries, 8, 10),
+            Err(crate::Error::UnsafeMove(_))
+        ));
+        assert!(matches!(
+            move_source(&policy, USER_SETLIST, &entries, 8, 11),
+            Err(crate::Error::UnsafeMove(_))
+        ));
+
+        let moved = vec![PresetEntry {
+            index: 9,
+            name: "Fictional Source".into(),
+            key: None,
+            instrument: None,
+        }];
+        assert!(move_converged(&moved, "fictional source", 8, 9));
+        assert!(!move_converged(&entries, "Fictional Source", 8, 9));
+    }
+
+    #[test]
+    fn move_public_flow_lists_sends_then_waits_for_convergence() {
+        let link = FakeLink::new();
+        let session = Arc::new(crate::Session::over(link.clone()).unwrap());
+        let qc = QuadCortex::new(session.clone());
+        let fake = link.clone();
+        let responder = std::thread::spawn(move || {
+            let (after_listing, listing) = wait_for_file_write(&fake, 0);
+            assert_eq!(listing.action, MessageAction::Read as i32);
+            push_file(&fake, &complete_listing(&[(8, "Fictional Source")]));
+            let (after_move, sent) = wait_for_file_write(&fake, after_listing);
+            assert_eq!(sent.action, MessageAction::Move as i32);
+            let (_, convergence_read) = wait_for_file_write(&fake, after_move);
+            assert_eq!(convergence_read.action, MessageAction::Read as i32);
+            push_file(&fake, &complete_listing(&[(9, "Fictional Source")]));
+        });
+        let policy = crate::SavePolicy::new(
+            USER_SETLIST,
+            vec![crate::ScratchRange::new("2A", "2B").unwrap()],
+        )
+        .unwrap();
+
+        qc.move_preset(&policy, USER_SETLIST, "2A", "2B", Duration::from_secs(1))
+            .unwrap();
+        assert_eq!(qc.state_cache().status().storage_revision, 1);
+        responder.join().unwrap();
+        session.close();
     }
 
     #[test]

@@ -36,7 +36,7 @@ The MIT- and Apache-2.0-licensed prior art we port in remains under its own term
 
 ### Design choice: CC-BY-SA-4.0 for written content
 
-Markdown, docs, and specs are CC-BY-SA-4.0 (share-alike). This keeps the written content open and prevents a proprietary fork of the docs without the corresponding source. The `REUSE.toml` annotations for `**/*.md` carry the AGPL license identifier (because `REUSE.toml` is one license per file, and AGPL is a superset of the attribution/share-alike intent); the `NOTICE` and `README.md` state the CC-BY-SA-4.0 intent for prose.
+Markdown, docs, and specs are CC-BY-SA-4.0. `LICENSES/CC-BY-SA-4.0.txt` carries the canonical text, and the final matching `REUSE.toml` annotation applies it to `**/*.md`. This is an enforceable per-file declaration, not merely prose intent.
 
 ### Design choice: "or later"
 
@@ -52,13 +52,14 @@ Markdown, docs, and specs are CC-BY-SA-4.0 (share-alike). This keeps the written
 
 ### Behaviour
 
-The prior-art licensing table in `AGENTS.md` is the source of truth for what may be taken from which repo. It is mirrored in `THIRD-PARTY-NOTICES.md` with full license texts.
+The prior-art licensing table in `AGENTS.md` is the source of truth for what may be taken from which repo. `THIRD-PARTY-NOTICES.md` mirrors it while distinguishing material actually incorporated or adapted, licensed references not yet used, indirect Nano BLE provenance, and projects without a clear repository-wide licence.
 
 | Repo | License | Use |
 | --- | --- | --- |
 | `pyquadcortex` (stokes-audio) | MIT | **Port freely with attribution.** Recovered `.proto` vendored; framing, write-STALL, trailer envelope derived. |
 | `deskop-nano-cortex` (rixrix) | Apache-2.0 | **Adapt with attribution.** Architectural precedent for the Tauri app. No code copied yet. |
 | `qc-stomp-tools` (VanIseghemThomas) | MIT | Adapt with attribution. On-device ioctls; relevant only if we target on-device builds. |
+| `nano-cortex-web-editor` (choldy) | MIT | No material currently used; indirect provenance for the BLE field map credited by `deskop-nano-cortex`. |
 | `OpenCortex` (VanIseghemThomas) | No repository-wide licence; mixed file-level notices | **Reference only.** Do not copy. |
 | `qc-extras` (roelj) | No repository-wide licence; GPL-3.0-or-later source headers | **Reference only until scope is clarified.** Do not copy. |
 | `quad-cortex-usb-re-notes` (hsaastamoinen) | None declared | **Reference only.** Do not copy. |
@@ -74,7 +75,7 @@ The four reference-only repos (`OpenCortex`, `qc-extras`, `quad-cortex-usb-re-no
 
 ### Design choice: `NOTICE` is the summary; `THIRD-PARTY-NOTICES.md` is the full text
 
-`NOTICE` is the SPDX-style summary: project copyright, license decision, and a one-line attribution per incorporated project. `THIRD-PARTY-NOTICES.md` is the full text: project description, repository link, license, copyright, use-in-cortex-rs, and the license text (for MIT) or a link (for Apache-2.0). This split follows the standard open-source attribution convention.
+`NOTICE` is the SPDX-style summary: project copyright, license decision, and attribution for work incorporated or adapted into the project. `THIRD-PARTY-NOTICES.md` is the full record: project description, repository link, licensing posture, copyright where stated, actual use in cortex-rs, the retained MIT text for incorporated pyquadcortex material, and an Apache-2.0 link for the architectural precedent. It also records licensed and unclear-licence reference projects so their constraints remain visible without implying that their material was incorporated.
 
 ### Alternatives considered
 
@@ -97,16 +98,15 @@ Every `.rs`, `.toml`, `.yml`, `.sh` file starts with:
 // SPDX-License-Identifier: AGPL-3.0-or-later
 ```
 
-(or the language's comment prefix). This is machine-readable by the REUSE tool and human-readable. The copyright holder is "2026 Dr Marcus Baw"; a company name may be added later (AGENTS.md: "Confirm the copyright holder with Marcus before seeding headers").
+(or the language's comment prefix). This is machine-readable by the REUSE tool and human-readable. The settled copyright holder is Dr Marcus Baw; no company is added without an explicit decision.
 
 ### Design choice: `REUSE.toml` for header-less files
 
-Files that cannot carry an inline header (`**/*.md`, `**/*.txt`, `**/*.json`, `**/Cargo.lock`, `LICENSE`, `.gitignore`, `.editorconfig`, etc.) are covered by `REUSE.toml`:
+Files that cannot carry an inline header are covered by ordered `REUSE.toml` annotations: a general AGPL block covers assets/config, then the final Markdown block applies CC-BY-SA-4.0:
 
 ```toml
 [[annotations]]
 path = [
-    "**/*.md",
     "**/*.txt",
     "**/*.json",
     "**/Cargo.lock",
@@ -121,9 +121,15 @@ path = [
 precedence = "aggregate"
 SPDX-FileCopyrightText = "2026 Dr Marcus Baw"
 SPDX-License-Identifier = "AGPL-3.0-or-later"
+
+[[annotations]]
+path = ["**/*.md"]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2026 Dr Marcus Baw"
+SPDX-License-Identifier = "CC-BY-SA-4.0"
 ```
 
-`precedence = "aggregate"` means the bulk annotation is combined with any inline header (the vendored `.proto` files keep their own MIT header; the `REUSE.toml` annotation does not override it).
+REUSE applies the last matching bulk annotation, so Markdown receives CC-BY-SA while other covered assets remain AGPL. Vendored `.proto` files keep their inline MIT metadata.
 
 ### Design choice: vendored `.proto` keeps its own MIT header
 
@@ -156,7 +162,7 @@ The trademark and unaffiliation notice appears in `README.md`, `AGENTS.md`, and 
 
 ## [DES-LIMITS] Known Limitations
 
-- **Copyright holder is an individual, not a company.** The SPDX header says "2026 Dr Marcus Baw". A company name may be added later (AGENTS.md); the change touches every file's header and `REUSE.toml`.
+- **Copyright holder is an individual, not a company.** SPDX metadata says `2026 Dr Marcus Baw`; this is settled unless explicitly reconsidered.
 - **No dual-license boilerplate.** Available on request; no `DUAL-LICENSE.md` yet.
 - **No CLA.** Not in scope; the AGPL header on every file is the inbound-outbound grant.
 - **`THIRD-PARTY-NOTICES.md` does not carry the Apache-2.0 full text inline.** It links to the Apache license URL instead, following the standard convention (the full text is large). The MIT text is inlined because it is short.

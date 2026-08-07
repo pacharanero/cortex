@@ -15,6 +15,16 @@ cortex session status
 
 The MCP server currently requires that held session to be running before the agent starts it. Automatic daemon startup and idle shutdown are the next distribution lifecycle step.
 
+## Safety and conventions
+
+- MCP rows are zero-based (`0` to `3`), while the hardware screen labels them `1` to `4`. Every row-taking tool repeats this because a wrong-row edit can succeed silently.
+- `read_preset` recalls the stored slot, discards an unsaved working copy and resets the active scene. Use `read_current_preset` for side-effect-free inspection of what is loaded now.
+- Recall and live-grid writes are audible but non-persistent. The server has no save or delete tool.
+- Routing tools currently take raw protocol port identifiers. Inspect the current grid and tool description rather than guessing a physical jack number.
+- Block placement is verified by echo or live-grid read-back. Other working-copy writes currently prove dispatch but do not all perform an independent post-write read-back; read the grid after a sequence when structural certainty matters.
+
+The server exposes status, device version, active scene, CPU load, live/stored preset reads, block/folder/preset listings, catalog search, recall, scene switching, block placement/removal, parameter/bypass writes, chain input/output routing and split control. Use MCP discovery for the authoritative schemas.
+
 ## Claude Code
 
 Register the absolute executable path at user scope so the server is available from every project and does not depend on the restricted `PATH` of a graphical launcher:

@@ -24,7 +24,7 @@ This project is a Rust port of work others did first, and would not exist withou
 | Project | Licence | What we owe it |
 | --- | --- | --- |
 | [`stokes-audio/pyquadcortex`](https://github.com/stokes-audio/pyquadcortex) | MIT | **The foundation.** Established the protocol against real hardware, recovered the protobuf schema, and documented the framing, the trailer-tagged envelope, the write-STALL gotcha, the connect handshake, and the domain traps. The `.proto` files in this repo are vendored from it with its own SPDX header. |
-| [`rixrix/deskop-nano-cortex`](https://github.com/rixrix/deskop-nano-cortex) | Apache-2.0 | The architectural precedent for the planned desktop app, and the verified-versus-provisional labelling discipline these docs use. |
+| [`rixrix/deskop-nano-cortex`](https://github.com/rixrix/deskop-nano-cortex) | Apache-2.0 | The architectural precedent for the existing fixture-backed desktop first draft, and the verified-versus-provisional labelling discipline these docs use. |
 | [`VanIseghemThomas/qc-stomp-tools`](https://github.com/VanIseghemThomas/qc-stomp-tools) | MIT | On-device footswitch and LED work, relevant only if we ever target on-device builds. |
 
 Full attribution is in [`NOTICE`](https://github.com/pacharanero/cortex/blob/main/NOTICE) and [`THIRD-PARTY-NOTICES.md`](https://github.com/pacharanero/cortex/blob/main/THIRD-PARTY-NOTICES.md).
@@ -37,7 +37,7 @@ These informed our understanding but lack a clear repository-wide licence, so no
 
 Reverse engineering to achieve interoperability is well established in law. In the UK, CDPA s50B permits decompilation to create an independent interoperable program, and s296A voids contract terms purporting to forbid it. EU Software Directive Article 6 is equivalent.
 
-This is a device you own, and the aim is a Linux client for hardware whose vendor ships none.
+This is a device you own. The project began as the missing Linux client and now targets a cross-platform desktop GUI, while Linux remains the only verified host.
 
 We follow the norms the existing projects set:
 
@@ -59,6 +59,6 @@ Neural DSP name their models obliquely - "Brit 2203", not "Marshall JCM800" - an
 
 ## Your data
 
-`cortex` makes **no network connections whatsoever**. It has no telemetry, no analytics, no update check, and no cloud component. It talks to your Quad Cortex over USB and to nothing else.
+The runtime device tools (`cortex`, its local daemon and `cortex-mcp`) make **no external network connections**. They have no telemetry, analytics, update check or hosted Cortex service. USB carries device traffic and owner-only local IPC connects host processes; the documentation site and development package tooling are outside that runtime claim.
 
 The model catalog it reads from your device stays on your machine. It is Neural DSP's content and is not committed to this repository.

@@ -49,7 +49,7 @@ Hold a persistent connection to the device, serving other commands [alias: conne
 ```text
 Hold a persistent connection to the device, serving other commands.
 
-The device grants its USB interface exclusively, so exactly one process can own it. This is that process: it performs the handshake ONCE and every other command then talks to it over a socket instead of connecting for itself.
+The protocol requires one effective USB owner, although a damaging second open may succeed. This process claims ownership, performs the handshake ONCE, and serves every other command through local IPC.
 
 That matters for more than speed. A held session SUBSCRIBES to device state, which is how the unit reports edits you make on the hardware - so what `cortex` reports can stay true while you play, rather than being a snapshot from whenever the last command ran.
 
@@ -207,15 +207,16 @@ Examples:
 
 ### `cortex preset`
 
-Presets: list a setlist, show one, or load one onto the unit.
+Presets: list, inspect, recall, prepare/save, or delete.
 
 ```text
-Presets: list a setlist, show one, or load one onto the unit
+Presets: list, inspect, recall, prepare/save, or delete
 
 Usage: cortex preset [OPTIONS] <COMMAND>
 
 Commands:
   delete        Delete a preset from a setlist, by name
+  move          Move a preset to an empty slot in the same setlist
   prepare-save  Prepare a save destination before editing the working grid
   save          Commit the working grid to a destination prepared before editing
   list          List the presets in a setlist, in slot order
@@ -297,6 +298,59 @@ Examples:
   cortex preset delete --name "SCRATCH"
 ```
 
+#### `cortex preset move`
+
+Move a preset to an empty slot in the same setlist.
+
+```text
+Move a preset to an empty slot in the same setlist.
+
+WRITES TO THE UNIT. The command requests a fresh complete listing and refuses an empty source, an occupied destination, a no-op move, the factory library, and malformed slots.
+
+Usage: cortex preset move [OPTIONS] --from <BANK+LETTER> --to <BANK+LETTER>
+
+Options:
+      --from <BANK+LETTER>
+          Occupied source slot: bank number then letter, e.g. `2A`
+
+      --to <BANK+LETTER>
+          Empty destination slot: bank number then letter, e.g. `2B`
+
+      --setlist <PATH>
+          Absolute device path of the setlist
+
+          [default: "/media/p4/Presets/My Presets"]
+
+      --yes
+          Explicitly confirm this destructive storage mutation
+
+      --format <FORMAT>
+          Output format. `text` is for humans; `json` is for scripts and agents, and is stable enough to parse.
+
+          Only the RESULT changes format. Progress, warnings, and errors always go to stderr as plain text, so `cortex preset list --format json | jq` gets clean JSON regardless.
+
+          Possible values:
+          - text: Human-readable, the default
+          - json: Machine-readable JSON
+
+          [default: text]
+
+      --zero-based
+          Take `--row` as 0-3 rather than the 1-4 shown on the unit.
+
+          The unit labels its rows 1-4 and the wire numbers them 0-3, so the default matches what a player sees. Scripts and agents generally have a zero-based index already, and converting it back by hand is exactly the sort of arithmetic that silently edits the wrong row.
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+  -V, --version
+          Print version
+
+Examples:
+  cortex preset list --include-empty
+  cortex preset move --from 2A --to 2B --yes
+```
+
 #### `cortex preset prepare-save`
 
 Prepare a save destination before editing the working grid.
@@ -314,15 +368,6 @@ Options:
           Absolute device path of the setlist
 
           [default: "/media/p4/Presets/My Presets"]
-
-      --scratch-setlist <PATH>
-          Scratch setlist path. Defaults to --setlist
-
-      --scratch-range <START-END>...
-          Inclusive scratch slot range, e.g. `7A-7H`
-
-      --allow-outside-scratch
-          Allow a USER target outside the configured scratch range
 
       --format <FORMAT>
           Output format. `text` is for humans; `json` is for scripts and agents, and is stable enough to parse.
@@ -348,7 +393,7 @@ Options:
 
 Examples:
   cortex session start
-  cortex preset prepare-save --slot 7A --scratch-range 7A-7H
+  cortex preset prepare-save --slot 7A
 ```
 
 #### `cortex preset save`
@@ -1064,7 +1109,7 @@ Options:
           Print version
 
 Examples:
-  cortex row input --row 1 --port 0
+  cortex row input --row 1 --port 1
 ```
 
 #### `cortex row output`
@@ -1177,7 +1222,7 @@ Usage: cortex device [OPTIONS] <COMMAND>
 Commands:
   version  Read the device firmware version (CorOS, app, bootloader, zencoder)
   cpu      Show the unit's live DSP load
-  probe    Run the connect handshake and report the state the device pushes back
+  probe    Probe the core session read paths and report their state
   help     Print this message or the help of the given subcommand(s)
 
 Options:
@@ -1286,12 +1331,12 @@ Examples:
 
 #### `cortex device probe`
 
-Run the connect handshake and report the state the device pushes back.
+Probe the core session read paths and report their state.
 
 ```text
-Run the connect handshake and report the state the device pushes back.
+Probe the core session read paths and report their state.
 
-This is the hardware smoke test for the session layer. It performs the full handshake, holds the session open for a window so device pushes can arrive, prints a tally of what came back, then disconnects.
+Without a held daemon this performs a subscribed handshake, reads the core scene/current-preset/preset-list paths, then disconnects. With a held daemon it probes those paths through the existing owner and leaves that session running.
 
 Read-only: the handshake sends READs and a connect announcement. It never writes preset data and never saves.
 
@@ -1372,12 +1417,12 @@ Examples:
 
 ### `cortex catalog`
 
-Fetch the device model catalog and write the raw payload to a file.
+Search or inspect the device model catalog, or save its raw payload.
 
 ```text
-Fetch the device model catalog and write the raw payload to a file.
+Search or inspect the device model catalog, or save its raw payload.
 
-The catalog is what turns the integer model ids stored in a preset into names. It comes from the device, so it covers this unit's purchased plugins and the player's own Neural Captures.
+The catalog is what turns the integer model ids stored in a preset into names. It comes from the device, so it reflects installed model content rather than a hard-coded factory table.
 
 Read-only.
 

@@ -14,7 +14,7 @@ spec: spec.md
 
 ## [DES-OVR] Overview
 
-This layer wraps the generated `cortex_protobuf_v2` types (zone 120) into ergonomic, documented Rust types. The wire-shape contract lives in the proto module; the navigation safety, the row-numbering trap, and the human-readable model catalog live here. The implemented surface is `DeviceKind` and `Message`; the planned surface is `Preset`, `Grid`, `Block`, `Scene`, `Catalog`, and the navigation helpers.
+This layer turns generated protobuf shapes into typed host views, pure keyed grid updates, catalog metadata, subscribed state and save-safety values. The wire contract remains in `proto`; callers use `view`, `grid`, `state`, `catalog`, and `safety` rather than reproducing those decisions.
 
 The design principle is: never let a caller touch a raw `oneof` accessor without a doc-comment that explains the trap. The proto types are correct; they are just not safe to navigate blind.
 
@@ -24,10 +24,12 @@ The design principle is: never let a caller touch a raw `oneof` accessor without
 | --- | --- | --- |
 | `crates/cortex-rs/src/device.rs` | `DeviceKind` enum, `vid_pid()` | Implemented |
 | `crates/cortex-rs/src/message.rs` | `Message` struct, `parse()`, `TRAILER_LEN` | Implemented |
-| `crates/cortex-rs/src/preset.rs` (planned) | `Preset` wrapper around `BinaryPreset` | Planned |
-| `crates/cortex-rs/src/grid.rs` (planned) | `Grid`, `Block`, `Scene`, row/column helpers | Planned |
-| `crates/cortex-rs/src/catalog.rs` (planned) | `Catalog` parsed from `ModelRepo` blob | Planned |
-| `crates/cortex-rs/src/helpers.rs` (planned) | `UNITY_LEVEL`, `input_level_db`, scaling conversions | Planned |
+| `crates/cortex-rs/src/catalog.rs` | Bounded `gzip(tar(XML))` parser and model metadata | Implemented, hardware-verified |
+| `crates/cortex-rs/src/grid.rs` | Checked `Row` plus pure keyed update builders | Implemented; exposed operations hardware-verified |
+| `crates/cortex-rs/src/view.rs` | Stable serialisable host views | Implemented |
+| `crates/cortex-rs/src/safety.rs` | Save policy, preparations and validated commit flow | Implemented; core path hardware-verified |
+
+`state.rs` consumes these domain views but is owned by zone 140 because its generation, revision, continuity and wait semantics are part of the held session contract.
 
 ## [DES-DEVICE] DeviceKind Design
 
@@ -62,75 +64,21 @@ Design choices:
 - **`TRAILER_LEN` is public.** The framing layer (110) and the tests both need it; hiding it behind a private constant would force duplication.
 - **The remaining 6 trailer bytes are currently unused.** The recovered schema does not document them; `Message::parse` reads only the first two. If a future CorOS version uses them (e.g. a sequence number), this is where they are exposed.
 
-## [DES-PRESET] Preset Wrapper Design (planned)
+## [DES-PRESET] Host View Design
 
-`Preset` wraps `proto::BinaryPreset` and exposes ergonomic accessors. The design choice is a newtype wrapper, not a re-implementation:
+`view::Preset::from_binary` creates an owned serialisable projection for CLI, daemon, MCP and Tauri. `view::Row` and `view::Block` preserve both wire and screen row labels, occupied cells only, parameter values and bypass state. The protobuf remains available to protocol layers; host surfaces should not independently interpret its positional arrays.
 
-```rust
-pub struct Preset {
-    inner: proto::BinaryPreset,
-}
-```
+## [DES-GRID] Grid and Row Design
 
-- **Why a wrapper, not a re-implementation?** The proto type is the wire shape; re-implementing it would create a second source of truth for the preset structure. The wrapper adds ergonomics (named scene access, typed block iteration) without duplicating the wire layout.
-- **Why not `Deref`?** `Deref` hides the inner type and lets callers reach the raw `oneof` accessors without the doc-comments. Explicit accessor methods keep the row-numbering trap visible.
-- **Scenes are parallel arrays in the proto** (`scene_labels`, `scene_colors`, `scene_tempo`, `bypass`). The wrapper presents them as a `Vec<Scene>` indexed by scene index, hiding the parallel-array layout.
-- **A recalled preset carries no explicit row.** The wrapper documents this; the client layer (150) sets the row before writing. See [DES-ROW-TRAP].
+The read side is represented by `view::Preset::{rows,blocks}`. The write side uses `grid::Row` and pure protobuf builders. `Row::from_wire` and `Row::from_screen` centralise conversion and refuse invalid values; splitter operations refuse odd wire rows before sending. A separate dense `Grid` type remains optional rather than being created merely to match an old plan.
 
-## [DES-GRID] Grid, Block, Scene Design (planned)
+## [DES-CATALOG] Catalog Design
 
-The grid is a 4-row by N-column model. Each row is a `Chain` in the proto. The design:
+`Catalog::parse` validates bounded gzip input, opens the tar archive, extracts `ModelRepo.xml`, and eagerly parses model/category/parameter metadata. Positional `empty` and `meter` entries remain in each parameter vector because filtering them shifts all later wire indices. The vendor's `tm` attribution is exposed verbatim as `based_on`; this project does not paraphrase it. Tests construct fictional minimal XML/tar fixtures rather than committing a real device catalog.
 
-```rust
-pub struct Grid {
-    chains: Vec<Chain>, // 4 entries, one per row
-}
-pub struct Block {
-    model_hash: u32,
-    column: u32,
-    params: Vec<Param>,
-}
-pub struct Scene {
-    index: u32,
-    label: Option<String>,
-    color: Option<u32>,
-    bypass: Vec<bool>, // per-block
-}
-```
+## [DES-HELPERS] Helper Functions
 
-- **Rows are 0-based in the API, 1-4 on screen.** Every accessor that takes or returns a row documents this in its doc-comment. See [DES-ROW-TRAP].
-- **Splitters and mixers exist only on rows 0 and 2.** The `Grid` accessor for splitter/mixer returns `None` for rows 1 and 3, with a doc-comment explaining why.
-- **`Block` is a view, not an owner.** A `Block` borrows from the `Chain` it came from; it does not own a copy of the params. This keeps preset editing cheap.
-
-## [DES-CATALOG] Catalog Design (planned)
-
-The catalog is parsed from the `ModelRepo` message's `model_repo_payload` `bytes` field - a ~47KB gzip blob. The design:
-
-```rust
-pub struct Catalog {
-    models: HashMap<u32, ModelInfo>,
-}
-pub struct ModelInfo {
-    pub name: String,
-    pub category: String,
-    pub parameters: Vec<ParameterInfo>,
-}
-```
-
-- **Field-level gzip, not frame-level.** The blob is decompressed once with `flate2`, then the inner protobuf is decoded. This is the same field-level gzip pattern the framing layer (110) handles at the frame level.
-- **Covers purchased models and captures, not just factory.** The catalog is the union of factory, purchased, and user-captured models. The GUI uses it to render human-readable block names from the model hash.
-- **Lazy where possible.** If the catalog is large and only a few lookups are needed, the design may expose a `Catalog::lookup(hash)` that decompresses on demand. This is a future optimisation; the initial implementation decodes the whole blob.
-
-## [DES-HELPERS] Helper Functions Design (planned)
-
-Ported from `pyquadcortex` (MIT) with attribution:
-
-- `blocks(preset, row) -> Vec<Block>` - the model instances on a given row.
-- `splits(preset, row) -> Option<(SplitPoint, SplitPoint)>` - the split/mix control points; `None` for rows 1 and 3.
-- `slot_to_position(slot) -> (row, column)` - convert a linear slot index to a (row, column) pair.
-- `position_to_slot(row, column) -> u32` - the inverse.
-
-Each helper's doc-comment surfaces the row-numbering trap. The helpers are free functions, not methods on `Preset`, because they are pure functions of the preset structure and are easier to test in isolation.
+Checked slot conversion, inverse conversion, dB scaling, row validation and `preset_has_block` are implemented. Richer helpers (`splits`, `free_rows`, `row_status`) remain in the roadmap; they should compose the existing typed views instead of introducing a second preset interpretation.
 
 ## [DES-ROW-TRAP] The Row-Numbering Trap (authoritative design note)
 
@@ -154,7 +102,7 @@ These are free functions in `helpers.rs`, not methods, because they are pure con
 ## [DES-LAYERS] Layer Map (cross-reference)
 
 ```text
-Layer 4: Domain (130)      - DeviceKind, Message, Preset, Grid, Block, Scene, Catalog
+Layer 4: Domain (130)      - DeviceKind, Message, Preset, Grid, Block, Catalog; Scene planned
        ^
        |  (cortex_rs::proto::* types, reassembled buffer)
        |
@@ -162,14 +110,14 @@ Layer 3: Proto (120)       - prost-generated types
 Layer 2: Framing (110)     - reassembled buffer production
 ```
 
-This zone is Layer 4. It depends on Layer 3 (proto types) and Layer 2 (the reassembled buffer that `Message::parse` consumes). Nothing above it (session, client, CLI, MCP, GUI) touches the proto types directly; they go through this layer.
+This zone is Layer 4. Protocol layers still use generated types directly where the wire requires them; host-facing rendering and validation use the shared domain views and builders.
 
 ## [DES-TEST] Testing Strategy
 
 - **Unit tests for `Message::parse`** (implemented): body/trailer split, LE `u16` read, short-buffer rejection.
 - **Unit tests for `DeviceKind::vid_pid`** (implemented): the Quad Cortex pair is asserted; the Nano Cortex placeholder is asserted as `0xFFFF`.
-- **Unit tests for the helpers** (planned): `slot_to_position` / `position_to_slot` round-trip; `blocks` / `splits` against a fixture preset.
-- **Catalog parsing test** (planned): against a captured ~47KB blob (fixture, not checked in if it contains Neural DSP strings - see AGENTS.md legal hygiene).
+- **Unit tests for helpers and views** cover slot round-trips, row validation, scaling, occupancy and serialisable projections.
+- **Catalog parsing tests** build fictional minimal XML/tar/gzip fixtures and exercise malformed/bounded input without committing vendor or device data.
 - **Hardware smoke test** (manual runbook): recall a preset, parse it, edit a block, write it back, recall again and confirm the edit landed on the right row. CI has no hardware.
 
 Agent-generated tests are not the sole basis for accepting the row-numbering-trap behaviour; the trap is cross-checked against `pyquadcortex` and a real device.

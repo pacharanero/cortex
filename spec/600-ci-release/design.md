@@ -20,13 +20,13 @@ spec: spec.md
 - [house-style ci.md](https://github.com/marcus-pacharanero/house-style/blob/main/ci.md) - the CI conventions.
 - [house-style distribution.md](https://github.com/marcus-pacharanero/house-style/blob/main/distribution.md) - the release conventions.
 - [500-dx-tooling design](../500-dx-tooling/design.md) - the local gate that mirrors this zone.
-- Owned source: `.github/workflows/ci.yml`, `.github/dependabot.yml`.
+- Owned source: `.github/workflows/{ci,docs,auto-tag}.yml`, `.github/dependabot.yml`.
 
 ## [DES-CI] The CI workflow
 
 ### Behaviour
 
-`.github/workflows/ci.yml` runs on `push` to `main`, on `pull_request`, and on `workflow_dispatch`. It has two jobs: `test` (fmt, clippy, tests) and `reuse` (license lint). Permissions are `contents: read`.
+`.github/workflows/ci.yml` runs on `push` to `main`, `pull_request`, and `workflow_dispatch`. The test job installs protobuf, hidapi/udev and Tauri Linux prerequisites; rejects real device data; runs both feature configurations; and cross-checks host/MCP code for Windows. REUSE is a separate job. The YAML below is schematic; the workflow file is authoritative.
 
 ```yaml
 name: CI
@@ -52,17 +52,17 @@ jobs:
           toolchain: stable
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
-      - name: Install protoc (for prost-build)
-        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+      - name: Install protoc and Linux native dependencies
+        run: sudo apt-get update && sudo apt-get install -y <see workflow>
       - name: Formatting
         run: cargo fmt --all --check
       - name: Clippy (all features)
         run: cargo clippy --all-targets --all-features -- -D warnings
       - name: Clippy (no default features - leaf protocol surface only)
         run: cargo clippy --all-targets --no-default-features -- -D warnings
-      - name: Tests (all features)
+      - name: Tests (workspace default features)
         run: cargo test --all
-      - name: Tests (leaf engine, no default features)
+      - name: Tests (workspace, no default features)
         run: cargo test --all --no-default-features
   reuse:
     name: REUSE licence lint
@@ -87,12 +87,12 @@ Every action is pinned to a specific commit SHA with a `# vX.Y.Z` comment. This 
 
 Dependabot opens PRs to bump these SHAs (the `github-actions` ecosystem in `dependabot.yml`), and the version comment is updated in the same PR.
 
-### Design choice: dual feature paths (all-features + no-default-features)
+### Design choice: dual feature configurations
 
 The crate is a leaf with `default-features = false` building the protocol/domain surface (no `hidapi`). CI runs clippy and tests on **both** paths:
 
-- `--all-features`: the full crate including the `hid` feature (transport, hidapi).
-- `--no-default-features`: the leaf protocol/domain surface only.
+- clippy with `--all-features`: the complete workspace including HID.
+- clippy/tests with `--no-default-features`: a workspace-wide feature cross-check. The focused leaf guarantee remains `cargo check --no-default-features -p cortex-rs`.
 
 This enforces the leaf-crate discipline (AGENTS.md / 001-overview NFR-4): the crate must compile and pass clippy/tests without `hidapi` in the dependency graph. A regression that pulls `hidapi` into the no-default-features path fails CI.
 
@@ -106,7 +106,7 @@ The REUSE license lint is a separate job (`reuse`) rather than a step in `test`.
 
 ### Design choice: `protoc` installed via `apt`
 
-`prost-build` needs `protoc` at build time. CI installs it via `sudo apt-get install -y protobuf-compiler`. The alternative is `arrows-circle/protoc-action` or a prebuilt binary, but the `apt` package is the simplest and most stable on `ubuntu-latest`.
+`prost-build` needs `protoc`; hidapi needs udev development files; and the Tauri workspace member needs WebKitGTK and related Linux libraries. CI installs the complete explicit package set with apt.
 
 ### Alternatives considered
 
@@ -118,9 +118,11 @@ The REUSE license lint is a separate job (`reuse`) rather than a step in `test`.
 
 ### Behaviour
 
-`.github/dependabot.yml` watches two ecosystems:
+`.github/dependabot.yml` watches four ecosystems:
 
-- **cargo**: workspace root + each crate directory (`/`, `/crates/cortex-rs`, `/crates/cortex-cli`, `/crates/cortex-mcp`). Weekly, Monday, with a cooldown (7 days default, 3 days for patch, 7 for minor, 14 for major). Routine minor+patch updates are grouped into one PR.
+- **cargo**: workspace root. Cargo discovers member manifests from the workspace. Weekly with cooldown and routine grouping.
+- **npm**: `/gui`, weekly with cooldown and routine grouping.
+- **pip**: repository root for documentation tooling, weekly with cooldown and routine grouping.
 - **github-actions**: root `/`. Weekly, Monday, 7-day cooldown. Routine minor+patch updates grouped.
 
 ### Design choice: cooldown
@@ -131,9 +133,9 @@ The cooldown (`default-days: 7`, with shorter windows for patch/minor) prevents 
 
 Routine minor and patch updates are grouped (`applies-to: version-updates`) so Dependabot opens one PR for "bump all deps a minor/patch" rather than N PRs. Major updates are not grouped (they need individual review).
 
-### Design choice: per-crate `directories` for cargo
+### Design choice: workspace-root Cargo discovery
 
-Dependabot's cargo ecosystem needs each `Cargo.toml` listed. The workspace root `/` covers the workspace manifest; the per-crate directories cover the crate manifests. This ensures Dependabot sees all dependency declarations.
+One Cargo entry at `/` covers the workspace and member manifests; duplicate per-crate entries would generate overlapping updates.
 
 ### Alternatives considered
 
@@ -149,8 +151,8 @@ The release pipeline is partly wired. `s/version++` and auto-tag exist; the rema
 
 1. **`s/version++`** (zone 500) bumps the canonical Rust workspace version and synchronizes the npm and Tauri manifests in one release commit.
 2. **Auto-tag workflow** detects the version bump on `main` and creates a `vX.Y.Z` tag. Implemented.
-3. **crates.io publish workflow** is gated on the `vX.Y.Z` tag. It runs `cargo publish --dry-run` in CI, then `cargo publish` for `cortex-rs` (and later `cortex-cli`). Requires approval before first use (AGENTS.md).
-4. **`cargo-dist`** is invoked directly by `auto-tag.yml` through `workflow_call`. The first supported target is `x86_64-unknown-linux-gnu`, packaging both `cortex` and `cortex-mcp`; the release also publishes licences/notices, the udev rule and one authoritative `SHA256SUMS`.
+3. **Planned crates.io publish workflow** will run dry-run and publish selected crates only after explicit approval.
+4. **Planned `cargo-dist` workflow** will be invoked directly by `auto-tag.yml` through `workflow_call`. The first supported target is `x86_64-unknown-linux-gnu`, packaging both binaries plus licences/notices, the udev rule and `SHA256SUMS`.
 5. **GitHub Release** is created from the tag with changelog notes (from `cargo-dist` or a `CHANGELOG.md`).
 6. **Public installer** at the docs-site root resolves the latest release, verifies the selected archive against `SHA256SUMS`, installs both binaries and refreshes or prescribes completions.
 
@@ -176,7 +178,7 @@ Per AGENTS.md, publishing to crates.io, cutting a release tag, and any externall
 
 - **Release pipeline is incomplete.** Auto-tag exists; crates.io publish, `cargo-dist`, GitHub Release generation and GUI bundles are not implemented.
 - **No `CHANGELOG.md`.** Changelog generation is undecided (cargo-dist auto vs. hand-maintained per house-style docs.md).
-- **Linux-only CI.** No macOS/Windows matrix; the project is Linux-first and the USB HID transport is the focus.
+- **Linux-native CI.** There is no native macOS/Windows matrix, but host and MCP crates are cross-checked for Windows.
 - **No hardware smoke in CI.** CI has no hardware; the hardware smoke runbook is manual.
 - **No frontend CI.** The GUI exists, but frontend lint/typecheck and Tauri build jobs are not wired into CI.
 - **`s/test` does not run the no-default-features test path.** CI runs `cargo test --all --no-default-features`; the local `s/test` currently runs all-features only (zone 500 gap).

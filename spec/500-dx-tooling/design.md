@@ -12,7 +12,7 @@ spec: spec.md
 
 # 500 DX Tooling - Design
 
-> Design for the repo scripts and lint/format/test config. The interesting part is not the scripts themselves but the contract they enforce: `s/test` mirrors CI exactly, `s/lint` degrades gracefully, and the `s/` scripts run from any working directory.
+> Design for the repo scripts and lint/format/test config. The local gate is explicit about the checks CI adds; the scripts run from any working directory.
 
 ## References
 
@@ -27,7 +27,7 @@ spec: spec.md
 
 The `s/` scripts are executable bash files at the repo root in `s/`. Each carries an SPDX header, a one-line description, `set -euo pipefail`, and a `cd` to the repo root via `git rev-parse --show-toplevel`. They are the canonical entry points so a maintainer or agent does not have to remember the exact incantations.
 
-### Design choice: mirror CI in `s/test`
+### Design choice: a fast local Rust test path
 
 `s/test` runs the same three steps as `.github/workflows/ci.yml`:
 
@@ -37,7 +37,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo test --all
 ```
 
-If CI adds a step (e.g. `cargo test --all --no-default-features`, which CI already runs), the local script adds it in the same PR. The contract is: a green local run means a green CI run.
+CI additionally runs no-default workspace clippy/tests, real-device-data lint, Windows host-boundary checks and platform setup. `s/lint` already adds the device-data lint and a no-HID crate check. The remaining parity gap is tracked rather than hidden.
 
 ### Design choice: `reuse` is optional in `s/lint`
 
@@ -45,13 +45,13 @@ If CI adds a step (e.g. `cargo test --all --no-default-features`, which CI alrea
 
 ```sh
 if command -v reuse >/dev/null 2>&1; then
-    use lint
+    reuse lint
 else
     echo "s/lint: 'reuse' not installed; skipping SPDX lint (pip install reuse)" >&2
 fi
 ```
 
-The message goes to stderr (not stdout), so it does not corrupt a script's output. The script does not fail when `reuse` is missing; the fmt + clippy gates are enough to catch most issues, and `reuse` runs in CI regardless.
+The message goes to stderr so it does not corrupt output. The script does not fail when `reuse` is missing so a contributor can run the Rust checks, but maintainers must install REUSE before committing and CI always enforces it.
 
 ### Design choice: `cd` to repo root
 
@@ -100,7 +100,7 @@ This is the house-style rule (tauri-gui.md): the script is the canonical entry p
 
 ### `s/version++`
 
-Implemented for the Rust workspace and release commit flow. Outstanding: update and verify `gui/package.json` and `tauri.conf.json` in the same commit.
+Implemented for the Rust workspace, npm package/lock, Tauri configuration and release commit flow. A future CI drift check can enforce equality outside release runs.
 
 A thin bash script works for `Cargo.toml` (toml-edit) and `gui/package.json` (jq). If the parsing gets complex, this is the one script that might justify an `xtask` Rust binary.
 

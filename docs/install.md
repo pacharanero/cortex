@@ -2,27 +2,27 @@
 
 ## Current Preview Requirements
 
-- **Linux.** macOS and Windows are not tested. Nothing in the crate is Linux-specific except the device-permissions step below, but only Linux has been exercised.
+- **Linux.** The leaf crate is portable, but the installed CLI/MCP host boundary is currently supported only on Linux. Windows named pipes and native Windows/macOS lifecycle and hardware paths remain unimplemented or unverified.
 - **Rust** (stable). Install via [rustup](https://rustup.rs/).
-- **`protoc`**, the Protocol Buffers compiler. The build script compiles the recovered schema with it.
+- **A C build toolchain, `pkg-config`, libudev development files, and `protoc`.** The CLI's hidapi backend needs the native USB/HID prerequisites; the build script needs the Protocol Buffers compiler.
 - A **Quad Cortex**, connected by USB and powered on.
 
 === "Arch / CachyOS"
 
     ```sh
-    sudo pacman -S protobuf
+    sudo pacman -S --needed base-devel pkgconf protobuf systemd
     ```
 
 === "Debian / Ubuntu"
 
     ```sh
-    sudo apt install protobuf-compiler
+    sudo apt install build-essential pkg-config libudev-dev protobuf-compiler
     ```
 
 === "Fedora"
 
     ```sh
-    sudo dnf install protobuf-compiler
+    sudo dnf install gcc pkgconf-pkg-config systemd-devel protobuf-compiler
     ```
 
 ## 1. Grant access to the device
@@ -55,7 +55,7 @@ Then **unplug and replug the unit**.
 
 ## 2. Quit Cortex Control
 
-The device grants its HID interface **exclusively**. If Neural DSP's Cortex Control is running - including in a VM with the device passed through - it holds that interface and `cortex` cannot open it. Quit it first.
+The protocol requires one effective HID owner, but the OS/device does not enforce it safely: a second process may open successfully and silently break the first owner's next request. If Neural DSP's Cortex Control is running, including in a VM with USB passthrough, quit it first.
 
 The same applies in reverse: while `cortex` holds a session, Cortex Control will not connect.
 
@@ -115,7 +115,7 @@ autoload -Uz compinit && compinit
 cortex device version
 ```
 
-You should see your unit's firmware and serial number:
+You should see your unit's firmware and serial number. The values below are fictional stand-ins; only the output shape is representative:
 
 ```text
 device_type                QC
