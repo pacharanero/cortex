@@ -147,15 +147,16 @@ Dependabot's cargo ecosystem needs each `Cargo.toml` listed. The workspace root 
 
 The release pipeline is partly wired. `s/version++` and auto-tag exist; the remaining plan follows house-style distribution.md:
 
-1. **`s/version++`** (zone 500) bumps the canonical Rust workspace version in one release commit. GUI manifest synchronization remains outstanding.
+1. **`s/version++`** (zone 500) bumps the canonical Rust workspace version and synchronizes the npm and Tauri manifests in one release commit.
 2. **Auto-tag workflow** detects the version bump on `main` and creates a `vX.Y.Z` tag. Implemented.
 3. **crates.io publish workflow** is gated on the `vX.Y.Z` tag. It runs `cargo publish --dry-run` in CI, then `cargo publish` for `cortex-rs` (and later `cortex-cli`). Requires approval before first use (AGENTS.md).
-4. **`cargo-dist`** is gated on the `vX.Y.Z` tag. It builds distributable `cortex` binaries for the supported targets (Linux-first) and attaches them to the GitHub Release.
+4. **`cargo-dist`** is invoked directly by `auto-tag.yml` through `workflow_call`. The first supported target is `x86_64-unknown-linux-gnu`, packaging both `cortex` and `cortex-mcp`; the release also publishes licences/notices, the udev rule and one authoritative `SHA256SUMS`.
 5. **GitHub Release** is created from the tag with changelog notes (from `cargo-dist` or a `CHANGELOG.md`).
+6. **Public installer** at the docs-site root resolves the latest release, verifies the selected archive against `SHA256SUMS`, installs both binaries and refreshes or prescribes completions.
 
-### Design choice: tag-triggered cascade
+### Design choice: workflow-call release cascade
 
-The tag is the single trigger. `s/version++` creates the commit; the auto-tag workflow creates the tag; the tag triggers publish + `cargo-dist` + the GitHub Release. This keeps the release externally visible and reproducible: a tag is a permanent artifact; a commit message is not.
+`s/version++` creates the commit; the auto-tag workflow creates the tag and directly invokes the release workflow through `workflow_call`. The tag is the permanent release identity, but its `GITHUB_TOKEN` creation event is not relied upon to trigger another workflow because GitHub suppresses that recursion.
 
 ### Design choice: approval before first publish
 
@@ -163,7 +164,7 @@ Per AGENTS.md, publishing to crates.io, cutting a release tag, and any externall
 
 ### Design choice: `cargo-dist` for binaries
 
-`cargo-dist` produces distributable binaries from a release tag. For the `cortex` CLI, it builds Linux binaries and attaches them to the GitHub Release as archives. The cross-platform Tauri GUI will use Tauri's bundler or an integrated release path for Linux, Windows and macOS once those hosts are supported and verified.
+`cargo-dist` produces distributable binaries from a release tag. The product surface is the pair: `cortex` owns the held USB session and `cortex-mcp` gives local agent harnesses a bounded stdio adapter to it. The first preview is Linux x86_64 only, matching the actual Unix-socket implementation and hardware evidence. Linux aarch64 follows validation; macOS and Windows wait for a cross-platform host boundary and hardware testing. The Tauri GUI will use Tauri's bundler once its backend is connected.
 
 ### Alternatives considered
 

@@ -18,14 +18,15 @@ The full local gate, mirroring CI: `cargo fmt --check`, clippy with `-D warnings
 
 ## `s/install`
 
-Install the `cortex` CLI from this checkout onto your `PATH`.
+Install the `cortex` CLI and `cortex-mcp` server from this checkout onto your `PATH`.
 
 Needed because the obvious command does not work here: the workspace root has no `[package]`, so `cargo install --path .` fails. The binary lives in `crates/cortex-cli`.
 
-- `s/install` - install `cortex`
+- `s/install` - install `cortex` and `cortex-mcp`
+- `s/install --cli-only` - install only `cortex`
 - `s/install --force` - reinstall over an existing copy
 - `s/install --debug` - faster build, slower runtime
-- `s/install --mcp` - also install the non-persistent `cortex-mcp` tool server
+- `s/install --mcp` - compatibility alias; MCP is installed by default
 
 Also preflights the udev rule and prints the fix if it is missing.
 

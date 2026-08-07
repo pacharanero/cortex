@@ -17,8 +17,8 @@ edition = "2024"
 rust-version = "1.85"
 authors = ["Dr Marcus Baw"]
 license = "AGPL-3.0-or-later"
-repository = "https://github.com/pacharanero/cortex-rs"
-homepage = "https://github.com/pacharanero/cortex-rs"
+repository = "https://github.com/pacharanero/cortex"
+homepage = "https://pacharanero.github.io/cortex/"
 description = "Unofficial, Linux-first Cortex Control USB HID toolkit for the Neural DSP Quad Cortex; Nano Cortex support is planned."
 
 [workspace.dependencies]

@@ -27,7 +27,7 @@ tags: ["dx", "tooling", "lint", "format", "test", "scripts", "editorconfig"]
 
 A maintainer or agent running `s/test` locally should get the same gate CI runs: `cargo fmt --check`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test --all`, and `reuse lint`. If the local gate is green, CI is green. The `s/` scripts are the canonical entry point so no one has to remember the exact incantations.
 
-This zone owns the scripts, the `.editorconfig`, and the lint/format config. The CI workflow itself is owned by zone 600; this zone mirrors it locally. `s/gui-dev` and `s/version++` exist. The version script still needs to synchronize the now-existing GUI manifests.
+This zone owns the scripts, the `.editorconfig`, and the lint/format config. The CI workflow itself is owned by zone 600; this zone mirrors it locally. `s/gui-dev` and `s/version++` exist. The version script synchronizes the Rust workspace, npm lock/package metadata and Tauri configuration in one release commit.
 
 ## Verification Basis
 
@@ -38,7 +38,7 @@ This zone owns the scripts, the `.editorconfig`, and the lint/format config. The
 | `.editorconfig` enforces UTF-8, LF, 4-space indent (2 for md/yaml/json), final newline | Implemented | `.editorconfig` at repo root |
 | `cargo fmt` and `cargo clippy` run in CI | Implemented | `.github/workflows/ci.yml` (owned by zone 600) |
 | `s/gui-dev` | Implemented | Runs the Tauri dev server from the repository-independent entry point |
-| `s/version++` | Partial | Release script exists; GUI manifest synchronization remains outstanding |
+| `s/version++` | Implemented | Release script synchronizes Cargo, npm and Tauri versions, runs the Rust and frontend gates, then lands one release commit |
 | Markdown lint | Planned | Not yet wired |
 
 ## User Stories
@@ -128,7 +128,7 @@ Maintainers and AI coding agents running the local gate before a commit.
 
 ## Future
 
-- **`s/version++` GUI synchronization.** Extend the implemented release script to update and verify `gui/package.json` and `gui/src-tauri/tauri.conf.json` alongside the canonical workspace version.
+- **`s/version++` GUI synchronization.** Implemented for `gui/package.json`, `gui/package-lock.json` and `gui/src-tauri/tauri.conf.json`; a future CI drift check can verify they match outside release runs.
 - **Markdown lint config.** A `.markdownlint.json` or equivalent enforcing the house-style prose rules (no hard-wrap, heading style, etc.). Will run in `s/lint` and CI.
 - **Pre-commit hook scope.** `.githooks/pre-commit` should run a fast subset (fmt + clippy, not the full test suite) so the commit is not blocked on a long test run. `s/test` remains the full pre-push gate.
 

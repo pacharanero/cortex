@@ -37,14 +37,14 @@ This zone owns the thin MCP tool wrappers and enforces the shared safety surface
 
 | Claim | Status | Evidence |
 | --- | --- | --- |
-| Shared save policy (explicit confirmation, absolute factory refusal, configured scratch ranges, pre-edit preparation/backup, stale-target refusal) | Implemented, fake-session tested, and prepare/edit/commit ordering hardware-verified through the CLI; PROT-009.5/.6 remain open | `crates/cortex-rs/src/safety.rs`; ENG-006.3 |
+| Shared save policy (explicit confirmation, absolute factory refusal, configured scratch ranges, pre-edit preparation/backup, stale-target refusal) | Implemented, fake-session tested, and prepare/edit/commit ordering hardware-verified through the CLI; MCP save remains deliberately absent | `crates/cortex-rs/src/safety.rs`; ENG-006.3 |
 | MCP tool descriptions and single owning process | Implemented and hardware-verified | `crates/cortex-mcp/src/server.rs`; 2026-08-06 hardware smoke |
 | Read, transient and working-copy tiers | Implemented and hardware-verified | `crates/cortex-mcp/src/server.rs`; official-client process test and hardware smoke |
 | Destructive tier | Deliberately absent | Blocked on PROT-009.1/.5/.6/.9 |
 | Bounded official-SDK stdio transport | Implemented and tested | `crates/cortex-mcp/src/transport.rs`; stable `rmcp` 3.1.0 remains affected by upstream #1030 |
-| The `rmcp` crate is the MCP server framework | Provisional | Pinned in `Cargo.toml`; not yet exercised against a real MCP client |
+| The `rmcp` crate is the MCP server framework | Implemented | Process-tested with the official SDK client and hardware-smoked through that client |
 
-Everything in the MCP host remains provisional until the server is implemented and exercised against a real Quad Cortex. The shared prepared-save ordering is now hardware-verified through the CLI, but MCP enforcement is absent and the open reconnect, stale-generation recovery and file-correlation gaps prevent exposing a destructive save tool in the first milestone.
+The non-persistent MCP host is hardware-verified against a real Quad Cortex through the official SDK client. Persistent save remains absent until the MCP token registry, host-configured scratch policy and their own hardware smoke exist.
 
 ## Next Milestone
 
@@ -128,6 +128,7 @@ AI coding agents editing patches via MCP, and the maintainers who gate what an a
 | FR-41 | Every tool delegates through the typed daemon request contract to the sole held `QuadCortex` session. | Must Have |
 | FR-42 | The server runs on stdio (the MCP transport) via `rmcp`. | Must Have |
 | FR-43 | The server logs safety-relevant events (refused save, slot backup, scratch-range override) to stderr. | Should Have |
+| FR-44 | When no daemon socket exists, the installed MCP server starts the sibling `cortex session` owner before serving stdio. It never silently replaces a running incompatible daemon, and concurrent starts converge on the daemon's socket claim. | Should Have |
 
 ### Non-Functional Requirements
 
@@ -154,6 +155,7 @@ AI coding agents editing patches via MCP, and the maintainers who gate what an a
 - [x] The server runs on bounded stdio via `rmcp` and answers a real official-SDK MCP client.
 - [x] All tools delegate through the daemon to `QuadCortex`; none reimplement protocol or domain logic.
 - [x] The non-persistent tool surface passed hardware smoke on 2026-08-06 against CorOS 4.0.1.
+- [ ] A normally installed `cortex-mcp` can start from an agent harness without a separate manual `cortex session start`; startup writes no non-MCP data to stdout.
 
 ## Non-Goals
 

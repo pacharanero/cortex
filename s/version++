@@ -11,10 +11,9 @@
 # THIS PUSHES. On an unprotected repo it pushes to main directly; where branch
 # protection is detected it opens a release PR instead.
 #
-# Adapted from ~/code/house-style/examples/s/version++. Every crate in the
-# workspace takes `version.workspace = true`, so the single version in the root
-# Cargo.toml is the only one to bump. When the Tauri app lands, its
-# package.json and tauri.conf.json versions have to move in the same commit.
+# Adapted from ~/code/house-style/examples/s/version++. Every Rust crate takes
+# `version.workspace = true`; the GUI's npm and Tauri manifests are synchronized
+# to that canonical workspace version in the same release commit.
 
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
@@ -63,6 +62,10 @@ done
 
 command -v cargo-set-version >/dev/null 2>&1 ||
 	{ echo "cargo-set-version is missing. Install it: cargo install cargo-edit" >&2; exit 1; }
+command -v npm >/dev/null 2>&1 ||
+	{ echo "npm is missing; it is required to synchronize the GUI release version." >&2; exit 1; }
+command -v node >/dev/null 2>&1 ||
+	{ echo "node is missing; it is required to synchronize the Tauri release version." >&2; exit 1; }
 
 if [[ "$(git branch --show-current)" != "main" ]]; then
 	echo "Refusing to release: check out main first." >&2
@@ -95,6 +98,7 @@ landing_mode="$(detect_landing_mode)"
 # workflow runs is how a repo ends up shipping something CI would have caught.
 echo "version++: running the full gate ..."
 s/lint
+(cd gui && npm run check)
 
 # --- bump -----------------------------------------------------------------
 
@@ -104,6 +108,18 @@ cargo generate-lockfile
 version="$(awk -F\" '/^version = / { print $2; exit }' Cargo.toml)"
 [[ -n "$version" ]] ||
 	{ echo "Could not read the version from Cargo.toml after the bump." >&2; exit 1; }
+
+(
+	cd gui
+	npm version "$version" --no-git-tag-version >/dev/null
+)
+node -e '
+  const fs = require("fs");
+  const path = "gui/src-tauri/tauri.conf.json";
+  const config = JSON.parse(fs.readFileSync(path, "utf8"));
+  config.version = process.argv[1];
+  fs.writeFileSync(path, `${JSON.stringify(config, null, 2)}\n`);
+' "$version"
 
 # Only when the repo has adopted git-cliff; skipped silently otherwise so this
 # script works before that decision is made.
@@ -115,7 +131,7 @@ if [[ "$landing_mode" == "pr" ]]; then
 	git switch -c "release/v${version}"
 fi
 
-git add Cargo.toml Cargo.lock
+git add Cargo.toml Cargo.lock gui/package.json gui/package-lock.json gui/src-tauri/tauri.conf.json
 [[ -f CHANGELOG.md ]] && git add CHANGELOG.md
 git commit -m "chore(release): v${version}"
 

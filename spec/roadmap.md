@@ -233,8 +233,15 @@ Complete. See [completed.md](completed.md).
 
 ### CLI-004: Distribution
 
+**Decision (2026-08-07):** the primary user channel is a Linux x86_64 preview containing both `cortex` and `cortex-mcp`, installed without Rust or `protoc`, followed by one guided udev and agent-harness setup. Local stdio remains the MCP transport and the existing daemon remains the sole USB owner. Do not add a remote MCP service or systemd dependency. Homebrew/crates.io are secondary developer channels; add a `.deb` only after the release archive has user evidence, because package-level udev installation is its main additional value.
+
 - [ ] **CLI-004.3**: crates.io publish workflow (PROT layers must be complete first)
-- [ ] **CLI-004.4**: cargo-dist release pipeline (archives + installers)
+- [ ] **CLI-004.4**: Linux x86_64 cargo-dist release pipeline. Publish `cortex` and `cortex-mcp` together as the supported product surface, attach `SHA256SUMS`, licences/notices and the udev rule, and expose a checksum-verifying `install.sh` from the docs-site root. The release workflow must be `workflow_call`-able from `auto-tag.yml`; generated actions must be replaced with verified SHA pins. Add Linux aarch64 only after build and HID behaviour are verified; defer macOS/Windows while the host boundary is Unix-only
+- [x] **CLI-004.7**: First agent-onboarding slice. The source installer now installs both binaries by default, stale MCP-stub claims are removed, package repository/homepage metadata names the real project, and `docs/agent-setup.md` gives current Claude Code and generic stdio registration with an absolute binary path. `s/version++` synchronizes the existing npm and Tauri manifest versions
+- [ ] **CLI-004.8**: Self-starting MCP lifecycle. If no daemon socket exists, `cortex-mcp` locates its sibling `cortex` binary and starts `cortex session`; concurrent MCP launches converge on the socket claim. A protocol mismatch remains an explicit stop/restart refusal. Add request-based daemon idle shutdown so abandoned agent sessions eventually release the device without coupling ownership to one MCP process
+- [ ] **CLI-004.9**: Guided `cortex setup` for non-developers. Diagnose architecture, USB presence, udev installation/effective hidraw access, Cortex Control contention, daemon health and MCP registration. Support Claude Code first with an absolute stdio command; print harness-specific configuration for others. Privilege escalation must be explicit and narrowly scoped
+- [ ] **CLI-004.10**: Test the published install path in a clean Linux environment: checksum verification, both binaries on `PATH`, completions, MCP process discovery, upgrade replacement of both binaries, and actionable no-device/udev diagnostics
+- [ ] **CLI-004.11**: Add a `.deb` only after user demand is established. Its purpose is to install both binaries and the udev rule in conventional system locations; RPM remains demand-led rather than default scope
 
 ### CLI-007: Shared machine contract
 
@@ -268,6 +275,7 @@ The reason this project has an MCP server at all is that an agent can do things 
 - [x] **MCP-002.5**: Official `rmcp` stdio server with modern discovery, structured tool results, a custom 16 MiB bounded reader, and an eight-request aggregate cap held through response transmission. Required because stable `rmcp` 3.1.0 still contains the unbounded read tracked by upstream issue #1030 / PR #1049. Process-tested with the official client
 - [ ] **MCP-002.6**: Add typed daemon error codes so model-correctable failures such as invalid rows, DSP refusal and reconnecting survive the socket boundary without parsing human-readable strings
 - [ ] **MCP-002.7**: Replace raw routing port integers with typed input/output enums and add post-write read-back for bypass, remove, routing, split and parameter writes. The device accepts meaningless output IDs silently, while those daemon acknowledgements currently prove only that a write was sent
+- [ ] **MCP-002.8**: Start a missing compatible held daemon through the installed sibling `cortex` binary before serving stdio, without ever opening HID in `cortex-mcp`. Preserve stdout exclusively for MCP frames, surface startup diagnostics on stderr, and process-test missing-daemon, concurrent-start and protocol-skew cases
 
 ## GUI (GUI)
 
@@ -321,7 +329,7 @@ Improve on the Cortex Control appearance while staying familiar enough to naviga
 
 - [ ] **GUI-004.1**: Reuse the MCP safety surface (factory refusal, configured scratch range, pre-edit target preparation/backup, trap-surfacing) for save actions. If an occupied target was not prepared before the grid became dirty, offer an empty scratch slot rather than recalling it and losing the edits
 - [ ] **GUI-004.2**: Label hardware-verified vs provisional surfaces in the UI. Model this as a typed capability matrix (`confirmed-readable`, `confirmed-writable`, `inferred`, `unsupported`, `unverified`) whose default is tested to make no unsupported claims, rather than as ad-hoc copy ([prior-art.md](prior-art.md#the-idea-most-worth-stealing))
-- [ ] **GUI-004.3**: `s/version++` bumps `gui/package.json` and `tauri.conf.json` with the canonical version. `deskop-nano-cortex` has a working multi-manifest sync script and CI drift mode to use as an architectural reference ([prior-art.md](prior-art.md#for-eng-004-and-eng-001))
+- [x] **GUI-004.3**: `s/version++` synchronizes `gui/package.json`, `gui/package-lock.json` and `tauri.conf.json` with the canonical workspace version in the same release commit
 - [ ] **GUI-004.4**: `docs/gui/` explains how to use and run the GUI
 
 ## Engineering (ENG)
@@ -329,7 +337,7 @@ Improve on the Cortex Control appearance while staying familiar enough to naviga
 ### ENG-001: DX and testing
 
 - [x] **ENG-001.1**: `s/gui-dev`
-- [ ] **ENG-001.2**: `s/version++` exists (CLI-004.1). Outstanding: teach it the GUI manifests - `gui/package.json` and `gui/src-tauri/tauri.conf.json` must move in the same release commit once they exist
+- [x] **ENG-001.2**: `s/version++` synchronizes the canonical workspace version into `gui/package.json`, `gui/package-lock.json` and `gui/src-tauri/tauri.conf.json` before creating the release commit
 - [ ] **ENG-001.3**: `s/install-hooks` and `.githooks/pre-commit`
 - [ ] **ENG-001.4**: Markdown lint
 

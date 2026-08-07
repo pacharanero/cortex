@@ -1,6 +1,6 @@
 # Install
 
-## Requirements
+## Current Preview Requirements
 
 - **Linux.** macOS and Windows are not tested. Nothing in the crate is Linux-specific except the device-permissions step below, but only Linux has been exercised.
 - **Rust** (stable). Install via [rustup](https://rustup.rs/).
@@ -59,7 +59,7 @@ The device grants its HID interface **exclusively**. If Neural DSP's Cortex Cont
 
 The same applies in reverse: while `cortex` holds a session, Cortex Control will not connect.
 
-## 3. Install
+## 3. Install the preview
 
 ```sh
 git clone https://github.com/pacharanero/cortex
@@ -67,7 +67,7 @@ cd cortex
 s/install
 ```
 
-`s/install` exists because the obvious command does not work here: this repo is a Cargo workspace whose root manifest has no `[package]`, so `cargo install --path .` fails. The binary lives in `crates/cortex-cli`, and the script points cargo at it.
+`s/install` currently builds and installs both `cortex` and `cortex-mcp` from the checkout. It exists because the obvious command does not work here: this repo is a Cargo workspace whose root manifest has no `[package]`, so `cargo install --path .` fails. Prebuilt Linux release archives and a checksum-verifying installer are the next distribution milestone.
 
 It also checks for the udev rule and prints the fix if it is missing.
 
@@ -77,12 +77,12 @@ It also checks for the udev rule and prints the fix if it is missing.
     s/install --force     # reinstall over an existing copy
     s/install --debug     # faster build, slower runtime
     s/install --root ~/.local
-    s/install --mcp       # also install the non-persistent cortex-mcp server
+    s/install --cli-only  # omit cortex-mcp
     ```
 
     Any other flags are passed through to `cargo install`.
 
-    `cortex-mcp` is currently a stub that starts and exits without serving any tools. Installing it is only useful for development.
+    `--mcp` remains accepted as a compatibility alias, but MCP is installed by default.
 
 ## 4. Shell completions
 
@@ -129,3 +129,5 @@ bootloader_firmware        d119
 If instead you get `device not found`, work through: is it plugged in and powered on, is Cortex Control quit, did you replug after adding the udev rule.
 
 Next: the [walkthrough](walkthrough.md).
+
+To use the device from Claude Code or another local MCP harness, continue to [Agent setup](agent-setup.md).

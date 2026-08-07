@@ -28,7 +28,7 @@ tags: ["ci", "release", "github-actions", "dependabot", "cargo-dist", "crates-io
 
 CI runs the full gate on every push and PR: formatting, clippy (all-features and no-default-features, both with `-D warnings`), tests (all-features and no-default-features), and the REUSE license lint. A green CI run is the gate to merge. The workflow uses pinned action SHAs with `# vX.Y.Z` comments (house-style), cached dependencies, and the minimal permissions (`contents: read`).
 
-Release is only partly wired. `s/version++` and the auto-tag workflow exist; crates.io publishing, `cargo-dist`, GitHub Release generation and GUI bundles do not. All release actions are externally visible and require explicit approval before first use.
+Release is only partly wired. `s/version++` and the auto-tag workflow exist; crates.io publishing, `cargo-dist`, GitHub Release generation and GUI bundles do not. The first binary release is deliberately Linux x86_64 and installs the `cortex` and `cortex-mcp` pair; other host platforms remain unsupported until their daemon boundary and hardware behaviour are verified. All release actions are externally visible and require explicit approval before first use.
 
 ## Verification Basis
 
@@ -95,9 +95,11 @@ Maintainers merging PRs, and the downstream consumers who install the crate or t
 | ID | Requirement | Priority |
 | --- | --- | --- |
 | FR-21 | crates.io publish workflow: gated on the release tag, publishes `cortex-rs` (and later `cortex-cli`) to crates.io. **Requires approval before first use** (AGENTS.md). | Must Have |
-| FR-22 | `cargo-dist` release pipeline: gated on the release tag, builds distributable `cortex` binaries for the supported targets and attaches them to the GitHub release. | Must Have |
-| FR-23 | The release tag triggers a GitHub Release with changelog notes. | Should Have |
+| FR-22 | `cargo-dist` release pipeline: invoked from `auto-tag.yml` through `workflow_call`, builds Linux x86_64 `cortex` and `cortex-mcp` artifacts, and attaches them to the GitHub release. | Must Have |
+| FR-23 | The auto-tag workflow invokes the release workflow, which creates a GitHub Release for that tag with changelog notes. | Should Have |
 | FR-24 | Dependabot updates for `github-actions` are grouped and pinned to SHAs with version comments (matching the existing convention). | Should Have |
+| FR-25 | Every binary release publishes one authoritative `SHA256SUMS` covering its artifacts. | Must Have |
+| FR-26 | A docs-root `install.sh` fetches the latest supported Linux archive, verifies it against `SHA256SUMS`, installs both binaries without requiring Rust or `protoc`, and refreshes or prescribes shell completions. | Must Have |
 
 ### Non-Functional Requirements
 
@@ -118,8 +120,9 @@ Maintainers merging PRs, and the downstream consumers who install the crate or t
 - [x] CI installs `protoc` and caches cargo.
 - [x] Auto-tag workflow produces a `vX.Y.Z` tag on a version bump.
 - [ ] crates.io publish workflow publishes on the release tag (requires approval before first use).
-- [ ] `cargo-dist` produces distributable `cortex` binaries on the release tag.
+- [ ] `cargo-dist` produces distributable Linux x86_64 `cortex` and `cortex-mcp` binaries on the release tag.
 - [ ] The release tag produces a GitHub Release with changelog notes.
+- [ ] The release publishes `SHA256SUMS`, and the public installer refuses an artifact that does not match it.
 
 ## Non-Goals
 
@@ -141,8 +144,8 @@ Maintainers merging PRs, and the downstream consumers who install the crate or t
 
 - **Auto-tag details.** The trigger could be a push to `main` that changes the `Cargo.toml` version, or an explicit `s/version++` commit message. The tag format is `vX.Y.Z` (matching `cargo` and `cargo-dist` conventions).
 - **crates.io first publish.** Requires `cargo login` with a token, `cargo publish --dry-run` in CI, and the maintainer's approval (AGENTS.md). The crate name is `cortex-rs`; the CLI binary crate is `cortex-cli`.
-- **`cargo-dist`.** Produces distributable binaries for the `cortex` CLI (and later the Tauri GUI as an `.AppImage`/`.deb`). The targets are Linux-first (`x86_64-unknown-linux-gnu`, maybe `aarch64`); macOS/Windows are future.
-- **Changelog generation.** `cargo-dist` can generate changelogs from commit history; alternatively, a `CHANGELOG.md` kept by hand follows house-style docs.md.
+- **`cargo-dist`.** Produces distributable `cortex` and `cortex-mcp` binaries (and later the Tauri GUI through its own bundler). The first target is `x86_64-unknown-linux-gnu`; Linux aarch64, macOS and Windows follow only after their host and hardware paths are verified.
+- **Changelog generation.** Add the house-style `git-cliff` configuration so `s/version++` regenerates `CHANGELOG.md` before the release commit is tagged.
 
 ## Glossary
 

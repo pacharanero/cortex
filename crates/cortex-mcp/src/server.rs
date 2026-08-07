@@ -106,7 +106,7 @@ impl ServerHandler for CortexMcp {
                 Implementation::new("cortex-mcp", env!("CARGO_PKG_VERSION"))
                     .with_title("Quad Cortex MCP server")
                     .with_description("Provisional, non-persistent live-grid tools for the Neural DSP Quad Cortex")
-                    .with_website_url("https://github.com/pacharanero/cortex-rs"),
+                    .with_website_url("https://github.com/pacharanero/cortex"),
             )
             .with_instructions("Requires `cortex session start`. Tools may recall presets or alter the unsaved working grid, but this server exposes no save or delete operation.")
     }

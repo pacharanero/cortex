@@ -21,10 +21,10 @@ patch editing, and a cross-platform Tauri desktop GUI.
 **Pre-alpha and actively changing.** The Quad Cortex core and CLI are usable on
 Linux and passed a 37-check hardware smoke against CorOS 4.0.1, including live
 state, grid editing, prepared save, recall and delete. This is not a finished
-editor: much of the wider device API remains unimplemented, reconnect and save
-correctness gaps remain tracked, and releases are not yet distributed.
+editor: much of the wider device API remains unimplemented, some reconnect and
+file-operation edge-case coverage remains tracked, and releases are not yet distributed.
 
-The MCP server exposes hardware-verified read, recall, scene and unsaved live-grid editing tools through the held-session daemon; it deliberately exposes no save or delete tool. The Tauri GUI has an
+The MCP server exposes hardware-verified read, recall, scene and unsaved live-grid editing tools through the held-session daemon; it deliberately exposes no save or delete tool. Source installation now installs both binaries and the [agent setup guide](https://pacharanero.github.io/cortex/agent-setup/) covers Claude Code and generic stdio harnesses. Prebuilt Linux releases remain the next distribution milestone. The Tauri GUI has an
 interactive read-only, fixture-backed first draft, but it is not connected to
 the device. Linux is the only hardware-verified host today; the GUI is intended
 to support Linux, Windows and macOS once those platforms are implemented and

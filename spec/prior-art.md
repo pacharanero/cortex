@@ -99,7 +99,7 @@ That is portable to GUI-004.2 and would sharpen the MCP tool descriptions too.
 
 It has a **working traceability checker** - the thing our ENG-004 describes but has never started. It resolves both the document and the node id, fails CI on a broken link, warns on a missing back-reference, and carries an explicit extra-files list so configs and workflows are covered rather than only source. Porting it is independent of the GUI and could happen at any time.
 
-It also has version-sync across four manifests with a check mode wired into CI as a drift job - which is our outstanding "teach `s/version++` the GUI manifests" - and a hardware smoke runbook with a fixed evidence block (date, firmware, app version, OS, per-step pass/fail).
+It also has version-sync across four manifests with a check mode wired into CI as a drift job - our release script now synchronizes its GUI manifests, while the equivalent CI drift check remains useful future work - and a hardware smoke runbook with a fixed evidence block (date, firmware, app version, OS, per-step pass/fail).
 
 ### What it says about the Nano Cortex, and one contradiction
 

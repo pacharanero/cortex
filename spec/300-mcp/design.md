@@ -97,11 +97,15 @@ The traps are not errors - the device does not refuse a wrong-row edit or a too-
 
 ### Behaviour
 
-The first MCP milestone opens no `Transport`. It connects to the held `cortex session` daemon through a reusable host boundary extracted from `cortex-cli::connect`. Every tool call uses that typed request client, so the daemon remains the one process holding HID.
+The MCP process opens no `Transport`. It connects to the held `cortex session` daemon through the reusable host boundary. Every tool call uses that typed request client, so the daemon remains the one process holding HID. For distribution, a missing socket should cause the MCP process to locate the installed sibling `cortex` binary and invoke `cortex session start` before opening stdio; an existing incompatible daemon remains an explicit refusal rather than being killed behind another user's back.
 
 ### Design choice: reuse the daemon, do not become another owner
 
-`cortex-cli/src/connect.rs` currently contains both daemon ownership and the request client. Before MCP tool wiring, extract the host-facing request/lifecycle boundary into a reusable non-leaf crate or module. `cortex-rs` remains free of host IPC and async-runtime dependencies. The MCP process constructs one host client at startup, fails clearly when no compatible daemon is available, and serves stdio through `rmcp`.
+`cortex-host` owns the extracted host-facing request boundary; `cortex-rs` remains free of host IPC and async-runtime dependencies. The MCP process constructs one host client at startup and serves stdio through `rmcp`. Today it fails clearly when no compatible daemon is available; the distribution lifecycle adds missing-daemon startup without changing that ownership boundary.
+
+### Design choice: agent-triggered daemon lifecycle, not systemd
+
+The installed stdio server starts a missing daemon on demand. The daemon is not a child whose lifetime is tied to one MCP connection: CLI, GUI and another harness may share it. A request-based idle timeout will eventually release the device after all host activity stops. This avoids a systemd user-service dependency and its installation/environment complexity while preserving one stable HID owner.
 
 ### Design choice: no per-tool-call reconnect
 

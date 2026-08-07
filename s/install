@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: 2026 Dr Marcus Baw
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
-# Install the `cortex` CLI from this checkout onto your PATH.
+# Install `cortex` and `cortex-mcp` from this checkout onto your PATH.
 #
 # This repo is a Cargo WORKSPACE whose root manifest has no [package], so
 # `cargo install --path .` does not work here - the binary lives in
@@ -13,8 +13,9 @@
 # $CARGO_INSTALL_ROOT). --locked uses the committed Cargo.lock so the install
 # is reproducible.
 #
-#   s/install                # install `cortex`
-#   s/install --mcp          # also install `cortex-mcp` (scaffold, see below)
+#   s/install                # install `cortex` and `cortex-mcp`
+#   s/install --cli-only     # install only `cortex`
+#   s/install --mcp          # compatibility alias; MCP is installed by default
 #   s/install --force        # reinstall over an existing copy
 #   s/install --debug        # faster build, slower runtime
 #   s/install --root ~/.local
@@ -30,12 +31,13 @@ cd "$(git rev-parse --show-toplevel)"
 
 UDEV_RULE=/etc/udev/rules.d/70-quadcortex.rules
 
-install_mcp=false
+install_mcp=true
 cargo_args=()
 for arg in "$@"; do
   case "$arg" in
     --mcp) install_mcp=true ;;
-    -h|--help) sed -n '5,26p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --cli-only) install_mcp=false ;;
+    -h|--help) sed -n '5,27p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) cargo_args+=("$arg") ;;
   esac
 done
@@ -44,12 +46,7 @@ echo "Installing cortex from crates/cortex-cli ..." >&2
 cargo install --locked --path crates/cortex-cli "${cargo_args[@]+"${cargo_args[@]}"}"
 
 if [[ "$install_mcp" == true ]]; then
-  # Worth saying plainly rather than letting someone install a stub and
-  # wonder why their MCP client sees no tools.
-  echo >&2
-  echo "note: cortex-mcp is currently a SCAFFOLD - it starts and exits without" >&2
-  echo "      serving any tools. Installing it is only useful for development." >&2
-  echo "      See spec/300-mcp/spec.md for the intended surface." >&2
+  echo "Installing cortex-mcp from crates/cortex-mcp ..." >&2
   cargo install --locked --path crates/cortex-mcp "${cargo_args[@]+"${cargo_args[@]}"}"
 fi
 
@@ -82,7 +79,26 @@ Installed. Try:
   cortex version                   # confirm the device answers
   cortex catalog --search marshall # explore the model catalog
   cortex --help
+EOF
 
+if [[ "$install_mcp" == true ]]; then
+  mcp_path="$(command -v cortex-mcp || true)"
+  if [[ -n "$mcp_path" ]]; then
+    cat >&2 <<EOF
+Agent setup:
+
+  cortex session start
+  claude mcp add --transport stdio --scope user cortex -- "$mcp_path"
+EOF
+  else
+    cat >&2 <<'EOF'
+Agent setup: add the absolute path to the installed cortex-mcp binary to your
+harness after adding its bin directory to PATH. See docs/agent-setup.md.
+EOF
+  fi
+fi
+
+cat >&2 <<'EOF'
 Shell completions:
 
   cortex completions install

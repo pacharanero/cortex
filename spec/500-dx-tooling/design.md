@@ -116,7 +116,7 @@ The pre-commit hook should be opt-in (a script the maintainer runs), not forced 
 
 ## [DES-LIMITS] Known Limitations
 
-- **GUI versions are not synchronized by `s/version++`.** The script exists, but the frontend and Tauri manifests can drift from the workspace version.
+- **GUI version drift is handled at release time.** `s/version++` synchronizes `gui/package.json`, `gui/package-lock.json` and `gui/src-tauri/tauri.conf.json` to the canonical workspace version before committing.
 - **No markdown lint yet.** The config and the CI step are planned.
 - **No pre-commit hook yet.** `.githooks/` does not exist; `s/install-hooks` is planned.
 - **`s/test` does not run `cargo test --all --no-default-features`.** CI does (the leaf-crate no-default-features path); the local script currently runs the all-features path only. This is a gap to close.
