@@ -149,7 +149,9 @@ The non-persistent MCP surface is implemented and hardware-verified; it opens
 no HID connection and exposes no save/delete tools. The design that matters for
 any future destructive tier is the safety boundary, not the tool count:
 
-- Read and recall are free; **saving is always explicitly confirmed**.
+- CLI save and move commands execute when invoked and expose `-n`/`--dry-run`
+  as the non-mutating path. Future MCP and GUI persistent actions still require
+  explicit confirmation because an agent or UI can invoke them indirectly.
 - Never write to the factory setlist; require one explicitly named USER target
   for each persistent operation.
 - Prepare every target and retain any backup before working-copy edits begin.

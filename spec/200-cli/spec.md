@@ -113,7 +113,7 @@ Linux users with a Quad Cortex, script writers, AI coding agents driving the CLI
 | FR-20 | The daemon serves only responsive `Live` cache entries, falls back to explicit reads for missing state, and reports cache phase/generation/revision and reducer counters in `session status`. | Must Have |
 | FR-21 | A background monitor invalidates state before replacing a silent or continuity-invalidated session, excludes and drains device operations, explicitly releases the old handle before opening another, retries the full subscribed handshake with exponential backoff capped at 30 seconds, and exposes connected/reconnecting/failed status. | Must Have |
 | FR-22 | Requests received during reconnect fail immediately with the attempt and last error; status and shutdown remain available. | Must Have |
-| FR-23 | `cortex preset move --from <slot> --to <slot> --yes` routes through daemon protocol v4 when held, otherwise uses one direct client session. It requires explicit confirmation and delegates source-path resolution, occupancy refusal, and listing-convergence checks to `QuadCortex::move_preset`; MCP exposes no corresponding tool. | Must Have |
+| FR-23 | `cortex preset move --from <slot> --to <slot>` routes through daemon protocol v4 when held, otherwise uses one direct client session. It executes by default; `-n`/`--dry-run` reports the exact source, destination, and setlist without opening a session or changing the unit. Execution delegates source-path resolution, occupancy refusal, and listing-convergence checks to `QuadCortex::move_preset`; MCP exposes no corresponding tool. | Must Have |
 
 ### Non-Functional Requirements
 
@@ -161,7 +161,7 @@ Linux users with a Quad Cortex, script writers, AI coding agents driving the CLI
 ## Future
 
 - **`--format yaml`.** A third format option for the global flag, if the need arises. JSON covers the script/agent case; YAML is a human-friendly middle ground.
-- **`--dry-run` on mutating commands.** Mutations are implemented, but a uniform plan-only mode remains outstanding.
+- **`--dry-run` on mutating commands.** `preset save` and `preset move` execute by default and provide `-n`/`--dry-run` as their non-mutating inverse. A uniform plan-only mode for the remaining working-copy and storage mutations remains outstanding.
 - **Progress widgets on long-running commands.** The CLI prints phase progress to stderr today; auto-hiding count/byte bars may be worthwhile for operations with a known total.
 - **Registry-driven dispatch.** If the command surface grows large, a single registry driving the CLI, schema, and any MCP tool surface keeps them from drifting.
 

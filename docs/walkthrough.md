@@ -248,7 +248,7 @@ cortex block param --row 1 --column 1 --param THRESHOLD --real -20
     Every grid edit lives on the working grid until you save or recall another preset. A recall discards the edits. To keep them, explicitly commit the destination token you reviewed before editing:
 
     ```sh
-    cortex preset save --token "$SAVE_TOKEN" --name "My preset" --yes
+    cortex preset save --token "$SAVE_TOKEN" --name "My preset"
     ```
 
 `block set` **verifies**. A block that does not fit the preset's DSP budget is accepted on the wire and simply is not there afterwards, with no error of any kind. So `cortex` uses the device's echo as a fast path and reads the grid back when no echo arrives; it reports `BlockRefused` only when the grid confirms that the block is absent.

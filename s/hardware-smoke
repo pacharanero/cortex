@@ -412,7 +412,7 @@ else
   # designated scratch bank ---------------------------------------------
   SAVE_NAME="cortex-smoke-test"
   expect_ok "preset save (scratch slot $SAVE_SLOT)" \
-    preset save --token "$SAVE_TOKEN" --name "$SAVE_NAME" --yes
+    preset save --token "$SAVE_TOKEN" --name "$SAVE_NAME"
 
   # File mutations are eventually consistent. The device can acknowledge a
   # save or delete before a folder listing reflects it, so poll state rather
@@ -447,7 +447,7 @@ else
     MOVE_REVISION_BEFORE="$(jq -r '.cache.storage_revision // 0' <<<"$LAST_OUT")"
 
     expect_ok "preset move ($SAVE_SLOT -> $MOVE_SLOT)" \
-      preset move --from "$SAVE_SLOT" --to "$MOVE_SLOT" --setlist "$SETLIST" --yes
+      preset move --from "$SAVE_SLOT" --to "$MOVE_SLOT" --setlist "$SETLIST"
 
     MOVED=false
     for _ in {1..10}; do
@@ -478,7 +478,7 @@ else
     fi
 
     expect_ok "preset move restore ($MOVE_SLOT -> $SAVE_SLOT)" \
-      preset move --from "$MOVE_SLOT" --to "$SAVE_SLOT" --setlist "$SETLIST" --yes
+      preset move --from "$MOVE_SLOT" --to "$SAVE_SLOT" --setlist "$SETLIST"
 
     MOVE_RESTORED=false
     for _ in {1..10}; do

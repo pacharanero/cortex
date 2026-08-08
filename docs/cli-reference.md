@@ -321,8 +321,8 @@ Options:
 
           [default: "/media/p4/Presets/My Presets"]
 
-      --yes
-          Explicitly confirm this destructive storage mutation
+  -n, --dry-run
+          Show the move that would be attempted without changing the unit
 
       --format <FORMAT>
           Output format. `text` is for humans; `json` is for scripts and agents, and is stable enough to parse.
@@ -348,7 +348,8 @@ Options:
 
 Examples:
   cortex preset list --include-empty
-  cortex preset move --from 2A --to 2B --yes
+  cortex preset move --from 2A --to 2B --dry-run
+  cortex preset move --from 2A --to 2B
 ```
 
 #### `cortex preset prepare-save`
@@ -418,8 +419,8 @@ Options:
       --name <NAME>
           Name to save under. Omit to keep the slot's existing name
 
-      --yes
-          Explicitly confirm this destructive commit
+  -n, --dry-run
+          Show the prepared save that would be committed without changing the unit
 
       --format <FORMAT>
           Output format. `text` is for humans; `json` is for scripts and agents, and is stable enough to parse.
@@ -444,8 +445,9 @@ Options:
           Print version
 
 Examples:
-  cortex preset save --token save-1 --yes
-  cortex preset save --token save-1 --name "Lead Tone" --yes
+  cortex preset save --token save-1 --dry-run
+  cortex preset save --token save-1
+  cortex preset save --token save-1 --name "Lead Tone"
 ```
 
 #### `cortex preset list`

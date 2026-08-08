@@ -299,7 +299,7 @@ enum PresetCmd {
     /// refuses an empty source, an occupied destination, a no-op move, the
     /// factory library, and malformed slots.
     #[command(
-        after_help = "Examples:\n  cortex preset list --include-empty\n  cortex preset move --from 2A --to 2B --yes"
+        after_help = "Examples:\n  cortex preset list --include-empty\n  cortex preset move --from 2A --to 2B --dry-run\n  cortex preset move --from 2A --to 2B"
     )]
     Move {
         /// Occupied source slot: bank number then letter, e.g. `2A`.
@@ -311,9 +311,9 @@ enum PresetCmd {
         /// Absolute device path of the setlist.
         #[arg(long, value_name = "PATH", default_value = cortex_rs::client::USER_SETLIST)]
         setlist: String,
-        /// Explicitly confirm this destructive storage mutation.
-        #[arg(long)]
-        yes: bool,
+        /// Show the move that would be attempted without changing the unit.
+        #[arg(short = 'n', long)]
+        dry_run: bool,
     },
     /// Prepare a save destination before editing the working grid.
     #[command(
@@ -339,7 +339,7 @@ enum PresetCmd {
     ///
     /// The factory library is refused.
     #[command(
-        after_help = "Examples:\n  cortex preset save --token save-1 --yes\n  cortex preset save --token save-1 --name \"Lead Tone\" --yes"
+        after_help = "Examples:\n  cortex preset save --token save-1 --dry-run\n  cortex preset save --token save-1\n  cortex preset save --token save-1 --name \"Lead Tone\""
     )]
     Save {
         /// Opaque token returned by `preset prepare-save`.
@@ -348,9 +348,9 @@ enum PresetCmd {
         /// Name to save under. Omit to keep the slot's existing name.
         #[arg(long, value_name = "NAME")]
         name: Option<String>,
-        /// Explicitly confirm this destructive commit.
-        #[arg(long)]
-        yes: bool,
+        /// Show the prepared save that would be committed without changing the unit.
+        #[arg(short = 'n', long)]
+        dry_run: bool,
     },
     /// List the presets in a setlist, in slot order.
     ///
@@ -722,14 +722,16 @@ fn run(cli: Cli) -> Result<()> {
                 from,
                 to,
                 setlist,
-                yes,
-            } => cmd_preset_move(&from, &to, &setlist, yes, fmt),
+                dry_run,
+            } => cmd_preset_move(&from, &to, &setlist, dry_run, fmt),
             PresetCmd::PrepareSave { slot, setlist } => {
                 cmd_preset_prepare_save(&slot, &setlist, fmt)
             }
-            PresetCmd::Save { token, name, yes } => {
-                cmd_preset_save(&token, name.as_deref(), yes, fmt)
-            }
+            PresetCmd::Save {
+                token,
+                name,
+                dry_run,
+            } => cmd_preset_save(&token, name.as_deref(), dry_run, fmt),
             PresetCmd::List {
                 setlist,
                 include_empty,
@@ -1379,11 +1381,13 @@ fn cmd_preset_prepare_save(slot: &str, setlist: &str, fmt: Format) -> Result<()>
 }
 
 /// Commit a token prepared before working-grid edits.
-fn cmd_preset_save(token: &str, name: Option<&str>, yes: bool, fmt: Format) -> Result<()> {
-    if !yes {
-        anyhow::bail!(
-            "save tokens are destructive; pass --yes after reviewing `preset prepare-save` output"
-        )
+fn cmd_preset_save(token: &str, name: Option<&str>, dry_run: bool, fmt: Format) -> Result<()> {
+    if dry_run {
+        let detail = match name {
+            Some(name) => format!("commit prepared token {token} as {name:?}"),
+            None => format!("commit prepared token {token} with its existing name"),
+        };
+        return report_edit("dry-run save", detail, fmt);
     }
     let Some(result) = connect::request(&cortex_host::Request::CommitSave {
         token: token.to_string(),
@@ -1429,16 +1433,23 @@ fn cmd_preset_move(
     from_slot: &str,
     to_slot: &str,
     setlist: &str,
-    yes: bool,
+    dry_run: bool,
     fmt: Format,
 ) -> Result<()> {
-    if !yes {
-        anyhow::bail!(
-            "preset moves change stored content; inspect `preset list --include-empty` and pass \
-             --yes to confirm"
-        )
+    if cortex_rs::client::is_factory_setlist(setlist) {
+        anyhow::bail!("{setlist} is the factory library and is not writable");
+    }
+    for slot in [from_slot, to_slot] {
+        if cortex_rs::client::slot_to_position_checked(slot).is_none() {
+            anyhow::bail!(
+                "{slot} is not a slot. Slots are a bank number 1-32 then a letter A-H, e.g. 2B"
+            );
+        }
     }
     let detail = format!("{from_slot} to {to_slot} in {setlist}");
+    if dry_run {
+        return report_edit("dry-run move", detail, fmt);
+    }
     if let Some(result) = connect::request(&cortex_host::Request::MovePreset {
         setlist: setlist.to_string(),
         from_slot: from_slot.to_string(),
@@ -2329,6 +2340,36 @@ mod tests {
         // Catches conflicting args, bad defaults, and duplicate names at test
         // time rather than on first run.
         Cli::command().debug_assert();
+    }
+
+    #[test]
+    fn persistent_commands_execute_by_default_and_dry_run_is_explicit() {
+        let move_cli =
+            Cli::try_parse_from(["cortex", "preset", "move", "--from", "2A", "--to", "2B"])
+                .unwrap();
+        assert!(matches!(
+            move_cli.command,
+            Some(Command::Preset {
+                command: PresetCmd::Move { dry_run: false, .. }
+            })
+        ));
+
+        let save_cli =
+            Cli::try_parse_from(["cortex", "preset", "save", "--token", "save-1", "--dry-run"])
+                .unwrap();
+        assert!(matches!(
+            save_cli.command,
+            Some(Command::Preset {
+                command: PresetCmd::Save { dry_run: true, .. }
+            })
+        ));
+
+        assert!(
+            Cli::try_parse_from([
+                "cortex", "preset", "move", "--from", "2A", "--to", "2B", "--yes"
+            ])
+            .is_err()
+        );
     }
 
     /// Every `after_help` example must name a real command and real flags.

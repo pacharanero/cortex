@@ -143,7 +143,7 @@ cortex block param --row "$ROW" --column "$COLUMN" --param WOBBLE --value 0.5
 To retain the edited grid, commit the preparation made before editing:
 
 ```sh
-cortex preset save --token "$SAVE_TOKEN" --name "Smoke Test" --yes
+cortex preset save --token "$SAVE_TOKEN" --name "Smoke Test"
 ```
 
 - [ ] The saved preset still contains the edits after recall
@@ -217,7 +217,7 @@ Use two slots wholly inside the disposable test bank. Confirm `MOVE_FROM` contai
 
 ```sh
 cortex preset list --include-empty
-cortex preset move --from "$MOVE_FROM" --to "$MOVE_TO" --yes
+cortex preset move --from "$MOVE_FROM" --to "$MOVE_TO"
 cortex preset list --include-empty
 ```
 
@@ -228,7 +228,7 @@ cortex preset list --include-empty
 Move it back before leaving the scratch bank:
 
 ```sh
-cortex preset move --from "$MOVE_TO" --to "$MOVE_FROM" --yes
+cortex preset move --from "$MOVE_TO" --to "$MOVE_FROM"
 cortex preset list --include-empty
 ```
 
