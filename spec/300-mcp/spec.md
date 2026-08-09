@@ -112,6 +112,10 @@ AI coding agents editing patches via MCP, and the maintainers who gate what an a
 | FR-29 | `save_preset(setlist, slot, preparation, confirm)` - save the working copy to a slot. **Destructive and deferred beyond the first MCP milestone.** Gate this: require explicit slot, refuse FACTORY (FR-2), require confirmation (FR-1), and require a matching pre-edit preparation (FR-4). | Must Have |
 | FR-30 | `read_current_preset()` - read the live grid without recalling (no side effect). Read, unrestricted. | Should Have |
 | FR-31 | `list_folders()` - list all folders the device knows. Read, unrestricted. | Should Have |
+| FR-32 | `set_scene_label(scene, label)` and `unlabel_scene(scene)` edit scene metadata on the unsaved working copy. | Must Have |
+| FR-33 | `set_scene_color(scene, color)` writes an ARGB `uint32` to the unsaved working copy. | Must Have |
+| FR-34 | `copy_scene(from_scene, to_scene)` copies parameter, bypass, label and colour state, then refreshes the live preset before returning. | Must Have |
+| FR-35 | `swap_scenes(first_scene, second_scene)` exchanges complete scene state and refreshes the live preset before returning. | Must Have |
 
 #### Server lifecycle
 

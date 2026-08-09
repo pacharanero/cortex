@@ -261,6 +261,28 @@ impl Daemon {
                 c.switch_scene(scene)
                     .map(|()| serde_json::json!({ "scene": scene }))
             }),
+            Request::SetSceneLabel { scene, label } => self.respond(|c| {
+                c.set_scene_label(scene, label.as_deref())
+                    .map(|()| serde_json::json!({ "scene": scene, "label": label }))
+            }),
+            Request::SetSceneColor { scene, color } => self.respond(|c| {
+                c.set_scene_color(scene, color)
+                    .map(|()| serde_json::json!({ "scene": scene, "color": color }))
+            }),
+            Request::CopyScene {
+                from_scene,
+                to_scene,
+                swap,
+            } => self.respond(|c| {
+                c.copy_scene(from_scene, to_scene, swap)?;
+                c.read_current_preset(REQUEST_TIMEOUT)?;
+                Ok(serde_json::json!({
+                    "from_scene": from_scene,
+                    "to_scene": to_scene,
+                    "swap": swap,
+                    "verified": true,
+                }))
+            }),
             Request::CurrentPreset {
                 with_params,
                 timeout_seconds,

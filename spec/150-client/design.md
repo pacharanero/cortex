@@ -92,7 +92,7 @@ The read methods fall into two correlation patterns:
 
 **Pattern C: `collect()` (fan-out)** - used by `list_folders()`. A single `File` READ produces a flood of folder listings over 10-20 s; `collect` gathers them all.
 
-**Pattern D: fire-and-forget `send`** - used by `switch_scene()`, `set_param()`, `set_block(verify=false)`, `set_bypass()`. The write STALL is swallowed by the transport; persistence is confirmed by a later read or a save.
+**Pattern D: fire-and-forget `send`** - used by `switch_scene()`, scene label/colour/copy, `set_param()`, `set_block(verify=false)`, `set_bypass()`. The write STALL is swallowed by the transport; persistence is confirmed by a later read or a save. The daemon follows every scene copy/swap with `read_current_preset()` because the device's `SceneCopy` acknowledgement omits `is_swap` even when it performed a swap, so reducing that echo would turn a correct device swap into an incorrect cached copy.
 
 ---
 

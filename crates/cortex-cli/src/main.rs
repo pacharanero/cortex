@@ -168,16 +168,21 @@ enum Command {
         command: DeviceCmd,
     },
 
-    /// Switch the active scene.
+    /// Switch, label, recolour, copy, or swap scenes.
     ///
     /// CHANGES WHAT IS HEARD. Nothing is saved.
     #[command(alias = "sc")]
-    #[command(after_help = "Examples:\n  cortex scene --index 2")]
+    #[command(
+        after_help = "Examples:\n  cortex scene switch --index 2\n  cortex scene label --index 2 --label 'Wide Lead'\n  cortex scene color --index 2 --color '#FF02C2'\n  cortex scene copy --from 1 --to 3\n  cortex scene swap --first 1 --second 3\n\nCompatibility:\n  cortex scene --index 2"
+    )]
     Scene {
+        #[command(subcommand)]
+        command: Option<SceneCmd>,
         /// Scene number, 0-7 ZERO-BASED: 0 is scene A and 7 is scene H.
         /// The unit labels them A-H, so scene C is `--index 2`.
+        /// Compatibility shorthand for `cortex scene switch --index N`.
         #[arg(long, value_name = "0-7")]
-        index: u32,
+        index: Option<u32>,
     },
     /// Search or inspect the device model catalog, or save its raw payload.
     ///
@@ -632,6 +637,69 @@ enum RowCmd {
     },
 }
 
+/// Commands acting on scenes A-H. Every index is zero-based 0-7.
+#[derive(Subcommand, Debug)]
+enum SceneCmd {
+    /// Switch the active scene. Changes what is heard; does not save.
+    Switch {
+        #[arg(long, value_name = "0-7")]
+        index: u32,
+    },
+    /// Set a scene label on the unsaved working copy.
+    Label {
+        #[arg(long, value_name = "0-7")]
+        index: u32,
+        #[arg(long)]
+        label: String,
+    },
+    /// Clear a scene label on the unsaved working copy.
+    Unlabel {
+        #[arg(long, value_name = "0-7")]
+        index: u32,
+    },
+    /// Set a scene colour as `0xAARRGGBB`, `#RRGGBB`, or decimal.
+    Color {
+        #[arg(long, value_name = "0-7")]
+        index: u32,
+        #[arg(long, value_parser = parse_argb)]
+        color: u32,
+    },
+    /// Copy one scene onto another, including its label and colour.
+    Copy {
+        #[arg(long, value_name = "0-7")]
+        from: u32,
+        #[arg(long, value_name = "0-7")]
+        to: u32,
+    },
+    /// Exchange two scenes, including their labels and colours.
+    Swap {
+        #[arg(long, value_name = "0-7")]
+        first: u32,
+        #[arg(long, value_name = "0-7")]
+        second: u32,
+    },
+}
+
+fn parse_argb(value: &str) -> std::result::Result<u32, String> {
+    if let Some(rgb) = value.strip_prefix('#') {
+        if rgb.len() != 6 {
+            return Err("# colours must use six RRGGBB digits".into());
+        }
+        return u32::from_str_radix(rgb, 16)
+            .map(|color| 0xff00_0000 | color)
+            .map_err(|_| format!("invalid RGB colour: {value}"));
+    }
+    if let Some(argb) = value
+        .strip_prefix("0x")
+        .or_else(|| value.strip_prefix("0X"))
+    {
+        return u32::from_str_radix(argb, 16).map_err(|_| format!("invalid ARGB colour: {value}"));
+    }
+    value
+        .parse()
+        .map_err(|_| format!("invalid ARGB colour: {value}"))
+}
+
 /// Commands reporting on the unit itself.
 #[derive(Subcommand, Debug)]
 enum DeviceCmd {
@@ -812,7 +880,52 @@ fn run(cli: Cli) -> Result<()> {
             DeviceCmd::Cpu => cmd_cpu(fmt),
             DeviceCmd::Probe { listen } => cmd_probe(listen, fmt),
         },
-        Some(Command::Scene { index }) => cmd_scene(index, fmt),
+        Some(Command::Scene { command, index }) => match (command, index) {
+            (Some(SceneCmd::Switch { index }), None) | (None, Some(index)) => {
+                cmd_scene_request(cortex_host::Request::SwitchScene { scene: index }, fmt)
+            }
+            (Some(SceneCmd::Label { index, label }), None) => cmd_scene_request(
+                cortex_host::Request::SetSceneLabel {
+                    scene: index,
+                    label: Some(label),
+                },
+                fmt,
+            ),
+            (Some(SceneCmd::Unlabel { index }), None) => cmd_scene_request(
+                cortex_host::Request::SetSceneLabel {
+                    scene: index,
+                    label: None,
+                },
+                fmt,
+            ),
+            (Some(SceneCmd::Color { index, color }), None) => cmd_scene_request(
+                cortex_host::Request::SetSceneColor {
+                    scene: index,
+                    color,
+                },
+                fmt,
+            ),
+            (Some(SceneCmd::Copy { from, to }), None) => cmd_scene_request(
+                cortex_host::Request::CopyScene {
+                    from_scene: from,
+                    to_scene: to,
+                    swap: false,
+                },
+                fmt,
+            ),
+            (Some(SceneCmd::Swap { first, second }), None) => cmd_scene_request(
+                cortex_host::Request::CopyScene {
+                    from_scene: first,
+                    to_scene: second,
+                    swap: true,
+                },
+                fmt,
+            ),
+            (None, None) => anyhow::bail!("choose a scene operation; run `cortex scene --help`"),
+            (Some(_), Some(_)) => {
+                anyhow::bail!("legacy --index cannot be combined with a scene subcommand")
+            }
+        },
         Some(Command::Catalog {
             search,
             model,
@@ -862,6 +975,19 @@ fn validate_slot(slot: &str) -> Result<()> {
         );
     }
     Ok(())
+}
+
+fn validate_scene_index(scene: u32) -> Result<()> {
+    if scene > 7 {
+        anyhow::bail!("scene must be 0-7 (A-H)");
+    }
+    Ok(())
+}
+
+fn scene_display(scene: u32) -> String {
+    char::from_u32(u32::from(b'A') + scene)
+        .unwrap_or('?')
+        .to_string()
 }
 
 fn validate_cell(row: u32, column: u32) -> Result<cortex_rs::Row> {
@@ -1104,17 +1230,71 @@ fn dry_run_plan(command: Option<&Command>) -> Result<Option<DryRunPlan>> {
             }),
             DeviceCmd::Cpu | DeviceCmd::Probe { .. } => None,
         },
-        Command::Scene { index } => {
-            if *index > 7 {
-                anyhow::bail!("scene must be 0-7");
+        Command::Scene { command, index } => match (command, index) {
+            (Some(SceneCmd::Switch { index }), None) | (None, Some(index)) => {
+                validate_scene_index(*index)?;
+                Some(plan(
+                    "scene switch",
+                    "audible state",
+                    serde_json::json!({ "index": index, "display": scene_display(*index) }),
+                    &["switch the active scene"],
+                ))
             }
-            Some(plan(
-                "scene",
-                "audible state",
-                serde_json::json!({ "index": index, "display": char::from_u32(65 + index).unwrap_or('?').to_string() }),
-                &["switch the active scene"],
-            ))
-        }
+            (Some(SceneCmd::Label { index, label }), None) => {
+                validate_scene_index(*index)?;
+                if label.is_empty() {
+                    anyhow::bail!("scene label cannot be empty; use `scene unlabel`");
+                }
+                Some(plan(
+                    "scene label",
+                    "working grid",
+                    serde_json::json!({ "index": index, "display": scene_display(*index), "label": label }),
+                    &["write the scene label"],
+                ))
+            }
+            (Some(SceneCmd::Unlabel { index }), None) => {
+                validate_scene_index(*index)?;
+                Some(plan(
+                    "scene unlabel",
+                    "working grid",
+                    serde_json::json!({ "index": index, "display": scene_display(*index) }),
+                    &["write the unit's one-space unlabelled value"],
+                ))
+            }
+            (Some(SceneCmd::Color { index, color }), None) => {
+                validate_scene_index(*index)?;
+                Some(plan(
+                    "scene color",
+                    "working grid",
+                    serde_json::json!({ "index": index, "display": scene_display(*index), "color": color, "argb": format!("0x{color:08X}") }),
+                    &["write the scene ARGB colour"],
+                ))
+            }
+            (Some(SceneCmd::Copy { from, to }), None) => {
+                validate_scene_index(*from)?;
+                validate_scene_index(*to)?;
+                Some(plan(
+                    "scene copy",
+                    "working grid",
+                    serde_json::json!({ "from": from, "to": to }),
+                    &["copy parameter, bypass, label and colour state"],
+                ))
+            }
+            (Some(SceneCmd::Swap { first, second }), None) => {
+                validate_scene_index(*first)?;
+                validate_scene_index(*second)?;
+                Some(plan(
+                    "scene swap",
+                    "working grid",
+                    serde_json::json!({ "first": first, "second": second }),
+                    &["exchange parameter, bypass, label and colour state"],
+                ))
+            }
+            (None, None) => anyhow::bail!("choose a scene operation; run `cortex scene --help`"),
+            (Some(_), Some(_)) => {
+                anyhow::bail!("legacy --index cannot be combined with a scene subcommand")
+            }
+        },
         Command::Catalog { dump, .. } => dump.as_ref().map(|path| {
             plan(
                 "catalog dump",
@@ -1779,27 +1959,84 @@ fn cmd_preset_move(from_slot: &str, to_slot: &str, setlist: &str, fmt: Format) -
     report_edit("move", detail, fmt)
 }
 
-/// Switch the active scene.
-fn cmd_scene(index: u32, fmt: Format) -> Result<()> {
+/// Apply one scene operation through the held daemon or a direct session.
+fn cmd_scene_request(request: cortex_host::Request, fmt: Format) -> Result<()> {
+    let (action, detail) = match &request {
+        cortex_host::Request::SwitchScene { scene } => {
+            validate_scene_index(*scene)?;
+            (
+                "scene switch",
+                format!("{} ({scene})", scene_display(*scene)),
+            )
+        }
+        cortex_host::Request::SetSceneLabel { scene, label } => {
+            validate_scene_index(*scene)?;
+            if label.as_ref().is_some_and(String::is_empty) {
+                anyhow::bail!("scene label cannot be empty; use `scene unlabel`");
+            }
+            (
+                if label.is_some() {
+                    "scene label"
+                } else {
+                    "scene unlabel"
+                },
+                format!("{} ({scene})", scene_display(*scene)),
+            )
+        }
+        cortex_host::Request::SetSceneColor { scene, color } => {
+            validate_scene_index(*scene)?;
+            (
+                "scene color",
+                format!("{} ({scene}) = 0x{color:08X}", scene_display(*scene)),
+            )
+        }
+        cortex_host::Request::CopyScene {
+            from_scene,
+            to_scene,
+            swap,
+        } => {
+            validate_scene_index(*from_scene)?;
+            validate_scene_index(*to_scene)?;
+            (
+                if *swap { "scene swap" } else { "scene copy" },
+                format!(
+                    "{} ({from_scene}) {} {} ({to_scene})",
+                    scene_display(*from_scene),
+                    if *swap { "<->" } else { "->" },
+                    scene_display(*to_scene)
+                ),
+            )
+        }
+        _ => anyhow::bail!("internal error: non-scene request reached scene dispatch"),
+    };
+
     // Prefer a held connection. It has already paid the handshake, so this
     // is a socket round trip rather than a fresh session - and it avoids
     // contending for a device interface the daemon already owns.
-    if let Some(result) = connect::request(&cortex_host::Request::SwitchScene { scene: index }) {
+    if let Some(result) = connect::request(&request) {
         result?;
-        return report_edit("scene", index.to_string(), fmt);
+        return report_edit(action, detail, fmt);
     }
 
     let (session, qc) = connected()?;
-    let result = qc.switch_scene(index);
+    let result = match request {
+        cortex_host::Request::SwitchScene { scene } => qc.switch_scene(scene),
+        cortex_host::Request::SetSceneLabel { scene, label } => {
+            qc.set_scene_label(scene, label.as_deref())
+        }
+        cortex_host::Request::SetSceneColor { scene, color } => qc.set_scene_color(scene, color),
+        cortex_host::Request::CopyScene {
+            from_scene,
+            to_scene,
+            swap,
+        } => qc.copy_scene(from_scene, to_scene, swap),
+        _ => unreachable!("validated above as a scene request"),
+    };
     std::thread::sleep(Duration::from_millis(500));
     qc.disconnect();
     session.stop();
     result?;
-    let out = ActionOut {
-        action: "scene".into(),
-        detail: index.to_string(),
-    };
-    emit(&out, fmt, |o| println!("{}: {}", o.action, o.detail))
+    report_edit(action, detail, fmt)
 }
 
 /// Recall a slot and dump the preset it loads, naming each block.
@@ -2372,6 +2609,22 @@ fn print_preset(o: &PresetOut) {
     println!("slot: {}", o.slot);
     println!("name: {}", o.name);
     println!("chains: {}", o.chains);
+    if !o.scenes.is_empty() {
+        let scenes = o
+            .scenes
+            .iter()
+            .map(|scene| {
+                let letter = scene_display(scene.index);
+                let label = scene.label.as_deref().unwrap_or("<unlabelled>");
+                scene.color.map_or_else(
+                    || format!("{letter} {label}"),
+                    |color| format!("{letter} {label} 0x{color:08X}"),
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        println!("scenes: {scenes}");
+    }
     for row in 0..o.chains {
         let routing = o
             .rows
@@ -2699,6 +2952,47 @@ mod tests {
             &["cortex", "scene", "--index", "2", "--dry-run"],
             &[
                 "cortex",
+                "scene",
+                "label",
+                "--index",
+                "2",
+                "--label",
+                "Wide Lead",
+                "--dry-run",
+            ],
+            &["cortex", "scene", "unlabel", "--index", "2", "--dry-run"],
+            &[
+                "cortex",
+                "scene",
+                "color",
+                "--index",
+                "2",
+                "--color",
+                "#FF02C2",
+                "--dry-run",
+            ],
+            &[
+                "cortex",
+                "scene",
+                "copy",
+                "--from",
+                "1",
+                "--to",
+                "3",
+                "--dry-run",
+            ],
+            &[
+                "cortex",
+                "scene",
+                "swap",
+                "--first",
+                "1",
+                "--second",
+                "3",
+                "--dry-run",
+            ],
+            &[
+                "cortex",
                 "block",
                 "param",
                 "--row",
@@ -2793,6 +3087,14 @@ mod tests {
                 "{args:?} is side-effecting but has no plan"
             );
         }
+    }
+
+    #[test]
+    fn scene_colours_accept_argb_rgb_and_decimal_forms() {
+        assert_eq!(parse_argb("0xFFFF02C2").unwrap(), 0xffff_02c2);
+        assert_eq!(parse_argb("#FF02C2").unwrap(), 0xffff_02c2);
+        assert_eq!(parse_argb("4294902466").unwrap(), 4_294_902_466);
+        assert!(parse_argb("#123").is_err());
     }
 
     /// Every `after_help` example must name a real command and real flags.

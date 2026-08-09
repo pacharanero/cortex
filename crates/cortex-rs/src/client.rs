@@ -42,8 +42,8 @@ use crate::grid::{Row, Value};
 use crate::proto::cortex_message_type::Enum as MessageType;
 use crate::proto::message_action::Enum as MessageAction;
 use crate::proto::{
-    BinaryPreset, FileMessage, RecallPresetMessage, SceneMessage, SetlistPositionMessage,
-    VersionMessage,
+    BinaryPreset, FileMessage, RecallPresetMessage, SceneColorMessage, SceneCopyMessage,
+    SceneLabelMessage, SceneMessage, SetlistPositionMessage, VersionMessage,
 };
 use crate::session::{InboundMessage, Session};
 
@@ -535,6 +535,15 @@ pub struct ParameterWrite {
     pub value: Value,
 }
 
+fn validate_scene(scene: u32) -> crate::Result<()> {
+    if scene > 7 {
+        return Err(crate::Error::InvalidScene(format!(
+            "scene {scene} is out of range; scenes are 0-7 (A-H)"
+        )));
+    }
+    Ok(())
+}
+
 /// The `QuadCortex` client: an ergonomic API over the session layer.
 /// Holds an `Arc<Session>` and builds protobuf messages for each operation.
 ///
@@ -622,8 +631,9 @@ impl QuadCortex {
     ///
     /// # Errors
     ///
-    /// Currently always returns `Ok`.
+    /// Returns [`crate::Error::InvalidScene`] when `scene` is outside 0-7.
     pub fn switch_scene(&self, scene: u32) -> crate::Result<()> {
+        validate_scene(scene)?;
         let msg = SceneMessage {
             action: MessageAction::Update as i32,
             selected_scene: Some(crate::proto::scene_message::SelectedScene::SelectedScene(
@@ -633,6 +643,64 @@ impl QuadCortex {
         };
         let payload = prost::Message::encode_to_vec(&msg);
         self.session.send(MessageType::Scene, &payload)
+    }
+
+    /// Copy one scene onto another, or exchange them when `swap` is true.
+    /// Labels and colours travel with the scene's parameter and bypass state.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`crate::Error::InvalidScene`] when either index is outside 0-7.
+    pub fn copy_scene(&self, from_scene: u32, to_scene: u32, swap: bool) -> crate::Result<()> {
+        validate_scene(from_scene)?;
+        validate_scene(to_scene)?;
+        let msg = SceneCopyMessage {
+            action: MessageAction::Update as i32,
+            from_index: i32::try_from(from_scene).expect("validated scene fits i32"),
+            to_index: i32::try_from(to_scene).expect("validated scene fits i32"),
+            is_swap: swap,
+            ..Default::default()
+        };
+        self.session
+            .send(MessageType::SceneCopy, &prost::Message::encode_to_vec(&msg))
+    }
+
+    /// Set a scene label. `None` writes the unit's unlabelled value, one space.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`crate::Error::InvalidScene`] when `scene` is outside 0-7.
+    pub fn set_scene_label(&self, scene: u32, label: Option<&str>) -> crate::Result<()> {
+        validate_scene(scene)?;
+        let msg = SceneLabelMessage {
+            action: MessageAction::Update as i32,
+            index: i32::try_from(scene).expect("validated scene fits i32"),
+            label: label.unwrap_or(SCENE_UNLABELLED).to_string(),
+            ..Default::default()
+        };
+        self.session.send(
+            MessageType::SceneLabel,
+            &prost::Message::encode_to_vec(&msg),
+        )
+    }
+
+    /// Set a scene colour as an ARGB `u32`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`crate::Error::InvalidScene`] when `scene` is outside 0-7.
+    pub fn set_scene_color(&self, scene: u32, color: u32) -> crate::Result<()> {
+        validate_scene(scene)?;
+        let msg = SceneColorMessage {
+            action: MessageAction::Update as i32,
+            index: i32::try_from(scene).expect("validated scene fits i32"),
+            color,
+            ..Default::default()
+        };
+        self.session.send(
+            MessageType::SceneColor,
+            &prost::Message::encode_to_vec(&msg),
+        )
     }
 
     /// Read the LIVE grid: the current editing state, unsaved changes
@@ -1841,6 +1909,93 @@ mod tests {
             std::thread::sleep(Duration::from_millis(1));
         }
         panic!("timed out waiting for a File write from report {start}");
+    }
+
+    fn wait_for_write(link: &FakeLink, start: usize, expected: MessageType) -> (usize, Vec<u8>) {
+        let deadline = Instant::now() + Duration::from_secs(1);
+        let mut next = start;
+        let mut reassembler = FrameReassembler::new();
+        while Instant::now() < deadline {
+            let written = link.written();
+            while let Some(report) = written.get(next) {
+                next += 1;
+                let Ok(frame) = Frame::parse(report) else {
+                    continue;
+                };
+                let Ok(Some(body)) = reassembler.feed(&frame) else {
+                    continue;
+                };
+                let Ok(message) = Message::parse(&body) else {
+                    continue;
+                };
+                if message.message_type == expected as u16 {
+                    return (next, message.body.to_vec());
+                }
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        panic!("timed out waiting for a {expected:?} write from report {start}");
+    }
+
+    #[test]
+    fn scene_management_encodes_the_verified_wire_shapes() {
+        let link = FakeLink::new();
+        let session = Arc::new(crate::Session::over(link.clone()).unwrap());
+        let qc = QuadCortex::new(session.clone());
+        let mut next = 0;
+
+        qc.switch_scene(2).unwrap();
+        let (after, body) = wait_for_write(&link, next, MessageType::Scene);
+        next = after;
+        let scene: SceneMessage = prost::Message::decode(body.as_slice()).unwrap();
+        assert_eq!(scene.action, MessageAction::Update as i32);
+        assert!(matches!(
+            scene.selected_scene,
+            Some(crate::proto::scene_message::SelectedScene::SelectedScene(2))
+        ));
+
+        qc.set_scene_label(1, Some("Wide Lead")).unwrap();
+        let (after, body) = wait_for_write(&link, next, MessageType::SceneLabel);
+        next = after;
+        let label: SceneLabelMessage = prost::Message::decode(body.as_slice()).unwrap();
+        assert_eq!((label.index, label.label.as_str()), (1, "Wide Lead"));
+
+        qc.set_scene_label(3, None).unwrap();
+        let (after, body) = wait_for_write(&link, next, MessageType::SceneLabel);
+        next = after;
+        let label: SceneLabelMessage = prost::Message::decode(body.as_slice()).unwrap();
+        assert_eq!((label.index, label.label.as_str()), (3, SCENE_UNLABELLED));
+
+        qc.set_scene_color(4, 0xff12_34ab).unwrap();
+        let (after, body) = wait_for_write(&link, next, MessageType::SceneColor);
+        next = after;
+        let color: SceneColorMessage = prost::Message::decode(body.as_slice()).unwrap();
+        assert_eq!((color.index, color.color), (4, 0xff12_34ab));
+
+        qc.copy_scene(1, 5, false).unwrap();
+        let (after, body) = wait_for_write(&link, next, MessageType::SceneCopy);
+        next = after;
+        let copy: SceneCopyMessage = prost::Message::decode(body.as_slice()).unwrap();
+        assert_eq!(
+            (copy.from_index, copy.to_index, copy.is_swap),
+            (1, 5, false)
+        );
+        assert_eq!(copy.action, MessageAction::Update as i32);
+
+        qc.copy_scene(2, 6, true).unwrap();
+        let (_, body) = wait_for_write(&link, next, MessageType::SceneCopy);
+        let swap: SceneCopyMessage = prost::Message::decode(body.as_slice()).unwrap();
+        assert_eq!((swap.from_index, swap.to_index, swap.is_swap), (2, 6, true));
+
+        for result in [
+            qc.switch_scene(8),
+            qc.set_scene_label(8, Some("invalid")),
+            qc.set_scene_color(8, 0),
+            qc.copy_scene(0, 8, false),
+        ] {
+            assert!(matches!(result, Err(crate::Error::InvalidScene(_))));
+        }
+        session.close();
     }
 
     #[test]

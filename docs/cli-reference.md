@@ -1462,18 +1462,27 @@ Examples:
 
 ### `cortex scene`
 
-Switch the active scene.
+Switch, label, recolour, copy, or swap scenes.
 
 ```text
-Switch the active scene.
+Switch, label, recolour, copy, or swap scenes.
 
 CHANGES WHAT IS HEARD. Nothing is saved.
 
-Usage: cortex scene [OPTIONS] --index <0-7>
+Usage: cortex scene [OPTIONS] [COMMAND]
+
+Commands:
+  switch   Switch the active scene. Changes what is heard; does not save
+  label    Set a scene label on the unsaved working copy
+  unlabel  Clear a scene label on the unsaved working copy
+  color    Set a scene colour as `0xAARRGGBB`, `#RRGGBB`, or decimal
+  copy     Copy one scene onto another, including its label and colour
+  swap     Exchange two scenes, including their labels and colours
+  help     Print this message or the help of the given subcommand(s)
 
 Options:
       --index <0-7>
-          Scene number, 0-7 ZERO-BASED: 0 is scene A and 7 is scene H. The unit labels them A-H, so scene C is `--index 2`
+          Scene number, 0-7 ZERO-BASED: 0 is scene A and 7 is scene H. The unit labels them A-H, so scene C is `--index 2`. Compatibility shorthand for `cortex scene switch --index N`
 
       --format <FORMAT>
           Output format. `text` is for humans; `json` is for scripts and agents, and is stable enough to parse.
@@ -1501,7 +1510,260 @@ Options:
           Print version
 
 Examples:
+  cortex scene switch --index 2
+  cortex scene label --index 2 --label 'Wide Lead'
+  cortex scene color --index 2 --color '#FF02C2'
+  cortex scene copy --from 1 --to 3
+  cortex scene swap --first 1 --second 3
+
+Compatibility:
   cortex scene --index 2
+```
+
+#### `cortex scene switch`
+
+Switch the active scene. Changes what is heard; does not save.
+
+```text
+Switch the active scene. Changes what is heard; does not save
+
+Usage: cortex scene switch [OPTIONS] --index <0-7>
+
+Options:
+      --index <0-7>
+
+
+      --format <FORMAT>
+          Output format. `text` is for humans; `json` is for scripts and agents, and is stable enough to parse.
+
+          Only the RESULT changes format. Progress, warnings, and errors always go to stderr as plain text, so `cortex preset list --format json | jq` gets clean JSON regardless.
+
+          Possible values:
+          - text: Human-readable, the default
+          - json: Machine-readable JSON
+
+          [default: text]
+
+      --zero-based
+          Take `--row` as 0-3 rather than the 1-4 shown on the unit.
+
+          The unit labels its rows 1-4 and the wire numbers them 0-3, so the default matches what a player sees. Scripts and agents generally have a zero-based index already, and converting it back by hand is exactly the sort of arithmetic that silently edits the wrong row.
+
+  -n, --dry-run
+          Print the operation plan without changing device or local state. Read-only commands accept and ignore this flag
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+  -V, --version
+          Print version
+```
+
+#### `cortex scene label`
+
+Set a scene label on the unsaved working copy.
+
+```text
+Set a scene label on the unsaved working copy
+
+Usage: cortex scene label [OPTIONS] --index <0-7> --label <LABEL>
+
+Options:
+      --index <0-7>
+
+
+      --label <LABEL>
+
+
+      --format <FORMAT>
+          Output format. `text` is for humans; `json` is for scripts and agents, and is stable enough to parse.
+
+          Only the RESULT changes format. Progress, warnings, and errors always go to stderr as plain text, so `cortex preset list --format json | jq` gets clean JSON regardless.
+
+          Possible values:
+          - text: Human-readable, the default
+          - json: Machine-readable JSON
+
+          [default: text]
+
+      --zero-based
+          Take `--row` as 0-3 rather than the 1-4 shown on the unit.
+
+          The unit labels its rows 1-4 and the wire numbers them 0-3, so the default matches what a player sees. Scripts and agents generally have a zero-based index already, and converting it back by hand is exactly the sort of arithmetic that silently edits the wrong row.
+
+  -n, --dry-run
+          Print the operation plan without changing device or local state. Read-only commands accept and ignore this flag
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+  -V, --version
+          Print version
+```
+
+#### `cortex scene unlabel`
+
+Clear a scene label on the unsaved working copy.
+
+```text
+Clear a scene label on the unsaved working copy
+
+Usage: cortex scene unlabel [OPTIONS] --index <0-7>
+
+Options:
+      --index <0-7>
+
+
+      --format <FORMAT>
+          Output format. `text` is for humans; `json` is for scripts and agents, and is stable enough to parse.
+
+          Only the RESULT changes format. Progress, warnings, and errors always go to stderr as plain text, so `cortex preset list --format json | jq` gets clean JSON regardless.
+
+          Possible values:
+          - text: Human-readable, the default
+          - json: Machine-readable JSON
+
+          [default: text]
+
+      --zero-based
+          Take `--row` as 0-3 rather than the 1-4 shown on the unit.
+
+          The unit labels its rows 1-4 and the wire numbers them 0-3, so the default matches what a player sees. Scripts and agents generally have a zero-based index already, and converting it back by hand is exactly the sort of arithmetic that silently edits the wrong row.
+
+  -n, --dry-run
+          Print the operation plan without changing device or local state. Read-only commands accept and ignore this flag
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+  -V, --version
+          Print version
+```
+
+#### `cortex scene color`
+
+Set a scene colour as `0xAARRGGBB`, `#RRGGBB`, or decimal.
+
+```text
+Set a scene colour as `0xAARRGGBB`, `#RRGGBB`, or decimal
+
+Usage: cortex scene color [OPTIONS] --index <0-7> --color <COLOR>
+
+Options:
+      --index <0-7>
+
+
+      --color <COLOR>
+
+
+      --format <FORMAT>
+          Output format. `text` is for humans; `json` is for scripts and agents, and is stable enough to parse.
+
+          Only the RESULT changes format. Progress, warnings, and errors always go to stderr as plain text, so `cortex preset list --format json | jq` gets clean JSON regardless.
+
+          Possible values:
+          - text: Human-readable, the default
+          - json: Machine-readable JSON
+
+          [default: text]
+
+      --zero-based
+          Take `--row` as 0-3 rather than the 1-4 shown on the unit.
+
+          The unit labels its rows 1-4 and the wire numbers them 0-3, so the default matches what a player sees. Scripts and agents generally have a zero-based index already, and converting it back by hand is exactly the sort of arithmetic that silently edits the wrong row.
+
+  -n, --dry-run
+          Print the operation plan without changing device or local state. Read-only commands accept and ignore this flag
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+  -V, --version
+          Print version
+```
+
+#### `cortex scene copy`
+
+Copy one scene onto another, including its label and colour.
+
+```text
+Copy one scene onto another, including its label and colour
+
+Usage: cortex scene copy [OPTIONS] --from <0-7> --to <0-7>
+
+Options:
+      --from <0-7>
+
+
+      --to <0-7>
+
+
+      --format <FORMAT>
+          Output format. `text` is for humans; `json` is for scripts and agents, and is stable enough to parse.
+
+          Only the RESULT changes format. Progress, warnings, and errors always go to stderr as plain text, so `cortex preset list --format json | jq` gets clean JSON regardless.
+
+          Possible values:
+          - text: Human-readable, the default
+          - json: Machine-readable JSON
+
+          [default: text]
+
+      --zero-based
+          Take `--row` as 0-3 rather than the 1-4 shown on the unit.
+
+          The unit labels its rows 1-4 and the wire numbers them 0-3, so the default matches what a player sees. Scripts and agents generally have a zero-based index already, and converting it back by hand is exactly the sort of arithmetic that silently edits the wrong row.
+
+  -n, --dry-run
+          Print the operation plan without changing device or local state. Read-only commands accept and ignore this flag
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+  -V, --version
+          Print version
+```
+
+#### `cortex scene swap`
+
+Exchange two scenes, including their labels and colours.
+
+```text
+Exchange two scenes, including their labels and colours
+
+Usage: cortex scene swap [OPTIONS] --first <0-7> --second <0-7>
+
+Options:
+      --first <0-7>
+
+
+      --second <0-7>
+
+
+      --format <FORMAT>
+          Output format. `text` is for humans; `json` is for scripts and agents, and is stable enough to parse.
+
+          Only the RESULT changes format. Progress, warnings, and errors always go to stderr as plain text, so `cortex preset list --format json | jq` gets clean JSON regardless.
+
+          Possible values:
+          - text: Human-readable, the default
+          - json: Machine-readable JSON
+
+          [default: text]
+
+      --zero-based
+          Take `--row` as 0-3 rather than the 1-4 shown on the unit.
+
+          The unit labels its rows 1-4 and the wire numbers them 0-3, so the default matches what a player sees. Scripts and agents generally have a zero-based index already, and converting it back by hand is exactly the sort of arithmetic that silently edits the wrong row.
+
+  -n, --dry-run
+          Print the operation plan without changing device or local state. Read-only commands accept and ignore this flag
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+  -V, --version
+          Print version
 ```
 
 ### `cortex catalog`

@@ -80,12 +80,29 @@ Changes what is heard. Note the starting slot first.
 ```sh
 cortex preset recall --slot "$SCRATCH_SLOT"
 cortex grid show                    # confirm the grid changed
-cortex scene --index 1
+cortex scene switch --index 1
 cortex device probe                   # confirm active_scene: 1
 ```
 
 - [ ] The recall changed the loaded preset
 - [ ] The scene switch took effect
+
+Scene metadata and copy/swap are unsaved working-copy edits. Record `cortex grid show --params --format json`, exercise discriminating scenes, then recall the scratch slot to restore it:
+
+```sh
+cortex scene label --index 1 --label "Fictional Lead"
+cortex scene color --index 1 --color '#112233'
+cortex scene copy --from 1 --to 4
+cortex scene swap --first 2 --second 3
+cortex grid show --params
+cortex scene unlabel --index 1
+cortex preset recall --slot "$SCRATCH_SLOT"
+```
+
+- [ ] Label and colour read back on scene B
+- [ ] Copy makes scene E's parameters, bypass, label and colour equal scene B
+- [ ] Swap exchanges discriminating C/D values rather than copying one over both
+- [ ] Recalling the scratch slot restores all unsaved scene changes
 
 ## 7. Stored preset read
 
@@ -99,7 +116,7 @@ cortex preset show --slot "$SCRATCH_SLOT"
 Then check the documented trap:
 
 ```sh
-cortex scene --index 1
+cortex scene switch --index 1
 cortex preset show --slot "$SCRATCH_SLOT"
 cortex device probe                   # active_scene should be back to 0
 ```

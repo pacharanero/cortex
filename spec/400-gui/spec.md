@@ -65,7 +65,7 @@ The planned visual model:
 
 - **A faithful rendering of the Quad Cortex front panel** - the 10 footswitch/encoder positions, the colour OLED grid display, the scene LEDs, and the context strip along the top. The player sees a virtual Quad Cortex on screen, not a generic "editor window".
 - **Click-to-press and drag-to-turn** on each footswitch/encoder. A click toggles bypass (or recalls a scene, or navigates a menu, depending on mode). A vertical drag or scroll adjusts the encoder value. Keyboard equivalents for accessibility.
-- **The grid display** mirrors the device's OLED - the current signal chain, block icons, bypass state, and active scene. It will render the crate's existing preset/grid/block views and active-scene state; the richer `Scene` value remains planned in zone 130.
+- **The grid display** mirrors the device's OLED - the current signal chain, block icons, bypass state, and active scene. It renders the crate's preset/grid/block/scene views and uses a custom scene label when present, falling back to A-H.
 - **Wrapper layers for common workflows** on top of the hardware-faithful view:
   - **Patch browser** - a setlist/slot grid for quick preset switching (the `list_presets` + `recall_preset` path), with search and favourites.
   - **Block palette** - a searchable list of available models (from the `Catalog`) to drag onto a grid cell.

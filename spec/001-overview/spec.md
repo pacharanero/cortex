@@ -24,7 +24,7 @@ tags: ["overview", "cortex-rs", "rust", "usb-hid", "quad-cortex", "nano-cortex",
 
 ## Problem Statement
 
-cortex-rs is an unofficial, Linux-first Rust toolkit for the Neural DSP Quad Cortex (and, in time, the Nano Cortex). The core deliverable is a low-level leaf crate that speaks the Cortex Control USB HID protocol and exposes a typed domain model for presets, the grid, blocks, and active-scene state. A richer `Scene` value remains planned. A shared `cortex-host` daemon IPC boundary serves three host surfaces: the hardware-verified `cortex` CLI; the hardware-verified, non-persistent `cortex-mcp` server; and a Tauri desktop GUI whose interactive read-only first draft has explicit fixture and daemon-backed modes. The GUI target is cross-platform, while Linux is the only verified host today.
+cortex-rs is an unofficial, Linux-first Rust toolkit for the Neural DSP Quad Cortex (and, in time, the Nano Cortex). The core deliverable is a low-level leaf crate that speaks the Cortex Control USB HID protocol and exposes a typed domain model for presets, the grid, blocks, scene metadata, and active-scene state. A shared `cortex-host` daemon IPC boundary serves three host surfaces: the hardware-verified `cortex` CLI; the hardware-verified, non-persistent `cortex-mcp` server; and a Tauri desktop GUI whose interactive read-only first draft has explicit fixture and daemon-backed modes. The GUI target is cross-platform, while Linux is the only verified host today.
 
 The project is a Rust port of the protocol behaviour established by the MIT-licensed `stokes-audio/pyquadcortex` Python library, with the implemented core paths re-verified against a real Quad Cortex on Linux running CorOS 4.0.1. It is not affiliated with or endorsed by Neural DSP.
 

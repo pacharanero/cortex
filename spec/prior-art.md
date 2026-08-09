@@ -35,7 +35,7 @@ Start with `pyquadcortex/docs/protocol.md` (especially "Operation coverage") and
 
 ### What it has that we do not
 
-Most planned items in PROT-006.4 through PROT-006.15 already have an implementation or a documented investigation there: the remaining reads, scene copy/label/colour, `move_block`, the splitter/mixer/lane/gate group, tempo methods, stomp/expression/MIDI, file operations, captures and IRs, global settings, I/O ports, and pinning/favourites. Verification varies by operation - read-back, confirmation on the unit, capture only, or a documented negative result - so copy the evidence level as carefully as the wire shape. Its ergonomic helper for selecting a list parameter by option **name** and centralising the `index / (count - 1)` arithmetic is now tracked in PROT-006.15.
+Most planned items in PROT-006.4 through PROT-006.15 already have an implementation or a documented investigation there: the remaining reads, `move_block`, the splitter/mixer/lane/gate group, tempo methods, stomp/expression/MIDI, file operations, captures and IRs, global settings, I/O ports, and pinning/favourites. Scene copy/label/colour have now been ported and independently hardware-verified here. Verification varies by operation - read-back, confirmation on the unit, capture only, or a documented negative result - so copy the evidence level as carefully as the wire shape. Its ergonomic helper for selecting a list parameter by option **name** and centralising the `index / (count - 1)` arithmetic is now tracked in PROT-006.15.
 
 ### Device behaviour that fails silently
 

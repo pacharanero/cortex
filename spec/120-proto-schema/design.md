@@ -113,7 +113,7 @@ Layer 3: Proto (120)       - prost-generated types from .proto files (compile-ti
        ^
        |  (cortex_rs::proto::* types)
        |
-Layer 4: Domain (130)      - Message, DeviceKind, Preset, Grid, Block, Catalog; Scene planned
+Layer 4: Domain (130)      - Message, DeviceKind, Preset, Grid, Block, Scene, Catalog
 ```
 
 This zone is Layer 3. It has no dependency on any higher layer; the dependency arrow points *down* into the generated types from the domain model.

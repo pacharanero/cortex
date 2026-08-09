@@ -2,7 +2,7 @@
 
 `cortex-mcp` gives a local agent controlled access to the Quad Cortex connected to this Linux machine. It uses stdio and talks through the held `cortex session` daemon; it does not open a second USB connection and it sends no device data to a hosted Cortex service.
 
-The current tool surface can read device and preset state, recall presets, switch scenes, and edit the unsaved live grid. It deliberately exposes no save or delete tool. Recall and grid edits are audible and can discard an unsaved working copy, but they do not persist unless separately saved through the CLI.
+The current tool surface can read device and preset state, recall presets, switch/label/recolour/copy/swap scenes, and edit the unsaved live grid. It deliberately exposes no save or delete tool. Recall and grid edits are audible and can discard an unsaved working copy, but they do not persist unless separately saved through the CLI.
 
 ## Before registering it
 
@@ -22,8 +22,9 @@ The MCP server currently requires that held session to be running before the age
 - Recall and live-grid writes are audible but non-persistent. The server has no save or delete tool.
 - Routing tools currently take raw protocol port identifiers. Inspect the current grid and tool description rather than guessing a physical jack number.
 - Block placement is verified by echo or live-grid read-back. Other working-copy writes currently prove dispatch but do not all perform an independent post-write read-back; read the grid after a sequence when structural certainty matters.
+- Scene indices are zero-based 0-7 (A-H). `copy_scene` and `swap_scenes` move labels and colours as well as sound state. Scene colours are decimal ARGB `uint32` values in MCP schemas; copy/swap force a fresh live-grid read before returning because the device's acknowledgement omits its swap flag.
 
-The server exposes status, device version, active scene, CPU load, live/stored preset reads, block/folder/preset listings, catalog search, recall, scene switching, block placement/removal, parameter/bypass writes, chain input/output routing and split control. Use MCP discovery for the authoritative schemas.
+The server exposes status, device version, active scene, CPU load, live/stored preset reads, block/folder/preset listings, catalog search, recall, scene switching and metadata/copy management, block placement/removal, parameter/bypass writes, chain input/output routing and split control. Use MCP discovery for the authoritative schemas.
 
 ## Claude Code
 

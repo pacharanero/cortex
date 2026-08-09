@@ -48,7 +48,7 @@ The project's central discipline is being honest about what has actually run aga
 | Grid: bypass, routing, per-scene values, splits | <span class="status verified">verified</span> |
 | Prepared save, stored read-back and delete | <span class="status verified">verified</span> |
 | Capture and IR export/import | <span class="status provisional">investigation; no working export/import</span> |
-| MCP server read, recall, scene and live-grid tools | <span class="status verified">verified; no save/delete tools</span> |
+| MCP server read, recall, scene management and live-grid tools | <span class="status verified">verified; no save/delete tools</span> |
 | Desktop GUI shell | <span class="status provisional">daemon read boundary verified on Linux; native reconnect UI smoke pending</span> |
 | Windows and macOS hardware paths and packaging | <span class="status planned">planned; Linux is the only verified host</span> |
 | Nano Cortex | <span class="status provisional">unverified target; transport compatibility unestablished</span> |

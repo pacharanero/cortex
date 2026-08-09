@@ -39,7 +39,7 @@ use cortex_rs::RecallConsent;
 /// Bump this whenever a `Request` variant changes shape or a new variant is
 /// added. A client that sees a mismatch refuses with an actionable message
 /// rather than sending a request the daemon will misparse.
-pub const DAEMON_PROTOCOL_VERSION: u32 = 4;
+pub const DAEMON_PROTOCOL_VERSION: u32 = 5;
 
 /// A request from a client to the daemon.
 ///
@@ -59,6 +59,29 @@ pub enum Request {
     SwitchScene {
         /// Scene index, 0-7. Zero-based; the unit labels these A-H.
         scene: u32,
+    },
+    /// Set or clear a scene label on the unsaved working copy.
+    SetSceneLabel {
+        /// Scene index, 0-7.
+        scene: u32,
+        /// Label text, or `None` for the unit's unlabelled value.
+        label: Option<String>,
+    },
+    /// Set a scene's ARGB colour on the unsaved working copy.
+    SetSceneColor {
+        /// Scene index, 0-7.
+        scene: u32,
+        /// ARGB colour as a `u32`.
+        color: u32,
+    },
+    /// Copy or swap two scenes on the unsaved working copy.
+    CopyScene {
+        /// Source scene index, 0-7.
+        from_scene: u32,
+        /// Destination scene index, 0-7.
+        to_scene: u32,
+        /// Exchange both scenes rather than overwriting the destination.
+        swap: bool,
     },
     /// The live grid, including unsaved edits.
     CurrentPreset {
@@ -388,6 +411,37 @@ mod tests {
         assert!(text.contains(r#""scene":3"#), "{text}");
         let back: Request = serde_json::from_str(&text).unwrap();
         assert!(matches!(back, Request::SwitchScene { scene: 3 }));
+    }
+
+    #[test]
+    fn scene_management_requests_round_trip_without_losing_argb_or_null() {
+        let requests = [
+            Request::SetSceneLabel {
+                scene: 2,
+                label: Some("Wide Lead".into()),
+            },
+            Request::SetSceneLabel {
+                scene: 3,
+                label: None,
+            },
+            Request::SetSceneColor {
+                scene: 4,
+                color: u32::MAX,
+            },
+            Request::CopyScene {
+                from_scene: 1,
+                to_scene: 6,
+                swap: true,
+            },
+        ];
+        for request in requests {
+            let text = serde_json::to_string(&request).unwrap();
+            let back: Request = serde_json::from_str(&text).unwrap();
+            assert_eq!(
+                serde_json::to_value(back).unwrap(),
+                serde_json::to_value(request).unwrap()
+            );
+        }
     }
 
     #[test]

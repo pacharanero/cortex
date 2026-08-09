@@ -102,7 +102,7 @@ These are free functions in `helpers.rs`, not methods, because they are pure con
 ## [DES-LAYERS] Layer Map (cross-reference)
 
 ```text
-Layer 4: Domain (130)      - DeviceKind, Message, Preset, Grid, Block, Catalog; Scene planned
+Layer 4: Domain (130)      - DeviceKind, Message, Preset, Grid, Block, Scene, Catalog
        ^
        |  (cortex_rs::proto::* types, reassembled buffer)
        |

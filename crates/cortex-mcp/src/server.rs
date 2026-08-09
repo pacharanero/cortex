@@ -162,6 +162,28 @@ impl CortexMcp {
             "switch_scene" => Request::SwitchScene {
                 scene: bounded_u32(args, "scene", 0, 7)?,
             },
+            "set_scene_label" => Request::SetSceneLabel {
+                scene: bounded_u32(args, "scene", 0, 7)?,
+                label: Some(string_arg(args, "label")?),
+            },
+            "unlabel_scene" => Request::SetSceneLabel {
+                scene: bounded_u32(args, "scene", 0, 7)?,
+                label: None,
+            },
+            "set_scene_color" => Request::SetSceneColor {
+                scene: bounded_u32(args, "scene", 0, 7)?,
+                color: u32_arg(args, "color")?,
+            },
+            "copy_scene" => Request::CopyScene {
+                from_scene: bounded_u32(args, "from_scene", 0, 7)?,
+                to_scene: bounded_u32(args, "to_scene", 0, 7)?,
+                swap: false,
+            },
+            "swap_scenes" => Request::CopyScene {
+                from_scene: bounded_u32(args, "first_scene", 0, 7)?,
+                to_scene: bounded_u32(args, "second_scene", 0, 7)?,
+                swap: true,
+            },
             "set_block" => Request::SetBlock {
                 row: bounded_u32(args, "row", 0, 3)?,
                 column: bounded_u32(args, "column", 0, 7)?,
@@ -310,6 +332,36 @@ fn tools() -> Vec<Tool> {
             false,
         ),
         tool(
+            "set_scene_label",
+            "Set a scene label on the unsaved working copy. Scenes A-H are zero-based 0-7; does not save.",
+            scene_label_schema(),
+            false,
+        ),
+        tool(
+            "unlabel_scene",
+            "Clear a scene label on the unsaved working copy using the unit's one-space unlabelled value. Scenes A-H are zero-based 0-7; does not save.",
+            scene_schema("scene"),
+            false,
+        ),
+        tool(
+            "set_scene_color",
+            "Set a scene colour on the unsaved working copy as an ARGB uint32. Scenes A-H are zero-based 0-7; does not save.",
+            scene_color_schema(),
+            false,
+        ),
+        tool(
+            "copy_scene",
+            "Copy one scene's parameter, bypass, label and colour state onto another scene in the unsaved working copy. Scenes A-H are zero-based 0-7; does not save.",
+            scene_pair_schema("from_scene", "to_scene"),
+            false,
+        ),
+        tool(
+            "swap_scenes",
+            "Exchange two scenes' parameter, bypass, label and colour state in the unsaved working copy. Scenes A-H are zero-based 0-7; does not save.",
+            scene_pair_schema("first_scene", "second_scene"),
+            false,
+        ),
+        tool(
             "set_block",
             &format!(
                 "Place a model on the unsaved grid. {ROW_TRAP} DSP-capacity refusal is silent; verify defaults true and catches it by echo or read-back."
@@ -428,6 +480,30 @@ fn split_schema() -> JsonObject {
         &["row", "split"],
     )
 }
+fn scene_schema(name: &str) -> JsonObject {
+    object_schema(
+        json!({(name):{"type":"integer","minimum":0,"maximum":7}}),
+        &[name],
+    )
+}
+fn scene_label_schema() -> JsonObject {
+    object_schema(
+        json!({"scene":{"type":"integer","minimum":0,"maximum":7},"label":{"type":"string","minLength":1}}),
+        &["scene", "label"],
+    )
+}
+fn scene_color_schema() -> JsonObject {
+    object_schema(
+        json!({"scene":{"type":"integer","minimum":0,"maximum":7},"color":{"type":"integer","minimum":0,"maximum":4294967295_u64,"description":"ARGB uint32, e.g. 4294902466 for 0xFFFF02C2"}}),
+        &["scene", "color"],
+    )
+}
+fn scene_pair_schema(first: &str, second: &str) -> JsonObject {
+    object_schema(
+        json!({(first):{"type":"integer","minimum":0,"maximum":7},(second):{"type":"integer","minimum":0,"maximum":7}}),
+        &[first, second],
+    )
+}
 fn param_schema() -> JsonObject {
     cell_schema(
         json!({"target":{"oneOf":[{"type":"object","properties":{"by":{"const":"index"},"value":{"type":"integer","minimum":0}},"required":["by","value"]},{"type":"object","properties":{"by":{"const":"name"},"value":{"type":"string","minLength":1}},"required":["by","value"]}]},"input":{"oneOf":[{"type":"object","properties":{"kind":{"const":"normalised"},"value":{"type":"number","minimum":0,"maximum":1}},"required":["kind","value"]},{"type":"object","properties":{"kind":{"const":"real"},"value":{"type":"number"}},"required":["kind","value"]},{"type":"object","properties":{"kind":{"const":"text"},"value":{"type":"string"}},"required":["kind","value"]}]},"scene":{"type":["integer","null"],"minimum":0,"maximum":7},"promote":{"type":"boolean","default":false},"timeout_seconds":{"type":"integer","minimum":1,"maximum":60,"default":15}}),
@@ -515,6 +591,15 @@ mod tests {
             assert!(!names.iter().any(|name| name == forbidden));
         }
         assert!(names.contains(&"set_block".to_string()));
+        for scene_tool in [
+            "set_scene_label",
+            "unlabel_scene",
+            "set_scene_color",
+            "copy_scene",
+            "swap_scenes",
+        ] {
+            assert!(names.contains(&scene_tool.to_string()));
+        }
     }
 
     #[test]

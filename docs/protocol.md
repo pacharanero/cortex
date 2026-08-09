@@ -361,6 +361,21 @@ A malformed report or envelope breaks subscribed-state continuity even when late
 
 Prepared saves rely on that continuous subscription as their mutation epoch. Preparation and commit both require `cache.phase == live`; one unchanged generation and `storage_revision` must span the preparation listing and backup read. `unsubscribed`, `seeding`, `incomplete`, or `invalidated` state fails closed even if the target's listing metadata is unchanged.
 
+## Scene labels, colours, copy and swap
+
+Scenes are indexed 0-7 on the wire and displayed as A-H. Their labels and colours are stored in `BinaryPreset.scene_labels` and `BinaryPreset.scene_colors`; an unlabelled scene is one space (`" "`), not an empty string. Colours are ARGB `uint32` values.
+
+```text
+SceneLabel{action: UPDATE, index: 2, label: "Wide Lead"}
+SceneColor{action: UPDATE, index: 2, color: 0xFFFF02C2}
+SceneCopy{action: UPDATE, from_index: 1, to_index: 4, is_swap: false}
+SceneCopy{action: UPDATE, from_index: 2, to_index: 3, is_swap: true}
+```
+
+Copy and swap both use `UPDATE`, not the schema's `COPY` or `SWAP` actions. They move the complete scene state, including scene-following parameters, per-scene bypass, label and colour. Hardware read-back on CorOS 4.0.1 confirmed source B copied onto E and scenes C/D exchanged with discriminating parameter values.
+
+The device acts on `SceneCopy.is_swap`, but its acknowledgement omits that flag and therefore looks like a copy even after a successful swap. Do not reduce that acknowledgement into cached parameter state. Invalidate the live preset and issue a fresh `RecallPreset{READ}`; the returned preset is ground truth. Separate `SceneLabel` and `SceneColor` broadcasts do repair metadata, but they cannot repair the copied/swapped parameter and bypass arrays.
+
 ## Settings writes are not uniformly sparse
 
 Top-level settings fields behave like sparse updates, but a nested submessage can replace the whole nested value. For structures such as `master_volume_assignment`, read the current value, merge the intended field, and write the complete submessage; sending one flag can silently clear its siblings.

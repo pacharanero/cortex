@@ -11,7 +11,7 @@ tags: ["domain-model", "device", "message", "preset", "grid", "block", "scene", 
 
 # cortex-rs - Domain Model (Zone 130)
 
-> Owns the typed views, pure grid builders, catalog, and save-safety value types above the generated protobuf shapes. Zone 140 owns the subscribed state reducer. `Scene` and several richer navigation helpers remain planned.
+> Owns the typed views, pure grid builders, catalog, and save-safety value types above the generated protobuf shapes. Zone 140 owns the subscribed state reducer. Scene metadata is typed; several richer navigation helpers remain planned.
 
 ## References
 
@@ -26,7 +26,7 @@ tags: ["domain-model", "device", "message", "preset", "grid", "block", "scene", 
 
 The generated protobuf types are correct but unergonomic: `BinaryPreset` is a flat bag of `oneof` fields, `Chain` carries rows as optional `uint32`, and the grid's row numbering is 0-based in the API but 1-4 on the device screen. A wrong-row edit succeeds silently - the device does not push back. This zone owns the typed wrappers and helper functions that make the domain safe to navigate, and that surface the row-numbering trap to every caller (CLI, MCP server, GUI) rather than letting each one re-derive it.
 
-Implemented surfaces include `DeviceKind`, `Message`, `Catalog`, `view::Preset`/`Row`/`Block`/`Bypass`, checked row and slot conversion, pure grid message builders, and prepared-save policy. `DeviceStateCache` consumes these values under zone 140's session contract. Remaining work is tracked in the roadmap and labelled per operation rather than treating the whole layer as either verified or provisional.
+Implemented surfaces include `DeviceKind`, `Message`, `Catalog`, `view::Preset`/`Row`/`Block`/`Bypass`/`Scene`, checked row and slot conversion, pure grid message builders, and prepared-save policy. `DeviceStateCache` consumes these values under zone 140's session contract. Remaining work is tracked in the roadmap and labelled per operation rather than treating the whole layer as either verified or provisional.
 
 ## User Stories
 
@@ -72,7 +72,7 @@ Maintainers, AI coding agents, and the CLI/MCP/GUI surfaces that consume the cra
 | FR-8 | `view::Preset::from_binary` returns an owned serialisable host view containing metadata, rows and occupied blocks without exposing protobuf oneofs. | Must Have |
 | FR-9 | `grid::Row` validates zero-based wire rows and one-based screen rows; `view::Preset` exposes the read-side row/column layout. A distinct dense `Grid` abstraction is optional and must add value beyond these views. | Must Have |
 | FR-10 | `view::Block` exposes row, screen row, column, model identity/name, vendor attribution, parameters and bypass state. | Must Have |
-| FR-11 | A `Scene` model exposes index, label, color, and per-block bypass. | Should Have |
+| FR-11 | `view::Scene` exposes index, label and colour; per-block scene bypass remains on each `view::Block`, avoiding a duplicated aggregate. | Should Have |
 | FR-12 | `Catalog::parse` eagerly and boundedly parses `gzip(tar(ModelRepo.xml))` into model/category/parameter metadata while retaining positional placeholders and the vendor's attribution verbatim. | Must Have |
 | FR-13 | Checked row and slot conversions plus input-level scaling are implemented once in the crate. Richer helpers such as `splits`, `free_rows`, and `row_status` remain roadmap work. | Should Have |
 | FR-14 | A recalled preset carries NO explicit row; writing it back wholesale does nothing. The `Preset` wrapper documents this and the client layer (150) must set the row before writing. | Should Have |
@@ -100,7 +100,7 @@ Maintainers, AI coding agents, and the CLI/MCP/GUI surfaces that consume the cra
 - [x] `device.rs` and `message.rs` carry `@see` links to this spec.
 - [x] `view::Preset`, `view::Row`, `view::Block`, `ParamValue`, and `Bypass` provide shared serialisable read views.
 - [x] `grid::Row` makes the row-numbering trap explicit and rejects invalid rows.
-- [ ] A richer `Scene` view remains planned.
+- [x] `view::Scene` exposes A-H metadata in every preset view, while each block exposes its per-scene bypass state.
 - [x] `Catalog` parses the `ModelRepo` container and preserves parameter wire positions.
 - [~] Slot conversion and scaling helpers are implemented; richer grid-navigation helpers remain planned.
 - [x] `UNITY_LEVEL`, `input_level_db`, and `db_to_input_level` are exposed.

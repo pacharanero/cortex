@@ -92,7 +92,7 @@ Linux users with a Quad Cortex, script writers, AI coding agents driving the CLI
 | --- | --- | --- |
 | FR-10 | A global `--format text\|json` flag (default `text`) is honoured by every command. `text` is for humans; `json` is for scripts and agents. `cortex device version --format json` emits structured version output. | Must Have |
 | FR-11 | `cortex preset recall --setlist <path> --slot <slot>` recalls a preset on the device (delegates to `QuadCortex::recall_preset`). | Must Have |
-| FR-12 | `cortex scene --index <n>` is the deliberate direct-action exception to noun-then-verb grouping and delegates to `QuadCortex::switch_scene`. | Must Have |
+| FR-12 | `cortex scene switch|label|unlabel|color|copy|swap` delegates to the shared scene API. Indices are zero-based 0-7; colour accepts `0xAARRGGBB`, `#RRGGBB`, or decimal. The shipped `cortex scene --index <n>` switch shorthand remains accepted. | Must Have |
 | FR-13 | `cortex preset show --setlist <path> --slot <slot>` recalls a preset and prints a typed summary (text by default, JSON with `--format json`). | Must Have |
 | FR-14 | `cortex preset list --setlist <path>` lists presets in a setlist (delegates to `QuadCortex::list_presets`). | Must Have |
 | FR-15 | `cortex setlist list` lists folders the device knows (delegates to `QuadCortex::list_folders`). | Should Have |
@@ -113,7 +113,7 @@ Linux users with a Quad Cortex, script writers, AI coding agents driving the CLI
 | FR-20 | The daemon serves only responsive `Live` cache entries, falls back to explicit reads for missing state, and reports cache phase/generation/revision and reducer counters in `session status`. | Must Have |
 | FR-21 | A background monitor invalidates state before replacing a silent or continuity-invalidated session, excludes and drains device operations, explicitly releases the old handle before opening another, retries the full subscribed handshake with exponential backoff capped at 30 seconds, and exposes connected/reconnecting/failed status. | Must Have |
 | FR-22 | Requests received during reconnect fail immediately with the attempt and last error; status and shutdown remain available. | Must Have |
-| FR-23 | `cortex preset move --from <slot> --to <slot>` routes through daemon protocol v4 when held, otherwise uses one direct client session. It executes by default; `-n`/`--dry-run` reports the exact source, destination, and setlist without opening a session or changing the unit. Execution delegates source-path resolution, occupancy refusal, and listing-convergence checks to `QuadCortex::move_preset`; MCP exposes no corresponding tool. | Must Have |
+| FR-23 | `cortex preset move --from <slot> --to <slot>` routes through the versioned daemon protocol when held, otherwise uses one direct client session. It executes by default; `-n`/`--dry-run` reports the exact source, destination, and setlist without opening a session or changing the unit. Execution delegates source-path resolution, occupancy refusal, and listing-convergence checks to `QuadCortex::move_preset`; MCP exposes no corresponding tool. | Must Have |
 
 ### Non-Functional Requirements
 

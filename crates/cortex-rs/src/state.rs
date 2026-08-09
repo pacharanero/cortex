@@ -28,7 +28,8 @@ use crate::proto::message_action::Enum as MessageAction;
 use crate::proto::{
     BinaryPreset, Bypass, Chain, ColBypass, ConnectionMessage, CpuLoadMessage, FileMessage,
     FolderInfo, GridMessage, Model, ModelRepoMessage, NewModelsMessage, Param, PresetDirtyMessage,
-    RecallPresetMessage, SceneMessage, SetlistPositionMessage, VersionMessage,
+    RecallPresetMessage, SceneColorMessage, SceneCopyMessage, SceneLabelMessage, SceneMessage,
+    SetlistPositionMessage, VersionMessage,
 };
 
 /// Whether a cache is ready to answer without device I/O.
@@ -293,6 +294,9 @@ impl DeviceStateCache {
                     apply_scene,
                 );
             }
+            MessageType::SceneLabel | MessageType::SceneColor | MessageType::SceneCopy => {
+                self.observe_scene_metadata(generation, message_type, body);
+            }
             MessageType::PresetDirty => self.decode_and_record::<PresetDirtyMessage, _>(
                 generation,
                 body,
@@ -347,6 +351,30 @@ impl DeviceStateCache {
                 });
             }
             _ => {}
+        }
+    }
+
+    fn observe_scene_metadata(&self, generation: u64, message_type: MessageType, body: &[u8]) {
+        match message_type {
+            MessageType::SceneLabel => self.decode_and_record::<SceneLabelMessage, _>(
+                generation,
+                body,
+                DecodeImpact::CurrentPreset,
+                apply_scene_label,
+            ),
+            MessageType::SceneColor => self.decode_and_record::<SceneColorMessage, _>(
+                generation,
+                body,
+                DecodeImpact::CurrentPreset,
+                apply_scene_color,
+            ),
+            MessageType::SceneCopy => self.decode_and_record::<SceneCopyMessage, _>(
+                generation,
+                body,
+                DecodeImpact::CurrentPreset,
+                apply_scene_copy,
+            ),
+            _ => unreachable!("scene metadata dispatcher received {message_type:?}"),
         }
     }
 
@@ -636,6 +664,83 @@ fn apply_scene(inner: &mut StateInner, revision: u64, message: SceneMessage) -> 
     }
     inner.active_scene = Some(cached(inner, revision, scene));
     Apply::Applied
+}
+
+fn scene_index(index: i32) -> Result<usize, String> {
+    let index = usize::try_from(index).map_err(|_| format!("scene {index} is negative"))?;
+    if index > 7 {
+        return Err(format!("scene {index} is out of range; scenes are 0-7"));
+    }
+    Ok(index)
+}
+
+fn apply_scene_label(inner: &mut StateInner, revision: u64, message: SceneLabelMessage) -> Apply {
+    if message.action != MessageAction::Update as i32 {
+        return Apply::Ignored;
+    }
+    let Ok(index) = scene_index(message.index) else {
+        inner.last_rejection = Some(format!(
+            "device reported scene label index {}; scenes are 0-7",
+            message.index
+        ));
+        return Apply::Rejected;
+    };
+    let Some(current) = inner.current_preset.as_ref() else {
+        return Apply::Ignored;
+    };
+    let mut preset = current.value.clone();
+    preset
+        .scene_labels
+        .resize(8, crate::client::SCENE_UNLABELLED.to_string());
+    preset.scene_labels[index] = message.label;
+    inner.current_preset = Some(cached(inner, revision, preset));
+    Apply::Applied
+}
+
+fn apply_scene_color(inner: &mut StateInner, revision: u64, message: SceneColorMessage) -> Apply {
+    if message.action != MessageAction::Update as i32 {
+        return Apply::Ignored;
+    }
+    let Ok(index) = scene_index(message.index) else {
+        inner.last_rejection = Some(format!(
+            "device reported scene color index {}; scenes are 0-7",
+            message.index
+        ));
+        return Apply::Rejected;
+    };
+    let Some(current) = inner.current_preset.as_ref() else {
+        return Apply::Ignored;
+    };
+    let mut preset = current.value.clone();
+    preset.scene_colors.resize(8, 0);
+    preset.scene_colors[index] = message.color;
+    inner.current_preset = Some(cached(inner, revision, preset));
+    Apply::Applied
+}
+
+fn apply_scene_copy(inner: &mut StateInner, _revision: u64, message: SceneCopyMessage) -> Apply {
+    if message.action != MessageAction::Update as i32 {
+        return Apply::Ignored;
+    }
+    let (Ok(_from), Ok(_to)) = (
+        scene_index(message.from_index),
+        scene_index(message.to_index),
+    ) else {
+        inner.last_rejection = Some(format!(
+            "device reported scene copy {} -> {}; scenes are 0-7",
+            message.from_index, message.to_index
+        ));
+        return Apply::Rejected;
+    };
+    // The device acts on is_swap but its acknowledgement omits it, so this
+    // message cannot distinguish a copy from a swap. A fresh RecallPreset READ
+    // must rebuild the baseline; applying the lossy echo would turn swaps into
+    // copies in the cache while the unit itself was correct.
+    invalidate_current(
+        inner,
+        "SceneCopy acknowledgement omits swap state; live preset refresh required".into(),
+    );
+    Apply::Rejected
 }
 
 fn apply_preset_dirty(inner: &mut StateInner, revision: u64, message: PresetDirtyMessage) -> Apply {
@@ -1246,10 +1351,16 @@ mod tests {
         chains[0].models = vec![model];
         BinaryPreset {
             chains,
+            scene_labels: (0..8).map(|index| format!("Scene {index}")).collect(),
+            scene_colors: (0..8).map(|index| 0xff00_0000 | index).collect(),
             bypass: vec![Bypass {
                 col_bypass: vec![ColBypass {
                     scene_mode: Some(col_bypass::SceneMode::SceneMode(bypass_scene_mode)),
-                    scene_bypass: vec![SceneBypass { bypass: false }; 8],
+                    scene_bypass: (0..8)
+                        .map(|index| SceneBypass {
+                            bypass: index % 2 == 1,
+                        })
+                        .collect(),
                     ..Default::default()
                 }],
                 ..Default::default()
@@ -1295,6 +1406,55 @@ mod tests {
         let (cache, _) = seeded_cache(false, false);
         assert_eq!(cache.status().phase, CachePhase::Live);
         assert_eq!(cache.current_preset().unwrap().value.chains.len(), 4);
+    }
+
+    #[test]
+    fn scene_label_and_color_pushes_update_the_live_baseline() {
+        let (cache, generation) = seeded_cache(true, true);
+        observe(
+            &cache,
+            generation,
+            MessageType::SceneLabel,
+            &SceneLabelMessage {
+                action: MessageAction::Update as i32,
+                index: 2,
+                label: "Wide Lead".into(),
+                ..Default::default()
+            },
+        );
+        observe(
+            &cache,
+            generation,
+            MessageType::SceneColor,
+            &SceneColorMessage {
+                action: MessageAction::Update as i32,
+                index: 2,
+                color: 0xff12_34ab,
+                ..Default::default()
+            },
+        );
+        let preset = cache.current_preset().unwrap().value;
+        assert_eq!(preset.scene_labels[2], "Wide Lead");
+        assert_eq!(preset.scene_colors[2], 0xff12_34ab);
+    }
+
+    #[test]
+    fn scene_copy_invalidates_until_a_full_live_read_repairs_the_baseline() {
+        let (cache, generation) = seeded_cache(true, true);
+        observe(
+            &cache,
+            generation,
+            MessageType::SceneCopy,
+            &SceneCopyMessage {
+                action: MessageAction::Update as i32,
+                from_index: 1,
+                to_index: 4,
+                is_swap: false,
+                ..Default::default()
+            },
+        );
+        assert!(cache.current_preset().is_none());
+        assert_eq!(cache.status().phase, CachePhase::Incomplete);
     }
 
     #[test]

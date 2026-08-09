@@ -88,6 +88,8 @@ Verification is per method. This project's implemented core read, navigation, gr
 | FR-29 | `set_scene_label(scene_index, label)` sends `SceneLabel{UPDATE}`; `None` sends `SCENE_UNLABELLED` (a single space, not empty string). | Should Have |
 | FR-30 | `set_scene_color(scene_index, color)` sends `SceneColor{UPDATE}` with an ARGB uint32. | Should Have |
 
+All five navigation operations are implemented and hardware-verified on CorOS 4.0.1. Scene indices are validated before wire I/O. A `SceneCopy` acknowledgement cannot safely update the subscribed baseline because the device omits `is_swap`; hosts refresh the full live preset after copy/swap.
+
 #### Grid write
 
 | ID    | Requirement                                                                                                       | Priority    |

@@ -124,6 +124,11 @@ impl DashboardSource for DaemonDashboardSource {
             });
         }
 
+        let active_scene_label = preset
+            .scenes
+            .get(active_scene as usize)
+            .and_then(|scene| scene.label.clone())
+            .unwrap_or_else(|| scene_letter(active_scene));
         let blocks = preset
             .blocks
             .into_iter()
@@ -157,7 +162,7 @@ impl DashboardSource for DaemonDashboardSource {
                 storage_revision: after.cache.storage_revision,
                 preset_name: preset.name,
                 active_scene,
-                active_scene_label: scene_label(active_scene),
+                active_scene_label,
                 preset_dirty: None,
                 cpu_load,
                 blocks,
@@ -221,7 +226,7 @@ fn status_is_live(status: &Status) -> bool {
         && status.cache.phase == cortex_rs::CachePhase::Live
 }
 
-fn scene_label(scene: u32) -> String {
+fn scene_letter(scene: u32) -> String {
     char::from_u32(u32::from(b'A') + scene)
         .unwrap_or('?')
         .to_string()
@@ -258,9 +263,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn scene_labels_are_rendered_in_rust() {
-        assert_eq!(scene_label(0), "A");
-        assert_eq!(scene_label(7), "H");
+    fn scene_letters_are_rendered_in_rust() {
+        assert_eq!(scene_letter(0), "A");
+        assert_eq!(scene_letter(7), "H");
     }
 
     #[test]

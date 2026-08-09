@@ -27,7 +27,7 @@ async fn official_client_discovers_and_calls_the_real_server() -> anyhow::Result
     let socket = runtime_dir.join("cortex.sock");
     let endpoint = LocalEndpoint::at(socket);
     let listener = LocalListener::bind(&endpoint)?.listener;
-    let daemon = std::thread::spawn(move || serve_daemon(listener, 2));
+    let daemon = std::thread::spawn(move || serve_daemon(listener, 3));
 
     let transport = TokioChildProcess::builder(
         tokio::process::Command::new(env!("CARGO_BIN_EXE_cortex-mcp")).configure(|command| {
@@ -40,6 +40,7 @@ async fn official_client_discovers_and_calls_the_real_server() -> anyhow::Result
     let client = ().serve(transport).await?;
     let tools = client.list_all_tools().await?;
     assert!(tools.iter().any(|tool| tool.name == "get_status"));
+    assert!(tools.iter().any(|tool| tool.name == "set_scene_label"));
     assert!(!tools.iter().any(|tool| tool.name.contains("save")));
 
     let result = client
@@ -55,6 +56,17 @@ async fn official_client_discovers_and_calls_the_real_server() -> anyhow::Result
             .and_then(serde_json::Value::as_str),
         Some("connected")
     );
+    let result = client
+        .call_tool(
+            CallToolRequestParams::new("set_scene_label").with_arguments(
+                serde_json::json!({"scene":2,"label":"Wide Lead"})
+                    .as_object()
+                    .expect("scene arguments are an object")
+                    .clone(),
+            ),
+        )
+        .await?;
+    assert_eq!(result.is_error, Some(false));
     client.cancel().await?;
     daemon.join().expect("fake daemon thread");
     let _ = std::fs::remove_dir(runtime_dir);
@@ -75,6 +87,14 @@ fn serve_connection(stream: LocalConnection) {
             .expect("decode fake daemon request");
         let response = match request {
             Request::Status => Response::ok(&status()).expect("encode status"),
+            Request::SetSceneLabel {
+                scene: 2,
+                label: Some(label),
+            } if label == "Wide Lead" => Response::ok(&serde_json::json!({
+                "scene": 2,
+                "label": label,
+            }))
+            .expect("encode scene label response"),
             other => Response::error(format!("unexpected request in process test: {other:?}")),
         };
         serde_json::to_writer(&mut writer, &response).expect("write fake daemon response");

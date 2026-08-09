@@ -180,6 +180,10 @@ pub enum Error {
     #[error("invalid row: {0}")]
     InvalidRow(String),
 
+    /// A scene index was outside the eight scenes A-H.
+    #[error("invalid scene: {0}")]
+    InvalidScene(String),
+
     /// A parameter selector or value was invalid for the requested write.
     #[error("invalid parameter write: {0}")]
     InvalidParameter(String),

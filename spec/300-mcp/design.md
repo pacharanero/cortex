@@ -46,6 +46,7 @@ The proposed tool surface has four tiers, each with a different safety posture:
 | --- | --- | --- |
 | Read | `list_presets`, `read_preset`, `list_blocks`, `get_device_version`, `read_current_preset`, `list_folders` | Unrestricted. (But note: `read_preset` has a recall side effect - surface it in the description.) |
 | Transient write | `recall_preset`, `switch_scene` | Free. Changes what is heard; nothing persistent is lost. |
+| Working-copy scene write | `set_scene_label`, `unlabel_scene`, `set_scene_color`, `copy_scene`, `swap_scenes` | Free. Changes device RAM only; copy/swap move labels and colours with sound state and force a live-preset refresh. |
 | Working-copy write | `set_block`, `set_param`, `set_bypass`, `remove_block`, `set_chain_input`, `set_chain_output`, `set_split` | Free. Edits device RAM; persists only on save. Surface per-operation traps. |
 | Destructive | `save_preset` | **Gated.** Require explicit slot, refuse FACTORY, require confirmation, and consume a matching pre-edit backup or empty-target preparation. |
 
@@ -140,6 +141,8 @@ The tool list mirrors the client API (zone 150), grouped by the destructive tier
 | `get_status`, `get_active_scene`, `get_cpu_load`, `search_catalog` | daemon/cache/client reads | Read |
 | `recall_preset` | `QuadCortex::recall_preset` | Transient write |
 | `switch_scene` | `QuadCortex::switch_scene` | Transient write |
+| `set_scene_label`, `unlabel_scene`, `set_scene_color` | typed daemon scene requests | Working-copy write |
+| `copy_scene`, `swap_scenes` | `QuadCortex::copy_scene` plus full live read-back | Working-copy write |
 | `set_block` | `QuadCortex::set_block` | Working-copy write |
 | `set_param`, `set_bypass`, `remove_block` | corresponding `QuadCortex` methods | Working-copy write |
 | `set_chain_input`, `set_chain_output`, `set_split` | corresponding `QuadCortex` methods | Working-copy write |

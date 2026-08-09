@@ -202,6 +202,18 @@ row 3 (screen row 4):
 
     To inspect what is loaded **right now** without disturbing it, use `cortex grid show`.
 
+Scene labels, colours, copy and swap are working-copy edits. On the unit they live in **Gig View**: enter SCENE mode, swipe up from the bottom, select a scene, then use EDIT SCENE, COPY SCENE or SWAP SCENE. The CLI exposes the same operations directly:
+
+```sh
+cortex scene label --index 0 --label "Focused"
+cortex scene color --index 0 --color '#22AA66'
+cortex scene copy --from 0 --to 4
+cortex scene swap --first 1 --second 3
+cortex grid show
+```
+
+Indices are zero-based: `0` is A and `7` is H. Copy and swap move the scene label and colour with its parameter and bypass state. None of these changes persist until the working grid is saved.
+
 ## Edit the grid
 
 If you intend to save the result, start a held session and prepare the destination **before** editing. Preparation recalls and backs up the target, so doing it afterwards would discard the grid you meant to save:

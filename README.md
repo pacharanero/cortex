@@ -1,6 +1,6 @@
 # cortex
 
-An unofficial toolkit for the Neural DSP **Quad Cortex**, built around a cross-platform Tauri desktop GUI target in active development, a hardware-backed `cortex` CLI, a `cortex-mcp` server for agentic patch editing, and the reusable `cortex-rs` Rust crate beneath them. The CLI and MCP server already share the crate's typed preset/grid model, block views, and active-scene state over the Cortex Control USB HID protocol; connecting the GUI to that same model is its next backend milestone.
+An unofficial toolkit for the Neural DSP **Quad Cortex**, built around a cross-platform Tauri desktop GUI target in active development, a hardware-backed `cortex` CLI, a `cortex-mcp` server for agentic patch editing, and the reusable `cortex-rs` Rust crate beneath them. The CLI, MCP server and read-only GUI share the crate's typed preset/grid model, block views, scene metadata and active-scene state over the Cortex Control USB HID protocol.
 
 **Nano Cortex** support is planned, but its transport compatibility is not yet established.
 
@@ -16,11 +16,11 @@ An unofficial toolkit for the Neural DSP **Quad Cortex**, built around a cross-p
 
 **Pre-alpha and actively changing.** The Quad Cortex core and CLI are usable on Linux and passed a 42-check hardware smoke against CorOS 4.0.1, including live state, grid editing, prepared save, same-setlist preset move/restore, recall and delete. This is not a finished editor: much of the wider device API remains unimplemented, some reconnect and file-operation edge-case coverage remains tracked, and releases are not yet distributed.
 
-The MCP server exposes hardware-verified read, recall, scene and unsaved live-grid editing tools through the held-session daemon; it deliberately exposes no save or delete tool. Source installation installs both binaries and the [agent setup guide](https://pacharanero.github.io/cortex/agent-setup/) covers Claude Code and generic stdio harnesses. The Tauri GUI has an interactive read-only first draft with explicit fixture and daemon-backed modes; its production boundary reads status, grid, scene, CPU and populated preset slots through the same held daemon. The desktop target is Linux, Windows and macOS; Linux is the only implemented and hardware-verified host today. Real-device GUI smoke and the hardware-faithful panel are next, while prebuilt Linux binaries are the parallel distribution milestone. Run `s/progress` for counted progress and read `spec/roadmap.md` for the outstanding backlog.
+The MCP server exposes hardware-verified read, recall, scene switching/metadata/copy and unsaved live-grid editing tools through the held-session daemon; it deliberately exposes no save or delete tool. Source installation installs both binaries and the [agent setup guide](https://pacharanero.github.io/cortex/agent-setup/) covers Claude Code and generic stdio harnesses. The Tauri GUI has an interactive read-only first draft with explicit fixture and daemon-backed modes; its production boundary reads status, grid, scene, CPU and populated preset slots through the same held daemon. The desktop target is Linux, Windows and macOS; Linux is the only implemented and hardware-verified host today. Native reconnect smoke and the hardware-faithful panel are next, while prebuilt Linux binaries are the parallel distribution milestone. Run `s/progress` for counted progress and read `spec/roadmap.md` for the outstanding backlog.
 
 ## What it is
 
-- `gui/` - the Tauri 2 + React + Mantine desktop editor, targeting Linux, Windows and macOS. Its first draft is an interactive read-only shell with explicit fixture and daemon-backed modes; write interactions, real-device GUI smoke and cross-platform packaging remain outstanding.
+- `gui/` - the Tauri 2 + React + Mantine desktop editor, targeting Linux, Windows and macOS. Its first draft is an interactive read-only shell with explicit fixture and daemon-backed modes; write interactions, native reconnect smoke and cross-platform packaging remain outstanding.
 - `cortex-cli` - a thin CLI over the crate, including a persistent daemon that
   owns the one device connection and reconnects without serving stale state.
 - `cortex-mcp` - an MCP server for agentic patch editing through `cortex session`. Its read, recall, scene and working-copy tools are hardware-verified; persistent writes remain deliberately unavailable.

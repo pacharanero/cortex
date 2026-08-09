@@ -206,9 +206,23 @@ pub struct Preset {
     pub chains: usize,
     /// Per-row input/output routing and branch points.
     pub rows: Vec<Row>,
+    /// Scene labels and colours, always indexed A-H as 0-7.
+    #[serde(default)]
+    pub scenes: Vec<Scene>,
     /// Every occupied cell, in row-then-column order. Empty cells are
     /// absent rather than represented, so this is not a dense grid.
     pub blocks: Vec<Block>,
+}
+
+/// One scene's editable metadata.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct Scene {
+    /// Zero-based scene index. The unit displays A-H.
+    pub index: u32,
+    /// Scene label, or `None` when the unit stores its one-space blank value.
+    pub label: Option<String>,
+    /// ARGB colour, when the preset carries one for this scene.
+    pub color: Option<u32>,
 }
 
 /// One grid row's routing.
@@ -459,6 +473,17 @@ impl Preset {
             name,
             chains: preset.chains.len(),
             rows: preset_rows(preset),
+            scenes: (0..8)
+                .map(|index| Scene {
+                    index,
+                    label: preset
+                        .scene_labels
+                        .get(index as usize)
+                        .filter(|label| !label.trim().is_empty())
+                        .cloned(),
+                    color: preset.scene_colors.get(index as usize).copied(),
+                })
+                .collect(),
             blocks,
         }
     }
@@ -475,6 +500,8 @@ mod tests {
             name: Some(crate::proto::binary_preset::Name::Name(
                 "Fictional Rig".into(),
             )),
+            scene_labels: vec!["Lead".into(), crate::client::SCENE_UNLABELLED.into()],
+            scene_colors: vec![0xff11_2233, 0xff44_5566],
             chains: vec![Chain {
                 in_portid: Some(crate::proto::chain::InPortid::InPortid(1)),
                 out_portid: Some(crate::proto::chain::OutPortid::OutPortid(19)),
@@ -499,6 +526,12 @@ mod tests {
         assert_eq!(view.rows[0].out_port, Some(19));
         assert_eq!(view.rows[0].split_at, Some(2));
         assert_eq!(view.rows[0].mix_at, Some(6));
+        assert_eq!(view.scenes.len(), 8);
+        assert_eq!(view.scenes[0].label.as_deref(), Some("Lead"));
+        assert_eq!(view.scenes[0].color, Some(0xff11_2233));
+        assert_eq!(view.scenes[1].label, None);
+        assert_eq!(view.scenes[1].color, Some(0xff44_5566));
+        assert_eq!(view.scenes[7].color, None);
         assert_eq!(view.blocks.len(), 1, "the empty cell must stay absent");
         assert_eq!(view.blocks[0].column, 1);
         assert_eq!(view.blocks[0].model_id, 42);
