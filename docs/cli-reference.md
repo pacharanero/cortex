@@ -29,6 +29,9 @@ Options:
 
           The unit labels its rows 1-4 and the wire numbers them 0-3, so the default matches what a player sees. Scripts and agents generally have a zero-based index already, and converting it back by hand is exactly the sort of arithmetic that silently edits the wrong row.
 
+  -n, --dry-run
+          Print the operation plan without changing device or local state. Read-only commands accept and ignore this flag
+
   -h, --help
           Print help (see a summary with '-h')
 
@@ -80,6 +83,9 @@ Options:
 
           The unit labels its rows 1-4 and the wire numbers them 0-3, so the default matches what a player sees. Scripts and agents generally have a zero-based index already, and converting it back by hand is exactly the sort of arithmetic that silently edits the wrong row.
 
+  -n, --dry-run
+          Print the operation plan without changing device or local state. Read-only commands accept and ignore this flag
+
   -h, --help
           Print help (see a summary with '-h')
 
@@ -122,6 +128,9 @@ Options:
 
           The unit labels its rows 1-4 and the wire numbers them 0-3, so the default matches what a player sees. Scripts and agents generally have a zero-based index already, and converting it back by hand is exactly the sort of arithmetic that silently edits the wrong row.
 
+  -n, --dry-run
+          Print the operation plan without changing device or local state. Read-only commands accept and ignore this flag
+
   -h, --help
           Print help (see a summary with '-h')
 
@@ -159,6 +168,9 @@ Options:
 
           The unit labels its rows 1-4 and the wire numbers them 0-3, so the default matches what a player sees. Scripts and agents generally have a zero-based index already, and converting it back by hand is exactly the sort of arithmetic that silently edits the wrong row.
 
+  -n, --dry-run
+          Print the operation plan without changing device or local state. Read-only commands accept and ignore this flag
+
   -h, --help
           Print help (see a summary with '-h')
 
@@ -194,6 +206,9 @@ Options:
           Take `--row` as 0-3 rather than the 1-4 shown on the unit.
 
           The unit labels its rows 1-4 and the wire numbers them 0-3, so the default matches what a player sees. Scripts and agents generally have a zero-based index already, and converting it back by hand is exactly the sort of arithmetic that silently edits the wrong row.
+
+  -n, --dry-run
+          Print the operation plan without changing device or local state. Read-only commands accept and ignore this flag
 
   -h, --help
           Print help (see a summary with '-h')
@@ -240,6 +255,9 @@ Options:
           Take `--row` as 0-3 rather than the 1-4 shown on the unit.
 
           The unit labels its rows 1-4 and the wire numbers them 0-3, so the default matches what a player sees. Scripts and agents generally have a zero-based index already, and converting it back by hand is exactly the sort of arithmetic that silently edits the wrong row.
+
+  -n, --dry-run
+          Print the operation plan without changing device or local state. Read-only commands accept and ignore this flag
 
   -h, --help
           Print help (see a summary with '-h')
@@ -288,6 +306,9 @@ Options:
 
           The unit labels its rows 1-4 and the wire numbers them 0-3, so the default matches what a player sees. Scripts and agents generally have a zero-based index already, and converting it back by hand is exactly the sort of arithmetic that silently edits the wrong row.
 
+  -n, --dry-run
+          Print the operation plan without changing device or local state. Read-only commands accept and ignore this flag
+
   -h, --help
           Print help (see a summary with '-h')
 
@@ -321,9 +342,6 @@ Options:
 
           [default: "/media/p4/Presets/My Presets"]
 
-  -n, --dry-run
-          Show the move that would be attempted without changing the unit
-
       --format <FORMAT>
           Output format. `text` is for humans; `json` is for scripts and agents, and is stable enough to parse.
 
@@ -339,6 +357,9 @@ Options:
           Take `--row` as 0-3 rather than the 1-4 shown on the unit.
 
           The unit labels its rows 1-4 and the wire numbers them 0-3, so the default matches what a player sees. Scripts and agents generally have a zero-based index already, and converting it back by hand is exactly the sort of arithmetic that silently edits the wrong row.
+
+  -n, --dry-run
+          Print the operation plan without changing device or local state. Read-only commands accept and ignore this flag
 
   -h, --help
           Print help (see a summary with '-h')
@@ -386,6 +407,9 @@ Options:
 
           The unit labels its rows 1-4 and the wire numbers them 0-3, so the default matches what a player sees. Scripts and agents generally have a zero-based index already, and converting it back by hand is exactly the sort of arithmetic that silently edits the wrong row.
 
+  -n, --dry-run
+          Print the operation plan without changing device or local state. Read-only commands accept and ignore this flag
+
   -h, --help
           Print help (see a summary with '-h')
 
@@ -419,9 +443,6 @@ Options:
       --name <NAME>
           Name to save under. Omit to keep the slot's existing name
 
-  -n, --dry-run
-          Show the prepared save that would be committed without changing the unit
-
       --format <FORMAT>
           Output format. `text` is for humans; `json` is for scripts and agents, and is stable enough to parse.
 
@@ -437,6 +458,9 @@ Options:
           Take `--row` as 0-3 rather than the 1-4 shown on the unit.
 
           The unit labels its rows 1-4 and the wire numbers them 0-3, so the default matches what a player sees. Scripts and agents generally have a zero-based index already, and converting it back by hand is exactly the sort of arithmetic that silently edits the wrong row.
+
+  -n, --dry-run
+          Print the operation plan without changing device or local state. Read-only commands accept and ignore this flag
 
   -h, --help
           Print help (see a summary with '-h')
@@ -491,6 +515,9 @@ Options:
 
           The unit labels its rows 1-4 and the wire numbers them 0-3, so the default matches what a player sees. Scripts and agents generally have a zero-based index already, and converting it back by hand is exactly the sort of arithmetic that silently edits the wrong row.
 
+  -n, --dry-run
+          Print the operation plan without changing device or local state. Read-only commands accept and ignore this flag
+
   -h, --help
           Print help (see a summary with '-h')
 
@@ -544,6 +571,9 @@ Options:
 
           The unit labels its rows 1-4 and the wire numbers them 0-3, so the default matches what a player sees. Scripts and agents generally have a zero-based index already, and converting it back by hand is exactly the sort of arithmetic that silently edits the wrong row.
 
+  -n, --dry-run
+          Print the operation plan without changing device or local state. Read-only commands accept and ignore this flag
+
   -h, --help
           Print help (see a summary with '-h')
 
@@ -594,6 +624,9 @@ Options:
 
           The unit labels its rows 1-4 and the wire numbers them 0-3, so the default matches what a player sees. Scripts and agents generally have a zero-based index already, and converting it back by hand is exactly the sort of arithmetic that silently edits the wrong row.
 
+  -n, --dry-run
+          Print the operation plan without changing device or local state. Read-only commands accept and ignore this flag
+
   -h, --help
           Print help (see a summary with '-h')
 
@@ -633,6 +666,9 @@ Options:
           Take `--row` as 0-3 rather than the 1-4 shown on the unit.
 
           The unit labels its rows 1-4 and the wire numbers them 0-3, so the default matches what a player sees. Scripts and agents generally have a zero-based index already, and converting it back by hand is exactly the sort of arithmetic that silently edits the wrong row.
+
+  -n, --dry-run
+          Print the operation plan without changing device or local state. Read-only commands accept and ignore this flag
 
   -h, --help
           Print help (see a summary with '-h')
@@ -681,6 +717,9 @@ Options:
 
           The unit labels its rows 1-4 and the wire numbers them 0-3, so the default matches what a player sees. Scripts and agents generally have a zero-based index already, and converting it back by hand is exactly the sort of arithmetic that silently edits the wrong row.
 
+  -n, --dry-run
+          Print the operation plan without changing device or local state. Read-only commands accept and ignore this flag
+
   -h, --help
           Print help (see a summary with '-h')
 
@@ -721,6 +760,9 @@ Options:
           Take `--row` as 0-3 rather than the 1-4 shown on the unit.
 
           The unit labels its rows 1-4 and the wire numbers them 0-3, so the default matches what a player sees. Scripts and agents generally have a zero-based index already, and converting it back by hand is exactly the sort of arithmetic that silently edits the wrong row.
+
+  -n, --dry-run
+          Print the operation plan without changing device or local state. Read-only commands accept and ignore this flag
 
   -h, --help
           Print help (see a summary with '-h')
@@ -765,6 +807,9 @@ Options:
 
           The unit labels its rows 1-4 and the wire numbers them 0-3, so the default matches what a player sees. Scripts and agents generally have a zero-based index already, and converting it back by hand is exactly the sort of arithmetic that silently edits the wrong row.
 
+  -n, --dry-run
+          Print the operation plan without changing device or local state. Read-only commands accept and ignore this flag
+
   -h, --help
           Print help (see a summary with '-h')
 
@@ -808,6 +853,9 @@ Options:
           Take `--row` as 0-3 rather than the 1-4 shown on the unit.
 
           The unit labels its rows 1-4 and the wire numbers them 0-3, so the default matches what a player sees. Scripts and agents generally have a zero-based index already, and converting it back by hand is exactly the sort of arithmetic that silently edits the wrong row.
+
+  -n, --dry-run
+          Print the operation plan without changing device or local state. Read-only commands accept and ignore this flag
 
   -h, --help
           Print help (see a summary with '-h')
@@ -870,6 +918,9 @@ Options:
 
           The unit labels its rows 1-4 and the wire numbers them 0-3, so the default matches what a player sees. Scripts and agents generally have a zero-based index already, and converting it back by hand is exactly the sort of arithmetic that silently edits the wrong row.
 
+  -n, --dry-run
+          Print the operation plan without changing device or local state. Read-only commands accept and ignore this flag
+
   -h, --help
           Print help (see a summary with '-h')
 
@@ -918,6 +969,9 @@ Options:
           Take `--row` as 0-3 rather than the 1-4 shown on the unit.
 
           The unit labels its rows 1-4 and the wire numbers them 0-3, so the default matches what a player sees. Scripts and agents generally have a zero-based index already, and converting it back by hand is exactly the sort of arithmetic that silently edits the wrong row.
+
+  -n, --dry-run
+          Print the operation plan without changing device or local state. Read-only commands accept and ignore this flag
 
   -h, --help
           Print help (see a summary with '-h')
@@ -977,6 +1031,9 @@ Options:
 
           The unit labels its rows 1-4 and the wire numbers them 0-3, so the default matches what a player sees. Scripts and agents generally have a zero-based index already, and converting it back by hand is exactly the sort of arithmetic that silently edits the wrong row.
 
+  -n, --dry-run
+          Print the operation plan without changing device or local state. Read-only commands accept and ignore this flag
+
   -h, --help
           Print help (see a summary with '-h')
 
@@ -1021,6 +1078,9 @@ Options:
 
           The unit labels its rows 1-4 and the wire numbers them 0-3, so the default matches what a player sees. Scripts and agents generally have a zero-based index already, and converting it back by hand is exactly the sort of arithmetic that silently edits the wrong row.
 
+  -n, --dry-run
+          Print the operation plan without changing device or local state. Read-only commands accept and ignore this flag
+
   -h, --help
           Print help (see a summary with '-h')
 
@@ -1063,6 +1123,9 @@ Options:
 
           The unit labels its rows 1-4 and the wire numbers them 0-3, so the default matches what a player sees. Scripts and agents generally have a zero-based index already, and converting it back by hand is exactly the sort of arithmetic that silently edits the wrong row.
 
+  -n, --dry-run
+          Print the operation plan without changing device or local state. Read-only commands accept and ignore this flag
+
   -h, --help
           Print help (see a summary with '-h')
 
@@ -1103,6 +1166,9 @@ Options:
           Take `--row` as 0-3 rather than the 1-4 shown on the unit.
 
           The unit labels its rows 1-4 and the wire numbers them 0-3, so the default matches what a player sees. Scripts and agents generally have a zero-based index already, and converting it back by hand is exactly the sort of arithmetic that silently edits the wrong row.
+
+  -n, --dry-run
+          Print the operation plan without changing device or local state. Read-only commands accept and ignore this flag
 
   -h, --help
           Print help (see a summary with '-h')
@@ -1149,6 +1215,9 @@ Options:
           Take `--row` as 0-3 rather than the 1-4 shown on the unit.
 
           The unit labels its rows 1-4 and the wire numbers them 0-3, so the default matches what a player sees. Scripts and agents generally have a zero-based index already, and converting it back by hand is exactly the sort of arithmetic that silently edits the wrong row.
+
+  -n, --dry-run
+          Print the operation plan without changing device or local state. Read-only commands accept and ignore this flag
 
   -h, --help
           Print help (see a summary with '-h')
@@ -1201,6 +1270,9 @@ Options:
 
           The unit labels its rows 1-4 and the wire numbers them 0-3, so the default matches what a player sees. Scripts and agents generally have a zero-based index already, and converting it back by hand is exactly the sort of arithmetic that silently edits the wrong row.
 
+  -n, --dry-run
+          Print the operation plan without changing device or local state. Read-only commands accept and ignore this flag
+
   -h, --help
           Print help (see a summary with '-h')
 
@@ -1244,6 +1316,9 @@ Options:
 
           The unit labels its rows 1-4 and the wire numbers them 0-3, so the default matches what a player sees. Scripts and agents generally have a zero-based index already, and converting it back by hand is exactly the sort of arithmetic that silently edits the wrong row.
 
+  -n, --dry-run
+          Print the operation plan without changing device or local state. Read-only commands accept and ignore this flag
+
   -h, --help
           Print help (see a summary with '-h')
 
@@ -1281,6 +1356,9 @@ Options:
           Take `--row` as 0-3 rather than the 1-4 shown on the unit.
 
           The unit labels its rows 1-4 and the wire numbers them 0-3, so the default matches what a player sees. Scripts and agents generally have a zero-based index already, and converting it back by hand is exactly the sort of arithmetic that silently edits the wrong row.
+
+  -n, --dry-run
+          Print the operation plan without changing device or local state. Read-only commands accept and ignore this flag
 
   -h, --help
           Print help (see a summary with '-h')
@@ -1320,6 +1398,9 @@ Options:
           Take `--row` as 0-3 rather than the 1-4 shown on the unit.
 
           The unit labels its rows 1-4 and the wire numbers them 0-3, so the default matches what a player sees. Scripts and agents generally have a zero-based index already, and converting it back by hand is exactly the sort of arithmetic that silently edits the wrong row.
+
+  -n, --dry-run
+          Print the operation plan without changing device or local state. Read-only commands accept and ignore this flag
 
   -h, --help
           Print help (see a summary with '-h')
@@ -1366,6 +1447,9 @@ Options:
 
           The unit labels its rows 1-4 and the wire numbers them 0-3, so the default matches what a player sees. Scripts and agents generally have a zero-based index already, and converting it back by hand is exactly the sort of arithmetic that silently edits the wrong row.
 
+  -n, --dry-run
+          Print the operation plan without changing device or local state. Read-only commands accept and ignore this flag
+
   -h, --help
           Print help (see a summary with '-h')
 
@@ -1406,6 +1490,9 @@ Options:
           Take `--row` as 0-3 rather than the 1-4 shown on the unit.
 
           The unit labels its rows 1-4 and the wire numbers them 0-3, so the default matches what a player sees. Scripts and agents generally have a zero-based index already, and converting it back by hand is exactly the sort of arithmetic that silently edits the wrong row.
+
+  -n, --dry-run
+          Print the operation plan without changing device or local state. Read-only commands accept and ignore this flag
 
   -h, --help
           Print help (see a summary with '-h')
@@ -1464,6 +1551,9 @@ Options:
 
           The unit labels its rows 1-4 and the wire numbers them 0-3, so the default matches what a player sees. Scripts and agents generally have a zero-based index already, and converting it back by hand is exactly the sort of arithmetic that silently edits the wrong row.
 
+  -n, --dry-run
+          Print the operation plan without changing device or local state. Read-only commands accept and ignore this flag
+
   -h, --help
           Print help (see a summary with '-h')
 
@@ -1513,6 +1603,9 @@ Options:
           Take `--row` as 0-3 rather than the 1-4 shown on the unit.
 
           The unit labels its rows 1-4 and the wire numbers them 0-3, so the default matches what a player sees. Scripts and agents generally have a zero-based index already, and converting it back by hand is exactly the sort of arithmetic that silently edits the wrong row.
+
+  -n, --dry-run
+          Print the operation plan without changing device or local state. Read-only commands accept and ignore this flag
 
   -h, --help
           Print help (see a summary with '-h')
@@ -1574,6 +1667,9 @@ Options:
           Take `--row` as 0-3 rather than the 1-4 shown on the unit.
 
           The unit labels its rows 1-4 and the wire numbers them 0-3, so the default matches what a player sees. Scripts and agents generally have a zero-based index already, and converting it back by hand is exactly the sort of arithmetic that silently edits the wrong row.
+
+  -n, --dry-run
+          Print the operation plan without changing device or local state. Read-only commands accept and ignore this flag
 
   -h, --help
           Print help (see a summary with '-h')

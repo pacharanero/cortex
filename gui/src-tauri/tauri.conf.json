@@ -4,8 +4,8 @@
   "version": "0.1.0",
   "identifier": "org.neuraldsp.cortex",
   "build": {
-    "beforeDevCommand": "npm run dev",
-    "beforeBuildCommand": "npm run build",
+    "beforeDevCommand": "npm run dev:tauri",
+    "beforeBuildCommand": "npm run build:tauri",
     "devUrl": "http://localhost:1420",
     "frontendDist": "../dist"
   },

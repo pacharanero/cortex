@@ -14,7 +14,7 @@ spec: spec.md
 
 ## [DES-OVR] Overview
 
-A Rust workspace with a leaf crate (`cortex-rs`) owning the Cortex Control USB HID protocol and typed domain model, a shared daemon IPC crate (`cortex-host`), and three host surfaces: the usable `cortex-cli`, the hardware-verified non-persistent `cortex-mcp`, and an interactive fixture-backed Tauri GUI first draft. The crate is a port of the protocol behaviour established by the MIT-licensed `stokes-audio/pyquadcortex` Python library, re-verified against a real Quad Cortex on Linux. The GUI target is cross-platform; Linux is the only verified host today.
+A Rust workspace with a leaf crate (`cortex-rs`) owning the Cortex Control USB HID protocol and typed domain model, a shared daemon IPC crate (`cortex-host`), and three host surfaces: the usable `cortex-cli`, the hardware-verified non-persistent `cortex-mcp`, and an interactive read-only Tauri GUI with explicit fixture and daemon-backed modes. The crate is a port of the protocol behaviour established by the MIT-licensed `stokes-audio/pyquadcortex` Python library, re-verified against a real Quad Cortex on Linux. The GUI target is cross-platform; Linux is the only verified host today.
 
 State honesty is the central invariant: verification is attached to each operation and host path. The implemented core Quad Cortex paths have been hardware-verified, while unimplemented operations, untested edge cases, new host platforms, and all Nano Cortex specifics remain provisional.
 
@@ -23,7 +23,7 @@ State honesty is the central invariant: verification is attached to each operati
 ```text
 [Flow.CLI]      cortex binary + held daemon (200)
 [Flow.MCP]      cortex-mcp binary (300) -- daemon-backed non-persistent tools
-[Flow.GUI]      Tauri backend (400) -- first draft; daemon/device IPC outstanding
+[Flow.GUI]      Tauri backend (400) -> cortex-host -> held daemon (read-only)
       |
       v
 [Flow.Host]     cortex-host (200) -- typed daemon contract + platform local IPC
@@ -60,7 +60,7 @@ hidapi -> Quad Cortex HID interface 5
 | `[Flow.Client]` | 150 | `client.rs` |
 | `[Flow.Host]` / `[Flow.CLI]` | 200 | `crates/cortex-host/src/`, `crates/cortex-cli/src/{main,connect,decode}.rs` |
 | `[Flow.MCP]` | 300 | `crates/cortex-mcp/src/{main,server,transport}.rs`, process tests |
-| `[Flow.GUI]` | 400 | `gui/` (fixture-backed first draft) |
+| `[Flow.GUI]` | 400 | `gui/` (explicit fixture and daemon-backed read modes) |
 
 ## [DES-DEC] Cross-Cutting Key Decisions
 
@@ -84,7 +84,7 @@ crates/
   cortex-mcp/   Hardware-verified non-persistent agent tools over the daemon
 spec/           AFX zone specs (this tree)
 s/              Repo scripts: test, lint, hardware smoke, docs, GUI dev, release
-gui/            Tauri 2 + React + Mantine fixture-backed first draft
+gui/            Tauri 2 + React + Mantine read-only fixture/daemon first draft
 docs/           Protocol reference, runbooks, CLI reference and GUI notes
 ```
 

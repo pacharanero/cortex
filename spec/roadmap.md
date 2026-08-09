@@ -25,11 +25,11 @@ tags: ["roadmap", "planning"]
 
 Connect the existing Tauri first draft to the same held-session contract already proven by CLI and MCP, without widening the write surface:
 
-1. Write the as-built GUI design and make `cortex-host` the explicit Tauri backend boundary.
-2. Replace fixture-only status, preset directory, live grid, active scene and CPU data with typed daemon snapshots and revisions.
-3. Surface connected/reconnecting/failed state and never render a stale generation as live.
-4. Keep fixture mode as a deliberate development/test adapter rather than hidden fallback behavior.
-5. Add boundary-focused GUI smoke tests and update `docs/gui/` for both browser fixture mode and Tauri daemon mode.
+1. [Done] Write the as-built GUI design and make `cortex-host` the explicit Tauri backend boundary.
+2. [Done] Replace fixture-only status, preset directory, live grid, active scene and CPU data with typed daemon snapshots and revisions.
+3. [Done] Surface connected/reconnecting/failed state and never render a stale generation as live.
+4. [Done] Keep fixture mode as a deliberate development/test adapter rather than hidden fallback behavior.
+5. [In progress] Boundary-focused Rust tests, both frontend builds, browser fixture smoke and the real-device dashboard boundary pass. Automated native DOM/IPC checks and unplug/reconnect UI smoke remain.
 
 Saving remains outside this milestone. GUI save needs exact-target preparation and confirmation UX, restoration semantics, typed failures and its own hardware smoke. In parallel, CLI-004.4 remains the next distribution milestone: a Linux x86_64 preview containing both `cortex` and `cortex-mcp`.
 
@@ -188,7 +188,7 @@ The `cortex` command-line surface over the crate.
 ### CLI-002: Format and output
 
 - [ ] **CLI-002.3**: `--schema` / `--print-schema` - JSON Schema of a command's inputs
-- [~] **CLI-002.5**: Uniform `-n`/`--dry-run`. Done for persistent `preset save` and `preset move`, which execute by default and report their exact prepared token/name or source/destination/setlist without opening a session when dry-run is selected. Outstanding: apply one plan-only contract to every remaining mutating command and add a registry/policy test that prevents omissions
+- [x] **CLI-002.5**: Uniform `-n`/`--dry-run`. Every device-state mutation, recall, daemon lifecycle action and local file write is exhaustively classified before dispatch; dry-run performs pure argument validation, emits a structured plan and returns before IPC, HID, process or filesystem access. Read-only commands accept and ignore the global flag. A command-policy test covers every side-effect class, and adding an enum variant requires an explicit classification before the CLI compiles
 
 ### CLI-003: Preset and scene commands
 
@@ -247,7 +247,7 @@ The reason this project has an MCP server at all is that an agent can do things 
 
 ## GUI (GUI)
 
-The typed read/edit, live-cache, health, reconnect, and shared prepared-save foundations are in place. An interactive read-only, fixture-backed Tauri first draft exists. Its next backend step is daemon-backed typed reads; save controls remain disabled until the GUI implements exact-target preparation and confirmation UX, restoration semantics, typed failures and its own hardware smoke. See [400-gui/spec.md](400-gui/spec.md).
+The typed read/edit, live-cache, health, reconnect, and shared prepared-save foundations are in place. The interactive read-only Tauri first draft now has explicit fixture and daemon-backed modes with generation-checked status, grid, scene, CPU and populated preset directory reads. Its production Rust boundary has passed against a real held session, and the native Linux window launches with live data; automated Tauri DOM/IPC checks and unplug/reconnect UI smoke remain outstanding. Save controls remain disabled until the GUI implements exact-target preparation and confirmation UX, restoration semantics, typed failures and its own write-path hardware smoke. See [400-gui/spec.md](400-gui/spec.md).
 
 **The prepared-save API is now enforced by the daemon and CLI.** Fixed in `743692a` (PROT-009.2): the daemon holds exact-target preparations under opaque tokens, and the CLI is two-phase with confirmation. A GUI that wants target backup and revalidation should call the same API.
 
@@ -255,12 +255,12 @@ The visual design goal is a **hardware-faithful rendering of the Quad Cortex fro
 
 ### GUI-001: Scaffold and Tauri MCP
 
-- [x] **GUI-001.1**: `gui/` with Tauri 2 + React + Mantine + Vite, `s/gui-dev` script. Implemented as an interactive, fixture-backed read-only first draft
-- [~] **GUI-001.2**: A demo Tauri command and mockable TypeScript API boundary exist. Outstanding: daemon-backed typed snapshots from `cortex-rs`, one managed Rust `AppState`, and no protocol/domain logic in TypeScript. Follow the prior-art boundary ([prior-art.md](prior-art.md#for-gui-001-to-gui-005))
+- [x] **GUI-001.1**: `gui/` with Tauri 2 + React + Mantine + Vite, `s/gui-dev` script. Implemented as an interactive read-only first draft with explicit fixture and daemon-backed modes
+- [x] **GUI-001.2**: Tauri owns one managed daemon backend using `cortex-host::DaemonClient`; its typed dashboard command returns status, generation/revision-tagged live grid, active scene, CPU and a storage-revision-cached populated preset directory. Rust resolves scene labels, screen rows and active-scene bypass. TypeScript owns only interaction/presentation and never opens HID or sends arbitrary daemon requests
 - [ ] **GUI-001.3**: Wire Tauri MCP for the dev feedback loop - drive the GUI from the MCP server to test Tauri commands without manual clicking
 - [ ] **GUI-001.4**: Remove the temporary `RUSTSEC-2024-0429` audit exception when stable Tauri moves its Linux runtime from the unmaintained GTK3/glib 0.18 stack to GTK4/glib 0.20 or later. Tauri 2.11.5 is the latest stable release and still pins GTK3; upstream migration is tracked in [tauri-apps/tauri#12562](https://github.com/tauri-apps/tauri/issues/12562) and [PR #14684](https://github.com/tauri-apps/tauri/pull/14684). Do not force two incompatible glib generations or ship the GUI from an unreleased Tauri branch
-- [ ] **GUI-001.5**: Write `spec/400-gui/design.md` from the existing frontend/Tauri boundary before expanding device integration
-- [ ] **GUI-001.6**: Add GUI boundary smoke tests for fixture mode and daemon-backed Tauri commands; avoid brittle visual snapshots
+- [x] **GUI-001.5**: `spec/400-gui/design.md` records the as-built host boundary, short-lived daemon connections, generation guard, directory epoch, explicit fixture/Tauri modes, frontend state rules and limits
+- [~] **GUI-001.6**: Rust boundary tests cover readiness, Rust-owned scene conversion and no fixture fallback; both strict TypeScript modes build; browser fixture interaction was inspected at 800x600 and 1280x800. The ignored production dashboard test passes against a real CorOS 4.0.1 held session, returning one live generation with populated blocks and preset directory, and the native Linux window launches with live data. Outstanding: use Tauri MCP from a client that exposes it for DOM/IPC checks and verify that unplug/reconnect hides stale state and advances the rendered generation
 
 ### GUI-002: Hardware-faithful control surface
 
@@ -276,8 +276,8 @@ Stack confirmed as Tauri 2 + React + Mantine, as AGENTS.md says, unless a concre
 
 Improve on the Cortex Control appearance while staying familiar enough to navigate without relearning.
 
-- [ ] **GUI-005.1**: Preset directory in a left sidebar, visible at all times rather than behind a picker. **Decided:** a tree (setlist then slots), showing only populated folders by default. The unit reports 399 folders and two hold anything, so an unfiltered tree would misrepresent how full the unit is.
-- [ ] **GUI-005.2**: CPU load visible at all times, **including the per-column, per-core breakdown**, not just a total. `Session::cpu_load()` supplies both (PROT-008.6.12). The per-core detail is the actionable part: when a preset will not fit, it shows which work could move to the other core, row or column.
+- [x] **GUI-005.1**: A permanently visible left sidebar renders the daemon-supplied tree of populated setlists and slots. Missing/unavailable listings are not presented as empty, and Rust caches the directory by generation/storage revision
+- [x] **GUI-005.2**: CPU load is always visible when reported, including total and per-row/per-column second-core markers. Initial absence is rendered as awaiting the first subscribed push rather than failure
 
 ### GUI-006: Screen-reader accessibility
 

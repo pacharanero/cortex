@@ -234,6 +234,23 @@ cortex preset list --include-empty
 
 - [ ] A fresh listing eventually shows the preset restored at `MOVE_FROM` and `MOVE_TO` empty
 
+## 13. GUI daemon read boundary
+
+Keep the held session running, then exercise the production Rust boundary:
+
+```sh
+cargo test -p cortex-gui tests::daemon_dashboard_reads_one_live_generation -- --ignored --exact
+s/gui-dev
+```
+
+- [ ] The Rust boundary returns one live snapshot whose generation and revision match daemon status
+- [ ] The preset directory contains populated slots and does not label an unavailable folder empty
+- [ ] Tauri mode shows the same working-grid name, blocks, scene and CPU data as the CLI
+- [ ] The header identifies daemon mode; it never displays the fixture banner
+- [ ] Unplugging the unit changes the GUI to reconnecting and hides the old grid and CPU
+- [ ] After reconnect, the generation advances and the first rendered live snapshot agrees with `cortex grid show`
+- [ ] A daemon failure remains visible and never switches to fixture data
+
 ```sh
 cortex session stop
 ```
@@ -245,6 +262,6 @@ cortex session stop
 Not covered by this runbook:
 
 - MCP protocol/discovery behavior beyond the same daemon/core operations.
-- GUI integration and interaction.
+- GUI write interactions and visual-polish coverage beyond the daemon read boundary above.
 - The wider unimplemented device API, capture/IR transfer, and most physical control paths.
 - Everything on the Nano Cortex.

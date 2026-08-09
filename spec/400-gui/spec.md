@@ -11,7 +11,7 @@ tags: ["gui", "tauri", "react", "mantine", "vite", "in-progress", "accessible"]
 
 # 400 GUI - Spec (in progress)
 
-> The cross-platform Tauri 2 desktop app: a consumer of the shared Rust engine and host boundary, not a second implementation. An interactive, read-only first draft exists with fixture data. It does not yet call the demo Tauri command, connect to the held daemon, or write to the device; an as-built `design.md` remains planned.
+> The cross-platform Tauri 2 desktop app: a consumer of the shared Rust engine and host boundary, not a second implementation. The read-only first draft now has explicit fixture and daemon-backed Tauri modes. It does not write to the device.
 
 ## References
 
@@ -38,8 +38,8 @@ The live read/edit and shared save-safety foundations are present: typed seriali
 - **React + TypeScript** - the frontend.
 - **Mantine** - UI primitives.
 - **Vite** - development and builds.
-- **`cortex-host`** - the planned daemon-facing command and local IPC boundary; not yet a GUI dependency.
-- **`cortex-rs`** - shared types, protocol, domain behavior and save policy beneath the daemon; not yet called by Tauri commands.
+- **`cortex-host`** - the implemented daemon-facing command and local IPC boundary used by Tauri.
+- **`cortex-rs`** - shared typed views and domain behavior used by the Rust backend; no protocol logic is implemented in TypeScript.
 
 ## Project shape (current scaffold, per house-style tauri-gui.md)
 
@@ -51,7 +51,7 @@ gui/
 `-- src-tauri/
     |-- Cargo.toml
     |-- tauri.conf.json
-    `-- src/       # Rust backend (fixture demo command; host/core integration planned)
+    `-- src/       # managed daemon-backed Rust command boundary
 docs/gui/         # how to use and run the GUI
 spec/400-gui/     # this zone
 s/gui-dev         # run the Tauri dev server from any working directory
@@ -97,8 +97,9 @@ The first draft establishes the stack, mockable frontend API boundary, a demo Ta
 
 - [x] `gui/` exists with the Tauri 2 + React + Mantine + Vite stack.
 - [x] `s/gui-dev` runs the Tauri dev server from any working directory.
-- [ ] Tauri commands call the shared host/core boundary and return typed serialisable data; no protocol/domain logic in TypeScript. The current frontend is fixture-only.
-- [ ] One managed Rust connection exposes `DeviceStateCache` snapshots and revision changes; reconnecting/failed status is visible and old generations are never rendered as live.
+- [x] Tauri commands call the shared host/core boundary and return typed serialisable data; no protocol/domain logic lives in TypeScript. Fixture and Tauri modes implement the same contract.
+- [x] One managed Rust backend exposes generation/revision-tagged daemon snapshots; reconnecting/failed status is visible and old generations are never rendered as live.
+- [x] The production dashboard boundary returns one live generation with populated blocks and preset directory against a real CorOS 4.0.1 held session on Linux.
 - [ ] The default view is a hardware-faithful rendering of the Quad Cortex front panel (10 footswitch/encoders, OLED grid, scene LEDs, context strip).
 - [ ] Footswitch/encoders are interactive: click-to-press (toggle/recall/navigate), drag-to-turn (adjust parameter), with keyboard equivalents.
 - [ ] The virtual panel reflects the current device mode and labels footswitches accordingly.
@@ -106,7 +107,7 @@ The first draft establishes the stack, mockable frontend API boundary, a demo Ta
 - [ ] The GUI labels hardware-verified vs provisional surfaces in the UI.
 - [ ] A save action reuses the shared prepared-save surface (factory refusal, exact target, pre-edit backup, explicit confirmation).
 - [x] `gui/package.json`, `package-lock.json`, and `tauri.conf.json` versions move with `s/version++`.
-- [~] `docs/gui/` explains the first draft and local run modes; full user/device-integration documentation remains outstanding.
+- [x] `docs/gui/` explains explicit fixture and daemon run modes, state freshness, and the read-only boundary.
 
 ## Non-Goals
 
@@ -130,18 +131,16 @@ The first draft establishes the stack, mockable frontend API boundary, a demo Ta
 
 ## Next
 
-- **Daemon-backed read integration.** Replace fixture data with typed snapshots from the held session without opening a second HID connection. This follows the MCP read-tool milestone rather than racing it, so both surfaces reuse one host contract.
-- **`design.md`.** Document the as-built frontend/Tauri boundary before expanding the scaffold further. Progress is tracked in [roadmap.md](../roadmap.md) under GUI-00x.
-- **`docs/gui/`.** How to use and run the GUI.
-- **E2E tests.** GUI smoke tests focused on the user workflows that prove the Rust/frontend boundary is wired (house-style tauri-gui.md). Avoid brittle visual snapshots.
+- **Hardware-faithful panel.** Expand the daemon-backed read surface into the footswitch/OLED presentation without widening the write boundary.
+- **E2E tests.** Add browser/Tauri workflow automation as the interaction surface grows; avoid brittle visual snapshots.
 - **Nano Cortex specifics.** Provisional until verified against real hardware; the GUI labels them.
 
 ## Glossary
 
 | Term | Definition |
 | --- | --- |
-| First draft | The stack and interactive fixture-backed shell exist; device integration and production workflows do not. |
-| Tauri command | A Rust function exposed to the webview; calls `cortex-rs` and returns typed serialisable data |
+| First draft | The stack and interactive read-only shell exist with explicit fixture and daemon-backed modes; write workflows do not. |
+| Tauri command | A Rust function exposed to the webview; calls `cortex-host`, uses shared `cortex-rs` views, and returns typed serialisable data |
 | `s/gui-dev` | Repo script that runs the Tauri dev server from any working directory |
 | Safety surface reuse | The GUI gates saves through the same prepared-target contract as the MCP server (factory refusal, exact target, pre-edit backup, explicit confirmation) |
 ## Related roadmap items

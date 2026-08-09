@@ -51,6 +51,12 @@ jobs:
       - name: No real device data
         run: s/lint-no-device-data
 
+      - name: Install frontend dependencies
+        run: npm ci --prefix gui
+
+      - name: Check fixture and Tauri frontends
+        run: npm run check --prefix gui
+
       - name: Formatting
         run: cargo fmt --all --check
 

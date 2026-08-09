@@ -4,9 +4,13 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "tsc --noEmit && vite build",
-    "check": "tsc --noEmit && vite build",
+    "dev": "npm run dev:fixture",
+    "dev:fixture": "vite --mode fixture",
+    "dev:tauri": "vite --mode tauri",
+    "build": "npm run build:fixture",
+    "build:fixture": "tsc --noEmit && vite build --mode fixture",
+    "build:tauri": "tsc --noEmit && vite build --mode tauri",
+    "check": "npm run build:fixture && npm run build:tauri",
     "tauri": "tauri"
   },
   "dependencies": {

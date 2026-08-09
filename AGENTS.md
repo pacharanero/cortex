@@ -81,7 +81,7 @@ crates/
   cortex-mcp/   The `cortex-mcp` MCP server: hardware-verified read, recall,
                 scene and live-grid tools; no persistent save/delete tools.
 gui/           Tauri 2 + React + Mantine first draft. Interactive and
-                fixture-backed; daemon/device IPC is not wired yet.
+                read-only, with explicit fixture and daemon-backed modes.
 docs/          Protocol notes, runbooks, GUI docs.
 spec/          Zone specs: spec.md (what it must do) + design.md (how, and why).
                NO tasks.md - progress lives in spec/roadmap.md (outstanding)
@@ -149,7 +149,7 @@ The non-persistent MCP surface is implemented and hardware-verified; it opens
 no HID connection and exposes no save/delete tools. The design that matters for
 any future destructive tier is the safety boundary, not the tool count:
 
-- CLI save and move commands execute when invoked and expose `-n`/`--dry-run`
+- CLI mutating commands execute when invoked and expose global `-n`/`--dry-run`
   as the non-mutating path. Future MCP and GUI persistent actions still require
   explicit confirmation because an agent or UI can invoke them indirectly.
 - Never write to the factory setlist; require one explicitly named USER target

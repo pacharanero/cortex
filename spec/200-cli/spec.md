@@ -161,7 +161,7 @@ Linux users with a Quad Cortex, script writers, AI coding agents driving the CLI
 ## Future
 
 - **`--format yaml`.** A third format option for the global flag, if the need arises. JSON covers the script/agent case; YAML is a human-friendly middle ground.
-- **`--dry-run` on mutating commands.** `preset save` and `preset move` execute by default and provide `-n`/`--dry-run` as their non-mutating inverse. A uniform plan-only mode for the remaining working-copy and storage mutations remains outstanding.
+- **`--dry-run` on mutating commands.** Every device, lifecycle and local-filesystem mutation executes by default and honours global `-n`/`--dry-run` before IPC, HID, process or filesystem access. Read-only commands accept and ignore the flag. Plans report requested targets and identify device-resolved checks deferred until execution.
 - **Progress widgets on long-running commands.** The CLI prints phase progress to stderr today; auto-hiding count/byte bars may be worthwhile for operations with a known total.
 - **Registry-driven dispatch.** If the command surface grows large, a single registry driving the CLI, schema, and any MCP tool surface keeps them from drifting.
 

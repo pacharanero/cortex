@@ -2,12 +2,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 import { Badge, Button, Paper, Stack, Text } from "@mantine/core";
-import type { GridBlock } from "../../shared/ipc/cortex";
+import type { LiveBlock } from "../../shared/ipc/types";
 
 interface GridProps {
-  blocks: GridBlock[];
-  selected: GridBlock | null;
-  onSelect: (block: GridBlock) => void;
+  blocks: LiveBlock[];
+  selected: LiveBlock | null;
+  onSelect: (block: LiveBlock) => void;
 }
 
 export function Grid({ blocks, selected, onSelect }: GridProps) {

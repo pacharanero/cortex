@@ -10,7 +10,7 @@ An unofficial toolkit for the **Neural DSP Quad Cortex**, developing a cross-pla
 
 The project is one device model with several interfaces:
 
-- **A desktop GUI targeting Linux, Windows and macOS**, built with Tauri, React and Mantine. Its interactive first draft is fixture-backed and read-only; connecting it to the shared daemon and Rust domain model is the next backend milestone.
+- **A desktop GUI targeting Linux, Windows and macOS**, built with Tauri, React and Mantine. Its read-only first draft has explicit browser-fixture and daemon-backed Tauri modes over the shared Rust domain model.
 - **A hardware-backed CLI** for reading device state, browsing presets, searching the model catalog and editing the grid.
 - **An MCP server** for agentic patch editing through the held-session daemon. Read, recall, scene and unsaved live-grid editing tools are hardware-verified; save and delete are not exposed.
 - **A reusable Rust core** implementing USB HID transport, framing, the protobuf envelope, session handling and a typed domain model. It depends on no host application or async runtime. The CLI and MCP server use it today; the GUI will consume the same behaviour rather than reimplementing it.
@@ -49,7 +49,7 @@ The project's central discipline is being honest about what has actually run aga
 | Prepared save, stored read-back and delete | <span class="status verified">verified</span> |
 | Capture and IR export/import | <span class="status provisional">investigation; no working export/import</span> |
 | MCP server read, recall, scene and live-grid tools | <span class="status verified">verified; no save/delete tools</span> |
-| Desktop GUI shell | <span class="status provisional">interactive fixture-backed first draft; no device IPC yet</span> |
+| Desktop GUI shell | <span class="status provisional">daemon read boundary verified on Linux; native reconnect UI smoke pending</span> |
 | Windows and macOS hardware paths and packaging | <span class="status planned">planned; Linux is the only verified host</span> |
 | Nano Cortex | <span class="status provisional">unverified target; transport compatibility unestablished</span> |
 

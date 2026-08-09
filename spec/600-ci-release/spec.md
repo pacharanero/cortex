@@ -132,7 +132,7 @@ Maintainers merging PRs, and the downstream consumers who install the crate or t
 
 - **The local gate.** Owned by zone 500 (`s/test`, `s/lint`). This zone mirrors it in CI.
 - **The GUI CI.** The GUI exists, but frontend lint/typecheck, Tauri build matrices and bundle tests are not in CI yet.
-- **A macOS/Windows matrix.** The project is Linux-first today. Windows and macOS CI become required as the cross-platform GUI moves beyond its fixture-backed draft.
+- **A macOS/Windows matrix.** The project is Linux-first today. Native Windows and macOS CI become required when their local IPC, process lifecycle, packaging and hardware paths are implemented.
 - **Hardware smoke in CI.** CI has no hardware; the hardware smoke runbook is manual (AGENTS.md). This zone does not attempt to connect to a real Quad Cortex.
 
 ## Dependencies

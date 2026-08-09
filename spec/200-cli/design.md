@@ -57,7 +57,7 @@ Ordinary commands call `QuadCortex` directly or send typed requests to the persi
 
 ### Behaviour
 
-The clap derive tree is noun-then-verb: `session`, `preset`, `setlist`, `grid`, `block`, `row` and `device` group the operations a player recognises. Explicitly invoking a destructive preset storage command executes it by default; `-n`/`--dry-run` is the non-mutating inverse. `preset move` names exact source and destination slots and refuses an occupied destination from a fresh listing. `scene` is a deliberate direct action; `catalog`, `completions` and trace decoding complete the current surface. The generated [CLI reference](../../docs/cli-reference.md) is the authoritative command inventory.
+The clap derive tree is noun-then-verb: `session`, `preset`, `setlist`, `grid`, `block`, `row` and `device` group the operations a player recognises. Explicitly invoking a mutating command executes it by default; global `-n`/`--dry-run` classifies the command and returns before any IPC, HID, process or filesystem boundary. Read-only commands accept and ignore the flag. `preset move` names exact source and destination slots and refuses an occupied destination from a fresh listing. `scene` is a deliberate direct action; `catalog`, `completions` and trace decoding complete the current surface. The generated [CLI reference](../../docs/cli-reference.md) is the authoritative command inventory.
 
 ### Design choice: `arg_required_else_help = true`
 
@@ -173,6 +173,6 @@ The schema is generated from the same `Cli::command()` tree that drives parsing 
 ## [DES-LIMITS] Known Limitations
 
 - **No `--schema` yet.** Machine discoverability is planned but not implemented.
-- **Incremental `--dry-run`.** Persistent `preset save` and `preset move` support `-n`/`--dry-run`; applying the same contract uniformly to the remaining mutating commands is tracked under CLI-002.5.
+- **Device-resolved facts are deferred in `--dry-run`.** A no-IPC plan cannot resolve a named parameter to a wire index, inspect slot occupancy or validate a daemon-held save token. Plans distinguish those execution-time checks instead of contacting the daemon and pretending the run is side-effect-free.
 - **Only the Unix local-IPC adapter is operational.** The daemon/client no longer expose Unix socket types outside `cortex-host::ipc`; `cortex-host` and `cortex-mcp` cross-check for Windows. A reviewed safe named-pipe adapter, current-user pipe ACLs, Windows detached-process lifecycle and hardware verification remain before Windows is supported.
 - **The command implementation remains concentrated in `main.rs`.** Behaviour is in the crate, but command-family modules may become worthwhile as the surface grows.

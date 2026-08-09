@@ -68,6 +68,11 @@ struct Cli {
     /// the sort of arithmetic that silently edits the wrong row.
     #[arg(long, global = true)]
     zero_based: bool,
+
+    /// Print the operation plan without changing device or local state.
+    /// Read-only commands accept and ignore this flag.
+    #[arg(short = 'n', long, global = true)]
+    dry_run: bool,
 }
 
 /// How to render a command's result.
@@ -78,6 +83,16 @@ enum Format {
     Text,
     /// Machine-readable JSON.
     Json,
+}
+
+/// A complete local plan returned before any side-effect boundary is crossed.
+#[derive(Debug, serde::Serialize)]
+struct DryRunPlan {
+    dry_run: bool,
+    action: &'static str,
+    effect: &'static str,
+    target: serde_json::Value,
+    checks_on_execute: Vec<&'static str>,
 }
 
 /// Print a result: JSON when asked for, otherwise the caller's text form.
@@ -311,9 +326,6 @@ enum PresetCmd {
         /// Absolute device path of the setlist.
         #[arg(long, value_name = "PATH", default_value = cortex_rs::client::USER_SETLIST)]
         setlist: String,
-        /// Show the move that would be attempted without changing the unit.
-        #[arg(short = 'n', long)]
-        dry_run: bool,
     },
     /// Prepare a save destination before editing the working grid.
     #[command(
@@ -348,9 +360,6 @@ enum PresetCmd {
         /// Name to save under. Omit to keep the slot's existing name.
         #[arg(long, value_name = "NAME")]
         name: Option<String>,
-        /// Show the prepared save that would be committed without changing the unit.
-        #[arg(short = 'n', long)]
-        dry_run: bool,
     },
     /// List the presets in a setlist, in slot order.
     ///
@@ -704,6 +713,17 @@ fn run(cli: Cli) -> Result<()> {
     // signatures would otherwise grow an argument that none of them decide.
     let _ = ZERO_BASED.set(cli.zero_based);
 
+    if cli.dry_run {
+        if let Some(plan) = dry_run_plan(cli.command.as_ref())? {
+            return emit(&plan, fmt, |plan| {
+                println!("dry-run {}: {}", plan.action, plan.target);
+                for check in &plan.checks_on_execute {
+                    println!("  on execution: {check}");
+                }
+            });
+        }
+    }
+
     match cli.command {
         Some(Command::Session { command }) => match command {
             SessionCmd::Start { foreground } => {
@@ -718,20 +738,11 @@ fn run(cli: Cli) -> Result<()> {
         },
         Some(Command::Preset { command }) => match command {
             PresetCmd::Delete { name, setlist } => cmd_preset_delete(&name, &setlist, fmt),
-            PresetCmd::Move {
-                from,
-                to,
-                setlist,
-                dry_run,
-            } => cmd_preset_move(&from, &to, &setlist, dry_run, fmt),
+            PresetCmd::Move { from, to, setlist } => cmd_preset_move(&from, &to, &setlist, fmt),
             PresetCmd::PrepareSave { slot, setlist } => {
                 cmd_preset_prepare_save(&slot, &setlist, fmt)
             }
-            PresetCmd::Save {
-                token,
-                name,
-                dry_run,
-            } => cmd_preset_save(&token, name.as_deref(), dry_run, fmt),
+            PresetCmd::Save { token, name } => cmd_preset_save(&token, name.as_deref(), fmt),
             PresetCmd::List {
                 setlist,
                 include_empty,
@@ -827,6 +838,309 @@ fn run(cli: Cli) -> Result<()> {
             Ok(())
         }
     }
+}
+
+fn plan(
+    action: &'static str,
+    effect: &'static str,
+    target: serde_json::Value,
+    checks_on_execute: &[&'static str],
+) -> DryRunPlan {
+    DryRunPlan {
+        dry_run: true,
+        action,
+        effect,
+        target,
+        checks_on_execute: checks_on_execute.to_vec(),
+    }
+}
+
+fn validate_slot(slot: &str) -> Result<()> {
+    if cortex_rs::client::slot_to_position_checked(slot).is_none() {
+        anyhow::bail!(
+            "{slot} is not a slot. Slots are a bank number 1-32 then a letter A-H, e.g. 2B"
+        );
+    }
+    Ok(())
+}
+
+fn validate_cell(row: u32, column: u32) -> Result<cortex_rs::Row> {
+    let row = wire_row(row)?;
+    if column > 7 {
+        anyhow::bail!("column {column} is out of range: columns are 0-7");
+    }
+    Ok(row)
+}
+
+/// Classify every command before dispatch. Exhaustive matching makes a new
+/// command fail to compile until its dry-run behavior is deliberately chosen.
+fn dry_run_plan(command: Option<&Command>) -> Result<Option<DryRunPlan>> {
+    let Some(command) = command else {
+        return Ok(None);
+    };
+    let plan = match command {
+        Command::Session { command } => match command {
+            SessionCmd::Start { foreground } => Some(plan(
+                "session start",
+                "local process and device session",
+                serde_json::json!({ "foreground": foreground }),
+                &[
+                    "claim the local endpoint",
+                    "open and subscribe to the device",
+                ],
+            )),
+            SessionCmd::Status => None,
+            SessionCmd::Stop => Some(plan(
+                "session stop",
+                "local process and device session",
+                serde_json::json!({}),
+                &[
+                    "announce disconnect",
+                    "stop the daemon and remove its endpoint",
+                ],
+            )),
+        },
+        Command::Preset { command } => match command {
+            PresetCmd::Delete { name, setlist } => {
+                if cortex_rs::client::is_factory_setlist(setlist) {
+                    anyhow::bail!("{setlist} is the factory library and is not writable");
+                }
+                Some(plan(
+                    "preset delete",
+                    "persistent device storage",
+                    serde_json::json!({ "name": name, "setlist": setlist }),
+                    &["resolve the stored file path", "delete the preset"],
+                ))
+            }
+            PresetCmd::Move { from, to, setlist } => {
+                if cortex_rs::client::is_factory_setlist(setlist) {
+                    anyhow::bail!("{setlist} is the factory library and is not writable");
+                }
+                validate_slot(from)?;
+                validate_slot(to)?;
+                Some(plan(
+                    "preset move",
+                    "persistent device storage",
+                    serde_json::json!({ "from": from, "to": to, "setlist": setlist }),
+                    &[
+                        "verify the source is occupied",
+                        "verify the destination is empty",
+                        "move and wait for listing convergence",
+                    ],
+                ))
+            }
+            PresetCmd::PrepareSave { slot, setlist } => {
+                if cortex_rs::client::is_factory_setlist(setlist) {
+                    anyhow::bail!("{setlist} is the factory library and is not writable");
+                }
+                validate_slot(slot)?;
+                Some(plan(
+                    "preset prepare-save",
+                    "working grid and daemon preparation registry",
+                    serde_json::json!({ "slot": slot, "setlist": setlist }),
+                    &[
+                        "recall and back up the exact target",
+                        "retain an opaque preparation token",
+                    ],
+                ))
+            }
+            PresetCmd::Save { token, name } => Some(plan(
+                "preset save",
+                "persistent device storage",
+                serde_json::json!({ "token": token, "name": name }),
+                &[
+                    "validate and consume the prepared target",
+                    "commit the working grid",
+                ],
+            )),
+            PresetCmd::List { .. } => None,
+            PresetCmd::Show {
+                slot,
+                setlist,
+                factory,
+                params,
+            } => {
+                validate_slot(slot)?;
+                Some(plan(
+                    "preset show",
+                    "working grid and audible state",
+                    serde_json::json!({ "slot": slot, "setlist": setlist, "factory": factory, "params": params }),
+                    &[
+                        "recall the stored preset",
+                        "replace unsaved grid state and reset the scene",
+                    ],
+                ))
+            }
+            PresetCmd::Recall {
+                slot,
+                setlist,
+                factory,
+            } => {
+                validate_slot(slot)?;
+                Some(plan(
+                    "preset recall",
+                    "working grid and audible state",
+                    serde_json::json!({ "slot": slot, "setlist": setlist, "factory": factory }),
+                    &[
+                        "recall the stored preset",
+                        "replace unsaved grid state and reset the scene",
+                    ],
+                ))
+            }
+        },
+        Command::Setlist { command } => match command {
+            SetlistCmd::List { .. } => None,
+        },
+        Command::Grid { command } => match command {
+            GridCmd::Show { .. } => None,
+        },
+        Command::Block { command } => match command {
+            BlockCmd::Param {
+                row,
+                column,
+                param,
+                index,
+                value,
+                real,
+                text,
+                scene,
+            } => {
+                let row = validate_cell(*row, *column)?;
+                if scene.is_some_and(|scene| scene > 7) {
+                    anyhow::bail!("scene must be 0-7");
+                }
+                if value.is_none() && real.is_none() && text.is_none() {
+                    anyhow::bail!("give a value: --value (0.0-1.0), --real (own units), or --text");
+                }
+                Some(plan(
+                    "block param",
+                    "working grid",
+                    serde_json::json!({ "wire_row": row.wire(), "screen_row": row.screen(), "column": column, "param": param, "index": index, "value": value, "real": real, "text": text, "scene": scene }),
+                    &[
+                        "resolve and type-check the parameter against the live block catalog",
+                        "write the parameter and read back device state",
+                    ],
+                ))
+            }
+            BlockCmd::Bypass {
+                row,
+                column,
+                bypass,
+            } => {
+                let row = validate_cell(*row, *column)?;
+                Some(plan(
+                    "block bypass",
+                    "working grid",
+                    serde_json::json!({ "wire_row": row.wire(), "screen_row": row.screen(), "column": column, "bypass": bypass }),
+                    &["write bypass state"],
+                ))
+            }
+            BlockCmd::Set {
+                row,
+                column,
+                model,
+                no_verify,
+                timeout,
+            } => {
+                let row = validate_cell(*row, *column)?;
+                Some(plan(
+                    "block set",
+                    "working grid",
+                    serde_json::json!({ "wire_row": row.wire(), "screen_row": row.screen(), "column": column, "model": model, "verify": !no_verify, "timeout_seconds": timeout }),
+                    &[
+                        "place or replace the model",
+                        "verify the device accepted the block when requested",
+                    ],
+                ))
+            }
+            BlockCmd::Remove { row, column } => {
+                let row = validate_cell(*row, *column)?;
+                Some(plan(
+                    "block remove",
+                    "working grid",
+                    serde_json::json!({ "wire_row": row.wire(), "screen_row": row.screen(), "column": column }),
+                    &["remove the block"],
+                ))
+            }
+        },
+        Command::Row { command } => match command {
+            RowCmd::Input { row, port } => {
+                let row = wire_row(*row)?;
+                Some(plan(
+                    "row input",
+                    "working grid",
+                    serde_json::json!({ "wire_row": row.wire(), "screen_row": row.screen(), "port": port }),
+                    &["write the row input routing"],
+                ))
+            }
+            RowCmd::Output { row, port } => {
+                let row = wire_row(*row)?;
+                Some(plan(
+                    "row output",
+                    "working grid",
+                    serde_json::json!({ "wire_row": row.wire(), "screen_row": row.screen(), "port": port }),
+                    &["write the row output routing"],
+                ))
+            }
+            RowCmd::Split { row, split, mix } => {
+                let row = wire_row(*row)?;
+                cortex_rs::grid::set_split(row, *split, *mix)?;
+                Some(plan(
+                    "row split",
+                    "working grid",
+                    serde_json::json!({ "wire_row": row.wire(), "screen_row": row.screen(), "split": split, "mix": mix }),
+                    &["write the row split and mix points"],
+                ))
+            }
+        },
+        Command::Device { command } => match command {
+            DeviceCmd::Version { .. } => std::env::var("CORTEX_DUMP_VERSION").ok().map(|path| {
+                plan(
+                    "device version dump",
+                    "local filesystem",
+                    serde_json::json!({ "path": path }),
+                    &["read the device version", "write the raw response payload"],
+                )
+            }),
+            DeviceCmd::Cpu | DeviceCmd::Probe { .. } => None,
+        },
+        Command::Scene { index } => {
+            if *index > 7 {
+                anyhow::bail!("scene must be 0-7");
+            }
+            Some(plan(
+                "scene",
+                "audible state",
+                serde_json::json!({ "index": index, "display": char::from_u32(65 + index).unwrap_or('?').to_string() }),
+                &["switch the active scene"],
+            ))
+        }
+        Command::Catalog { dump, .. } => dump.as_ref().map(|path| {
+            plan(
+                "catalog dump",
+                "local filesystem",
+                serde_json::json!({ "path": path }),
+                &["read or load the model catalog", "write the raw payload"],
+            )
+        }),
+        Command::DecodeTrace { .. } => None,
+        Command::Completions { target, shell, dir } => {
+            if matches!(target, CompletionTarget::Install) || dir.is_some() {
+                Some(plan(
+                    "completions install",
+                    "local filesystem",
+                    serde_json::json!({ "target": format!("{target:?}").to_lowercase(), "shell": shell.map(|shell| shell.to_string()), "dir": dir }),
+                    &[
+                        "create the destination directory if absent",
+                        "write the completion script",
+                    ],
+                ))
+            } else {
+                None
+            }
+        }
+    };
+    Ok(plan)
 }
 
 /// Enumerate every folder the device knows about.
@@ -1381,14 +1695,7 @@ fn cmd_preset_prepare_save(slot: &str, setlist: &str, fmt: Format) -> Result<()>
 }
 
 /// Commit a token prepared before working-grid edits.
-fn cmd_preset_save(token: &str, name: Option<&str>, dry_run: bool, fmt: Format) -> Result<()> {
-    if dry_run {
-        let detail = match name {
-            Some(name) => format!("commit prepared token {token} as {name:?}"),
-            None => format!("commit prepared token {token} with its existing name"),
-        };
-        return report_edit("dry-run save", detail, fmt);
-    }
+fn cmd_preset_save(token: &str, name: Option<&str>, fmt: Format) -> Result<()> {
     let Some(result) = connect::request(&cortex_host::Request::CommitSave {
         token: token.to_string(),
         confirmed: true,
@@ -1429,13 +1736,7 @@ fn cmd_preset_delete(name: &str, setlist: &str, fmt: Format) -> Result<()> {
 }
 
 /// Move a preset from one slot to an empty slot in the same setlist.
-fn cmd_preset_move(
-    from_slot: &str,
-    to_slot: &str,
-    setlist: &str,
-    dry_run: bool,
-    fmt: Format,
-) -> Result<()> {
+fn cmd_preset_move(from_slot: &str, to_slot: &str, setlist: &str, fmt: Format) -> Result<()> {
     if cortex_rs::client::is_factory_setlist(setlist) {
         anyhow::bail!("{setlist} is the factory library and is not writable");
     }
@@ -1447,9 +1748,6 @@ fn cmd_preset_move(
         }
     }
     let detail = format!("{from_slot} to {to_slot} in {setlist}");
-    if dry_run {
-        return report_edit("dry-run move", detail, fmt);
-    }
     if let Some(result) = connect::request(&cortex_host::Request::MovePreset {
         setlist: setlist.to_string(),
         from_slot: from_slot.to_string(),
@@ -2343,26 +2641,18 @@ mod tests {
     }
 
     #[test]
-    fn persistent_commands_execute_by_default_and_dry_run_is_explicit() {
+    fn commands_execute_by_default_and_dry_run_is_explicit() {
         let move_cli =
             Cli::try_parse_from(["cortex", "preset", "move", "--from", "2A", "--to", "2B"])
                 .unwrap();
-        assert!(matches!(
-            move_cli.command,
-            Some(Command::Preset {
-                command: PresetCmd::Move { dry_run: false, .. }
-            })
-        ));
+        assert!(!move_cli.dry_run);
+        assert!(dry_run_plan(move_cli.command.as_ref()).unwrap().is_some());
 
         let save_cli =
             Cli::try_parse_from(["cortex", "preset", "save", "--token", "save-1", "--dry-run"])
                 .unwrap();
-        assert!(matches!(
-            save_cli.command,
-            Some(Command::Preset {
-                command: PresetCmd::Save { dry_run: true, .. }
-            })
-        ));
+        assert!(save_cli.dry_run);
+        assert!(dry_run_plan(save_cli.command.as_ref()).unwrap().is_some());
 
         assert!(
             Cli::try_parse_from([
@@ -2370,6 +2660,139 @@ mod tests {
             ])
             .is_err()
         );
+    }
+
+    #[test]
+    fn every_side_effect_class_has_a_dry_run_plan() {
+        let cases: &[&[&str]] = &[
+            &["cortex", "session", "start", "--dry-run"],
+            &["cortex", "session", "stop", "--dry-run"],
+            &[
+                "cortex",
+                "preset",
+                "delete",
+                "--name",
+                "Fictional",
+                "--dry-run",
+            ],
+            &[
+                "cortex",
+                "preset",
+                "move",
+                "--from",
+                "2A",
+                "--to",
+                "2B",
+                "--dry-run",
+            ],
+            &[
+                "cortex",
+                "preset",
+                "prepare-save",
+                "--slot",
+                "2A",
+                "--dry-run",
+            ],
+            &["cortex", "preset", "save", "--token", "save-1", "--dry-run"],
+            &["cortex", "preset", "show", "--slot", "2A", "--dry-run"],
+            &["cortex", "preset", "recall", "--slot", "2A", "--dry-run"],
+            &["cortex", "scene", "--index", "2", "--dry-run"],
+            &[
+                "cortex",
+                "block",
+                "param",
+                "--row",
+                "1",
+                "--column",
+                "2",
+                "--param",
+                "GAIN",
+                "--real",
+                "7.5",
+                "--dry-run",
+            ],
+            &[
+                "cortex",
+                "block",
+                "bypass",
+                "--row",
+                "1",
+                "--column",
+                "2",
+                "--dry-run",
+            ],
+            &[
+                "cortex",
+                "block",
+                "set",
+                "--row",
+                "1",
+                "--column",
+                "2",
+                "--model",
+                "1001",
+                "--dry-run",
+            ],
+            &[
+                "cortex",
+                "block",
+                "remove",
+                "--row",
+                "1",
+                "--column",
+                "2",
+                "--dry-run",
+            ],
+            &[
+                "cortex",
+                "row",
+                "input",
+                "--row",
+                "1",
+                "--port",
+                "1",
+                "--dry-run",
+            ],
+            &[
+                "cortex",
+                "row",
+                "output",
+                "--row",
+                "1",
+                "--port",
+                "0",
+                "--dry-run",
+            ],
+            &[
+                "cortex",
+                "row",
+                "split",
+                "--row",
+                "1",
+                "--split",
+                "3",
+                "--mix",
+                "6",
+                "--dry-run",
+            ],
+            &[
+                "cortex",
+                "catalog",
+                "--dump",
+                "/tmp/fictional-catalog",
+                "--dry-run",
+            ],
+            &["cortex", "completions", "install", "--dry-run"],
+        ];
+        for args in cases {
+            let cli =
+                Cli::try_parse_from(*args).unwrap_or_else(|error| panic!("{args:?}: {error}"));
+            assert!(cli.dry_run, "{args:?} did not set the global flag");
+            assert!(
+                dry_run_plan(cli.command.as_ref()).unwrap().is_some(),
+                "{args:?} is side-effecting but has no plan"
+            );
+        }
     }
 
     /// Every `after_help` example must name a real command and real flags.
@@ -2383,7 +2806,7 @@ mod tests {
 
         /// Longs accepted everywhere, which clap attaches at parse time
         /// rather than listing on each subcommand.
-        const GLOBALS: [&str; 3] = ["--format", "--zero-based", "--help"];
+        const GLOBALS: [&str; 4] = ["--format", "--zero-based", "--dry-run", "--help"];
 
         /// Walk as far as the tokens name subcommands, then stop.
         ///

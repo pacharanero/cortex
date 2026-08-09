@@ -1,39 +1,87 @@
 // SPDX-FileCopyrightText: 2026 Dr Marcus Baw
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-import { Alert, AppShell, Badge, Group, Paper, SimpleGrid, Stack, Text, Title } from "@mantine/core";
-import { useEffect, useState } from "react";
+import { Alert, AppShell, Badge, Group, NavLink, Paper, ScrollArea, SimpleGrid, Stack, Text, Title } from "@mantine/core";
+import { useEffect, useRef, useState } from "react";
 import { Grid } from "./features/quad/Grid";
-import { cortexApi, type CortexDashboard, type GridBlock } from "./shared/ipc/cortex";
+import { cortexApi } from "./shared/ipc/api";
+import type { DashboardSnapshot, LiveBlock } from "./shared/ipc/types";
+
+interface Cell { row: number; column: number }
+
+function healthLabel(snapshot: DashboardSnapshot): string {
+  if (snapshot.source === "fixture") return "fixture";
+  return snapshot.status.device.state;
+}
 
 export function App() {
-  const [dashboard, setDashboard] = useState<CortexDashboard | null>(null);
-  const [selected, setSelected] = useState<GridBlock | null>(null);
+  const [snapshot, setSnapshot] = useState<DashboardSnapshot | null>(null);
+  const [selectedCell, setSelectedCell] = useState<Cell | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const generation = useRef<number | null>(null);
 
   useEffect(() => {
-    void cortexApi.dashboard().then(setDashboard);
+    let cancelled = false;
+    let timer: number | undefined;
+    const refresh = async () => {
+      try {
+        const next = await cortexApi.dashboard();
+        if (cancelled) return;
+        if (generation.current !== null && generation.current !== next.status.cache.generation) setSelectedCell(null);
+        generation.current = next.status.cache.generation;
+        setSnapshot(next);
+        setError(null);
+      } catch (reason) {
+        if (!cancelled) setError(reason instanceof Error ? reason.message : String(reason));
+      } finally {
+        if (!cancelled) timer = window.setTimeout(refresh, 1000);
+      }
+    };
+    void refresh();
+    return () => { cancelled = true; if (timer !== undefined) window.clearTimeout(timer); };
   }, []);
 
-  if (!dashboard) return <Text p="xl">Loading Cortex state...</Text>;
+  if (!snapshot && !error) return <Text p="xl">Loading Cortex state...</Text>;
+  if (!snapshot) return <Alert color="red" m="xl" title="Cortex session unavailable">{error}</Alert>;
+
+  const live = snapshot.live;
+  const selected: LiveBlock | null = selectedCell && live
+    ? live.blocks.find((block) => block.row === selectedCell.row && block.column === selectedCell.column) ?? null
+    : null;
+  const health = healthLabel(snapshot);
+  const connected = live !== null;
 
   return (
-    <AppShell header={{ height: 64 }} padding="md">
+    <AppShell header={{ height: 64 }} navbar={{ width: 250, breakpoint: "sm" }} padding="md">
       <AppShell.Header p="md">
         <Group justify="space-between">
           <Group gap="xs"><Title order={2}>cortex</Title><Badge color="orange">Quad Cortex</Badge></Group>
-          <Badge color={dashboard.health === "demo" ? "yellow" : "green"}>{dashboard.health}</Badge>
+          <Group gap="xs"><Badge color={snapshot.source === "fixture" ? "yellow" : connected ? "green" : "orange"}>{health}</Badge><Badge variant="outline">gen {snapshot.status.cache.generation} / rev {snapshot.status.cache.revision}</Badge></Group>
         </Group>
       </AppShell.Header>
+      <AppShell.Navbar p="sm">
+        <Text c="dimmed" fw={700} mb="xs" size="xs" tt="uppercase">Preset directory</Text>
+        <ScrollArea>
+          {snapshot.directory.map((setlist) => (
+            <NavLink defaultOpened key={setlist.key} label={setlist.name}>
+              {setlist.slots.map((slot) => <NavLink key={`${setlist.key}-${slot.index}`} label={`${slot.slot}  ${slot.name}`} />)}
+            </NavLink>
+          ))}
+          {snapshot.directory.length === 0 && <Text c="dimmed" size="sm">Unavailable for this session generation.</Text>}
+        </ScrollArea>
+      </AppShell.Navbar>
       <AppShell.Main>
         <Stack gap="md">
-          <Alert color="yellow" title="Demo surface">
-            This first draft is interactive but does not own USB HID or write to the device. The production backend will query the held `cortex` session daemon.
-          </Alert>
-          <Group justify="space-between"><div><Text c="dimmed" size="sm">Working grid</Text><Title order={3}>{dashboard.presetName}</Title></div><Text>Scene {String.fromCharCode(65 + dashboard.activeScene)}</Text></Group>
-          <SimpleGrid cols={{ base: 1, lg: 2 }} spacing="md">
-            <Paper p="md" withBorder><Grid blocks={dashboard.blocks} selected={selected} onSelect={setSelected} /></Paper>
-            <Paper p="md" withBorder><Text c="dimmed" size="sm">Inspector</Text><Title order={4}>{selected?.name ?? "Select a block"}</Title><Text mt="sm">{selected ? `${selected.category} at row ${selected.row + 1}, column ${selected.column + 1}.` : "Block details will appear here."}</Text><Text mt="md">CPU: {dashboard.cpuLoad === null ? "awaiting device session" : `${dashboard.cpuLoad}%`}</Text></Paper>
-          </SimpleGrid>
+          {snapshot.source === "fixture" && <Alert color="yellow" title="Fixture mode">Browser development data is active. Fixture mode never falls back from a daemon error.</Alert>}
+          {error && <Alert color="red" title="Refresh failed">{error}</Alert>}
+          {!live && <Alert color="orange" title={`Device ${snapshot.status.device.state}`}>Live state is hidden until the daemon reports a connected, complete generation.</Alert>}
+          {live && <>
+            <Group justify="space-between"><div><Text c="dimmed" size="sm">Working grid</Text><Title order={3}>{live.preset_name}{live.preset_dirty ? " *" : ""}</Title></div><Text>Scene {live.active_scene_label}</Text></Group>
+            <SimpleGrid cols={{ base: 1, lg: 2 }} spacing="md">
+              <Paper p="md" withBorder><Grid blocks={live.blocks} selected={selected} onSelect={(block) => setSelectedCell({ row: block.row, column: block.column })} /></Paper>
+              <Paper p="md" withBorder><Text c="dimmed" size="sm">Inspector</Text><Title order={4}>{selected?.name ?? "Select a block"}</Title><Text mt="sm">{selected ? `${selected.category} at row ${selected.screen_row}, column ${selected.column}.` : "Block details will appear here."}</Text><Text mt="md">CPU: {live.cpu_load?.total == null ? "awaiting device push" : `${live.cpu_load.total.toFixed(1)}%`}</Text>{live.cpu_load?.chains.map((chain, row) => <Text key={row} size="sm">Row {row + 1}: {chain.map((column) => `${column.load.toFixed(1)}${column.on_core2 ? "*" : ""}`).join("  ")}</Text>)}</Paper>
+            </SimpleGrid>
+          </>}
         </Stack>
       </AppShell.Main>
     </AppShell>

@@ -180,5 +180,5 @@ Per AGENTS.md, publishing to crates.io, cutting a release tag, and any externall
 - **No `CHANGELOG.md`.** Changelog generation is undecided (cargo-dist auto vs. hand-maintained per house-style docs.md).
 - **Linux-native CI.** There is no native macOS/Windows matrix, but host and MCP crates are cross-checked for Windows.
 - **No hardware smoke in CI.** CI has no hardware; the hardware smoke runbook is manual.
-- **No frontend CI.** The GUI exists, but frontend lint/typecheck and Tauri build jobs are not wired into CI.
+- **Frontend CI is Linux-only.** CI installs the locked npm tree and type-checks/builds both explicit fixture and Tauri frontend modes. Native Windows/macOS Tauri and hardware paths remain deferred until those hosts are supported.
 - **`s/test` does not run the no-default-features test path.** CI runs `cargo test --all --no-default-features`; the local `s/test` currently runs all-features only (zone 500 gap).
