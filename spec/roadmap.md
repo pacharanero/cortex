@@ -315,7 +315,7 @@ Version synchronization is completed and tracked canonically under ENG-001.2.
 - [ ] **ENG-001.3**: `s/install-hooks` and `.githooks/pre-commit`. **Night: ready.** Follow the house-style hook installer and keep installation explicit
 - [ ] **ENG-001.4**: Markdown lint. **Night: ready.** Use the house-style maintained tool/config and avoid reflowing existing prose as drive-by cleanup
 - [ ] **ENG-001.5**: Close the documented local/CI parity gap where practical: no-default workspace clippy/tests locally, while keeping platform cross-checks CI-only when native toolchains are unavailable. **Night: ready.** Prefer extending canonical `s/test`/`s/lint` over adding another script
-- [ ] **ENG-001.6**: Add a CI check that Cargo, npm package/lock and Tauri versions match outside `s/version++` runs. **Night: ready.** Reuse the version source/order already encoded by `s/version++`
+- [x] **ENG-001.6**: Add a CI check that Cargo, npm package/lock and Tauri versions match outside `s/version++` runs. `s/check-versions` reads the same four sources `s/version++` writes (`Cargo.toml`, `gui/package.json`, `gui/package-lock.json`, `gui/src-tauri/tauri.conf.json`), reports every outlier against the workspace version, and is wired into both `s/lint` and a dedicated CI step so a manual edit or a bad merge fails locally and in CI
 
 ### ENG-002: CI
 

@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Dr Marcus Baw
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# Fail if the workspace version and the GUI's synchronized manifests have
+# drifted apart. `s/version++` is the only script that is supposed to move
+# these together (Cargo.toml -> gui/package.json -> gui/package-lock.json ->
+# gui/src-tauri/tauri.conf.json); this catches a manual edit to any one of
+# them, or a merge that reintroduces an old value, outside that flow.
+
+set -euo pipefail
+cd "$(git rev-parse --show-toplevel)"
+
+command -v node >/dev/null 2>&1 ||
+	{ echo "node is missing; it is required to read the GUI manifests." >&2; exit 1; }
+
+cargo_version="$(awk -F\" '/^version = / { print $2; exit }' Cargo.toml)"
+[[ -n "$cargo_version" ]] ||
+	{ echo "Could not read the workspace version from Cargo.toml." >&2; exit 1; }
+
+package_version="$(node -p "require('./gui/package.json').version")"
+lockfile_version="$(node -p "require('./gui/package-lock.json').version")"
+tauri_version="$(node -p "require('./gui/src-tauri/tauri.conf.json').version")"
+
+findings=()
+report() { findings+=("  $1: $2"); }
+
+[[ "$package_version" == "$cargo_version" ]] || report "gui/package.json" "$package_version"
+[[ "$lockfile_version" == "$cargo_version" ]] || report "gui/package-lock.json" "$lockfile_version"
+[[ "$tauri_version" == "$cargo_version" ]] || report "gui/src-tauri/tauri.conf.json" "$tauri_version"
+
+if [[ "${#findings[@]}" -gt 0 ]]; then
+	{
+		echo "ERROR: version mismatch against Cargo.toml's $cargo_version:"
+		printf '%s\n' "${findings[@]}"
+		echo
+		echo "Run s/version++ to move all four together, or fix the outlier by hand."
+	} >&2
+	exit 1
+fi
+
+echo "versions match: $cargo_version"
