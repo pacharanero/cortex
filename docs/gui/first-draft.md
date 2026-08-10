@@ -16,6 +16,6 @@ Install the platform's [Tauri prerequisites](https://v2.tauri.app/start/prerequi
 
 The mode is never inferred from success or failure. A daemon error remains an error; Tauri mode does not fall back to plausible-looking fixture state. The header identifies fixture mode explicitly.
 
-Daemon snapshots carry physical-session generation and cache revisions. Reconnecting, failed, incomplete and invalidated state hides the old live grid rather than presenting it as current. A generation change also clears the selected block. CPU may initially say that it is awaiting a device push because the first subscribed CPU report is delayed.
+Daemon snapshots carry physical-session generation and cache revisions. Reconnecting, failed, incomplete and invalidated state hides the old live grid rather than presenting it as current. During reconnect the GUI shows the real daemon attempt count and last error; **Reconnect now** interrupts the current automatic backoff without bypassing the full subscribed handshake. A generation change also clears the selected block. CPU may initially say that it is awaiting a device push because the first subscribed CPU report is delayed.
 
 This milestone is read-only. Preset recall, grid editing and saving remain CLI/MCP operations until their GUI interaction and safety contracts are separately implemented and hardware-tested.

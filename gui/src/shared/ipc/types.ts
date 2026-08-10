@@ -78,4 +78,5 @@ export interface DashboardSnapshot {
 
 export interface CortexApi {
   dashboard(): Promise<DashboardSnapshot>;
+  reconnectNow(): Promise<void>;
 }

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Dr Marcus Baw
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-import { Alert, AppShell, Badge, Group, NavLink, Paper, ScrollArea, SimpleGrid, Stack, Text, Title } from "@mantine/core";
+import { Alert, AppShell, Badge, Button, Group, NavLink, Paper, ScrollArea, SimpleGrid, Stack, Text, Title } from "@mantine/core";
 import { useEffect, useRef, useState } from "react";
 import { Grid } from "./features/quad/Grid";
 import { cortexApi } from "./shared/ipc/api";
@@ -18,6 +18,7 @@ export function App() {
   const [snapshot, setSnapshot] = useState<DashboardSnapshot | null>(null);
   const [selectedCell, setSelectedCell] = useState<Cell | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [retrying, setRetrying] = useState(false);
   const generation = useRef<number | null>(null);
 
   useEffect(() => {
@@ -50,6 +51,18 @@ export function App() {
     : null;
   const health = healthLabel(snapshot);
   const connected = live !== null;
+  const reconnectState = snapshot.source === "daemon" && snapshot.status.device.state === "reconnecting" ? snapshot.status.device : null;
+  const reconnectNow = async () => {
+    setRetrying(true);
+    try {
+      await cortexApi.reconnectNow();
+      setError(null);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setRetrying(false);
+    }
+  };
 
   return (
     <AppShell header={{ height: 64 }} navbar={{ width: 250, breakpoint: "sm" }} padding="md">
@@ -74,7 +87,15 @@ export function App() {
         <Stack gap="md">
           {snapshot.source === "fixture" && <Alert color="yellow" title="Fixture mode">Browser development data is active. Fixture mode never falls back from a daemon error.</Alert>}
           {error && <Alert color="red" title="Refresh failed">{error}</Alert>}
-          {!live && <Alert color="orange" title={`Device ${snapshot.status.device.state}`}>Live state is hidden until the daemon reports a connected, complete generation.</Alert>}
+          {!live && <Alert color="orange" title={`Device ${snapshot.status.device.state}`}>
+            <Stack gap="xs">
+              <Text>Live state is hidden until the daemon reports a connected, complete generation.</Text>
+              {reconnectState && <>
+                <Text size="sm">Attempt {reconnectState.attempts}: {reconnectState.last_error}</Text>
+                <Group gap="sm"><Button color="orange" loading={retrying} onClick={() => void reconnectNow()} size="xs">Reconnect now</Button><Text c="dimmed" size="sm">Automatic retries continue in the background.</Text></Group>
+              </>}
+            </Stack>
+          </Alert>}
           {live && <>
             <Group justify="space-between"><div><Text c="dimmed" size="sm">Working grid</Text><Title order={3}>{live.preset_name}{live.preset_dirty ? " *" : ""}</Title></div><Text>Scene {live.active_scene_label}</Text></Group>
             <SimpleGrid cols={{ base: 1, lg: 2 }} spacing="md">

@@ -69,6 +69,28 @@ enum RuntimeHealth {
     Failed { error: String },
 }
 
+#[derive(Default)]
+struct ReconnectControl {
+    stopping: AtomicBool,
+    retry_now: AtomicBool,
+}
+
+impl ReconnectControl {
+    fn wait(&self, duration: Duration) -> bool {
+        let deadline = Instant::now() + duration;
+        while Instant::now() < deadline {
+            if self.stopping.load(Ordering::Relaxed) {
+                return false;
+            }
+            if self.retry_now.swap(false, Ordering::AcqRel) {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        true
+    }
+}
+
 /// State the daemon holds for the life of its session.
 struct Daemon {
     /// Swapped atomically at the host layer after a successful reconnect.
@@ -94,7 +116,7 @@ struct Daemon {
     health: Arc<Mutex<RuntimeHealth>>,
     /// Excludes reconnect/recovery from every in-flight device operation.
     operations: Arc<RwLock<()>>,
-    stopping: Arc<AtomicBool>,
+    reconnect: Arc<ReconnectControl>,
     started: Instant,
 }
 
@@ -141,7 +163,7 @@ impl Daemon {
             next_token: AtomicU64::new(1),
             health: Arc::new(Mutex::new(RuntimeHealth::Connected)),
             operations: Arc::new(RwLock::new(())),
-            stopping: Arc::new(AtomicBool::new(false)),
+            reconnect: Arc::new(ReconnectControl::default()),
             started: Instant::now(),
         }
     }
@@ -210,7 +232,10 @@ impl Daemon {
     /// failed request must not take the daemon down with it - the session is
     /// shared by every other client.
     fn handle(&self, request: Request) -> Response {
-        let needs_device = !matches!(&request, Request::Status | Request::Shutdown);
+        let needs_device = !matches!(
+            &request,
+            Request::Status | Request::ReconnectNow | Request::Shutdown
+        );
         if needs_device {
             if let Some(message) = self.unavailable() {
                 return Response::error(message);
@@ -231,6 +256,7 @@ impl Daemon {
                 Ok(r) => r,
                 Err(e) => Response::error(format!("building status: {e}")),
             },
+            Request::ReconnectNow => self.reconnect_now(),
             // Answer in the same shape the direct path emits, so a caller
             // cannot tell whether it went through the daemon. A `{:?}` dump
             // of the protobuf would have been a second, worse format.
@@ -614,6 +640,22 @@ impl Daemon {
         }
     }
 
+    fn reconnect_now(&self) -> Response {
+        let requested = match self.health.lock().unwrap().clone() {
+            RuntimeHealth::Reconnecting { .. } => true,
+            RuntimeHealth::Connected => !self.session().is_responsive(),
+            RuntimeHealth::Failed { error } => {
+                return Response::error(format!("reconnect monitor failed: {error}"));
+            }
+        };
+        if requested {
+            self.reconnect.retry_now.store(true, Ordering::Release);
+        }
+        Response::ok(&requested).unwrap_or_else(|error| {
+            Response::error(format!("building reconnect response: {error}"))
+        })
+    }
+
     /// Run a client call, turning any error into a `Response` rather than
     /// letting it escape.
     fn respond<T, F>(&self, call: F) -> Response
@@ -688,7 +730,7 @@ impl Daemon {
         let session = self.session.clone();
         let state = self.state.clone();
         let health = self.health.clone();
-        let stopping = self.stopping.clone();
+        let reconnect = self.reconnect.clone();
         let operations = self.operations.clone();
         let result = std::thread::Builder::new()
             .name("cortex-reconnect".into())
@@ -697,7 +739,7 @@ impl Daemon {
                     session,
                     state,
                     health.clone(),
-                    stopping,
+                    reconnect,
                     operations,
                     RECONNECT_TIMINGS,
                     open_replacement,
@@ -711,7 +753,7 @@ impl Daemon {
     }
 
     fn shutdown(&self) {
-        self.stopping.store(true, Ordering::Relaxed);
+        self.reconnect.stopping.store(true, Ordering::Relaxed);
         let _operation = self.operations.write().unwrap();
         self.session().close();
     }
@@ -756,30 +798,18 @@ fn open_replacement(state: &cortex_rs::DeviceStateCache) -> Result<Arc<Session>>
     Ok(session)
 }
 
-/// Sleep in slices so shutdown does not wait out a 30-second backoff.
-fn backoff(stopping: &AtomicBool, duration: Duration) -> bool {
-    let deadline = Instant::now() + duration;
-    while Instant::now() < deadline {
-        if stopping.load(Ordering::Relaxed) {
-            return false;
-        }
-        std::thread::sleep(Duration::from_millis(100));
-    }
-    true
-}
-
 fn reconnect_loop<F>(
     session_slot: Arc<Mutex<Arc<Session>>>,
     state: cortex_rs::DeviceStateCache,
     health: Arc<Mutex<RuntimeHealth>>,
-    stopping: Arc<AtomicBool>,
+    reconnect: Arc<ReconnectControl>,
     operations: Arc<RwLock<()>>,
     timings: ReconnectTimings,
     connect: F,
 ) where
     F: Fn(&cortex_rs::DeviceStateCache) -> Result<Arc<Session>>,
 {
-    while backoff(&stopping, timings.poll) {
+    while reconnect.wait(timings.poll) {
         let current = session_slot.lock().unwrap().clone();
         let cache_phase = state.status().phase;
         if current.is_responsive() && cache_phase != cortex_rs::CachePhase::Invalidated {
@@ -810,7 +840,7 @@ fn reconnect_loop<F>(
         current.close();
 
         loop {
-            if stopping.load(Ordering::Relaxed) {
+            if reconnect.stopping.load(Ordering::Relaxed) {
                 return;
             }
             attempts = attempts.saturating_add(1);
@@ -822,7 +852,7 @@ fn reconnect_loop<F>(
 
             match connect(&state) {
                 Ok(replacement) => {
-                    if stopping.load(Ordering::Relaxed) {
+                    if reconnect.stopping.load(Ordering::Relaxed) {
                         replacement.close();
                         return;
                     }
@@ -842,7 +872,7 @@ fn reconnect_loop<F>(
                          retrying in {}s",
                         delay.as_secs()
                     );
-                    if !backoff(&stopping, delay) {
+                    if !reconnect.wait(delay) {
                         return;
                     }
                     delay = (delay * 2).min(timings.max_backoff);
@@ -1354,6 +1384,11 @@ mod tests {
             panic!("status must remain available while reconnecting");
         };
         assert_eq!(data["device"]["state"], "reconnecting");
+        let Response::Ok { data } = daemon.handle(Request::ReconnectNow) else {
+            panic!("manual retry must remain available while reconnecting");
+        };
+        assert_eq!(data, true);
+        assert!(daemon.reconnect.retry_now.load(Ordering::Acquire));
         daemon.shutdown();
     }
 
@@ -1382,7 +1417,7 @@ mod tests {
         state.invalidate("fictional stream gap");
         let slot = Arc::new(Mutex::new(initial));
         let health = Arc::new(Mutex::new(RuntimeHealth::Connected));
-        let stopping = Arc::new(AtomicBool::new(false));
+        let reconnect = Arc::new(ReconnectControl::default());
         let operations = Arc::new(RwLock::new(()));
         let attempts = Arc::new(AtomicUsize::new(0));
         let connector_attempts = attempts.clone();
@@ -1390,7 +1425,7 @@ mod tests {
         let worker_slot = slot.clone();
         let worker_state = state.clone();
         let worker_health = health.clone();
-        let worker_stopping = stopping.clone();
+        let worker_reconnect = reconnect.clone();
         let worker_operations = operations.clone();
 
         let worker = std::thread::spawn(move || {
@@ -1398,7 +1433,7 @@ mod tests {
                 worker_slot,
                 worker_state,
                 worker_health,
-                worker_stopping,
+                worker_reconnect,
                 worker_operations,
                 ReconnectTimings {
                     poll: Duration::from_millis(1),
@@ -1437,7 +1472,7 @@ mod tests {
         {
             std::thread::sleep(Duration::from_millis(2));
         }
-        stopping.store(true, Ordering::Relaxed);
+        reconnect.stopping.store(true, Ordering::Relaxed);
         worker.join().unwrap();
 
         assert_eq!(attempts.load(Ordering::Relaxed), 2);
@@ -1445,6 +1480,23 @@ mod tests {
         assert_eq!(state.status().generation, 2);
         assert!(!active_lease.load(Ordering::Acquire));
         slot.lock().unwrap().close();
+    }
+
+    #[test]
+    fn manual_retry_interrupts_reconnect_backoff() {
+        let reconnect = Arc::new(ReconnectControl::default());
+        let worker_reconnect = reconnect.clone();
+        let started = Instant::now();
+        let worker = std::thread::spawn(move || worker_reconnect.wait(Duration::from_secs(10)));
+
+        std::thread::sleep(Duration::from_millis(20));
+        reconnect.retry_now.store(true, Ordering::Release);
+
+        assert!(worker.join().unwrap());
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "manual retry should interrupt rather than wait out backoff"
+        );
     }
 
     #[test]

@@ -88,6 +88,7 @@ The first draft establishes the stack, mockable frontend API boundary, a demo Ta
 - **Mode-aware footswitch labels.** The virtual footswitches reflect the current device mode and label themselves accordingly.
 - **Honest verified-vs-provisional labelling.** The GUI labels hardware-verified behaviour vs provisional surfaces (Nano Cortex specifics, unknown message types) in the UI, following the `deskop-nano-cortex` discipline.
 - **Live state comes from the reducer.** The Rust backend owns one subscribed session and exposes typed cache snapshots plus generation/revision changes. The frontend does not pollute its interaction state with optimistic device state and never renders a pre-reconnect generation as current.
+- **Reconnect is truthful and actionable.** Reconnecting state shows the daemon's real attempt count and last error. A manual retry interrupts automatic backoff but does not mark the device live before a complete replacement handshake.
 - **Safety surface reuse.** The GUI reuses the same rules as the MCP server: absolute factory refusal, one exact target, pre-edit preparation/backup for that target, explicit confirmation, and trap-surfacing. If a target was not prepared before the grid became dirty, the GUI requires another target rather than recalling the original target and destroying the edits.
 - **`s/gui-dev`** runs the Tauri dev server from any working directory (house-style tauri-gui.md).
 - **Versioning with the repo.** `gui/package.json` and `tauri.conf.json` versions move with the canonical version via `s/version++`.
@@ -100,6 +101,7 @@ The first draft establishes the stack, mockable frontend API boundary, a demo Ta
 - [x] Tauri commands call the shared host/core boundary and return typed serialisable data; no protocol/domain logic lives in TypeScript. Fixture and Tauri modes implement the same contract.
 - [x] One managed Rust backend exposes generation/revision-tagged daemon snapshots; reconnecting/failed status is visible and old generations are never rendered as live.
 - [x] The production dashboard boundary returns one live generation with populated blocks and preset directory against a real CorOS 4.0.1 held session on Linux.
+- [x] Physical unplug/reconnect hides the old grid and directory within one refresh, then restores the same live preset only under a newer generation.
 - [ ] The default view is a hardware-faithful rendering of the Quad Cortex front panel (10 footswitch/encoders, OLED grid, scene LEDs, context strip).
 - [ ] Footswitch/encoders are interactive: click-to-press (toggle/recall/navigate), drag-to-turn (adjust parameter), with keyboard equivalents.
 - [ ] The virtual panel reflects the current device mode and labels footswitches accordingly.

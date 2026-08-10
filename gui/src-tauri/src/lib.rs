@@ -66,6 +66,7 @@ impl CommandError {
 
 trait DashboardSource: Send + Sync {
     fn dashboard(&self) -> Result<DashboardSnapshot, CommandError>;
+    fn reconnect_now(&self) -> Result<(), CommandError>;
 }
 
 struct DaemonDashboardSource {
@@ -171,6 +172,13 @@ impl DashboardSource for DaemonDashboardSource {
             directory,
         })
     }
+
+    fn reconnect_now(&self) -> Result<(), CommandError> {
+        self.client
+            .request::<bool>(&Request::ReconnectNow)
+            .map(|_| ())
+            .map_err(|error| CommandError::daemon(error.to_string()))
+    }
 }
 
 impl DaemonDashboardSource {
@@ -240,6 +248,10 @@ fn load_dashboard(source: &dyn DashboardSource) -> Result<DashboardSnapshot, Com
     source.dashboard()
 }
 
+fn request_reconnect(source: &dyn DashboardSource) -> Result<(), CommandError> {
+    source.reconnect_now()
+}
+
 #[tauri::command]
 async fn dashboard(state: tauri::State<'_, AppState>) -> Result<DashboardSnapshot, CommandError> {
     let source = Arc::clone(&state.source);
@@ -248,12 +260,20 @@ async fn dashboard(state: tauri::State<'_, AppState>) -> Result<DashboardSnapsho
         .map_err(|error| CommandError::daemon(format!("dashboard task failed: {error}")))?
 }
 
+#[tauri::command]
+async fn reconnect_now(state: tauri::State<'_, AppState>) -> Result<(), CommandError> {
+    let source = Arc::clone(&state.source);
+    tauri::async_runtime::spawn_blocking(move || request_reconnect(source.as_ref()))
+        .await
+        .map_err(|error| CommandError::daemon(format!("reconnect task failed: {error}")))?
+}
+
 pub fn run() {
     tauri::Builder::default()
         .manage(AppState {
             source: Arc::new(DaemonDashboardSource::default()),
         })
-        .invoke_handler(tauri::generate_handler![dashboard])
+        .invoke_handler(tauri::generate_handler![dashboard, reconnect_now])
         .run(tauri::generate_context!())
         .expect("Tauri application failed");
 }
@@ -290,6 +310,10 @@ mod tests {
     impl DashboardSource for FailingSource {
         fn dashboard(&self) -> Result<DashboardSnapshot, CommandError> {
             Err(CommandError::daemon("fixture must not replace this error"))
+        }
+
+        fn reconnect_now(&self) -> Result<(), CommandError> {
+            Err(CommandError::daemon("fixture must not reconnect"))
         }
     }
 

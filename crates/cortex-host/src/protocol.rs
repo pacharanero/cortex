@@ -39,7 +39,7 @@ use cortex_rs::RecallConsent;
 /// Bump this whenever a `Request` variant changes shape or a new variant is
 /// added. A client that sees a mismatch refuses with an actionable message
 /// rather than sending a request the daemon will misparse.
-pub const DAEMON_PROTOCOL_VERSION: u32 = 5;
+pub const DAEMON_PROTOCOL_VERSION: u32 = 6;
 
 /// A request from a client to the daemon.
 ///
@@ -51,6 +51,8 @@ pub const DAEMON_PROTOCOL_VERSION: u32 = 5;
 pub enum Request {
     /// Is the daemon alive, is the device healthy, what is it holding.
     Status,
+    /// Interrupt reconnect backoff and make the next connection attempt now.
+    ReconnectNow,
     /// Device firmware and identity.
     Version,
     /// The active scene index.
@@ -448,6 +450,8 @@ mod tests {
     fn a_unit_request_needs_no_payload() {
         let text = serde_json::to_string(&Request::Status).unwrap();
         assert_eq!(text, r#"{"op":"status"}"#);
+        let text = serde_json::to_string(&Request::ReconnectNow).unwrap();
+        assert_eq!(text, r#"{"op":"reconnect_now"}"#);
     }
 
     #[test]

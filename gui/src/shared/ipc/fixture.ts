@@ -49,4 +49,5 @@ const dashboard: DashboardSnapshot = {
 
 export const fixtureApi: CortexApi = {
   async dashboard() { return structuredClone(dashboard); },
+  async reconnectNow() {},
 };
