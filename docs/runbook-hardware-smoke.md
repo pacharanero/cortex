@@ -151,6 +151,19 @@ cortex grid show --params
 - [ ] `GAIN` reads back as `0.9`
 - [ ] Untouched parameters sit at their catalog defaults
 
+Choose a second empty cell for `TO_ROW`/`TO_COLUMN`, move the block there and back, and inspect both cells after each operation:
+
+```sh
+cortex block move --from-row "$ROW" --from-column "$COLUMN" --to-row "$TO_ROW" --to-column "$TO_COLUMN"
+cortex grid show --params
+cortex block move --from-row "$TO_ROW" --from-column "$TO_COLUMN" --to-row "$ROW" --to-column "$COLUMN"
+cortex grid show --params
+```
+
+- [ ] Each command reports read-back confirmation
+- [ ] The source becomes empty and the block's model, parameters and bypass state appear unchanged at the destination
+- [ ] Moving back restores both cells; a cross-row destination lets the device adjust branch routing
+
 ```sh
 cortex block param --row "$ROW" --column "$COLUMN" --param WOBBLE --value 0.5
 ```

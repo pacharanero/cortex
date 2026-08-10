@@ -39,7 +39,7 @@ use cortex_rs::RecallConsent;
 /// Bump this whenever a `Request` variant changes shape or a new variant is
 /// added. A client that sees a mismatch refuses with an actionable message
 /// rather than sending a request the daemon will misparse.
-pub const DAEMON_PROTOCOL_VERSION: u32 = 6;
+pub const DAEMON_PROTOCOL_VERSION: u32 = 7;
 
 /// A request from a client to the daemon.
 ///
@@ -184,6 +184,19 @@ pub enum Request {
         row: u32,
         /// Zero-based column.
         column: u32,
+    },
+    /// Move one occupied grid cell to an empty destination with read-back.
+    MoveBlock {
+        /// Zero-based source wire row.
+        from_row: u32,
+        /// Zero-based source column.
+        from_column: u32,
+        /// Zero-based destination wire row.
+        to_row: u32,
+        /// Zero-based destination column.
+        to_column: u32,
+        /// Maximum wait for each live-grid read.
+        timeout_seconds: u64,
     },
     /// Set a row's split and mix columns.
     SetSplit {
@@ -444,6 +457,23 @@ mod tests {
                 serde_json::to_value(request).unwrap()
             );
         }
+    }
+
+    #[test]
+    fn a_block_move_round_trips_both_cells() {
+        let request = Request::MoveBlock {
+            from_row: 0,
+            from_column: 2,
+            to_row: 1,
+            to_column: 6,
+            timeout_seconds: 15,
+        };
+        let text = serde_json::to_string(&request).unwrap();
+        let back: Request = serde_json::from_str(&text).unwrap();
+        assert_eq!(
+            serde_json::to_value(back).unwrap(),
+            serde_json::to_value(request).unwrap()
+        );
     }
 
     #[test]

@@ -175,6 +175,14 @@ pub enum Error {
     #[error("block refused: {0}")]
     BlockRefused(String),
 
+    /// A block move was malformed or unsafe to send.
+    #[error("invalid block move: {0}")]
+    InvalidBlockMove(String),
+
+    /// A block move may have landed, but live-grid read-back did not prove it.
+    #[error("block move outcome unconfirmed: {0}")]
+    BlockMoveUnconfirmed(String),
+
     /// A row was addressed that cannot hold what was asked of it - an odd
     /// row for a splitter, or screen row 0, which does not exist.
     #[error("invalid row: {0}")]

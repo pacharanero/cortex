@@ -575,6 +575,30 @@ enum BlockCmd {
         #[arg(long, value_name = "0-7")]
         column: u32,
     },
+    /// Move one block to an empty grid cell and verify by live read-back.
+    ///
+    /// CHANGES THE WORKING GRID. Nothing is saved. A cross-row move lets the
+    /// device create or adjust a parallel path.
+    #[command(
+        after_help = "Examples:\n  cortex block move --from-row 1 --from-column 2 --to-row 2 --to-column 6"
+    )]
+    Move {
+        /// Source row as shown on the unit, 1-4.
+        #[arg(long, value_name = "1-4")]
+        from_row: u32,
+        /// Source column, 0-7.
+        #[arg(long, value_name = "0-7")]
+        from_column: u32,
+        /// Destination row as shown on the unit, 1-4.
+        #[arg(long, value_name = "1-4")]
+        to_row: u32,
+        /// Empty destination column, 0-7.
+        #[arg(long, value_name = "0-7")]
+        to_column: u32,
+        /// Seconds to wait for each live-grid read.
+        #[arg(long, value_name = "SECONDS", default_value = "15")]
+        timeout: u64,
+    },
 }
 
 /// Commands acting on a grid row.
@@ -868,6 +892,13 @@ fn run(cli: Cli) -> Result<()> {
                 timeout,
             } => cmd_set_block(row, column, model, no_verify, timeout, fmt),
             BlockCmd::Remove { row, column } => cmd_remove_block(row, column, fmt),
+            BlockCmd::Move {
+                from_row,
+                from_column,
+                to_row,
+                to_column,
+                timeout,
+            } => cmd_move_block(from_row, from_column, to_row, to_column, timeout, fmt),
         },
         Some(Command::Row { command }) => match command {
             RowCmd::Input { row, port } => cmd_set_routing(row, Some(port), None, fmt),
@@ -1186,6 +1217,33 @@ fn dry_run_plan(command: Option<&Command>) -> Result<Option<DryRunPlan>> {
                     "working grid",
                     serde_json::json!({ "wire_row": row.wire(), "screen_row": row.screen(), "column": column }),
                     &["remove the block"],
+                ))
+            }
+            BlockCmd::Move {
+                from_row,
+                from_column,
+                to_row,
+                to_column,
+                timeout,
+            } => {
+                let from_row = validate_cell(*from_row, *from_column)?;
+                let to_row = validate_cell(*to_row, *to_column)?;
+                if (from_row, from_column) == (to_row, to_column) {
+                    anyhow::bail!("source and destination cells must differ");
+                }
+                Some(plan(
+                    "block move",
+                    "working grid",
+                    serde_json::json!({
+                        "from": { "wire_row": from_row.wire(), "screen_row": from_row.screen(), "column": from_column },
+                        "to": { "wire_row": to_row.wire(), "screen_row": to_row.screen(), "column": to_column },
+                        "timeout_seconds": timeout,
+                    }),
+                    &[
+                        "read and validate the source and empty destination",
+                        "move the block",
+                        "read the live grid back to verify both cells",
+                    ],
                 ))
             }
         },
@@ -2604,6 +2662,49 @@ fn cmd_remove_block(row: u32, column: u32, fmt: Format) -> Result<()> {
     report_edit("remove_block", detail, fmt)
 }
 
+/// Move one block to an empty cell and verify both cells by read-back.
+fn cmd_move_block(
+    from_row: u32,
+    from_column: u32,
+    to_row: u32,
+    to_column: u32,
+    timeout: u64,
+    fmt: Format,
+) -> Result<()> {
+    let from_row = validate_cell(from_row, from_column)?;
+    let to_row = validate_cell(to_row, to_column)?;
+    let detail = format!(
+        "row {} column {from_column} -> row {} column {to_column} (read-back confirmed)",
+        from_row.screen(),
+        to_row.screen()
+    );
+
+    if let Some(result) = connect::request(&cortex_host::Request::MoveBlock {
+        from_row: from_row.wire(),
+        from_column,
+        to_row: to_row.wire(),
+        to_column,
+        timeout_seconds: timeout,
+    }) {
+        result?;
+        return report_edit("move_block", detail, fmt);
+    }
+
+    let (session, qc) = connected()?;
+    let result = qc.move_block(
+        from_row,
+        from_column,
+        to_row,
+        to_column,
+        true,
+        Duration::from_secs(timeout),
+    );
+    qc.disconnect();
+    session.stop();
+    result?;
+    report_edit("move_block", detail, fmt)
+}
+
 /// Human-readable rendering of a preset's grid.
 fn print_preset(o: &PresetOut) {
     println!("slot: {}", o.slot);
@@ -3035,6 +3136,20 @@ mod tests {
                 "1",
                 "--column",
                 "2",
+                "--dry-run",
+            ],
+            &[
+                "cortex",
+                "block",
+                "move",
+                "--from-row",
+                "1",
+                "--from-column",
+                "2",
+                "--to-row",
+                "2",
+                "--to-column",
+                "6",
                 "--dry-run",
             ],
             &[

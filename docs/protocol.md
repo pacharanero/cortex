@@ -347,6 +347,22 @@ Both paths are now verified. Forcing a zero timeout still confirms correctly via
 
 That gives a rough DSP budget figure of around 21 catalog CPU units for that preset shape. One data point, not a formula.
 
+### Block moves use `GridMove`, not a sparse `Grid` update
+
+One move is encoded without an action field and without the optional advisory grid snapshot:
+
+```text
+GridMove{move{from_row: 0, from_col: 2, to_row: 1, to_col: 6, is_drop: true}}
+```
+
+Rows and columns are zero-based on the wire. The source must be occupied and the destination empty. A cross-row move can create or adjust a parallel path; the device computes any split and rejoin columns rather than accepting them in this message. The `grid` snapshot in the schema is advisory and does not drive edits, so hosts should omit it.
+
+`GridMove` broadcasts do not carry enough state to update a complete cached preset safely. Invalidate the cached live grid, issue a fresh `RecallPreset{READ}`, and confirm that the source is empty and the complete source model payload plus bypass state now occupy the destination. `cortex block move` also reads before writing so empty sources, occupied destinations, no-ops and invalid columns are refused before device I/O.
+
+Hardware read-back on CorOS 4.0.1 confirmed a same-row move and reverse preserved every parameter, all eight bypass slots, scene mode, model identity and routing, and a cross-row move transferred the block while clearing its source. That cross-row test began with an existing branch at split 2 / mix 5, which the device retained unchanged; a cross-row move does not gratuitously recompute an already-valid path. Recalling the stored preset restored the original cells and routing.
+
+The discriminating bypass test also exposed an existing host-side gap: immediately after `set_bypass`, a cache-backed grid read still showed the old value, while the explicit full read performed by `move_block` observed the changed value and the destination then carried it. A successful write dispatch is not proof that every cache path has converged; bypass and the other simple working-copy writes still need the post-write read-back tracked in MCP-002.7.
+
 ### `read_preset` recalls, and that resets the scene
 
 There is no side-effect-free way to read a *stored* preset: the device only emits one when it recalls it.

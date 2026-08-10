@@ -102,7 +102,7 @@ Maintainers, AI coding agents, and the CLI/MCP/GUI surfaces that consume the cra
 - [x] `grid::Row` makes the row-numbering trap explicit and rejects invalid rows.
 - [x] `view::Scene` exposes A-H metadata in every preset view, while each block exposes its per-scene bypass state.
 - [x] `Catalog` parses the `ModelRepo` container and preserves parameter wire positions.
-- [~] Slot conversion and scaling helpers are implemented; richer grid-navigation helpers remain planned.
+- [x] Checked slot conversion and input-level scaling helpers are implemented. Richer grid-navigation helpers are independently tracked under PROT-006.15 rather than keeping the core domain requirement open.
 - [x] `UNITY_LEVEL`, `input_level_db`, and `db_to_input_level` are exposed.
 
 ## Non-Goals

@@ -835,6 +835,7 @@ Commands:
   bypass  Bypass or enable a block on the grid
   set     Place a model in a grid cell, creating or replacing a block
   remove  Remove the block at a grid cell
+  move    Move one block to an empty grid cell and verify by live read-back
   help    Print this message or the help of the given subcommand(s)
 
 Options:
@@ -1089,6 +1090,64 @@ Options:
 
 Examples:
   cortex block remove --row 1 --column 2
+```
+
+#### `cortex block move`
+
+Move one block to an empty grid cell and verify by live read-back.
+
+```text
+Move one block to an empty grid cell and verify by live read-back.
+
+CHANGES THE WORKING GRID. Nothing is saved. A cross-row move lets the device create or adjust a parallel path.
+
+Usage: cortex block move [OPTIONS] --from-row <1-4> --from-column <0-7> --to-row <1-4> --to-column <0-7>
+
+Options:
+      --from-row <1-4>
+          Source row as shown on the unit, 1-4
+
+      --from-column <0-7>
+          Source column, 0-7
+
+      --to-row <1-4>
+          Destination row as shown on the unit, 1-4
+
+      --to-column <0-7>
+          Empty destination column, 0-7
+
+      --timeout <SECONDS>
+          Seconds to wait for each live-grid read
+
+          [default: 15]
+
+      --format <FORMAT>
+          Output format. `text` is for humans; `json` is for scripts and agents, and is stable enough to parse.
+
+          Only the RESULT changes format. Progress, warnings, and errors always go to stderr as plain text, so `cortex preset list --format json | jq` gets clean JSON regardless.
+
+          Possible values:
+          - text: Human-readable, the default
+          - json: Machine-readable JSON
+
+          [default: text]
+
+      --zero-based
+          Take `--row` as 0-3 rather than the 1-4 shown on the unit.
+
+          The unit labels its rows 1-4 and the wire numbers them 0-3, so the default matches what a player sees. Scripts and agents generally have a zero-based index already, and converting it back by hand is exactly the sort of arithmetic that silently edits the wrong row.
+
+  -n, --dry-run
+          Print the operation plan without changing device or local state. Read-only commands accept and ignore this flag
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+  -V, --version
+          Print version
+
+Examples:
+  cortex block move --from-row 1 --from-column 2 --to-row 2 --to-column 6
 ```
 
 ### `cortex row`

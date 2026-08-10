@@ -3,8 +3,8 @@
 
 //! Grid-edit message construction.
 //!
-//! Every function here builds a `GridMessage` payload and nothing else - no
-//! I/O, no session, no device. That is deliberate: the grid is where the
+//! Every function here builds a grid-edit protobuf payload and nothing else -
+//! no I/O, no session, no device. That is deliberate: the grid is where the
 //! protocol's silent-no-op traps live, and a wrong message is accepted on the
 //! wire and simply does nothing. Keeping construction pure means each trap
 //! can be pinned by a test rather than discovered on hardware.
@@ -31,9 +31,9 @@
 //! @see spec/130-domain-model/spec.md
 
 use crate::proto::{
-    BinaryPreset, Bypass, Chain, ColBypass, GridMessage, Model, Param, ParamValue, SceneBypass,
-    binary_preset, bypass, chain, col_bypass, grid_message, message_action::Enum as MessageAction,
-    model, param, param_value,
+    BinaryPreset, Bypass, Chain, ColBypass, GridMessage, GridMoveElement, GridMoveMessage, Model,
+    Param, ParamValue, SceneBypass, binary_preset, bypass, chain, col_bypass, grid_message,
+    message_action::Enum as MessageAction, model, param, param_value,
 };
 
 /// A grid row, which exists to stop the zero-based/one-based confusion being
@@ -291,6 +291,31 @@ pub fn remove_block(row: Row, column: u32) -> GridMessage {
     model.hash = Some(model::Hash::Hash(0));
     chain.models.push(model);
     grid(MessageAction::Delete, preset_with_chain(chain))
+}
+
+/// Move one occupied grid cell to an empty destination.
+///
+/// A cross-row move asks the device to create or adjust the parallel path; the
+/// device computes its own split and rejoin columns. The optional advisory
+/// grid snapshot is deliberately absent because it does not drive edits.
+#[must_use]
+pub fn move_block(
+    from_row: Row,
+    from_column: u32,
+    to_row: Row,
+    to_column: u32,
+    drop: bool,
+) -> GridMoveMessage {
+    GridMoveMessage {
+        r#move: vec![GridMoveElement {
+            from_row: from_row.wire(),
+            from_col: from_column,
+            to_row: to_row.wire(),
+            to_col: to_column,
+            is_drop: drop,
+        }],
+        ..Default::default()
+    }
 }
 
 /// Set a row's split and mix points, activating a parallel branch.
@@ -594,6 +619,24 @@ mod tests {
             *v
         });
         assert_eq!(hash, Some(0));
+    }
+
+    #[test]
+    fn block_move_is_addressed_without_an_advisory_grid_snapshot() {
+        let message = move_block(Row::from_wire(2), 1, Row::from_wire(3), 7, true);
+        assert_eq!(message.r#move.len(), 1);
+        let movement = &message.r#move[0];
+        assert_eq!(
+            (
+                movement.from_row,
+                movement.from_col,
+                movement.to_row,
+                movement.to_col,
+                movement.is_drop,
+            ),
+            (2, 1, 3, 7, true)
+        );
+        assert!(message.grid.is_none());
     }
 
     // -- splits ------------------------------------------------------------

@@ -102,7 +102,7 @@ All five navigation operations are implemented and hardware-verified on CorOS 4.
 | FR-36 | `set_bypass(row, column, bypassed)` writes the bypass state across the block's stored scene slots. Scene-targeted bypass is not part of the implemented API. | Must Have   |
 | FR-37 | `set_block(row, column, model, verify, timeout)` treats a matching echo as a fast confirmation, then falls back to live-grid read-back. It returns `BlockRefused` only when read-back proves the model is absent; echo timeout alone is never proof of refusal. | Must Have   |
 | FR-38 | `remove_block(row, column)` sends `Grid{action: DELETE, ...}` (NOT UPDATE with hash:0, which is ignored). | Must Have   |
-| FR-39 | `move_block(from_row, from_col, to_row, to_col, drop)` sends `GridMove`. A cross-row move creates a parallel path. | Should Have |
+| FR-39 | `move_block(from_row, from_col, to_row, to_col, drop, timeout)` reads and validates an occupied source and empty destination, sends `GridMove` without its advisory grid snapshot, then reads the live grid back to prove the source cleared and the complete model payload plus bypass state reached the destination. A cross-row move lets the device compute a parallel path. | Should Have |
 
 #### Splitter/mixer/lane/gate
 
@@ -205,6 +205,7 @@ All five navigation operations are implemented and hardware-verified on CorOS 4.
 - [x] `set_param(scene=D)` issues the promote/switch/write sequence and changes only the target scene.
 - [x] `set_block(verify=true)` uses echo or read-back confirmation and reports a hardware-verified genuine DSP refusal only after absence is read back.
 - [x] `remove_block()` uses action DELETE and passed read-back.
+- [x] `move_block()` refuses invalid cells before writing and confirms both source and destination by complete live-grid read-back. Same-row move/reverse preserved every parameter and all bypass state, and a cross-row move passed on CorOS 4.0.1; recall restored the original grid.
 - [ ] `set_splitter_param()` writes `combined_splitter` (not `splitter[]`).
 - [x] `save_current_preset()` writes the working grid to the exact slot and exact `CREATE` acknowledgement is correlated; host surfaces gate it through prepared save.
 - [x] `delete_preset()` addresses by file path, correlates the exact `DELETE`, and passed disposable-slot hardware smoke.

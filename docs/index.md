@@ -44,7 +44,7 @@ The project's central discipline is being honest about what has actually run aga
 | Reading device version, scene, presets, folders | <span class="status verified">verified</span> |
 | Model catalog | <span class="status verified">verified</span> |
 | Recall preset, switch scene | <span class="status verified">verified</span> |
-| Grid: place block, set parameter, remove block | <span class="status verified">verified</span> |
+| Grid: place/move/remove block, set parameter | <span class="status verified">verified</span> |
 | Grid: bypass, routing, per-scene values, splits | <span class="status verified">verified</span> |
 | Prepared save, stored read-back and delete | <span class="status verified">verified</span> |
 | Capture and IR export/import | <span class="status provisional">investigation; no working export/import</span> |

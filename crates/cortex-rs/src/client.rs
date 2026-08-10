@@ -410,12 +410,68 @@ fn preset_entries(folder: &crate::proto::FolderInfo, include_empty: bool) -> Vec
 
 /// The model id at a grid cell, if the cell is occupied.
 fn model_id_at(preset: &BinaryPreset, row: Row, column: u32) -> Option<u32> {
-    let chain = preset.chains.get(row.wire() as usize)?;
-    let model = chain.models.get(column as usize)?;
+    let model = model_at(preset, row, column)?;
     match model.hash {
         Some(crate::proto::model::Hash::Hash(id)) if id != 0 => Some(id),
         _ => None,
     }
+}
+
+/// The complete model payload at an occupied grid cell.
+fn model_at(preset: &BinaryPreset, row: Row, column: u32) -> Option<&crate::proto::Model> {
+    let chain = preset.chains.get(row.wire() as usize)?;
+    let model = chain.models.get(column as usize)?;
+    match model.hash {
+        Some(crate::proto::model::Hash::Hash(id)) if id != 0 => Some(model),
+        _ => None,
+    }
+}
+
+/// The complete model state at a cell, without its location key.
+fn model_state_at(preset: &BinaryPreset, row: Row, column: u32) -> Option<crate::proto::Model> {
+    let mut model = model_at(preset, row, column)?.clone();
+    model.column = None;
+    Some(model)
+}
+
+/// The bypass state exposed for a cell, independent of its row/column keys.
+fn bypass_state_at(
+    preset: &BinaryPreset,
+    row: Row,
+    column: u32,
+) -> Option<(Vec<bool>, Option<bool>)> {
+    for (bypass_index, entry) in preset.bypass.iter().enumerate() {
+        let positional_row = u32::try_from(bypass_index).ok()?;
+        let entry_row = entry.row.as_ref().map_or(positional_row, |value| {
+            let crate::proto::bypass::Row::Row(row) = value;
+            *row
+        });
+        if entry_row != row.wire() {
+            continue;
+        }
+        for (column_index, value) in entry.col_bypass.iter().enumerate() {
+            let positional_column = u32::try_from(column_index).ok()?;
+            let entry_column = value.column.as_ref().map_or(positional_column, |entry| {
+                let crate::proto::col_bypass::Column::Column(column) = entry;
+                *column
+            });
+            if entry_column == column {
+                let scene_mode = value.scene_mode.as_ref().map(|entry| {
+                    let crate::proto::col_bypass::SceneMode::SceneMode(enabled) = entry;
+                    *enabled
+                });
+                return Some((
+                    value
+                        .scene_bypass
+                        .iter()
+                        .map(|scene| scene.bypass)
+                        .collect(),
+                    scene_mode,
+                ));
+            }
+        }
+    }
+    None
 }
 
 /// Validate a caller-provided wire value before the device can store it.
@@ -1647,6 +1703,82 @@ impl QuadCortex {
         self.send_grid(&crate::grid::remove_block(row, column))
     }
 
+    /// Move one occupied grid cell to an empty destination and verify it by
+    /// reading the complete live grid back.
+    ///
+    /// Cross-row moves let the device create or adjust a parallel path; its
+    /// computed split and rejoin columns are visible in the returned live
+    /// preset. The optional `GridMove.grid` snapshot is advisory and is not
+    /// sent.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`crate::Error::InvalidBlockMove`] for an invalid column, a
+    /// no-op, or an occupied destination; [`crate::Error::NotFound`] for an
+    /// empty source; and [`crate::Error::BlockMoveUnconfirmed`] when read-back
+    /// does not show the exact source model at the destination with the source
+    /// cleared.
+    pub fn move_block(
+        &self,
+        from_row: Row,
+        from_column: u32,
+        to_row: Row,
+        to_column: u32,
+        drop: bool,
+        timeout: Duration,
+    ) -> crate::Result<()> {
+        if from_column > 7 || to_column > 7 {
+            return Err(crate::Error::InvalidBlockMove(format!(
+                "columns are numbered 0-7, got {from_column} -> {to_column}"
+            )));
+        }
+        if (from_row, from_column) == (to_row, to_column) {
+            return Err(crate::Error::InvalidBlockMove(format!(
+                "source and destination are both wire row {} (screen row {}) column {from_column}",
+                from_row.wire(),
+                from_row.screen()
+            )));
+        }
+
+        let before = self.read_current_preset(timeout)?;
+        let source_model = model_state_at(&before, from_row, from_column).ok_or_else(|| {
+            crate::Error::NotFound(format!(
+                "no block at source wire row {} (screen row {}) column {from_column}",
+                from_row.wire(),
+                from_row.screen()
+            ))
+        })?;
+        let model_id = model_id_at(&before, from_row, from_column)
+            .expect("occupied source model has a nonzero id");
+        let source_bypass = bypass_state_at(&before, from_row, from_column);
+        if let Some(destination_model) = model_id_at(&before, to_row, to_column) {
+            return Err(crate::Error::InvalidBlockMove(format!(
+                "destination wire row {} (screen row {}) column {to_column} is occupied by model {destination_model}",
+                to_row.wire(),
+                to_row.screen()
+            )));
+        }
+
+        let message = crate::grid::move_block(from_row, from_column, to_row, to_column, drop);
+        self.session.send(
+            MessageType::GridMove,
+            &prost::Message::encode_to_vec(&message),
+        )?;
+
+        let after = self.read_current_preset(timeout)?;
+        if model_id_at(&after, from_row, from_column).is_none()
+            && model_state_at(&after, to_row, to_column) == Some(source_model)
+            && bypass_state_at(&after, to_row, to_column) == source_bypass
+        {
+            return Ok(());
+        }
+        Err(crate::Error::BlockMoveUnconfirmed(format!(
+            "expected model {model_id} and its parameter/bypass state to move from wire row {} column {from_column} to wire row {} column {to_column}, but live-grid read-back did not confirm the complete move",
+            from_row.wire(),
+            to_row.wire()
+        )))
+    }
+
     /// Set a row's split and mix points, activating a parallel branch.
     ///
     /// # Errors
@@ -1996,6 +2128,44 @@ mod tests {
             assert!(matches!(result, Err(crate::Error::InvalidScene(_))));
         }
         session.close();
+    }
+
+    #[test]
+    fn invalid_block_moves_are_refused_before_device_io() {
+        let link = FakeLink::new();
+        let session = Arc::new(crate::Session::over(link.clone()).unwrap());
+        let qc = QuadCortex::new(session.clone());
+        let timeout = Duration::from_millis(10);
+
+        for result in [
+            qc.move_block(Row::from_wire(0), 8, Row::from_wire(0), 1, true, timeout),
+            qc.move_block(Row::from_wire(0), 1, Row::from_wire(0), 1, true, timeout),
+        ] {
+            assert!(matches!(result, Err(crate::Error::InvalidBlockMove(_))));
+        }
+        assert_eq!(link.write_count(), 0);
+        session.close();
+    }
+
+    #[test]
+    fn model_state_excludes_the_cell_address() {
+        let mut models = vec![crate::proto::Model::default(); 3];
+        models[2] = crate::proto::Model {
+            hash: Some(crate::proto::model::Hash::Hash(12_044)),
+            column: Some(crate::proto::model::Column::Column(2)),
+            ..Default::default()
+        };
+        let preset = BinaryPreset {
+            chains: vec![crate::proto::Chain {
+                models,
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+
+        let state = model_state_at(&preset, Row::from_wire(0), 2).unwrap();
+        assert_eq!(state.hash, Some(crate::proto::model::Hash::Hash(12_044)));
+        assert_eq!(state.column, None);
     }
 
     #[test]

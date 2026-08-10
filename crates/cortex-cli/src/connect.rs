@@ -501,6 +501,23 @@ impl Daemon {
                 c.remove_block(cortex_rs::Row::try_from_wire(row)?, column)
                     .map(|()| serde_json::json!({ "applied": true }))
             }),
+            Request::MoveBlock {
+                from_row,
+                from_column,
+                to_row,
+                to_column,
+                timeout_seconds,
+            } => self.respond(move |c| {
+                c.move_block(
+                    cortex_rs::Row::try_from_wire(from_row)?,
+                    from_column,
+                    cortex_rs::Row::try_from_wire(to_row)?,
+                    to_column,
+                    true,
+                    Duration::from_secs(timeout_seconds),
+                )
+                .map(|()| serde_json::json!({ "applied": true, "verified": true }))
+            }),
             Request::SetSplit { row, split, mix } => self.respond(move |c| {
                 c.set_split(cortex_rs::Row::try_from_wire(row)?, split, mix)
                     .map(|()| serde_json::json!({ "applied": true }))
