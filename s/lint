@@ -24,3 +24,7 @@ fi
 # into the repo. Docs examples come from a physical unit, so this is easy to
 # do by accident and hard to undo once published.
 s/lint-no-device-data
+
+# Fail if the workspace version and the GUI's synchronized manifests have
+# drifted apart outside an `s/version++` run.
+s/check-versions

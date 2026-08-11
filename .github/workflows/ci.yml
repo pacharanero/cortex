@@ -51,6 +51,9 @@ jobs:
       - name: No real device data
         run: s/lint-no-device-data
 
+      - name: Workspace and GUI manifest versions match
+        run: s/check-versions
+
       - name: Install frontend dependencies
         run: npm ci --prefix gui
 
