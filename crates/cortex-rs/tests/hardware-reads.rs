@@ -2328,7 +2328,7 @@ fn prot_006_12_global_settings_mutate_poll_restore() -> cortex_rs::Result<()> {
         qc.set_tuner_mute(!tuner_mute)?;
         poll_twice(
             || qc.tuner_complete(timeout),
-            |value| tuner_values(value).is_some_and(|state| state.2 == !tuner_mute),
+            |value| tuner_values(value).is_some_and(|state| state.2 != tuner_mute),
             "tuner mute",
         )?;
         qc.set_tuner_mute(tuner_mute)?;
