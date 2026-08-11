@@ -20,6 +20,7 @@ cargo_version="$(awk -F\" '/^version = / { print $2; exit }' Cargo.toml)"
 
 package_version="$(node -p "require('./gui/package.json').version")"
 lockfile_version="$(node -p "require('./gui/package-lock.json').version")"
+lockfile_root_version="$(node -p "require('./gui/package-lock.json').packages[''].version")"
 tauri_version="$(node -p "require('./gui/src-tauri/tauri.conf.json').version")"
 
 findings=()
@@ -27,6 +28,7 @@ report() { findings+=("  $1: $2"); }
 
 [[ "$package_version" == "$cargo_version" ]] || report "gui/package.json" "$package_version"
 [[ "$lockfile_version" == "$cargo_version" ]] || report "gui/package-lock.json" "$lockfile_version"
+[[ "$lockfile_root_version" == "$cargo_version" ]] || report 'gui/package-lock.json packages[""].version' "$lockfile_root_version"
 [[ "$tauri_version" == "$cargo_version" ]] || report "gui/src-tauri/tauri.conf.json" "$tauri_version"
 
 if [[ "${#findings[@]}" -gt 0 ]]; then

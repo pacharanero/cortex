@@ -122,6 +122,7 @@ Kept rather than deleted: many carry the measurement that settled a question, an
 
 ### ENG-001: DX and testing
 - [x] **ENG-001.x**: Correlation unit tests - 12 tests over `dispatch` covering type-first matching, the id-less oldest-first fallback, cascade rejection, the stale-seed-push skip, collector semantics, and the liveness stamp. No fake transport needed; `dispatch` is a free function. The HashMap-ordering guard was verified to fail 12/12 with the bug reintroduced and 0/12 with it fixed
+- [x] **ENG-001.6**: Cargo, npm and Tauri version drift now fails locally and in CI. `s/check-versions` compares the workspace version with `gui/package.json`, both root-version fields in `gui/package-lock.json`, and `gui/src-tauri/tauri.conf.json`; reports every outlier; and runs from both `s/lint` and a dedicated CI step
 - [x] `s/test` - cargo fmt + clippy + test
 - [x] `s/lint` - cargo fmt + clippy + reuse lint
 - [x] `.editorconfig`
