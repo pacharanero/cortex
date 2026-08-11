@@ -3,8 +3,9 @@
 
 //! The hardware-verified USB HID transport for the Quad Cortex.
 //!
-//! Nano Cortex compatibility is unestablished; do not reuse these report sizes
-//! or handshake assumptions for it without hardware evidence.
+//! Nano Cortex shares the HID frame shape but uses 65-byte reports and a
+//! different application envelope. This implementation remains Quad-only until
+//! device-dependent geometry and the Nano codec land together.
 //!
 //! Encapsulates the two non-obvious behaviours documented in
 //! `quad-cortex-linux-editor-and-protocol.md`:

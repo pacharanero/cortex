@@ -34,7 +34,7 @@ The design principle is: never let a caller touch a raw `oneof` accessor without
 
 ## [DES-DEVICE] DeviceKind Design
 
-`DeviceKind` is a two-variant enum with a `vid_pid()` method. The variants express the project's current hardware targets, not a claim that both use one protocol: the recovered schema names `QC=0` and `ATMA=1`, while Nano transport compatibility remains unestablished. Adding another supported device would require an enum variant and transport evidence; it need not first appear in this recovered Quad Cortex schema.
+`DeviceKind` is a two-variant enum with a `vid_pid()` method. The variants express the project's current hardware targets, not a claim that both use one application protocol: hardware established shared HID framing but different Quad and Nano envelopes and domain models. Adding another supported device would require an enum variant and transport evidence; it need not first appear in the recovered Quad Cortex schema.
 
 ```rust
 pub enum DeviceKind {
@@ -43,7 +43,7 @@ pub enum DeviceKind {
 }
 ```
 
-`NanoCortex` is labelled provisional in its doc-comment because transport compatibility itself is unverified. Third-party observation reports VID:PID `152A:88E7` and 65-byte HID reports, but no protobuf/trailer exchange. The placeholder product ID `0xFFFF` is a sentinel that will never match a real device, so a `NanoCortex` open fails closed until this project verifies the transport and deliberately replaces it.
+`NanoCortex` is labelled provisional because runtime support is not implemented. Hardware confirms VID:PID `152A:88E7`, 65-byte HID reports, shared flag framing, and a decoded state exchange, but the current transport assumes Quad geometry and its domain parses the Quad eight-byte trailer. The placeholder product ID `0xFFFF` keeps opens fail-closed until device-dependent framing and the Nano codec land together.
 
 The `vid_pid()` method is `const fn` so it can be used in `const` contexts (e.g. a static lookup table in the transport layer).
 

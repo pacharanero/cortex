@@ -1,6 +1,6 @@
 # cortex
 
-An unofficial toolkit for the **Neural DSP Quad Cortex**, developing a cross-platform desktop GUI alongside a hardware-backed CLI, an MCP server for agentic patch editing, and the reusable Rust core beneath them.
+An unofficial, open-source toolkit for the **Neural DSP Quad Cortex and Nano Cortex**, developing one desktop GUI for Linux, Windows and macOS alongside a hardware-backed CLI, an MCP server for agentic patch editing, and the reusable Rust core beneath them.
 
 !!! warning "Unofficial and unaffiliated"
 
@@ -8,9 +8,9 @@ An unofficial toolkit for the **Neural DSP Quad Cortex**, developing a cross-pla
 
 ## What it is
 
-The project is one device model with several interfaces:
+The project is one toolkit for two related device models, exposed through several interfaces:
 
-- **A desktop GUI targeting Linux, Windows and macOS**, built with Tauri, React and Mantine. Its read-only first draft has explicit browser-fixture and daemon-backed Tauri modes over the shared Rust domain model.
+- **A desktop GUI intended for both Cortex devices on Linux, Windows and macOS**, built with Tauri, React and Mantine. Its current Quad-specific read-only first draft has explicit browser-fixture and daemon-backed Tauri modes over the shared Rust foundation.
 - **A hardware-backed CLI** for reading device state, browsing presets, searching the model catalog and editing the grid.
 - **An MCP server** for agentic patch editing through the held-session daemon. Read, recall, scene and unsaved live-grid editing tools are hardware-verified; save and delete are not exposed.
 - **A reusable Rust core** implementing USB HID transport, framing, the protobuf envelope, session handling and a typed domain model. It depends on no host application or async runtime. The CLI and MCP server use it today; the GUI will consume the same behaviour rather than reimplementing it.
@@ -19,7 +19,7 @@ The project is one device model with several interfaces:
 
 Neural DSP provides Cortex Control for macOS and Windows but has not provided a Linux editor. This community project began by building that missing support for ourselves; today it is maintained by one person.
 
-Linux is the first implementation and the only hardware-verified host today, but it is not the product boundary. The desktop GUI is intended for Linux, Windows and macOS, with the CLI and MCP server available for players and workflows that prefer those interfaces. Each platform will be called supported only after its transport, local IPC, packaging and real-hardware behaviour have been tested.
+Linux is the first implementation and the only hardware-verified host today, but it is not the product boundary. The aspiration is one open-source desktop GUI for Quad Cortex and Nano Cortex on Linux, Windows and macOS, with matching CLI and MCP interfaces where each device's capabilities permit them. Each device/platform combination will be called supported only after its transport, local IPC, packaging and real-hardware behaviour have been tested.
 
 ## What it is not
 
@@ -51,7 +51,7 @@ The project's central discipline is being honest about what has actually run aga
 | MCP server read, recall, scene management and live-grid tools | <span class="status verified">verified; no save/delete tools</span> |
 | Desktop GUI shell | <span class="status provisional">daemon read boundary verified on Linux; native reconnect UI smoke pending</span> |
 | Windows and macOS hardware paths and packaging | <span class="status planned">planned; Linux is the only verified host</span> |
-| Nano Cortex | <span class="status provisional">unverified target; transport compatibility unestablished</span> |
+| Nano Cortex | <span class="status provisional">USB HID framing and state read hardware-verified; toolkit support not yet implemented</span> |
 
 ## Start here
 
@@ -60,6 +60,8 @@ The project's central discipline is being honest about what has actually run aga
 - **[Walkthrough](walkthrough.md)** - a tour of the CLI with hardware-captured output shapes and fictionalised identifiers/preset names.
 - **[CLI reference](cli-reference.md)** - every command.
 - **[The protocol](protocol.md)** - what we know about the wire, and how we know it.
+- **[Quad Cortex HID transport](quad-cortex-hid.md)** - USB identity, reports, writes, framing, ownership and handshake.
+- **[Nano Cortex HID transport](nano-cortex-hid.md)** - the newly measured 65-byte transport, shared framing, state exchange and differences from Quad.
 
 ## A note on how this was built
 

@@ -39,7 +39,7 @@ use cortex_rs::RecallConsent;
 /// Bump this whenever a `Request` variant changes shape or a new variant is
 /// added. A client that sees a mismatch refuses with an actionable message
 /// rather than sending a request the daemon will misparse.
-pub const DAEMON_PROTOCOL_VERSION: u32 = 10;
+pub const DAEMON_PROTOCOL_VERSION: u32 = 11;
 
 /// A request from a client to the daemon.
 ///
@@ -169,7 +169,7 @@ pub enum Request {
         /// Maximum wait for confirmation.
         timeout_seconds: u64,
     },
-    /// Bypass or enable a block.
+    /// Bypass or enable a block and verify it by complete live-grid read-back.
     SetBypass {
         /// Zero-based wire row.
         row: u32,
@@ -178,7 +178,7 @@ pub enum Request {
         /// Whether the block should be bypassed.
         bypass: bool,
     },
-    /// Remove a block from the grid.
+    /// Remove a block and verify the cell is empty by complete read-back.
     RemoveBlock {
         /// Zero-based wire row.
         row: u32,
@@ -198,7 +198,7 @@ pub enum Request {
         /// Maximum wait for each live-grid read.
         timeout_seconds: u64,
     },
-    /// Set a row's split and mix columns.
+    /// Set and verify a row's split and mix columns.
     SetSplit {
         /// Zero-based wire row.
         row: u32,
@@ -207,14 +207,14 @@ pub enum Request {
         /// Column at which it rejoins, or negative for never.
         mix: i32,
     },
-    /// Set a row's input or output port.
+    /// Set and verify a row's typed input or output port.
     SetRouting {
         /// Zero-based wire row.
         row: u32,
         /// The input port, if setting the input.
-        input: Option<u32>,
+        input: Option<cortex_rs::GridInputPort>,
         /// The output port, if setting the output.
-        output: Option<u32>,
+        output: Option<cortex_rs::GridOutputPort>,
     },
     /// Prepare a save destination before editing. **Not destructive.**
     ///
@@ -413,6 +413,7 @@ impl DaemonErrorCode {
             cortex_rs::Error::BlockRefused(_) => Self::DspRefused,
             cortex_rs::Error::InvalidBlockMove(_) => Self::InvalidBlockMove,
             cortex_rs::Error::BlockMoveUnconfirmed(_)
+            | cortex_rs::Error::GridWriteUnconfirmed(_)
             | cortex_rs::Error::MoveUnconfirmed(_)
             | cortex_rs::Error::SetlistUnconfirmed(_) => Self::OutcomeUnconfirmed,
             cortex_rs::Error::InvalidRow(_) => Self::InvalidRow,
@@ -618,6 +619,31 @@ mod tests {
             serde_json::to_value(back).unwrap(),
             serde_json::to_value(request).unwrap()
         );
+    }
+
+    #[test]
+    fn typed_grid_routes_round_trip_by_name() {
+        let requests = [
+            Request::SetRouting {
+                row: 0,
+                input: Some(cortex_rs::GridInputPort::PreviousRow),
+                output: None,
+            },
+            Request::SetRouting {
+                row: 2,
+                input: None,
+                output: Some(cortex_rs::GridOutputPort::NextRow34),
+            },
+        ];
+        for request in requests {
+            let text = serde_json::to_string(&request).unwrap();
+            assert!(!text.contains("portid"), "{text}");
+            let back: Request = serde_json::from_str(&text).unwrap();
+            assert_eq!(
+                serde_json::to_value(back).unwrap(),
+                serde_json::to_value(request).unwrap()
+            );
+        }
     }
 
     #[test]

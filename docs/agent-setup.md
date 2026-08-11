@@ -22,11 +22,11 @@ An explicitly user-started session remains persistent until `cortex session stop
 - MCP rows are zero-based (`0` to `3`), while the hardware screen labels them `1` to `4`. Every row-taking tool repeats this because a wrong-row edit can succeed silently.
 - `read_preset` recalls the stored slot, discards an unsaved working copy and resets the active scene. Use `read_current_preset` for side-effect-free inspection of what is loaded now.
 - Recall and live-grid writes are audible but non-persistent. The server has no save or delete tool.
-- Routing tools currently take raw protocol port identifiers. Inspect the current grid and tool description rather than guessing a physical jack number.
-- Block placement is verified by echo or live-grid read-back. Other working-copy writes currently prove dispatch but do not all perform an independent post-write read-back; read the grid after a sequence when structural certainty matters.
+- Routing tools take closed typed names rather than wire integers. Examples include `input1`, `return1`, `previous_row`, `xlr12`, `next_row3`, and `multiple`; MCP discovery exposes every accepted input and output name.
+- Parameter, bypass, removal, routing, and split writes return only after a complete live-grid read confirms the requested state. A mismatch is returned as `outcome_unconfirmed`; block placement retains its echo-or-read-back confirmation path.
 - Scene indices are zero-based 0-7 (A-H). `copy_scene` and `swap_scenes` move labels and colours as well as sound state. Scene colours are decimal ARGB `uint32` values in MCP schemas; copy/swap force a fresh live-grid read before returning because the device's acknowledgement omits its swap flag.
 
-The server exposes status, device version, active scene, CPU load, live/stored preset reads, block/folder/preset listings, catalog search, recall, scene switching and metadata/copy management, block placement/removal, parameter/bypass writes, chain input/output routing and split control. Use MCP discovery for the authoritative schemas.
+The server exposes status, device version, active scene, CPU load, live/stored preset reads, block/folder/preset listings, catalog search, recall, scene switching and metadata/copy management, block placement/removal, read-back-verified parameter/bypass writes, typed chain input/output routing and split control. Use MCP discovery for the authoritative schemas.
 
 ## Claude Code
 

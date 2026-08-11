@@ -92,7 +92,7 @@ Maintainers, AI coding agents, and downstream crate consumers.
 
 - Feature requirements (each zone spec owns its own).
 - GUI interaction and presentation requirements (owned by zone `400-gui`).
-- Full Nano Cortex support. The recovered schema names `ATMA`, but nobody has shown the Nano speaking this HID protobuf/trailer protocol; transport compatibility itself is provisional until verified against real hardware.
+- Full Nano Cortex support. Hardware verification established shared USB HID framing and a decoded Nano state read, but device-dependent transport geometry, the Nano-specific envelope/domain, and host surfaces remain active work under NANO-001.
 - On-device builds (the `qc-stomp-tools` ioctl route; not in scope for this USB-first project).
 
 ## Dependencies

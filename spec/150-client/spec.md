@@ -99,13 +99,13 @@ All five navigation operations are implemented and hardware-verified on CorOS 4.
 | ID    | Requirement                                                                                                       | Priority    |
 | ----- | ----------------------------------------------------------------------------------------------------------------- | ----------- |
 | FR-31 | A low-level whole-preset write, if retained for investigation, must document that a recalled preset has no row keys and therefore applies nothing useful. Host surfaces use keyed wrappers instead. | Should Have |
-| FR-32 | `set_chain_input(row, in_portid)` re-points a row's input (row-keyed update). The ONLY shape that actually moves an input. | Must Have   |
-| FR-33 | `set_chain_output(row, out_portid)` re-points a row's output (row-keyed update). | Must Have   |
-| FR-34 | `set_param(row, column, param_index, value)` is the low-level wire-index write. `set_parameter(row, column, target, input, scene, promote, timeout)` is the shared host-facing API: it validates rows/columns/scenes and normalised values, reads the cell's model when addressed by name, resolves through the device catalog, refuses meters, converts real units, and performs the 3-message scene sequence when requested. `set_param_option` resolves an index or catalog name against dynamic options in a supplied current preset and centrally normalizes the named option. | Must Have   |
+| FR-32 | `set_chain_input(row, GridInputPort)` emits the row-keyed numeric wire value, then reads the complete live grid and confirms that route. The ONLY shape that actually moves an input. | Must Have   |
+| FR-33 | `set_chain_output(row, GridOutputPort)` does the same for output routing. Arbitrary wire integers are unavailable through the public method because the device silently stores meaningless ids. | Must Have   |
+| FR-34 | `set_param(row, column, param_index, value)` is the low-level wire-index write. `set_parameter(row, column, target, input, scene, promote, timeout)` is the shared host-facing API: it validates rows/columns/scenes and normalised values, reads the cell's model when addressed by name, resolves through the device catalog, refuses meters, converts real units, performs the 3-message scene sequence when requested, and confirms the target scene/value through a complete live-grid read. `set_param_option` resolves an index or catalog name against dynamic options in a supplied current preset and centrally normalizes the named option. | Must Have   |
 | FR-35 | `set_param_scene_mode(row, column, param_index, enabled)` sets the scene-following flag (must travel ALONE). | Must Have   |
-| FR-36 | `set_bypass(row, column, bypassed)` writes the bypass state across the block's stored scene slots. Scene-targeted bypass is not part of the implemented API. | Must Have   |
+| FR-36 | `set_bypass(row, column, bypassed)` writes the bypass state across the block's stored scene slots and confirms the active-scene or global result through a complete live-grid read. Scene-targeted bypass is not part of the implemented API. | Must Have   |
 | FR-37 | `set_block(row, column, model, verify, timeout)` treats a matching echo as a fast confirmation, then falls back to live-grid read-back. It returns `BlockRefused` only when read-back proves the model is absent; echo timeout alone is never proof of refusal. | Must Have   |
-| FR-38 | `remove_block(row, column)` sends `Grid{action: DELETE, ...}` (NOT UPDATE with hash:0, which is ignored). | Must Have   |
+| FR-38 | `remove_block(row, column)` sends `Grid{action: DELETE, ...}` (NOT UPDATE with hash:0, which is ignored) and succeeds only when a complete live-grid read contains the target cell as empty. A missing row/cell is unconfirmed, not proof of removal. | Must Have   |
 | FR-39 | `move_block(from_row, from_col, to_row, to_col, drop, timeout)` reads and validates an occupied source and empty destination, sends `GridMove` without its advisory grid snapshot, then reads the live grid back to prove the source cleared and the complete model payload plus bypass state reached the destination. A cross-row move lets the device compute a parallel path. | Should Have |
 
 #### Splitter/mixer/lane/gate
@@ -116,7 +116,7 @@ All five navigation operations are implemented and hardware-verified on CorOS 4.
 | FR-41 | `set_mixer_param(row, param_index, value, scene, promote)` writes `chain.mixer[]` with model 11000. Row must be 0 or 2. | Should Have |
 | FR-42 | `set_lane_output(row, param_index, value, scene, promote)` writes `chain.output_control[]` with model 23000. | Should Have |
 | FR-43 | `set_input_gate(row, param_index, value, scene, promote)` writes `chain.input_control[]` with model 28000. The raw-index core does not claim meter safety from an index; any future catalog name resolver must reject `Meter` parameters. | Should Have |
-| FR-44 | `set_split(row, split_column, mix_column)` sets `split_control_points` (activates a branch). `mix_column=-1` for a non-rejoining branch. Row must be 0 or 2. | Should Have |
+| FR-44 | `set_split(row, split_column, mix_column)` sets `split_control_points` (activates a branch) and confirms both points through a complete live-grid read. `mix_column=-1` creates a non-rejoining branch. Row must be 0 or 2. | Should Have |
 | FR-45 | `set_split_mute(row, muted)` writes `chain.splitBypass` (sets all 8 scenes at once). | Should Have |
 
 FR-40 through FR-43 intentionally expose the composable raw-index/normalised-value core rather than four near-identical catalog APIs. Values are rejected unless finite and within 0..1. Optional scene writes use the existing separate promote, switch, value sequence; the scene-mode flag is never packed with a value. Pure message-shape and fake-link sequencing/refusal tests establish these behaviours offline. Every row-control method and split mute passed fresh live read-back and recall restoration on CorOS 4.0.1; the splitter result is read from `combined_splitter`, not the legacy view.
@@ -234,6 +234,7 @@ Successful write dispatch is not device confirmation. `io_settings_complete` iss
 - [x] `set_param(scene=D)` issues the promote/switch/write sequence and changes only the target scene.
 - [x] `set_block(verify=true)` uses echo or read-back confirmation and reports a hardware-verified genuine DSP refusal only after absence is read back.
 - [x] `remove_block()` uses action DELETE and passed read-back.
+- [x] Host-facing parameter, bypass, removal, routing, and split methods fail with `GridWriteUnconfirmed` when complete live-grid read-back does not match the requested state. Typed routing and mandatory per-call verification passed the official-client MCP hardware smoke on CorOS 4.0.1 on 2026-08-11.
 - [x] `move_block()` refuses invalid cells before writing and confirms both source and destination by complete live-grid read-back. Same-row move/reverse preserved every parameter and all bypass state, and a cross-row move passed on CorOS 4.0.1; recall restored the original grid.
 - [x] PROT-006.7 splitter, mixer, lane-output, gate and split-mute methods passed fresh hardware read-back and recall restoration; splitter verification uses hashless `combined_splitter`.
 - [x] `save_current_preset()` writes the working grid to the exact slot and exact `CREATE` acknowledgement is correlated; host surfaces gate it through prepared save.
@@ -271,7 +272,7 @@ Successful write dispatch is not device confirmation. `io_settings_complete` iss
 
 These are confirmed on hardware and are the primary source of silent wrong-row / silent-no-op behaviour. Every one must appear in the relevant method's rustdoc and, where the MCP server exposes the method, in the tool description.
 
-1. **Rows are 0-based in the API, 1-4 on screen.** `row=0` is the top row on screen; `row=2` is labelled 3. Getting this wrong is QUIET: an edit lands on a real row, just not the one intended, and reads back perfectly. Check `chain.out_portid`: values 16-18 are internal row-to-row routing, not jacks (19/MULTIPLE is a real destination).
+1. **Rows are 0-based in the API, 1-4 on screen.** `row=0` is the top row on screen; `row=2` is labelled 3. Getting this wrong is QUIET: an edit lands on a real row, just not the one intended, and reads back perfectly. `GridOutputPort::NextRow3`, `NextRow4`, and `NextRow34` encode internal wire values 16-18; `Multiple` encodes the real destination 19.
 
 2. **A recalled preset carries no explicit `row`.** Writing it back wholesale via `write_preset()` does nothing - a full-preset write that re-pointed `in_portid` read back UNCHANGED. Use the keyed wrappers (`set_chain_input`, `set_param`, `set_bypass`) instead.
 
@@ -408,8 +409,8 @@ Done on the empty 2B scratchpad, unit restored to 1A afterwards. All on the work
 | Path | Observed |
 | --- | --- |
 | `set_bypass` | `xxxxxxxx` - all eight scene slots set at once, confirming that bypass is one global state for a block that does not follow scenes |
-| `set_chain_input` | row input became port 4 (Return 1) |
-| `set_chain_output` | row output became port 19 (MULTIPLE) |
+| `set_chain_input(GridInputPort::Return1)` | row input became `return1` (wire 4) |
+| `set_chain_output(GridOutputPort::Multiple)` | row output became `multiple` (wire 19) |
 | `set_split` | `split 2 rejoin 5` on an even row; **refused with an explanation on an odd row**, as designed |
 | `set_param_in_scene` | `per-scene A-H: [0.2, 0.2, 0.2, 0.8, 0.2, 0.2, 0.2, 0.2]` - scene D alone changed |
 

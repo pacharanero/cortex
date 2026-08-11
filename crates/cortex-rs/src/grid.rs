@@ -110,6 +110,213 @@ impl Row {
     }
 }
 
+/// A complete known input destination for one grid row.
+///
+/// This is deliberately distinct from [`crate::InputPort`], which models the
+/// narrower set of physical inputs accepted by I/O Settings. Grid routing also
+/// accepts USB, previous-row, empty, and sidechain sources.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[repr(u32)]
+pub enum GridInputPort {
+    /// No input.
+    Empty = 0,
+    /// Input 1.
+    Input1 = 1,
+    /// Input 2.
+    Input2 = 2,
+    /// Combined Input 1/2.
+    Input12 = 3,
+    /// Return 1.
+    Return1 = 4,
+    /// Return 2.
+    Return2 = 5,
+    /// Combined Return 1/2.
+    Return12 = 6,
+    /// Output of the preceding grid row.
+    PreviousRow = 7,
+    /// USB input 5.
+    Usb5 = 8,
+    /// USB input 6.
+    Usb6 = 9,
+    /// USB input 7.
+    Usb7 = 10,
+    /// USB input 8.
+    Usb8 = 11,
+    /// Combined USB input 5/6.
+    Usb56 = 12,
+    /// Combined USB input 7/8.
+    Usb78 = 13,
+    /// Internal sidechain buffer.
+    SidechainBuffer = 14,
+}
+
+/// A complete known output destination for one grid row.
+///
+/// This is deliberately distinct from [`crate::OutputPort`], which models the
+/// narrower I/O Settings controls. Grid routing also accepts USB and internal
+/// row-to-row destinations.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[repr(u32)]
+pub enum GridOutputPort {
+    /// No output.
+    Empty = 0,
+    /// Paired XLR Outputs 1/2.
+    Xlr12 = 1,
+    /// Paired Outputs 3/4.
+    Out34 = 2,
+    /// Paired Sends 1/2.
+    Send12 = 3,
+    /// XLR Output 1.
+    Xlr1 = 4,
+    /// XLR Output 2.
+    Xlr2 = 5,
+    /// Output 3.
+    Out3 = 6,
+    /// Output 4.
+    Out4 = 7,
+    /// Send 1.
+    Send1 = 8,
+    /// Send 2.
+    Send2 = 9,
+    /// USB output 5.
+    Usb5 = 10,
+    /// USB output 6.
+    Usb6 = 11,
+    /// USB output 7.
+    Usb7 = 12,
+    /// USB output 8.
+    Usb8 = 13,
+    /// Combined USB output 5/6.
+    Usb56 = 14,
+    /// Combined USB output 7/8.
+    Usb78 = 15,
+    /// Internal destination row 3.
+    NextRow3 = 16,
+    /// Internal destination row 4.
+    NextRow4 = 17,
+    /// Combined internal destination rows 3/4.
+    NextRow34 = 18,
+    /// Multiple device-selected outputs.
+    Multiple = 19,
+    /// USB output 3.
+    Usb3 = 20,
+    /// USB output 4.
+    Usb4 = 21,
+    /// Combined USB output 3/4.
+    Usb34 = 22,
+}
+
+macro_rules! routing_port_impl {
+    ($type:ty, $label:literal, [$($variant:ident = $id:literal => $name:literal),+ $(,)?]) => {
+        impl $type {
+            /// Every valid value, in wire order.
+            pub const ALL: &'static [Self] = &[$(Self::$variant),+];
+
+            /// Stable name used by CLI, daemon, and MCP surfaces.
+            #[must_use]
+            pub const fn as_str(self) -> &'static str {
+                match self {
+                    $(Self::$variant => $name),+
+                }
+            }
+        }
+
+        impl From<$type> for u32 {
+            fn from(value: $type) -> Self {
+                value as Self
+            }
+        }
+
+        impl TryFrom<u32> for $type {
+            type Error = crate::Error;
+
+            fn try_from(value: u32) -> crate::Result<Self> {
+                match value {
+                    $($id => Ok(Self::$variant),)+
+                    _ => Err(crate::Error::InvalidParameter(format!(
+                        "unknown {} grid-routing port id {value}", $label
+                    ))),
+                }
+            }
+        }
+
+        impl std::str::FromStr for $type {
+            type Err = crate::Error;
+
+            fn from_str(value: &str) -> crate::Result<Self> {
+                match value {
+                    $($name => Ok(Self::$variant),)+
+                    _ => Err(crate::Error::InvalidParameter(format!(
+                        "unknown {} grid-routing port {value:?}; expected one of: {}",
+                        $label,
+                        Self::ALL.iter().map(|port| port.as_str()).collect::<Vec<_>>().join(", ")
+                    ))),
+                }
+            }
+        }
+
+        impl std::fmt::Display for $type {
+            fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str(self.as_str())
+            }
+        }
+    };
+}
+
+routing_port_impl!(
+    GridInputPort,
+    "input",
+    [
+        Empty = 0 => "empty",
+        Input1 = 1 => "input1",
+        Input2 = 2 => "input2",
+        Input12 = 3 => "input12",
+        Return1 = 4 => "return1",
+        Return2 = 5 => "return2",
+        Return12 = 6 => "return12",
+        PreviousRow = 7 => "previous_row",
+        Usb5 = 8 => "usb5",
+        Usb6 = 9 => "usb6",
+        Usb7 = 10 => "usb7",
+        Usb8 = 11 => "usb8",
+        Usb56 = 12 => "usb56",
+        Usb78 = 13 => "usb78",
+        SidechainBuffer = 14 => "sidechain_buffer",
+    ]
+);
+
+routing_port_impl!(
+    GridOutputPort,
+    "output",
+    [
+        Empty = 0 => "empty",
+        Xlr12 = 1 => "xlr12",
+        Out34 = 2 => "out34",
+        Send12 = 3 => "send12",
+        Xlr1 = 4 => "xlr1",
+        Xlr2 = 5 => "xlr2",
+        Out3 = 6 => "out3",
+        Out4 = 7 => "out4",
+        Send1 = 8 => "send1",
+        Send2 = 9 => "send2",
+        Usb5 = 10 => "usb5",
+        Usb6 = 11 => "usb6",
+        Usb7 = 12 => "usb7",
+        Usb8 = 13 => "usb8",
+        Usb56 = 14 => "usb56",
+        Usb78 = 15 => "usb78",
+        NextRow3 = 16 => "next_row3",
+        NextRow4 = 17 => "next_row4",
+        NextRow34 = 18 => "next_row34",
+        Multiple = 19 => "multiple",
+        Usb3 = 20 => "usb3",
+        Usb4 = 21 => "usb4",
+        Usb34 = 22 => "usb34",
+    ]
+);
+
 /// A value to write into a parameter.
 ///
 /// Not every parameter is a number: a cabinet's microphone selection is a
@@ -424,22 +631,22 @@ pub fn set_expression_bypass(
 /// full-preset write whose chains lack an explicit `row` is accepted and
 /// ignored.
 #[must_use]
-pub fn set_chain_input(row: Row, in_portid: u32) -> GridMessage {
+pub fn set_chain_input(row: Row, port: GridInputPort) -> GridMessage {
     let mut chain = keyed_chain(row);
-    chain.in_portid = Some(chain::InPortid::InPortid(in_portid));
+    chain.in_portid = Some(chain::InPortid::InPortid(port.into()));
     grid(MessageAction::Update, preset_with_chain(chain))
 }
 
 /// Re-point one grid row's OUTPUT.
 ///
-/// Note the device does NOT validate this field: an id that means nothing is
-/// stored rather than rejected, so a typo reads back cleanly. Note also that
-/// not every value is a physical destination - 16 to 18 are internal
-/// row-to-row routing, while 19 (MULTIPLE) is a real output.
+/// The underlying wire field accepts meaningless ids and stores them rather
+/// than rejecting them. The closed [`GridOutputPort`] prevents that mistake at
+/// this public boundary. Values 16 to 18 are named internal row-to-row routes;
+/// 19 is the real `multiple` output.
 #[must_use]
-pub fn set_chain_output(row: Row, out_portid: u32) -> GridMessage {
+pub fn set_chain_output(row: Row, port: GridOutputPort) -> GridMessage {
     let mut chain = keyed_chain(row);
-    chain.out_portid = Some(chain::OutPortid::OutPortid(out_portid));
+    chain.out_portid = Some(chain::OutPortid::OutPortid(port.into()));
     grid(MessageAction::Update, preset_with_chain(chain))
 }
 
@@ -826,6 +1033,38 @@ mod tests {
         assert!(!Row::from_wire(3).can_branch());
     }
 
+    #[test]
+    fn typed_grid_input_ports_cover_every_known_wire_value() {
+        for (id, port) in GridInputPort::ALL.iter().copied().enumerate() {
+            let id = u32::try_from(id).unwrap();
+            assert_eq!(u32::from(port), id);
+            assert_eq!(GridInputPort::try_from(id).unwrap(), port);
+            assert_eq!(port.as_str().parse::<GridInputPort>().unwrap(), port);
+            assert_eq!(serde_json::to_value(port).unwrap(), port.as_str());
+        }
+        assert!(
+            GridInputPort::try_from(15).is_err(),
+            "MAX_PORTS is not a route"
+        );
+        assert!("15".parse::<GridInputPort>().is_err());
+    }
+
+    #[test]
+    fn typed_grid_output_ports_cover_every_known_wire_value() {
+        for (id, port) in GridOutputPort::ALL.iter().copied().enumerate() {
+            let id = u32::try_from(id).unwrap();
+            assert_eq!(u32::from(port), id);
+            assert_eq!(GridOutputPort::try_from(id).unwrap(), port);
+            assert_eq!(port.as_str().parse::<GridOutputPort>().unwrap(), port);
+            assert_eq!(serde_json::to_value(port).unwrap(), port.as_str());
+        }
+        assert!(
+            GridOutputPort::try_from(23).is_err(),
+            "MAX_PORTS is not a route"
+        );
+        assert!("23".parse::<GridOutputPort>().is_err());
+    }
+
     // -- keying ------------------------------------------------------------
 
     #[test]
@@ -833,8 +1072,8 @@ mod tests {
         // The single most important property here. An unkeyed chain is
         // accepted by the device and does nothing.
         for message in [
-            set_chain_input(Row::from_wire(2), 1),
-            set_chain_output(Row::from_wire(2), 19),
+            set_chain_input(Row::from_wire(2), GridInputPort::Input1),
+            set_chain_output(Row::from_wire(2), GridOutputPort::Multiple),
             set_param(Row::from_wire(2), 3, 0, Value::Normalised(0.5)),
             set_param_scene_mode(Row::from_wire(2), 3, 0, true),
             set_expression(Row::from_wire(2), 3, 0, 1, 0.0, 1.0).unwrap(),
@@ -1337,7 +1576,7 @@ mod tests {
         // proto3 makes CREATE the zero value, so an omitted action means
         // CREATE rather than UPDATE. Every edit must set it explicitly.
         for message in [
-            set_chain_input(Row::from_wire(0), 1),
+            set_chain_input(Row::from_wire(0), GridInputPort::Input1),
             set_param(Row::from_wire(0), 0, 0, Value::Normalised(0.0)),
             set_tempo_param(0, 0.0).unwrap(),
             set_splitter_param(Row::from_wire(0), 0, 0.0).unwrap(),

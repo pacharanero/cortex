@@ -109,13 +109,13 @@ s/             Repo scripts: s/test, s/lint, s/gui-dev, s/version++ ...
   on CorOS 4.0.1; unimplemented operations, new host integrations, unknown
   message types, and Nano Cortex specifics remain provisional until verified.
   Label them as such in UI, docs, and release notes.
-- **Nano Cortex is a planned, unverified target.** The recovered Quad Cortex
-  schema carries `QC = 0` and `ATMA = 1` (`ATMA` is the Nano codename), but an
-  enum value does not prove a shared transport. Third-party macOS observation
-  reports VID:PID `152A:88E7`, 65-byte HID reports rather than 129, and no
-  passive HID traffic. Nobody has shown the Nano speaking this protobuf/trailer
-  protocol. `DeviceKind::NanoCortex` therefore remains a non-matching
-  placeholder until this project verifies the transport on hardware.
+- **Nano Cortex transport is partly hardware-verified.** A real Nano on Linux
+  confirmed VID:PID `152A:88E7`, HID interface 5, 65-byte reports, the same
+  length/flag frame shape as the Quad, and a complete multi-report state read.
+  Its BLE application payload maps directly onto HID, but its four-byte footer
+  and fixed-chain domain differ from the Quad's eight-byte trailer and grid.
+  `DeviceKind::NanoCortex` remains a non-matching placeholder only until
+  device-dependent framing and the separate Nano codec land together.
 
 ## Protocol invariants (do not break silently)
 

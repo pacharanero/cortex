@@ -92,7 +92,7 @@ The read methods fall into two correlation patterns:
 
 **Pattern C: `collect()` (fan-out)** - used by `list_folders()`. A single `File` READ produces a flood of folder listings over 10-20 s; `collect` gathers them all.
 
-**Pattern D: fire-and-forget `send`** - used by `switch_scene()`, scene label/colour/copy, `set_param()`, `set_block(verify=false)`, `set_bypass()`. The write STALL is swallowed by the transport; persistence is confirmed by a later read or a save. The daemon follows every scene copy/swap with `read_current_preset()` because the device's `SceneCopy` acknowledgement omits `is_swap` even when it performed a swap, so reducing that echo would turn a correct device swap into an incorrect cached copy.
+**Pattern D: fire-and-forget `send`** - retained for low-level primitives such as `switch_scene()`, scene label/colour, `set_param()`, and `set_block(verify=false)`. The write STALL is swallowed by the transport. The daemon follows every scene copy/swap with `read_current_preset()` because the device's `SceneCopy` acknowledgement omits `is_swap` even when it performed a swap, so reducing that echo would turn a correct device swap into an incorrect cached copy.
 
 **Pattern E: predicate-bearing state READ** - used by Master Volume, Looper, Tuner, I/O settings, general settings, Global EQ and mode. A bare typed READ waits for a push containing the specific presence-bearing field promised by that method, rather than accepting an unrelated partial update. Mode and mode-cycle reads intentionally use different predicates. Recents requires a non-empty list because its uncorrelated transient empty push is ambiguous; Pinned Models has no repeated-field presence and therefore accepts an empty same-type reply.
 
@@ -114,6 +114,8 @@ No settle delay is needed between them; ordering over the pipe is sufficient.
 `set_block(verify=true)` treats a matching `Grid` echo as a fast path. If it times out, the live grid is read back; only confirmed absence becomes `BlockRefused`. This avoids false refusals when echo latency varies.
 
 `remove_block` uses action `DELETE` (trap #6). An `UPDATE` with `hash: 0` is transmitted and ignored.
+
+Host-facing parameter, bypass, removal, routing, and split methods send their sparse write and then issue a complete `RecallPreset{READ}` before returning. `send_grid_and_verify` centralises the send/read/error sequence; operation-specific predicates resolve explicit row, column, and parameter keys with positional fallback where the complete preset omits keys. A missing row or cell is not proof of removal or a cleared split. A mismatch returns `GridWriteUnconfirmed`, which the daemon maps to `outcome_unconfirmed`.
 
 ---
 

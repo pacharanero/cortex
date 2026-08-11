@@ -30,8 +30,8 @@ use cortex_rs::proto::message_action::Enum as MessageAction;
 use cortex_rs::{DeviceKind, Transport};
 
 /// The `cortex` CLI: an unofficial, Linux-first command-line surface for the
-/// Neural DSP Quad Cortex over USB HID. Nano Cortex support is planned but its
-/// transport compatibility is unverified.
+/// Neural DSP Quad Cortex over USB HID. Nano Cortex HID framing and state reads
+/// are hardware-verified, but CLI support is not yet implemented.
 ///
 /// Not affiliated with or endorsed by Neural DSP. "Neural DSP", "Quad Cortex",
 /// and "Nano Cortex" are trademarks of Neural DSP Technologies. See the README
@@ -536,6 +536,8 @@ enum BlockCmd {
     ///
     /// CHANGES THE WORKING GRID. Nothing is saved: the edit lives on the
     /// grid until you save the preset or recall another, which discards it.
+    /// A complete live-grid read must confirm the requested value before this
+    /// command reports success.
     ///
     /// Rows are given as the unit LABELS them, 1-4, not the zero-based wire
     /// index. Use `cortex grid show` to see what is where.
@@ -576,7 +578,8 @@ enum BlockCmd {
     },
     /// Bypass or enable a block on the grid.
     ///
-    /// CHANGES THE WORKING GRID. Nothing is saved.
+    /// CHANGES THE WORKING GRID. Nothing is saved. Success requires a complete
+    /// live-grid read confirming the active-scene bypass state.
     #[command(
         after_help = "Examples:\n  cortex block bypass --row 1 --column 2 --bypass   # bypass it\n  cortex block bypass --row 1 --column 2             # enable it"
     )]
@@ -622,7 +625,8 @@ enum BlockCmd {
     },
     /// Remove the block at a grid cell.
     ///
-    /// CHANGES THE WORKING GRID. Nothing is saved.
+    /// CHANGES THE WORKING GRID. Nothing is saved. Success requires a complete
+    /// live-grid read confirming that the cell is empty.
     #[command(after_help = "Examples:\n  cortex block remove --row 1 --column 2")]
     Remove {
         /// Grid row as shown on the unit, 1-4.
@@ -663,37 +667,37 @@ enum BlockCmd {
 enum RowCmd {
     /// Re-point a grid row's input.
     ///
-    /// CHANGES THE WORKING GRID. Nothing is saved.
-    #[command(after_help = "Examples:\n  cortex row input --row 1 --port 1")]
+    /// CHANGES THE WORKING GRID. Nothing is saved. Success requires a complete
+    /// live-grid read confirming the typed route.
+    #[command(after_help = "Examples:\n  cortex row input --row 1 --port input1")]
     Input {
         /// Grid row as shown on the unit, 1-4.
         #[arg(long, value_name = "1-4")]
         row: u32,
-        /// Input port id. 1 = Input 1, 2 = Input 2, 4 = Return 1, 5 = Return 2.
-        /// Note the ids are NOT 1/2/3/4 - combined ports are interleaved.
-        #[arg(long, value_name = "ID")]
-        port: u32,
+        /// Typed input destination, e.g. input1, return1, usb5, previous_row.
+        #[arg(long, value_name = "PORT")]
+        port: cortex_rs::GridInputPort,
     },
     /// Re-point a grid row's output.
     ///
-    /// CHANGES THE WORKING GRID. Nothing is saved.
+    /// CHANGES THE WORKING GRID. Nothing is saved. Success requires a complete
+    /// live-grid read confirming the typed route.
     ///
-    /// Not every id is a physical destination: 16-18 are internal row-to-row
-    /// routing, while 19 (MULTIPLE) is a real output. The device does not
-    /// validate this field, so a meaningless id is stored rather than
-    /// rejected and reads back cleanly.
-    #[command(after_help = "Examples:\n  cortex row output --row 1 --port 0")]
+    /// Not every destination is physical: next_row3, next_row4 and next_row34
+    /// route internally, while multiple is a real device-selected output.
+    #[command(after_help = "Examples:\n  cortex row output --row 1 --port xlr12")]
     Output {
         /// Grid row as shown on the unit, 1-4.
         #[arg(long, value_name = "1-4")]
         row: u32,
-        /// Output port id.
-        #[arg(long, value_name = "ID")]
-        port: u32,
+        /// Typed output destination, e.g. xlr12, out3, usb5, next_row3.
+        #[arg(long, value_name = "PORT")]
+        port: cortex_rs::GridOutputPort,
     },
     /// Set a row's split and mix points, activating a parallel branch.
     ///
-    /// CHANGES THE WORKING GRID. Nothing is saved.
+    /// CHANGES THE WORKING GRID. Nothing is saved. Success requires a complete
+    /// live-grid read confirming both control points.
     ///
     /// Only screen rows 1 and 3 can branch; their parallel lane is the row
     /// below. Rows 2 and 4 have no splitter and are refused.
@@ -1384,7 +1388,10 @@ fn dry_run_plan(command: Option<&Command>) -> Result<Option<DryRunPlan>> {
                     "block bypass",
                     "working grid",
                     serde_json::json!({ "wire_row": row.wire(), "screen_row": row.screen(), "column": column, "bypass": bypass }),
-                    &["write bypass state"],
+                    &[
+                        "write bypass state",
+                        "read the live grid back and verify the active-scene state",
+                    ],
                 ))
             }
             BlockCmd::Set {
@@ -1411,7 +1418,10 @@ fn dry_run_plan(command: Option<&Command>) -> Result<Option<DryRunPlan>> {
                     "block remove",
                     "working grid",
                     serde_json::json!({ "wire_row": row.wire(), "screen_row": row.screen(), "column": column }),
-                    &["remove the block"],
+                    &[
+                        "remove the block",
+                        "read the live grid back and verify the cell is empty",
+                    ],
                 ))
             }
             BlockCmd::Move {
@@ -1449,7 +1459,10 @@ fn dry_run_plan(command: Option<&Command>) -> Result<Option<DryRunPlan>> {
                     "row input",
                     "working grid",
                     serde_json::json!({ "wire_row": row.wire(), "screen_row": row.screen(), "port": port }),
-                    &["write the row input routing"],
+                    &[
+                        "write the row input routing",
+                        "read the live grid back and verify the route",
+                    ],
                 ))
             }
             RowCmd::Output { row, port } => {
@@ -1458,7 +1471,10 @@ fn dry_run_plan(command: Option<&Command>) -> Result<Option<DryRunPlan>> {
                     "row output",
                     "working grid",
                     serde_json::json!({ "wire_row": row.wire(), "screen_row": row.screen(), "port": port }),
-                    &["write the row output routing"],
+                    &[
+                        "write the row output routing",
+                        "read the live grid back and verify the route",
+                    ],
                 ))
             }
             RowCmd::Split { row, split, mix } => {
@@ -1468,7 +1484,10 @@ fn dry_run_plan(command: Option<&Command>) -> Result<Option<DryRunPlan>> {
                     "row split",
                     "working grid",
                     serde_json::json!({ "wire_row": row.wire(), "screen_row": row.screen(), "split": split, "mix": mix }),
-                    &["write the row split and mix points"],
+                    &[
+                        "write the row split and mix points",
+                        "read the live grid back and verify both points",
+                    ],
                 ))
             }
         },
@@ -2859,7 +2878,7 @@ fn cmd_set_param(
         _ => unreachable!("clap prevents more than one parameter value"),
     };
 
-    if let Some(result) = connect::request(&cortex_host::Request::SetParam {
+    let request = cortex_host::Request::SetParam {
         row: row.wire(),
         column,
         target: target.clone(),
@@ -2867,7 +2886,8 @@ fn cmd_set_param(
         scene,
         promote: scene.is_some(),
         timeout_seconds: 40,
-    }) {
+    };
+    if let Some(result) = connect::request_with_timeout(&request, Duration::from_secs(125)) {
         let applied: cortex_rs::ParameterWrite = serde_json::from_value(result?)?;
         return report_edit(
             "set_param",
@@ -2908,12 +2928,12 @@ fn parameter_detail(
     match scene {
         Some(scene) => format!(
             "row {} column {column} param {} = {shown} on scene {scene} \
-             (the unit is now sitting on that scene)",
+             (read-back confirmed; the unit is now sitting on that scene)",
             row.screen(),
             applied.index
         ),
         None => format!(
-            "row {} column {column} param {} = {shown} on the active scene",
+            "row {} column {column} param {} = {shown} on the active scene (read-back confirmed)",
             row.screen(),
             applied.index
         ),
@@ -2924,7 +2944,7 @@ fn parameter_detail(
 fn cmd_set_bypass(row: u32, column: u32, bypass: bool, fmt: Format) -> Result<()> {
     let row = wire_row(row)?;
     let detail = format!(
-        "row {} column {column} {}",
+        "row {} column {column} {} (read-back confirmed)",
         row.screen(),
         if bypass { "bypassed" } else { "enabled" }
     );
@@ -3007,7 +3027,10 @@ fn report_block_placement(
 /// Remove the block at a grid cell.
 fn cmd_remove_block(row: u32, column: u32, fmt: Format) -> Result<()> {
     let row = wire_row(row)?;
-    let detail = format!("row {} column {column}", row.screen());
+    let detail = format!(
+        "row {} column {column} (read-back confirmed empty)",
+        row.screen()
+    );
 
     if let Some(result) = connect::request(&cortex_host::Request::RemoveBlock {
         row: row.wire(),
@@ -3207,14 +3230,22 @@ fn cmd_grid(timeout: u64, params: bool, fmt: Format) -> Result<()> {
 }
 
 /// Re-point a row's input or output.
-fn cmd_set_routing(row: u32, input: Option<u32>, output: Option<u32>, fmt: Format) -> Result<()> {
+fn cmd_set_routing(
+    row: u32,
+    input: Option<cortex_rs::GridInputPort>,
+    output: Option<cortex_rs::GridOutputPort>,
+    fmt: Format,
+) -> Result<()> {
     let row = wire_row(row)?;
     let (which, port) = match (input, output) {
-        (Some(port), None) => ("input", port),
-        (None, Some(port)) => ("output", port),
+        (Some(port), None) => ("input", port.to_string()),
+        (None, Some(port)) => ("output", port.to_string()),
         _ => unreachable!("clap gives exactly one of input or output"),
     };
-    let detail = format!("row {} {which} = port {port}", row.screen());
+    let detail = format!(
+        "row {} {which} = {port} (read-back confirmed)",
+        row.screen()
+    );
 
     if let Some(result) = connect::request(&cortex_host::Request::SetRouting {
         row: row.wire(),
@@ -3241,15 +3272,15 @@ fn cmd_set_routing(row: u32, input: Option<u32>, output: Option<u32>, fmt: Forma
 fn cmd_set_split(row: u32, split: i32, mix: i32, fmt: Format) -> Result<()> {
     let row = wire_row(row)?;
     let detail = if split < 0 {
-        format!("row {} branch cleared", row.screen())
+        format!("row {} branch cleared (read-back confirmed)", row.screen())
     } else if mix < 0 {
         format!(
-            "row {} branches at column {split}, never rejoins",
+            "row {} branches at column {split}, never rejoins (read-back confirmed)",
             row.screen()
         )
     } else {
         format!(
-            "row {} branches at column {split}, rejoins at {mix}",
+            "row {} branches at column {split}, rejoins at {mix} (read-back confirmed)",
             row.screen()
         )
     };
@@ -3614,7 +3645,7 @@ mod tests {
                 "--row",
                 "1",
                 "--port",
-                "1",
+                "input1",
                 "--dry-run",
             ],
             &[
@@ -3624,7 +3655,7 @@ mod tests {
                 "--row",
                 "1",
                 "--port",
-                "0",
+                "empty",
                 "--dry-run",
             ],
             &[

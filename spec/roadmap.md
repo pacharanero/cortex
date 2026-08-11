@@ -19,7 +19,7 @@ tags: ["roadmap", "planning"]
 >
 > **`[x]` means the code exists and passes the local gate. It does NOT mean hardware-verified.** Anything touching the wire stays provisional until its hardware smoke item passes against a real Quad Cortex.
 >
-> Hardware-verified so far (through 2026-08-10, CorOS 4.0.1): transport through the implemented typed client; the held daemon, live cache and auto-managed idle release; read, navigation, grid, tempo, STOMP/expression/MIDI, file, capture/IR selection, global-setting and I/O paths; pinning/favourites; physical reconnect; and the native GUI's fail-closed reconnect rendering. Individual items below identify what remains provisional or unimplemented.
+> Hardware-verified so far (through 2026-08-11, CorOS 4.0.1): transport through the implemented typed client; the held daemon, live cache and auto-managed idle release; read, navigation, grid, typed routing with mandatory host read-back, tempo, STOMP/expression/MIDI, file, capture/IR selection, global-setting and I/O paths; pinning/favourites; physical reconnect; and the native GUI's fail-closed reconnect rendering. Individual items below identify what remains provisional or unimplemented.
 >
 > **Overnight routing:** `Night: ready` marks a bounded task that can be completed without USB hardware. `Night: slice` permits only the explicitly named offline subset and requires a PR `Hardware follow-up` section where applicable. Unmarked items are not available to the overnight routine. The copy-paste routine prompt and its safety rules live in [overnight-routine.md](overnight-routine.md).
 
@@ -84,6 +84,7 @@ The ergonomic `QuadCortex` struct - the Rust equivalent of pyquadcortex's 60+ me
 - [~] **PROT-006.12**: The automated restoration-first General Settings, Master Volume assignment, global Cab/IR bypass, Global EQ, mode/cycle and Tuner settings test passed in full on CorOS 4.0.1, including complete final baseline restoration. Value 9 and every power/reset/updater/internal-clock shape remain structurally absent. **Exact residual:** Gig View and show/hide Tuner are visual-only methods with no readable baseline and have not been visually verified; do not claim either UI method hardware-verified
 - [~] **PROT-006.16**: Hardware smoke coverage is expanded through every implemented non-UI PROT-006 path on CorOS 4.0.1. The 2026-08-10 runs added wider reads; row controls; all eight tempo/metronome methods; STOMP/expression and persistent MIDI; generated-setlist file composition; capture and user-IR selection; automated global settings; the complete I/O matrix and mutations; and pin/Favorite restoration. All mutable runs restored their baselines and cleaned generated storage. **Exact residuals:** the false-only capture-dialog decline and visual-only Gig View and Tuner visibility methods remain unverified, so this umbrella item stays partial
 - [ ] **PROT-006.17**: Implement the positive Neural Capture host workflow only with a complete v1/v2 host UI and explicit end-to-end design. Until then `show_dialog: true` remains structurally unavailable from the public client and absent from CLI, MCP and GUI. Establish the v1 `NeuralCapture` and v2 `NeuralCapture2` state machines, cancellation/recovery, calibration, A/B, progress, errors and save behavior before exposing acceptance; do not infer `show_dialog_fail_reason` semantics from its field name
+- [ ] **PROT-006.18**: Establish whether USB can select a grid block or open its on-device editing panel. The recovered schema has no explicit focus/panel command; `GridModelMeter` type 37 is the only non-editing message carrying row and column and may merely select the meter source. Trace short Cortex Control actions separately: desktop block A/B selection without edits, close/deselect, matching hardware taps, and a known parameter edit plus scene-switch positive controls. If selection is desktop-local, record that negative result rather than inventing a command; if type 37 correlates, capture open/close and cross-coordinate shapes before any replay
 
 ### PROT-007: Capture and IR export / import
 
@@ -190,7 +191,6 @@ The reason this project has an MCP server at all is that an agent can do things 
 ### MCP-002: Tool surface
 
 - [ ] **MCP-002.4**: Destructive tool: `save_preset`. Core PROT-009 correctness blockers and typed daemon failures are closed; remaining work is an MCP-held exact-target preparation-token registry, explicit confirmation, restoration semantics and an MCP save hardware smoke
-- [ ] **MCP-002.7**: Replace raw routing port integers with typed input/output enums and add post-write read-back for bypass, remove, routing, split and parameter writes. The device accepts meaningless output IDs silently, while those daemon acknowledgements currently prove only that a write was sent. Measured 2026-08-10: immediately after `set_bypass`, a cache-backed grid read returned the old value; the explicit full read before a subsequent block move observed the new value, proving dispatch succeeded but cache convergence had not
 
 ## GUI (GUI)
 
@@ -235,8 +235,9 @@ Improve on the Cortex Control appearance while staying familiar enough to naviga
 - [ ] **GUI-003.1**: Patch browser - setlist/slot grid for quick preset switching, with search and favourites
 - [ ] **GUI-003.2**: Block palette - searchable list of available models from the `Catalog`, drag onto a grid cell
 - [ ] **GUI-003.3**: Parameter inspector - form-based editor for the selected block's parameters, showing real units (dB, ms, Hz) via catalog range conversion
-- [ ] **GUI-003.4**: Scene manager - copy/swap/relabel/recolor scenes without the footswitch mode dance. **Night: slice.** Build one typed non-persistent scene-manager interaction against the fixture/Tauri API boundary, preserve zero-based API vs A-H display, and request next-day hardware read-back
+- [ ] **GUI-003.4**: Scene manager - copy/swap/relabel/recolor scenes without the footswitch mode dance. Expose a full RGB picker rather than reproducing the unit's fixed palette: CorOS 4.0.1 stored and freshly read back off-palette `0xFF808080` exactly, although physical LED rendering still needs visual confirmation. **Night: slice.** Build one typed non-persistent scene-manager interaction against the fixture/Tauri API boundary, preserve zero-based API vs A-H display, and request next-day hardware read-back
 - [ ] **GUI-003.5**: IR / Capture loader - file-browser-style access to the device's captures and IRs
+- [ ] **GUI-003.6**: Make externally originated live-grid edits legible in the GUI. Diff successive generation/revision-checked device snapshots so MCP/CLI block placements visibly enter the grid and parameter changes can focus or pulse the affected block's inspector without a USB panel command. Device read-back remains ground truth; do not steal focus while the user is actively editing, and do not guess one target when a snapshot changes several cells
 
 ### GUI-004: Safety surface and governance
 
@@ -291,10 +292,18 @@ The method is documented in the [protocol reference](../docs/protocol.md#observi
 
 - [~] **ENG-006.2**: Daemon start/status/stop and routed read/edit/save paths are scripted and hardware-verified. Physical unplug/replug was manually verified on 2026-08-07; only a safe automated reconnect substitute remains optional
 
+### NANO-001: Nano Cortex over USB HID
+
+- [x] **NANO-001.1**: Hardware discovery established VID:PID `152A:88E7`, HID interface 5, input/output report IDs `0x01`/`0x02`, 64-byte report bodies, shared length/flag framing, and shared `FIRST`/middle/`LAST` reassembly. The known read-only Nano current-state command returned nine USB HID reports and the existing decoder recovered firmware, control, assignment, bypass, and FX-model state. Bluetooth ownership produced an explicit `Device is busy!`; the same request succeeded after Bluetooth disconnected. Raw captures remain private because their padding and payload contain device and user strings
+- [ ] **NANO-001.2**: Generalise framing and transport geometry by `DeviceKind`, replace the Nano `0xFFFF` sentinel with hardware-verified PID `0x88E7`, and add Linux udev/install coverage for both devices. Preserve the Quad's 129-byte reports and benign write STALL while encoding the Nano's 65-byte reports and successful writes; do not route Nano through the Quad eight-byte envelope
+- [ ] **NANO-001.3**: Add a Nano-specific message codec and typed current-state domain model behind the common HID frame layer. Start with the hardware-verified read-only state dump and fixture tests using fictionalized data. Adapting the existing decoder requires the Apache-2.0 and indirect MIT attribution described in [prior-art.md](prior-art.md#an-additional-project-not-vendored), so request approval before editing notices
+- [ ] **NANO-001.4**: Extend the held daemon and CLI with explicit device selection and a read-only Nano status/state surface. Enforce one editor owner across USB and Bluetooth and surface the Nano's `Device is busy!` response rather than timing out or claiming the device is absent
+- [ ] **NANO-001.5**: Extend MCP and GUI from the same typed daemon contract after CLI state reads are hardware-verified. Reuse host infrastructure and presentation components where the domain matches; model the Nano's fixed signal-chain roles separately from the Quad's grid rather than forcing either device into the other's shape
+
 ## Future
 
-- **FUTURE-001**: Nano Cortex hardware verification - third-party macOS observation records provisional VID:PID `152A:88E7` and 65-byte HID reports, not the Quad Cortex's 129. Its HID interface opened but emitted no passive reports; nobody has shown it speaking this protobuf/trailer protocol. Plug in a Nano, verify the transport and handshake rather than assuming a shared shape, then replace the `0xFFFF` sentinel and promote `DeviceKind::NanoCortex` only if the evidence supports it ([prior-art.md](prior-art.md#what-it-says-about-the-nano-cortex-and-one-contradiction))
-- **FUTURE-002**: Nano Cortex BLE protocol - the Nano uses BLE for control telemetry; `deskop-nano-cortex` has a provisional decode (Apache-2.0) whose field map credits `choldy/nano-cortex-web-editor` (MIT). Any adaptation carries both attributions ([prior-art.md](prior-art.md#an-additional-project-not-vendored))
+- **FUTURE-001 (promoted)**: Nano Cortex hardware verification and USB support are active under NANO-001; preserve this ID as the original umbrella rather than counting it as a separate future item
+- **FUTURE-002 (promoted)**: Nano Cortex application-protocol reuse is active under NANO-001.3; preserve the Apache-2.0 and indirect MIT attribution boundary documented in [prior-art.md](prior-art.md#an-additional-project-not-vendored)
 - **FUTURE-003 (promoted)**: Cross-platform GUI completion is now active under GUI-001 through GUI-006 and CLI-004.12; preserve this ID as the original umbrella rather than counting it as a separate future item
 - **FUTURE-004**: On-device builds (qc-stomp-tools ioctl route) - only if there is a compelling reason; the USB route is preferred
 - **FUTURE-005**: Protocol-version probe - surface a CorOS version check rather than hard-coding assumptions, since the protocol has no version field on the wire

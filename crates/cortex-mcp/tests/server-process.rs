@@ -34,7 +34,7 @@ async fn official_client_discovers_and_calls_the_real_server() -> anyhow::Result
     let endpoint = LocalEndpoint::at(socket);
     let listener = LocalListener::bind(&endpoint)?.listener;
     // Startup compatibility, then compatibility + request for each tool call.
-    let daemon = std::thread::spawn(move || serve_daemon(listener, 7, false));
+    let daemon = std::thread::spawn(move || serve_daemon(listener, 9, false));
 
     let transport = TokioChildProcess::builder(
         tokio::process::Command::new(env!("CARGO_BIN_EXE_cortex-mcp")).configure(|command| {
@@ -112,6 +112,25 @@ async fn official_client_discovers_and_calls_the_real_server() -> anyhow::Result
             .and_then(serde_json::Value::as_str),
         Some("fictional DSP capacity exhausted")
     );
+    let result = client
+        .call_tool(
+            CallToolRequestParams::new("set_chain_output").with_arguments(
+                serde_json::json!({"row":0,"port":"multiple"})
+                    .as_object()
+                    .expect("routing arguments are an object")
+                    .clone(),
+            ),
+        )
+        .await?;
+    assert_eq!(result.is_error, Some(false));
+    assert_eq!(
+        result
+            .structured_content
+            .as_ref()
+            .and_then(|value| value.get("verified"))
+            .and_then(serde_json::Value::as_bool),
+        Some(true)
+    );
     client.cancel().await?;
     daemon.join().expect("fake daemon thread");
     let _ = std::fs::remove_dir(runtime_dir);
@@ -152,6 +171,12 @@ fn serve_connection(stream: LocalConnection, auto_managed: bool) {
                 DaemonErrorCode::DspRefused,
                 "fictional DSP capacity exhausted",
             ),
+            Request::SetRouting {
+                row: 0,
+                input: None,
+                output: Some(cortex_rs::GridOutputPort::Multiple),
+            } => Response::ok(&serde_json::json!({"applied":true,"verified":true}))
+                .expect("encode routing response"),
             other => Response::error(format!("unexpected request in process test: {other:?}")),
         };
         serde_json::to_writer(&mut writer, &response).expect("write fake daemon response");
@@ -391,7 +416,7 @@ async fn hardware_smoke_builds_and_restores_a_live_grid() -> anyhow::Result<()> 
         call(
             &client,
             "recall_preset",
-            serde_json::json!({"setlist":setlist,"slot":"7A"}),
+            serde_json::json!({"setlist":setlist,"slot":"6A"}),
         )
         .await?;
         call(
@@ -421,13 +446,13 @@ async fn hardware_smoke_builds_and_restores_a_live_grid() -> anyhow::Result<()> 
         call(
             &client,
             "set_chain_input",
-            serde_json::json!({"row":0,"port":1}),
+            serde_json::json!({"row":0,"port":"input1"}),
         )
         .await?;
         call(
             &client,
             "set_chain_output",
-            serde_json::json!({"row":0,"port":19}),
+            serde_json::json!({"row":0,"port":"multiple"}),
         )
         .await?;
         call(
@@ -469,7 +494,7 @@ async fn hardware_smoke_builds_and_restores_a_live_grid() -> anyhow::Result<()> 
     let restore = call(
         &client,
         "recall_preset",
-        serde_json::json!({"setlist":setlist,"slot":"1A"}),
+        serde_json::json!({"setlist":setlist,"slot":"6A"}),
     )
     .await;
     client.cancel().await?;

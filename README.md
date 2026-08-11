@@ -1,8 +1,8 @@
 # cortex
 
-An unofficial toolkit for the Neural DSP **Quad Cortex**, built around a cross-platform Tauri desktop GUI target in active development, a hardware-backed `cortex` CLI, a `cortex-mcp` server for agentic patch editing, and the reusable `cortex-rs` Rust crate beneath them. The CLI, MCP server and read-only GUI share the crate's typed preset/grid model, block views, scene metadata and active-scene state over the Cortex Control USB HID protocol.
+An unofficial, open-source toolkit for the Neural DSP **Quad Cortex** and **Nano Cortex**, built around an eventual desktop GUI for Linux, Windows and macOS, a `cortex` CLI, a `cortex-mcp` server for agentic patch editing, and the reusable `cortex-rs` Rust crate beneath them. The goal is one shared transport and host foundation with honest device-specific models: the Quad's grid, scenes and presets remain distinct from the Nano's fixed signal chain.
 
-**Nano Cortex** support is planned, but its transport compatibility is not yet established.
+That dual-device, cross-platform editor is the destination, not the current support claim. Today the Quad Cortex CLI and MCP paths are hardware-verified on Linux and the GUI is a Quad-specific read-only first draft. Nano Cortex USB HID framing and a complete state read are hardware-verified, but Nano support has not yet reached the crate, CLI, MCP server or GUI.
 
 > **Unofficial.** This project is not affiliated with, endorsed by, or
 > sponsored by Neural DSP Technologies. "Neural DSP", "Quad Cortex", "Nano
@@ -14,13 +14,15 @@ An unofficial toolkit for the Neural DSP **Quad Cortex**, built around a cross-p
 
 ## Status
 
-**Pre-alpha and actively changing.** The Quad Cortex core and CLI are usable on Linux and passed a 42-check hardware smoke against CorOS 4.0.1, including live state, grid editing, prepared save, same-setlist preset move/restore, recall and delete. This is not a finished editor: much of the wider device API remains unimplemented, some reconnect and file-operation edge-case coverage remains tracked, and releases are not yet distributed.
+**Pre-alpha and actively changing.** The Quad Cortex core and CLI are usable on Linux and passed a 42-check hardware smoke against CorOS 4.0.1, including live state, grid editing, prepared save, same-setlist preset move/restore, recall and delete. The Nano Cortex has now answered a read-only state request over USB HID using the same report-level framing with device-specific geometry and message semantics. This is not a finished editor: Nano runtime support, much of the wider Quad device API, cross-platform host paths and distribution remain unfinished.
 
 The MCP server exposes hardware-verified read, recall, scene switching/metadata/copy and unsaved live-grid editing tools through the held-session daemon; it deliberately exposes no save or delete tool. Source installation installs both binaries and the [agent setup guide](https://pacharanero.github.io/cortex/agent-setup/) covers Claude Code and generic stdio harnesses. The Tauri GUI has an interactive read-only first draft with explicit fixture and daemon-backed modes; its production boundary reads status, grid, scene, CPU and populated preset slots through the same held daemon. Physical unplug/reconnect hides stale state and restores a fresh generation in the native Linux window. The desktop target is Linux, Windows and macOS; Linux is the only implemented and hardware-verified host today. The hardware-faithful panel is next, while prebuilt Linux binaries are the parallel distribution milestone. Run `s/progress` for counted progress and read `spec/roadmap.md` for the outstanding backlog.
 
+Protocol implementers can start with the separate [Quad Cortex HID transport](https://pacharanero.github.io/cortex/quad-cortex-hid/) and [Nano Cortex HID transport](https://pacharanero.github.io/cortex/nano-cortex-hid/) references, then continue into the shared [protocol documentation](https://pacharanero.github.io/cortex/protocol/).
+
 ## What it is
 
-- `gui/` - the Tauri 2 + React + Mantine desktop editor, targeting Linux, Windows and macOS. Its first draft is an interactive read-only shell with explicit fixture and daemon-backed modes; write interactions, automated native DOM/IPC checks and cross-platform packaging remain outstanding.
+- `gui/` - the Tauri 2 + React + Mantine desktop editor, intended for both Cortex devices on Linux, Windows and macOS. Its first draft is a Quad-specific interactive read-only shell with explicit fixture and daemon-backed modes; Nano views, write interactions, automated native DOM/IPC checks and cross-platform packaging remain outstanding.
 - `cortex-cli` - a thin CLI over the crate, including a persistent daemon that
   owns the one device connection and reconnects without serving stale state.
 - `cortex-mcp` - an MCP server for agentic patch editing through `cortex session`. Its read, recall, scene and working-copy tools are hardware-verified; persistent writes remain deliberately unavailable.
@@ -31,7 +33,7 @@ The MCP server exposes hardware-verified read, recall, scene switching/metadata/
 
 Neural DSP provides Cortex Control for macOS and Windows but has not provided a Linux editor. This project began because Linux players still need full access to hardware they own, so the community is building that support for itself. Today that community effort is maintained by one person.
 
-Linux is therefore the project's origin, its first implementation and its only hardware-verified host so far, not the intended boundary of the product. The shared Rust core, local IPC seam and Tauri frontend are being built toward a GUI that runs on Linux, Windows and macOS, alongside the CLI and MCP interfaces.
+Linux is therefore the project's origin, its first implementation and its only hardware-verified host so far, not the intended boundary of the product. The shared Rust core, local IPC seam and Tauri frontend are being built toward one open-source GUI for Quad Cortex and Nano Cortex on Linux, Windows and macOS, alongside matching CLI and MCP interfaces where each device's capabilities permit them.
 
 ## What it is not
 

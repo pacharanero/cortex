@@ -1066,7 +1066,7 @@ Set a block parameter on the grid.
 ```text
 Set a block parameter on the grid.
 
-CHANGES THE WORKING GRID. Nothing is saved: the edit lives on the grid until you save the preset or recall another, which discards it.
+CHANGES THE WORKING GRID. Nothing is saved: the edit lives on the grid until you save the preset or recall another, which discards it. A complete live-grid read must confirm the requested value before this command reports success.
 
 Rows are given as the unit LABELS them, 1-4, not the zero-based wire index. Use `cortex grid show` to see what is where.
 
@@ -1135,7 +1135,7 @@ Bypass or enable a block on the grid.
 ```text
 Bypass or enable a block on the grid.
 
-CHANGES THE WORKING GRID. Nothing is saved.
+CHANGES THE WORKING GRID. Nothing is saved. Success requires a complete live-grid read confirming the active-scene bypass state.
 
 Usage: cortex block bypass [OPTIONS] --row <1-4> --column <0-7>
 
@@ -1246,7 +1246,7 @@ Remove the block at a grid cell.
 ```text
 Remove the block at a grid cell.
 
-CHANGES THE WORKING GRID. Nothing is saved.
+CHANGES THE WORKING GRID. Nothing is saved. Success requires a complete live-grid read confirming that the cell is empty.
 
 Usage: cortex block remove [OPTIONS] --row <1-4> --column <0-7>
 
@@ -1393,16 +1393,16 @@ Re-point a grid row's input.
 ```text
 Re-point a grid row's input.
 
-CHANGES THE WORKING GRID. Nothing is saved.
+CHANGES THE WORKING GRID. Nothing is saved. Success requires a complete live-grid read confirming the typed route.
 
-Usage: cortex row input [OPTIONS] --row <1-4> --port <ID>
+Usage: cortex row input [OPTIONS] --row <1-4> --port <PORT>
 
 Options:
       --row <1-4>
           Grid row as shown on the unit, 1-4
 
-      --port <ID>
-          Input port id. 1 = Input 1, 2 = Input 2, 4 = Return 1, 5 = Return 2. Note the ids are NOT 1/2/3/4 - combined ports are interleaved
+      --port <PORT>
+          Typed input destination, e.g. input1, return1, usb5, previous_row
 
       --format <FORMAT>
           Output format. `text` is for humans; `json` is for scripts and agents, and is stable enough to parse.
@@ -1430,7 +1430,7 @@ Options:
           Print version
 
 Examples:
-  cortex row input --row 1 --port 1
+  cortex row input --row 1 --port input1
 ```
 
 #### `cortex row output`
@@ -1440,18 +1440,18 @@ Re-point a grid row's output.
 ```text
 Re-point a grid row's output.
 
-CHANGES THE WORKING GRID. Nothing is saved.
+CHANGES THE WORKING GRID. Nothing is saved. Success requires a complete live-grid read confirming the typed route.
 
-Not every id is a physical destination: 16-18 are internal row-to-row routing, while 19 (MULTIPLE) is a real output. The device does not validate this field, so a meaningless id is stored rather than rejected and reads back cleanly.
+Not every destination is physical: next_row3, next_row4 and next_row34 route internally, while multiple is a real device-selected output.
 
-Usage: cortex row output [OPTIONS] --row <1-4> --port <ID>
+Usage: cortex row output [OPTIONS] --row <1-4> --port <PORT>
 
 Options:
       --row <1-4>
           Grid row as shown on the unit, 1-4
 
-      --port <ID>
-          Output port id
+      --port <PORT>
+          Typed output destination, e.g. xlr12, out3, usb5, next_row3
 
       --format <FORMAT>
           Output format. `text` is for humans; `json` is for scripts and agents, and is stable enough to parse.
@@ -1479,7 +1479,7 @@ Options:
           Print version
 
 Examples:
-  cortex row output --row 1 --port 0
+  cortex row output --row 1 --port xlr12
 ```
 
 #### `cortex row split`
@@ -1489,7 +1489,7 @@ Set a row's split and mix points, activating a parallel branch.
 ```text
 Set a row's split and mix points, activating a parallel branch.
 
-CHANGES THE WORKING GRID. Nothing is saved.
+CHANGES THE WORKING GRID. Nothing is saved. Success requires a complete live-grid read confirming both control points.
 
 Only screen rows 1 and 3 can branch; their parallel lane is the row below. Rows 2 and 4 have no splitter and are refused.
 

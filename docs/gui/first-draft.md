@@ -1,8 +1,8 @@
 # Cross-Platform GUI
 
-The desktop GUI is one of the toolkit's three user-facing interfaces alongside the CLI and MCP server. It is intended to provide a complete Quad Cortex editor on Linux, Windows and macOS over the same typed Rust core, not to become a separate implementation of device behaviour.
+The desktop GUI is one of the toolkit's three user-facing interfaces alongside the CLI and MCP server. Its destination is one open-source editor for Quad Cortex and Nano Cortex on Linux, Windows and macOS over the same Rust transport and host foundation, not separate applications that reimplement device behaviour. Shared infrastructure will remain shared, while the Quad's grid and the Nano's fixed signal chain retain honest device-specific domain models and screens.
 
-The current first draft is a Quad Cortex-specific, read-only interactive shell with two explicit modes. Browser fixture mode uses fictional development data. Tauri mode calls a managed Rust backend, which reads status, grid, active scene, CPU and populated preset slots through `cortex-host` and the held `cortex session` daemon. It never opens a second HID connection.
+The current first draft is a Quad Cortex-specific, read-only interactive shell with two explicit modes. Browser fixture mode uses fictional development data. Tauri mode calls a managed Rust backend, which reads status, grid, active scene, CPU and populated preset slots through `cortex-host` and the held `cortex session` daemon. It never opens a second HID connection. Nano Cortex views are aspirational until the hardware-verified Nano transport and state decoder are integrated into that same daemon contract.
 
 Linux is the first and only hardware-verified baseline today because Neural DSP has not provided Cortex Control for Linux and this community project began by filling that gap for ourselves. Windows and macOS transport, local IPC, packaging and hardware testing remain outstanding; the project will not describe them as supported until that evidence exists.
 

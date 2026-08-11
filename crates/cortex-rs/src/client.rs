@@ -1624,6 +1624,80 @@ fn model_at(preset: &BinaryPreset, row: Row, column: u32) -> Option<&crate::prot
     }
 }
 
+/// One complete chain, applying the wire's explicit-key-then-position rule.
+fn chain_at(preset: &BinaryPreset, row: Row) -> Option<&crate::proto::Chain> {
+    preset
+        .chains
+        .iter()
+        .enumerate()
+        .find(|(position, chain)| {
+            let positional = u32::try_from(*position).ok();
+            let stored = chain.row.as_ref().map(|value| {
+                let crate::proto::chain::Row::Row(row) = value;
+                *row
+            });
+            stored.or(positional) == Some(row.wire())
+        })
+        .map(|(_, chain)| chain)
+}
+
+/// One parameter, applying the wire's explicit-key-then-position rule.
+fn parameter_at(
+    preset: &BinaryPreset,
+    row: Row,
+    column: u32,
+    index: u32,
+) -> Option<&crate::proto::Param> {
+    model_at(preset, row, column)?
+        .params
+        .iter()
+        .enumerate()
+        .find(|(position, parameter)| {
+            let positional = u32::try_from(*position).ok();
+            let stored = parameter.index.as_ref().map(|value| {
+                let crate::proto::param::Index::Index(index) = value;
+                *index
+            });
+            stored.or(positional) == Some(index)
+        })
+        .map(|(_, parameter)| parameter)
+}
+
+fn parameter_matches(
+    parameter: &crate::proto::Param,
+    expected: &Value,
+    scene: u32,
+) -> crate::Result<bool> {
+    let follows_scenes = parameter.scene_mode.as_ref().is_some_and(|value| {
+        let crate::proto::param::SceneMode::SceneMode(enabled) = value;
+        *enabled
+    });
+    let value = if follows_scenes {
+        parameter
+            .param_values
+            .get(usize::try_from(scene).ok().unwrap_or(usize::MAX))
+    } else {
+        parameter.param_values.first()
+    };
+    let Some(value) = value.and_then(|value| value.value.as_ref()) else {
+        return Ok(false);
+    };
+    match (expected, value) {
+        (Value::Normalised(expected), crate::proto::param_value::Value::FloatValue(actual)) => {
+            crate::helpers::params_equal(*expected, *actual, None)
+        }
+        (Value::Normalised(expected), crate::proto::param_value::Value::IntValue(actual)) =>
+        {
+            #[allow(clippy::cast_precision_loss)]
+            crate::helpers::params_equal(*expected, *actual as f32, None)
+        }
+        (Value::Text(expected), crate::proto::param_value::Value::StringValue(actual)) => {
+            Ok(expected == actual)
+        }
+        _ => Ok(false),
+    }
+}
+
 /// The complete model state at a cell, without its location key.
 fn model_state_at(preset: &BinaryPreset, row: Row, column: u32) -> Option<crate::proto::Model> {
     let mut model = model_at(preset, row, column)?.clone();
@@ -4764,22 +4838,47 @@ impl QuadCortex {
     ///
     /// # Errors
     ///
-    /// Returns `Ok` even on a write error, since the USB status-stage stall
-    /// makes every write appear to fail.
-    pub fn set_chain_input(&self, row: Row, in_portid: u32) -> crate::Result<()> {
-        self.send_grid(&crate::grid::set_chain_input(row, in_portid))
+    /// The benign USB status-stage stall is swallowed. Returns
+    /// [`crate::Error::GridWriteUnconfirmed`] when a complete live-grid read
+    /// does not report the requested route, and propagates read/session errors.
+    pub fn set_chain_input(&self, row: Row, port: crate::GridInputPort) -> crate::Result<()> {
+        let expected = u32::from(port);
+        self.send_grid_and_verify(
+            &crate::grid::set_chain_input(row, port),
+            |preset| {
+                chain_at(preset, row).and_then(|chain| {
+                    chain.in_portid.as_ref().map(|value| {
+                        let crate::proto::chain::InPortid::InPortid(port) = value;
+                        *port
+                    })
+                }) == Some(expected)
+            },
+            format!("wire row {} input to {port}", row.wire()),
+        )
     }
 
     /// Re-point one grid row's output.
     ///
-    /// The device does NOT validate this field: an id that means nothing is
-    /// stored rather than rejected, so a typo reads back cleanly.
+    /// The device stores meaningless wire ids rather than rejecting them, so
+    /// this method accepts only the closed [`crate::GridOutputPort`] values.
     ///
     /// # Errors
     ///
     /// As [`QuadCortex::set_chain_input`].
-    pub fn set_chain_output(&self, row: Row, out_portid: u32) -> crate::Result<()> {
-        self.send_grid(&crate::grid::set_chain_output(row, out_portid))
+    pub fn set_chain_output(&self, row: Row, port: crate::GridOutputPort) -> crate::Result<()> {
+        let expected = u32::from(port);
+        self.send_grid_and_verify(
+            &crate::grid::set_chain_output(row, port),
+            |preset| {
+                chain_at(preset, row).and_then(|chain| {
+                    chain.out_portid.as_ref().map(|value| {
+                        let crate::proto::chain::OutPortid::OutPortid(port) = value;
+                        *port
+                    })
+                }) == Some(expected)
+            },
+            format!("wire row {} output to {port}", row.wire()),
+        )
     }
 
     /// Set one block parameter on the ACTIVE scene.
@@ -5061,6 +5160,8 @@ impl QuadCortex {
     /// out-of-range normalised values, read-only meters, or real-unit writes
     /// without a named parameter. Returns [`crate::Error::NotFound`] when the
     /// cell is empty or the model/parameter is absent from the catalog.
+    /// Returns [`crate::Error::GridWriteUnconfirmed`] when a complete live-grid
+    /// read does not contain the requested value on the target scene.
     #[allow(clippy::too_many_arguments)]
     pub fn set_parameter(
         &self,
@@ -5094,6 +5195,11 @@ impl QuadCortex {
         let ParameterWrite { index, value } =
             self.resolve_parameter(row, column, target, input, timeout)?;
 
+        let verification_scene = match scene {
+            Some(scene) => scene,
+            None => self.active_scene(timeout.max(READ_BACK_TIMEOUT))?,
+        };
+
         if let Some(scene) = scene {
             self.set_param_in_scene(row, column, index, value.clone(), scene, promote)?;
         } else {
@@ -5101,6 +5207,24 @@ impl QuadCortex {
                 self.set_param_scene_mode(row, column, index, true)?;
             }
             self.set_param(row, column, index, value.clone())?;
+        }
+
+        let after = self.read_current_preset(timeout.max(READ_BACK_TIMEOUT))?;
+        let Some(parameter) = parameter_at(&after, row, column, index) else {
+            return Err(crate::Error::GridWriteUnconfirmed(format!(
+                "parameter {index} is absent at wire row {} column {column}",
+                row.wire()
+            )));
+        };
+        let promoted = parameter.scene_mode.as_ref().is_some_and(|mode| {
+            let crate::proto::param::SceneMode::SceneMode(enabled) = mode;
+            *enabled
+        });
+        if (promote && !promoted) || !parameter_matches(parameter, &value, verification_scene)? {
+            return Err(crate::Error::GridWriteUnconfirmed(format!(
+                "parameter {index} at wire row {} column {column} did not read back as requested for scene {verification_scene}",
+                row.wire()
+            )));
         }
 
         Ok(ParameterWrite { index, value })
@@ -5180,7 +5304,9 @@ impl QuadCortex {
     ///
     /// # Errors
     ///
-    /// As [`QuadCortex::set_chain_input`].
+    /// Propagates session send failures. This low-level primitive does not
+    /// verify the resulting flag; host surfaces use [`QuadCortex::set_parameter`]
+    /// for a complete scene-aware write and read-back.
     pub fn set_param_scene_mode(
         &self,
         row: Row,
@@ -5806,16 +5932,46 @@ impl QuadCortex {
     ///
     /// As [`QuadCortex::set_chain_input`].
     pub fn set_bypass(&self, row: Row, column: u32, bypassed: bool) -> crate::Result<()> {
-        self.send_grid(&crate::grid::set_bypass(row, column, bypassed))
+        let scene = self.active_scene(READ_BACK_TIMEOUT)?;
+        self.send_grid_and_verify(
+            &crate::grid::set_bypass(row, column, bypassed),
+            |preset| {
+                if model_at(preset, row, column).is_none() {
+                    return false;
+                }
+                let Some((scenes, scene_mode)) = bypass_state_at(preset, row, column) else {
+                    return false;
+                };
+                if scene_mode == Some(true) {
+                    scenes.get(usize::try_from(scene).ok().unwrap_or(usize::MAX)) == Some(&bypassed)
+                } else {
+                    !scenes.is_empty() && scenes.iter().all(|value| *value == bypassed)
+                }
+            },
+            format!(
+                "wire row {} column {column} bypass to {bypassed}",
+                row.wire()
+            ),
+        )
     }
 
     /// Remove the block at a cell.
     ///
     /// # Errors
     ///
-    /// As [`QuadCortex::set_chain_input`].
+    /// Returns [`crate::Error::GridWriteUnconfirmed`] when the target cell is
+    /// absent from the complete live-grid read or remains occupied. Read and
+    /// session failures are propagated.
     pub fn remove_block(&self, row: Row, column: u32) -> crate::Result<()> {
-        self.send_grid(&crate::grid::remove_block(row, column))
+        self.send_grid_and_verify(
+            &crate::grid::remove_block(row, column),
+            |preset| {
+                crate::helpers::model_at(preset, row.wire(), column).is_some_and(|model| {
+                    !matches!(model.hash, Some(crate::proto::model::Hash::Hash(id)) if id != 0)
+                })
+            },
+            format!("wire row {} column {column} to be empty", row.wire()),
+        )
     }
 
     /// Move one occupied grid cell to an empty destination and verify it by
@@ -5899,9 +6055,23 @@ impl QuadCortex {
     /// # Errors
     ///
     /// Returns [`crate::Error::InvalidRow`] for an odd row, which has no
-    /// splitter.
+    /// splitter. Returns [`crate::Error::GridWriteUnconfirmed`] when the row is
+    /// absent or its split/mix state does not match a complete live-grid read.
     pub fn set_split(&self, row: Row, split: i32, mix: i32) -> crate::Result<()> {
-        self.send_grid(&crate::grid::set_split(row, split, mix)?)
+        self.send_grid_and_verify(
+            &crate::grid::set_split(row, split, mix)?,
+            |preset| {
+                chain_at(preset, row).is_some_and(|chain| {
+                    chain
+                        .split_control_points
+                        .first()
+                        .map_or(split < 0 && mix < 0, |points| {
+                            points.split == split && points.mix == mix
+                        })
+                })
+            },
+            format!("wire row {} split {split} mix {mix}", row.wire()),
+        )
     }
 
     /// Place a model in a grid cell, verifying the device accepted it.
@@ -6002,6 +6172,22 @@ impl QuadCortex {
     fn send_grid(&self, message: &crate::proto::GridMessage) -> crate::Result<()> {
         let payload = crate::grid::encode(message);
         self.session.send(MessageType::Grid, &payload)
+    }
+
+    fn send_grid_and_verify(
+        &self,
+        message: &crate::proto::GridMessage,
+        matches: impl FnOnce(&BinaryPreset) -> bool,
+        expected: String,
+    ) -> crate::Result<()> {
+        self.send_grid(message)?;
+        let after = self.read_current_preset(READ_BACK_TIMEOUT)?;
+        if matches(&after) {
+            return Ok(());
+        }
+        Err(crate::Error::GridWriteUnconfirmed(format!(
+            "expected {expected}, but a complete live-grid read did not confirm it"
+        )))
     }
 }
 
@@ -6188,6 +6374,28 @@ mod tests {
                 ..Default::default()
             },
         );
+    }
+
+    fn answer_active_scene(link: &FakeLink, request: &[u8], scene: u32) {
+        let request: SceneMessage = prost::Message::decode(request).unwrap();
+        push_proto(
+            link,
+            MessageType::Scene,
+            &SceneMessage {
+                action: MessageAction::Update as i32,
+                request_id: request.request_id,
+                selected_scene: Some(crate::proto::scene_message::SelectedScene::SelectedScene(
+                    scene,
+                )),
+            },
+        );
+    }
+
+    fn one_chain(chain: crate::proto::Chain) -> BinaryPreset {
+        BinaryPreset {
+            chains: vec![chain],
+            ..Default::default()
+        }
     }
 
     fn seed_live_cache(session: &crate::Session) {
@@ -9820,6 +10028,212 @@ mod tests {
             ..Default::default()
         };
         assert!(!preset_has_block(&preset, 0, 0, 0));
+    }
+
+    #[test]
+    fn routing_and_split_writes_require_matching_complete_readback() {
+        use crate::proto::{Chain, SplitControlPoints, chain};
+
+        let link = FakeLink::new();
+        let session = Arc::new(crate::Session::over(link.clone()).unwrap());
+        let qc = QuadCortex::new(session.clone());
+        let fake = link.clone();
+        let responder = std::thread::spawn(move || {
+            let (next, _) = wait_for_write(&fake, 0, MessageType::Grid);
+            let (next, request) = wait_for_write(&fake, next, MessageType::RecallPreset);
+            push_current_preset(
+                &fake,
+                &request,
+                one_chain(Chain {
+                    in_portid: Some(chain::InPortid::InPortid(1)),
+                    ..Default::default()
+                }),
+            );
+            let (next, _) = wait_for_write(&fake, next, MessageType::Grid);
+            let (next, request) = wait_for_write(&fake, next, MessageType::RecallPreset);
+            push_current_preset(
+                &fake,
+                &request,
+                one_chain(Chain {
+                    out_portid: Some(chain::OutPortid::OutPortid(19)),
+                    ..Default::default()
+                }),
+            );
+            let (next, _) = wait_for_write(&fake, next, MessageType::Grid);
+            let (_, request) = wait_for_write(&fake, next, MessageType::RecallPreset);
+            push_current_preset(
+                &fake,
+                &request,
+                one_chain(Chain {
+                    split_control_points: vec![SplitControlPoints { split: 3, mix: 6 }],
+                    ..Default::default()
+                }),
+            );
+        });
+
+        qc.set_chain_input(Row::from_wire(0), crate::GridInputPort::Input1)
+            .unwrap();
+        qc.set_chain_output(Row::from_wire(0), crate::GridOutputPort::Multiple)
+            .unwrap();
+        qc.set_split(Row::from_wire(0), 3, 6).unwrap();
+        responder.join().unwrap();
+        session.close();
+    }
+
+    #[test]
+    fn block_removal_requires_a_returned_empty_cell() {
+        use crate::proto::{Chain, Model};
+
+        for (read_back, expected) in [
+            (
+                one_chain(Chain {
+                    models: vec![Model::default()],
+                    ..Default::default()
+                }),
+                true,
+            ),
+            (one_chain(Chain::default()), false),
+        ] {
+            let link = FakeLink::new();
+            let session = Arc::new(crate::Session::over(link.clone()).unwrap());
+            let qc = QuadCortex::new(session.clone());
+            let fake = link.clone();
+            let responder = std::thread::spawn(move || {
+                let (next, _) = wait_for_write(&fake, 0, MessageType::Grid);
+                let (_, request) = wait_for_write(&fake, next, MessageType::RecallPreset);
+                push_current_preset(&fake, &request, read_back);
+            });
+            assert_eq!(qc.remove_block(Row::from_wire(0), 0).is_ok(), expected);
+            responder.join().unwrap();
+            session.close();
+        }
+    }
+
+    #[test]
+    fn bypass_readback_checks_the_active_scene_and_occupied_cell() {
+        use crate::proto::{
+            Bypass, Chain, ColBypass, Model, SceneBypass, bypass, col_bypass, model,
+        };
+
+        let link = FakeLink::new();
+        let session = Arc::new(crate::Session::over(link.clone()).unwrap());
+        let qc = QuadCortex::new(session.clone());
+        let fake = link.clone();
+        let responder = std::thread::spawn(move || {
+            let (next, request) = wait_for_write(&fake, 0, MessageType::Scene);
+            answer_active_scene(&fake, &request, 2);
+            let (next, _) = wait_for_write(&fake, next, MessageType::Grid);
+            let (_, request) = wait_for_write(&fake, next, MessageType::RecallPreset);
+            push_current_preset(
+                &fake,
+                &request,
+                BinaryPreset {
+                    chains: vec![Chain {
+                        models: vec![Model {
+                            hash: Some(model::Hash::Hash(42)),
+                            ..Default::default()
+                        }],
+                        ..Default::default()
+                    }],
+                    bypass: vec![Bypass {
+                        row: Some(bypass::Row::Row(0)),
+                        col_bypass: vec![ColBypass {
+                            column: Some(col_bypass::Column::Column(0)),
+                            scene_bypass: (0..8)
+                                .map(|scene| SceneBypass { bypass: scene == 2 })
+                                .collect(),
+                            scene_mode: Some(col_bypass::SceneMode::SceneMode(true)),
+                        }],
+                    }],
+                    ..Default::default()
+                },
+            );
+        });
+
+        qc.set_bypass(Row::from_wire(0), 0, true).unwrap();
+        responder.join().unwrap();
+        session.close();
+    }
+
+    #[test]
+    fn parameter_readback_uses_explicit_keys_and_target_scene() {
+        use crate::proto::{Chain, Model, Param, ParamValue, chain, model, param, param_value};
+
+        let link = FakeLink::new();
+        let session = Arc::new(crate::Session::over(link.clone()).unwrap());
+        let qc = QuadCortex::new(session.clone());
+        let fake = link.clone();
+        let responder = std::thread::spawn(move || {
+            let (next, _) = wait_for_write(&fake, 0, MessageType::Grid);
+            let (next, _) = wait_for_write(&fake, next, MessageType::Scene);
+            let (next, _) = wait_for_write(&fake, next, MessageType::Grid);
+            let (_, request) = wait_for_write(&fake, next, MessageType::RecallPreset);
+            let mut values = vec![ParamValue::default(); 8];
+            values[3].value = Some(param_value::Value::FloatValue(0.75));
+            push_current_preset(
+                &fake,
+                &request,
+                one_chain(Chain {
+                    row: Some(chain::Row::Row(2)),
+                    models: vec![Model {
+                        column: Some(model::Column::Column(3)),
+                        hash: Some(model::Hash::Hash(42)),
+                        params: vec![Param {
+                            index: Some(param::Index::Index(4)),
+                            param_values: values,
+                            scene_mode: Some(param::SceneMode::SceneMode(true)),
+                            ..Default::default()
+                        }],
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                }),
+            );
+        });
+
+        let applied = qc
+            .set_parameter(
+                Row::from_wire(2),
+                3,
+                ParameterTarget::Index(4),
+                ParameterInput::Normalised(0.75),
+                Some(3),
+                true,
+                Duration::from_secs(1),
+            )
+            .unwrap();
+        assert_eq!(applied.value, Value::Normalised(0.75));
+        responder.join().unwrap();
+        session.close();
+    }
+
+    #[test]
+    fn mismatched_grid_readback_is_not_reported_as_success() {
+        use crate::proto::{Chain, chain};
+
+        let link = FakeLink::new();
+        let session = Arc::new(crate::Session::over(link.clone()).unwrap());
+        let qc = QuadCortex::new(session.clone());
+        let fake = link.clone();
+        let responder = std::thread::spawn(move || {
+            let (next, _) = wait_for_write(&fake, 0, MessageType::Grid);
+            let (_, request) = wait_for_write(&fake, next, MessageType::RecallPreset);
+            push_current_preset(
+                &fake,
+                &request,
+                one_chain(Chain {
+                    in_portid: Some(chain::InPortid::InPortid(2)),
+                    ..Default::default()
+                }),
+            );
+        });
+
+        assert!(matches!(
+            qc.set_chain_input(Row::from_wire(0), crate::GridInputPort::Input1),
+            Err(crate::Error::GridWriteUnconfirmed(_))
+        ));
+        responder.join().unwrap();
+        session.close();
     }
 }
 

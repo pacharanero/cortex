@@ -107,12 +107,14 @@ It has a **working traceability checker** - the thing our ENG-004 describes but 
 
 It also has version-sync across four manifests with a check mode wired into CI as a drift job - our release script now synchronizes its GUI manifests, while the equivalent CI drift check remains useful future work - and a hardware smoke runbook with a fixed evidence block (date, firmware, app version, OS, per-step pass/fail).
 
-### What it says about the Nano Cortex, and one contradiction
+### What it says about the Nano Cortex, and what hardware settled
 
-- It records a **Nano USB product id of `0x88E7`** (vendor `0x152A`). Our `DeviceKind` deliberately retains a non-matching `0xFFFF` sentinel until this project verifies the transport. The third-party value is a useful lead, not sufficient evidence to make the client open that device.
-- **It records the Nano's HID reports as 65 bytes** - report id plus 64 - rather than the Quad Cortex's 129. The protocol reference and `DeviceKind` documentation now state that the Quad Cortex geometry is not evidence for the Nano; if the third-party observation holds, body size is device-dependent.
-- **Nobody has shown the Nano speaking this protobuf protocol over HID at all.** That project reaches it over MIDI and BLE; its HID interface opens but produces no passive reports. `DeviceKind::NanoCortex` therefore keeps a non-matching product-id sentinel, and the project documentation treats `ATMA = 1` in the recovered *Quad Cortex* schema only as a lead.
-- Its Nano telemetry work is over **BLE**, with a documented GATT service, a write/notify command-response pair, and a segmented state dump. That is the route if we ever pursue the Nano.
+- Its **Nano USB product ID `0x88E7`** (vendor `0x152A`) is now independently hardware-verified on Linux. `DeviceKind` still retains `0xFFFF` only until device-dependent framing is implemented, so the current Quad-only transport continues to fail closed rather than opening a 65-byte device through its 129-byte path.
+- Its **65-byte HID report** observation - report ID plus 64-byte body - is now hardware-verified. The Nano report descriptor is otherwise byte-for-byte the Quad descriptor, including input report ID `0x01` and output report ID `0x02`.
+- Its negative passive-HID result remains correct but was incomplete. A labelled active probe showed that the Nano shares the Quad's HID length/flag framing and multi-report reassembly. The known Nano BLE current-state request maps directly onto a complete HID frame and returns the same Nano state protobuf and four-byte footer over USB.
+- The Nano does **not** use the Quad's eight-byte message-type trailer or Quad handshake unchanged. A Quad `Version READ` was ignored, while the Nano current-state request returned nine reports and decoded successfully. Reuse the transport/framing substrate, not the Quad message registry or domain model.
+- The editor protocol is exclusive across BLE and HID. An active Bluetooth client caused USB requests to receive `Device is busy!`; disconnecting Bluetooth allowed the same state read to succeed.
+- Its BLE write/notify command-response pair and state decoder are now also the strongest prior art for a Nano USB implementation because the application payload is shared across those transports.
 
 ### An additional project, not vendored
 

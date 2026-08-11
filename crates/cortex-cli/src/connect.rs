@@ -556,11 +556,11 @@ impl Daemon {
                 bypass,
             } => self.respond(move |c| {
                 c.set_bypass(cortex_rs::Row::try_from_wire(row)?, column, bypass)
-                    .map(|()| serde_json::json!({ "applied": true }))
+                    .map(|()| serde_json::json!({ "applied": true, "verified": true }))
             }),
             Request::RemoveBlock { row, column } => self.respond(move |c| {
                 c.remove_block(cortex_rs::Row::try_from_wire(row)?, column)
-                    .map(|()| serde_json::json!({ "applied": true }))
+                    .map(|()| serde_json::json!({ "applied": true, "verified": true }))
             }),
             Request::MoveBlock {
                 from_row,
@@ -581,7 +581,7 @@ impl Daemon {
             }),
             Request::SetSplit { row, split, mix } => self.respond(move |c| {
                 c.set_split(cortex_rs::Row::try_from_wire(row)?, split, mix)
-                    .map(|()| serde_json::json!({ "applied": true }))
+                    .map(|()| serde_json::json!({ "applied": true, "verified": true }))
             }),
             Request::SetRouting { row, input, output } => self.respond(move |c| {
                 let row = cortex_rs::Row::try_from_wire(row)?;
@@ -592,7 +592,7 @@ impl Daemon {
                         "set-routing needs exactly one of input or output".into(),
                     )),
                 }
-                .map(|()| serde_json::json!({ "applied": true }))
+                .map(|()| serde_json::json!({ "applied": true, "verified": true }))
             }),
             Request::PrepareSave {
                 setlist,

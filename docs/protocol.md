@@ -4,6 +4,8 @@ What we know about the Cortex Control wire protocol, and how we know it.
 
 Almost all of this was established by [`stokes-audio/pyquadcortex`](https://github.com/stokes-audio/pyquadcortex) against real hardware. Findings marked **measured here** are this project's own, collected across several hardware runs against a Quad Cortex running CorOS 4.0.1.
 
+For a device-first implementation guide, see [Quad Cortex HID transport](quad-cortex-hid.md) and [Nano Cortex HID transport](nano-cortex-hid.md). This page carries the shared framing model and the deeper Quad Cortex message/session/operation reference.
+
 ## Transport
 
 | | |
@@ -38,25 +40,27 @@ A client should therefore refuse to open the device when it can tell another own
 
 Reconnect has the same constraint. Stopping worker threads is not enough if another `Arc` still retains the underlying HID object. A session owner must join readers and explicitly destroy the old handle before attempting the replacement open; in-flight operations must drain behind the same recovery barrier. This implementation has both an exclusivity-aware fake proving that order and a CorOS 4.0.1 unplug/replug run in which the replacement handshake returned to `live` and its first grid read succeeded.
 
-### Nano Cortex compatibility is unestablished
+### Nano Cortex shares HID framing, not the Quad envelope
 
-The recovered schema contains `DeviceType.ATMA`, the Nano Cortex codename, but that enum value does **not** establish transport compatibility. Third-party macOS observation in [`deskop-nano-cortex`](https://github.com/rixrix/deskop-nano-cortex) records provisional VID:PID `152A:88E7` and 65-byte HID reports (one report-ID byte plus 64 payload bytes), rather than the Quad Cortex's 129. Its HID interface opened but produced no passive input reports; an unknown handshake may still exist.
+**Hardware-measured on a Nano Cortex on 2026-08-11.** The Nano presents as VID:PID `152A:88E7` on HID interface 5. Its report descriptor is byte-for-byte the Quad Cortex descriptor except that each report body is 64 bytes rather than 128, so hidapi reads and writes are 65 bytes rather than 129. Input remains report ID `0x01`, output remains `0x02`, and the `[report_id][len][flags][data]` layout and `FIRST`/middle/`LAST` reassembly below are shared. A passive five-second HID observation produced no reports.
 
-This project has not tested a Nano Cortex, and nobody has shown one exchanging this protobuf-plus-trailer protocol over HID. Do not apply the Quad Cortex's report size, framing, handshake, or message semantics to a Nano until hardware establishes each of them.
+The Nano's application envelope is different. The BLE current-state request bytes map directly onto one complete HID frame: its BLE length prefix becomes HID `len`, BLE `0xC0` becomes the HID complete flag, and the remaining bytes become frame data. The reply arrived in nine HID reports - one `FIRST`, seven middle, and one `LAST` - which reassembled to 546 meaningful bytes. The reassembled Nano body is its state protobuf followed by a four-byte command-specific footer, not the Quad's eight-byte message-type trailer. The existing Nano state decoder recovered firmware, four of five amp controls, capture and IR assignments, all five bypass states, and all five FX model IDs from that USB reply.
 
-## Framing
+The editor channel is exclusive across transports. While another Bluetooth client was active, both Nano and Quad-shaped HID requests received a Nano confirmation carrying `Device is busy!`; the current-state request succeeded immediately after Bluetooth disconnected. A Quad `Version READ` with the Quad eight-byte trailer then received no reply, so the Quad handshake and message registry must not be applied to the Nano merely by changing PID and report size.
+
+## HID framing
 
 ```text
 [report_id][len][flags][data ... zero padded]
 ```
 
-`flags` is `0x40` FIRST, `0x80` LAST, `0xC0` complete, `0x00` middle.
+`flags` is `0x40` FIRST, `0x80` LAST, `0xC0` complete, `0x00` middle. The data capacity is device-dependent: 126 bytes per Quad report and 62 bytes per Nano report.
 
 There are **no sequence numbers, no offsets, and no total-length field anywhere**. Reassembly is purely flag-driven: a FIRST frame starts a buffer, middles append, a LAST or COMPLETE emits.
 
 A FIRST frame arriving mid-reassembly means the previous message was lost. The decoder can drop the stale partial and resynchronise, but a subscribed client must invalidate cached continuity because the missing body may have contained state.
 
-## Message envelope
+## Quad Cortex message envelope
 
 A reassembled message is `protobuf ++ 8-byte trailer`, and **the message-type tag lives in the trailer, not a header**: a little-endian `uint16` `CortexMessageType`. The generated enum has 70 concrete operational values numbered 1 through 70, bracketed by `Undefined=0` and the terminal `NumberOfMessageTypes=71` sentinel. Neither sentinel is a message. Tags outside the recovered enum must remain numeric unknown values rather than being coerced to `Undefined`.
 
@@ -67,7 +71,7 @@ Two independent kinds of gzip are in play, and a client needs both in different 
 - **Frame-level**: the reassembled payload starts `1f 8b`. Decompress before protobuf decode.
 - **Field-level**: gzip inside a protobuf `bytes` field. The model catalog is the notable case.
 
-## The connect handshake
+## The Quad Cortex connect handshake
 
 The device **will not push state to a client that has merely opened the pipe**:
 
@@ -383,6 +387,23 @@ A grid edit is a `BinaryPreset` carrying only the elements being changed, each w
 
 A preset freshly read from a recall carries **no** explicit row, so writing one back wholesale **does nothing**.
 
+### Grid routing uses numeric wire enums and closed host names
+
+`Chain.in_portid` and `Chain.out_portid` remain numeric protobuf fields. The device does not validate every output integer: a meaningless value can be stored and read back cleanly. Host-facing APIs therefore expose closed `GridInputPort` and `GridOutputPort` values, serialised as stable snake-case names, and reject unknown names or raw integers before device I/O.
+
+| Input name | Wire value | Input name | Wire value |
+| --- | ---: | --- | ---: |
+| `empty` | 0 | `previous_row` | 7 |
+| `input1` / `input2` / `input12` | 1 / 2 / 3 | `usb5` / `usb6` / `usb7` / `usb8` | 8 / 9 / 10 / 11 |
+| `return1` / `return2` / `return12` | 4 / 5 / 6 | `usb56` / `usb78` / `sidechain_buffer` | 12 / 13 / 14 |
+
+| Output name | Wire value | Output name | Wire value |
+| --- | ---: | --- | ---: |
+| `empty` | 0 | `usb5` / `usb6` / `usb7` / `usb8` | 10 / 11 / 12 / 13 |
+| `xlr12` / `out34` / `send12` | 1 / 2 / 3 | `usb56` / `usb78` | 14 / 15 |
+| `xlr1` / `xlr2` / `out3` / `out4` | 4 / 5 / 6 / 7 | `next_row3` / `next_row4` / `next_row34` | 16 / 17 / 18 |
+| `send1` / `send2` | 8 / 9 | `multiple` / `usb3` / `usb4` / `usb34` | 19 / 20 / 21 / 22 |
+
 ### Traps that fail silently
 
 | Trap | Consequence |
@@ -466,7 +487,7 @@ Rows and columns are zero-based on the wire. The source must be occupied and the
 
 Hardware read-back on CorOS 4.0.1 confirmed a same-row move and reverse preserved every parameter, all eight bypass slots, scene mode, model identity and routing, and a cross-row move transferred the block while clearing its source. That cross-row test began with an existing branch at split 2 / mix 5, which the device retained unchanged; a cross-row move does not gratuitously recompute an already-valid path. Recalling the stored preset restored the original cells and routing.
 
-The discriminating bypass test also exposed an existing host-side gap: immediately after `set_bypass`, a cache-backed grid read still showed the old value, while the explicit full read performed by `move_block` observed the changed value and the destination then carried it. A successful write dispatch is not proof that every cache path has converged; bypass and the other simple working-copy writes still need the post-write read-back tracked in MCP-002.7.
+The discriminating bypass test established why host confirmation cannot trust the subscribed cache immediately after a write: a cache-backed read still showed the old value, while an explicit complete live-grid read observed the applied value. Host-facing parameter, bypass, removal, routing, and split writes now issue that explicit read before reporting success. If the requested state is absent, they return `GridWriteUnconfirmed`, which host surfaces expose as `outcome_unconfirmed`. The mandatory per-call confirmation contract and typed routing passed the official-client MCP hardware smoke against CorOS 4.0.1 on 2026-08-11.
 
 ### `read_preset` recalls, and that resets the scene
 
@@ -485,6 +506,8 @@ Prepared saves rely on that continuous subscription as their mutation epoch. Pre
 ## Scene labels, colours, copy and swap
 
 Scenes are indexed 0-7 on the wire and displayed as A-H. Their labels and colours are stored in `BinaryPreset.scene_labels` and `BinaryPreset.scene_colors`; an unlabelled scene is one space (`" "`), not an empty string. Colours are ARGB `uint32` values.
+
+CorOS 4.0.1 accepts colours outside the unit's built-in scene-colour palette. On 2026-08-11, writing neutral grey `0xFF808080` to scene B and then reconnecting for a fresh complete live-grid read returned exactly `0xFF808080`; recalling the stored preset restored the working copy. This proves arbitrary RGB storage without quantisation. Physical LED rendering and alpha-channel semantics remain visually unverified.
 
 ```text
 SceneLabel{action: UPDATE, index: 2, label: "Wide Lead"}

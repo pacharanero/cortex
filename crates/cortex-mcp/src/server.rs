@@ -354,13 +354,13 @@ impl CortexMcp {
             },
             "set_chain_input" => Request::SetRouting {
                 row: bounded_u32(args, "row", 0, 3)?,
-                input: Some(u32_arg(args, "port")?),
+                input: Some(serde_json::from_value(required(args, "port")?.clone())?),
                 output: None,
             },
             "set_chain_output" => Request::SetRouting {
                 row: bounded_u32(args, "row", 0, 3)?,
                 input: None,
-                output: Some(u32_arg(args, "port")?),
+                output: Some(serde_json::from_value(required(args, "port")?.clone())?),
             },
             "set_split" => Request::SetSplit {
                 row: bounded_u32(args, "row", 0, 3)?,
@@ -379,7 +379,18 @@ impl CortexMcp {
             }
             _ => anyhow::bail!("unknown tool: {name}"),
         };
-        let value = self.daemon.client.request_value(&request)?;
+        let client = match &request {
+            Request::SetParam {
+                timeout_seconds, ..
+            } => self
+                .daemon
+                .client
+                .as_ref()
+                .clone()
+                .with_timeout(Duration::from_secs(timeout_seconds.saturating_mul(3) + 5)),
+            _ => self.daemon.client.as_ref().clone(),
+        };
+        let value = client.request_value(&request)?;
         if name == "list_blocks" {
             let preset: cortex_rs::view::Preset = serde_json::from_value(value)?;
             return Ok(serde_json::to_value(preset.blocks)?);
@@ -523,43 +534,43 @@ fn tools() -> Vec<Tool> {
         tool(
             "set_param",
             &format!(
-                "Set one parameter on the unsaved grid. {ROW_TRAP} A scene-targeted write sends promote/switch/write and leaves that scene active."
+                "Set and read back one parameter on the unsaved grid. {ROW_TRAP} A scene-targeted write sends promote/switch/write and leaves that scene active."
             ),
             param_schema(),
             false,
         ),
         tool(
             "set_bypass",
-            &format!("Bypass or enable a block on the unsaved grid. {ROW_TRAP}"),
+            &format!("Bypass or enable a block and verify it by live-grid read-back. {ROW_TRAP}"),
             cell_schema(json!({"bypass":{"type":"boolean"}}), &["bypass"]),
             false,
         ),
         tool(
             "remove_block",
-            &format!("Remove a block from the unsaved grid. {ROW_TRAP}"),
+            &format!(
+                "Remove a block and verify the cell is empty by live-grid read-back. {ROW_TRAP}"
+            ),
             cell_schema(json!({}), &[]),
             false,
         ),
         tool(
             "set_chain_input",
-            &format!(
-                "Set a row input port on the unsaved grid. {ROW_TRAP} Port IDs are protocol enums, not sequential physical-input numbers; Return 1 is ID 4."
-            ),
-            routing_schema(),
+            &format!("Set and read back a typed row input on the unsaved grid. {ROW_TRAP}"),
+            routing_schema(cortex_rs::GridInputPort::ALL),
             false,
         ),
         tool(
             "set_chain_output",
             &format!(
-                "Set a row output port on the unsaved grid. {ROW_TRAP} IDs 16-18 are internal routing and 19 is the real MULTIPLE output; meaningless IDs may be stored silently."
+                "Set and read back a typed row output on the unsaved grid. {ROW_TRAP} Internal next-row routes and the real multiple output are named explicitly."
             ),
-            routing_schema(),
+            routing_schema(cortex_rs::GridOutputPort::ALL),
             false,
         ),
         tool(
             "set_split",
             &format!(
-                "Set row branch and rejoin columns on the unsaved grid. {ROW_TRAP} Only rows 0 and 2 can branch; split=-1 clears and mix=-1 means never rejoin."
+                "Set and read back row branch and rejoin columns on the unsaved grid. {ROW_TRAP} Only rows 0 and 2 can branch; split=-1 clears and mix=-1 means never rejoin."
             ),
             split_schema(),
             false,
@@ -619,8 +630,11 @@ fn list_schema() -> JsonObject {
         &["setlist"],
     )
 }
-fn routing_schema() -> JsonObject {
-    cell_schema(json!({"port":{"type":"integer","minimum":0}}), &["port"])
+fn routing_schema<T: serde::Serialize>(ports: &[T]) -> JsonObject {
+    object_schema(
+        json!({"row":{"type":"integer","minimum":0,"maximum":3,"description":ROW_TRAP},"port":{"type":"string","enum":serde_json::to_value(ports).expect("routing ports serialize")}}),
+        &["row", "port"],
+    )
 }
 fn split_schema() -> JsonObject {
     object_schema(
@@ -766,6 +780,30 @@ mod tests {
                 tool.name
             );
         }
+    }
+
+    #[test]
+    fn routing_tools_expose_closed_typed_port_schemas() {
+        for (name, expected) in [
+            (
+                "set_chain_input",
+                serde_json::to_value(cortex_rs::GridInputPort::ALL).unwrap(),
+            ),
+            (
+                "set_chain_output",
+                serde_json::to_value(cortex_rs::GridOutputPort::ALL).unwrap(),
+            ),
+        ] {
+            let tool = tools().into_iter().find(|tool| tool.name == name).unwrap();
+            let port = &tool.input_schema["properties"]["port"];
+            assert_eq!(port["type"], "string");
+            assert_eq!(port["enum"], expected);
+            assert_eq!(tool.input_schema["required"], json!(["row", "port"]));
+            assert!(tool.input_schema["properties"].get("column").is_none());
+        }
+
+        assert!(serde_json::from_value::<cortex_rs::GridInputPort>(json!(1)).is_err());
+        assert!(serde_json::from_value::<cortex_rs::GridOutputPort>(json!("not_a_port")).is_err());
     }
 
     #[test]

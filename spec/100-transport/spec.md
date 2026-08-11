@@ -43,7 +43,7 @@ This zone owns the `Transport` struct that wraps `hidapi::HidDevice` and encodes
 | The benign write STALL (`hid_write` returns `-1` on success) | Hardware-verified | Observed on this machine; documented in `pyquadcortex` |
 | Swallow write errors, detect dead device via read timeout | Hardware-verified | `cortex device version` succeeds despite `-1` writes; a powered-off device surfaces as `Error::ReadTimeout` |
 | `Transport::request` gzip-decompresses frame-level payloads starting `1f 8b` | Hardware-verified | Observed on RecallPreset pushes from `pyquadcortex`; the `version` round-trip does not compress |
-| Nano Cortex transport | Unestablished | Third-party observation reports VID:PID `152A:88E7` and 65-byte reports, but no protobuf/trailer exchange; `device.rs` deliberately retains a non-matching `0xFFFF` sentinel |
+| Nano Cortex transport | Partly hardware-verified | Real Nano on Linux confirmed VID:PID `152A:88E7`, interface 5, 65-byte reports, shared length/flag framing, multi-report state transfer, and cross-transport BLE ownership. Runtime support remains fail-closed until device-dependent geometry and the Nano codec land together |
 
 The `pyquadcortex` offline test suite is a conformance reference but not a substitute for a hardware smoke run. Agent-generated tests must not be the sole basis for accepting transport behaviour.
 
@@ -85,8 +85,8 @@ CLI users, the MCP server, the future Tauri GUI backend, and downstream crate co
 | FR-6 | `Transport` holds a single `hidapi::HidDevice`; it does not open a new connection per call. Drop releases that handle. Host-level `LocalClaim` enforces effective process ownership. | Must Have |
 | FR-7 | `Transport::open` returns `Error::DeviceNotFound` when no matching device is enumerated; permission/backend failures may surface as HID errors. User-facing diagnostics belong to the host surfaces. | Must Have |
 | FR-8 | `Transport::request` returns the first reassembled message, not one correlated by `request_id` (READ replies carry none). Correlation is a later concern owned by the session layer (140). | Should Have |
-| FR-9 | Framing owns `HID_BODY_LEN = 128` and `HID_REPORT_LEN = 129`; transport re-exports them for compatibility. `DEFAULT_READ_TIMEOUT = 2s` remains transport-owned. | Must Have |
-| FR-10 | `DeviceKind::NanoCortex` is accepted by `Transport::open` but labelled provisional; its product ID is a placeholder until hardware-verified. | Should Have |
+| FR-9 | Framing owns the currently implemented Quad constants `HID_BODY_LEN = 128` and `HID_REPORT_LEN = 129`; transport re-exports them for compatibility. Device-dependent geometry must preserve those values for Quad and use 64/65 for Nano. `DEFAULT_READ_TIMEOUT = 2s` remains transport-owned. | Must Have |
+| FR-10 | `DeviceKind::NanoCortex` is accepted by `Transport::open` but labelled provisional; its product ID remains a placeholder until the hardware-verified Nano geometry and codec are implemented. | Should Have |
 
 ### Non-Functional Requirements
 
@@ -117,7 +117,7 @@ CLI users, the MCP server, the future Tauri GUI backend, and downstream crate co
 - **`request_id` correlation and broadcast waiting.** Owned by the session layer (`140-session`). `Transport::request` returns the first reassembled message, full stop.
 - **The paced connect handshake (ResetCommsBuffers; Version READ/cache and UPDATE; ModelRepo READ/wait; Connection; 22 subscribe READs; CPULoad CREATE; adaptive settle).** Owned by `140-session`.
 - **Background RX thread.** Owned by the session layer (`140`); the raw transport remains synchronous and blocking.
-- **Nano Cortex transport and behaviour.** The recovered schema's `ATMA` value is not evidence of a shared wire protocol. Third-party observation reports a different HID report size; all Nano transport assumptions remain provisional until verified against real hardware.
+- **Nano Cortex application behaviour.** Hardware established a shared HID framing substrate and a Nano state exchange, but not the Quad message envelope, handshake, registry, or domain semantics. Those remain separate implementation work under NANO-001.
 - **On-device / ioctl access.** The `qc-stomp-tools` route is out of scope; this project uses the USB HID route exclusively.
 
 ## Dependencies
@@ -144,7 +144,7 @@ Re-plug the Quad Cortex. The interface number's `hidraw` path is assigned dynami
 ## Future
 
 - **Protocol compatibility probe.** Device identity is cached, but the wire exposes no explicit protocol version. A CorOS update can still break compatibility silently.
-- **Nano Cortex hardware verification.** `DeviceKind::NanoCortex` carries a non-matching product ID (`0xFFFF`) until a real device is tested. Verify its report geometry, framing, envelope, and handshake independently before replacing the sentinel with the third-party-observed `0x88E7`.
+- **Nano Cortex implementation.** Hardware verification established PID `0x88E7`, 65-byte reports, frame flags, a four-byte Nano footer, and a decoded state read. Generalise transport geometry and add the Nano codec before replacing the fail-closed `0xFFFF` sentinel.
 
 ## Glossary
 
@@ -152,8 +152,8 @@ Re-plug the Quad Cortex. The interface number's `hidraw` path is assigned dynami
 | --- | --- |
 | Write STALL | The benign USB status-stage stall on every `SET_REPORT`; `hid_write()` returns `-1` on a write that worked |
 | Effective HID ownership | One host process must own the interface; the OS/device does not reliably enforce this and a second open can wedge the first owner |
-| HID body | The 128-byte payload portion of a report, excluding the 1-byte report ID |
-| HID report | The 129-byte unit at the hidapi boundary: 1-byte report ID + 128-byte body |
+| HID body | The report payload excluding the 1-byte report ID: 128 bytes on Quad Cortex, 64 on Nano Cortex |
+| HID report | The unit at the hidapi boundary: 129 bytes on Quad Cortex, 65 on Nano Cortex |
 | Input report | Device-to-host, report ID `0x01` |
 | Output report | Host-to-device, report ID `0x02` |
 | Dead-device signal | A read timeout (`Error::ReadTimeout`), not a write error, because writes are deliberately stalled |

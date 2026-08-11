@@ -47,7 +47,7 @@ The proposed tool surface has four tiers, each with a different safety posture:
 | Read | `list_presets`, `read_preset`, `list_blocks`, `get_device_version`, `read_current_preset`, `list_folders` | Unrestricted. (But note: `read_preset` has a recall side effect - surface it in the description.) |
 | Transient write | `recall_preset`, `switch_scene` | Free. Changes what is heard; nothing persistent is lost. |
 | Working-copy scene write | `set_scene_label`, `unlabel_scene`, `set_scene_color`, `copy_scene`, `swap_scenes` | Free. Changes device RAM only; copy/swap move labels and colours with sound state and force a live-preset refresh. |
-| Working-copy write | `set_block`, `set_param`, `set_bypass`, `remove_block`, `set_chain_input`, `set_chain_output`, `set_split` | Free. Edits device RAM; persists only on save. Surface per-operation traps. |
+| Working-copy write | `set_block`, `set_param`, `set_bypass`, `remove_block`, `set_chain_input`, `set_chain_output`, `set_split` | Free. Edits device RAM; persists only on save. Routing uses closed typed names; parameter, bypass, removal, routing, and split require complete live-grid read-back before success. |
 | Destructive | `save_preset` | **Gated.** Require explicit slot, refuse FACTORY, require confirmation, and consume a matching pre-edit backup or empty-target preparation. |
 
 This tiering is the design that matters. The tool list is a thin wrapper over the client layer; the tiering is what stops an agent from destroying a patch.
@@ -86,6 +86,8 @@ The traps are not errors - the device does not refuse a wrong-row edit or a too-
 - **`read_preset` side effect**: `read_preset` notes "RECALLS the slot (loads onto the grid, discards unsaved edits, resets active scene); use `read_current_preset` for inspection during editing."
 - **`set_block` DSP refusal**: `set_block` notes "a block that exceeds the preset's processing budget is accepted on the wire and silently absent; `verify=true` (default) catches this."
 - **`set_param(scene=)` 3-message rule**: `set_param` notes "a scene-targeted write issues 3 messages (promote scene_mode, switch scene, write) and leaves the unit on the target scene (visible side effect)."
+- **Routing-id trap**: the device stores meaningless output integers and reads them back cleanly, so MCP exposes only closed input/output string enums.
+- **Dispatch is not confirmation**: a subscribed cache can still show the old state immediately after a write, so affected tools explicitly read the complete live grid before reporting success.
 
 ### Alternatives considered
 
@@ -144,13 +146,13 @@ The tool list mirrors the client API (zone 150), grouped by the destructive tier
 | `set_scene_label`, `unlabel_scene`, `set_scene_color` | typed daemon scene requests | Working-copy write |
 | `copy_scene`, `swap_scenes` | `QuadCortex::copy_scene` plus full live read-back | Working-copy write |
 | `set_block` | `QuadCortex::set_block` | Working-copy write |
-| `set_param`, `set_bypass`, `remove_block` | corresponding `QuadCortex` methods | Working-copy write |
-| `set_chain_input`, `set_chain_output`, `set_split` | corresponding `QuadCortex` methods | Working-copy write |
+| `set_param`, `set_bypass`, `remove_block` | corresponding read-back-verified `QuadCortex` methods | Working-copy write |
+| `set_chain_input`, `set_chain_output`, `set_split` | typed, read-back-verified `QuadCortex` methods | Working-copy write |
 | `save_preset` | `QuadCortex::prepare_save_before_editing` + `QuadCortex::save_prepared` | Destructive |
 
 ### Design choice: `inputSchema` matches CLI `--schema`
 
-Tool schemas are explicit, bounded JSON Schemas maintained in the MCP registry. CLI `--schema` does not exist yet; CLI-007.1 will introduce one typed registry and migrate both surfaces to it.
+Tool schemas are explicit, bounded JSON Schemas maintained in the MCP registry. Routing schemas derive their closed string values from `GridInputPort::ALL` and `GridOutputPort::ALL`. CLI `--schema` does not exist yet; CLI-007.1 will introduce one typed registry and migrate both surfaces to it.
 
 ### Design choice: `save_preset` is a distinct tool, not a flag
 
@@ -188,5 +190,5 @@ The server uses the `rmcp` crate on a `tokio` runtime. Stable `rmcp` 3.1.0 still
 - **Prepared-save token and backup retention are implemented in the shared crate.** The MCP server still needs an opaque token registry so it can retain `SavePreparation` between tool calls without serialising raw backups.
 - **Automatic restoration is not implemented.** The retained `BinaryPreset` can be persisted, but the device ignores an unkeyed whole-preset grid write. Restoration needs a separately verified device-side copy, import, or keyed replay path; hosts must not present the retained blob as one-click rollback yet.
 - **The reusable host boundary is extracted.** `cortex-host` owns the typed daemon protocol and synchronous short-lived local IPC client. It has no HID feature; CLI and MCP share it without putting host IPC into the leaf crate. Platform details stay behind `LocalEndpoint`, `LocalListener` and `LocalConnection`.
-- **Daemon failures remain typed across both boundaries.** Protocol v10 carries a `DaemonErrorCode` beside every human diagnostic. `cortex-host` turns that envelope into a downcastable `DaemonError`; MCP converts it to structured tool content with top-level `code` and `error` fields. The mapping matches `cortex_rs::Error` variants and explicit daemon lifecycle state, never display strings. JSON-RPC errors remain reserved for malformed MCP traffic and server failures rather than model-correctable tool outcomes.
+- **Daemon failures remain typed across both boundaries.** Protocol v11 carries a `DaemonErrorCode` beside every human diagnostic and serialises typed routing names in `SetRouting`. `cortex-host` turns error envelopes into a downcastable `DaemonError`; MCP converts them to structured tool content with top-level `code` and `error` fields. The mapping matches `cortex_rs::Error` variants and explicit daemon lifecycle state, never display strings. JSON-RPC errors remain reserved for malformed MCP traffic and server failures rather than model-correctable tool outcomes.
 - **Destructive MCP save is intentionally deferred.** The former core PROT-009 blockers and typed daemon failures are closed; MCP still needs configured policy, opaque token lifecycle, restoration semantics and its own hardware smoke.

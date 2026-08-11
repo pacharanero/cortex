@@ -39,16 +39,16 @@ This zone owns the thin MCP tool wrappers and enforces the shared safety surface
 | --- | --- | --- |
 | Shared save policy (explicit target and confirmation, absolute factory refusal, pre-edit preparation/backup, stale-target refusal) | Implemented, fake-session tested, and prepare/edit/commit ordering hardware-verified through the CLI; MCP save remains deliberately absent | `crates/cortex-rs/src/safety.rs`; ENG-006.3 |
 | MCP tool descriptions and single owning process | Implemented and hardware-verified | `crates/cortex-mcp/src/server.rs`; 2026-08-06 hardware smoke |
-| Read, transient and working-copy tiers | Implemented and hardware-verified | `crates/cortex-mcp/src/server.rs`; official-client process test and hardware smoke |
+| Read, transient and working-copy tiers | Implemented and hardware-verified, including typed routing and mandatory per-call read-back | `crates/cortex-mcp/src/server.rs`; official-client process test and hardware smokes on 2026-08-06 and 2026-08-11 |
 | Destructive tier | Deliberately absent | Core correctness blockers are closed; MCP-specific policy configuration, token lifecycle, restoration semantics, typed errors and hardware smoke remain |
 | Bounded official-SDK stdio transport | Implemented and tested | `crates/cortex-mcp/src/transport.rs`; stable `rmcp` 3.1.0 remains affected by upstream #1030 |
 | The `rmcp` crate is the MCP server framework | Implemented | Process-tested with the official SDK client and hardware-smoked through that client |
 
-The non-persistent MCP host is hardware-verified against a real Quad Cortex through the official SDK client. Persistent save remains absent until the MCP token registry, exact-target confirmation flow, and its own hardware smoke exist.
+The non-persistent MCP host, including typed routing and mandatory per-call read-back, is hardware-verified against a real Quad Cortex through the official SDK client. Persistent save remains absent until the MCP token registry, exact-target confirmation flow, and its own hardware smoke exist.
 
 ## Current Boundary
 
-The non-persistent milestone is complete and hardware-verified through an official SDK client. The installed MCP server now starts and lazily restarts an auto-managed sibling daemon when needed; an explicit compatible daemon is reused, and typed failures survive both host boundaries. The next MCP work is read-back and typed-routing hardening. Destructive save is a later independent milestone.
+The non-persistent milestone is complete and hardware-verified through an official SDK client. The installed MCP server starts and lazily restarts an auto-managed sibling daemon when needed; an explicit compatible daemon is reused, typed failures survive both host boundaries, routing uses closed names, and affected working-copy writes require complete live-grid read-back. Destructive save is a later independent milestone.
 
 ## User Stories
 
@@ -107,8 +107,8 @@ AI coding agents editing patches via MCP, and the maintainers who gate what an a
 | FR-24 | `recall_preset(setlist, slot)` - recall a preset (changes what is heard; nothing persistent lost). Write, transient. | Must Have |
 | FR-25 | `switch_scene(scene)` - switch the active scene. Write, transient. | Must Have |
 | FR-26 | `set_block(row, column, model, verify)` - place a model in a cell. Write, working copy only (edits the recalled preset in device RAM). | Must Have |
-| FR-27 | `set_param(row, column, param_index, value, scene, ...)` - set one block parameter. Write, working copy only. | Must Have |
-| FR-28 | `set_chain_input`, `set_chain_output`, and `set_split` expose routing operations separately. Raw port integers remain provisional until typed enums land. | Must Have |
+| FR-27 | `set_param(row, column, param_index, value, scene, ...)` sets one block parameter and reports success only after a complete live-grid read confirms the target value and scene. Write, working copy only. | Must Have |
+| FR-28 | `set_chain_input` and `set_chain_output` accept closed string enums backed by `GridInputPort` and `GridOutputPort`; raw integers and unknown names are rejected before daemon dispatch. `set_split` remains separate. All three report success only after complete live-grid read-back confirms the requested state. | Must Have |
 | FR-29 | `save_preset(setlist, slot, preparation, confirm)` - save the working copy to a slot. **Destructive and deferred beyond the first MCP milestone.** Gate this: require explicit slot, refuse FACTORY (FR-2), require confirmation (FR-1), and require a matching pre-edit preparation (FR-4). | Must Have |
 | FR-30 | `read_current_preset()` - read the live grid without recalling (no side effect). Read, unrestricted. | Should Have |
 | FR-31 | `list_folders()` - list all folders the device knows. Read, unrestricted. | Should Have |
@@ -135,7 +135,7 @@ AI coding agents editing patches via MCP, and the maintainers who gate what an a
 | NFR-1 | The MCP process opens zero HID transports; the held daemon remains the sole owner. | Review-enforced |
 | NFR-2 | A `save_preset` refusal is a structured error, not a silent no-op. The agent sees the refusal and the safe alternative. | Review-enforced |
 | NFR-3 | Tool schemas are explicit and bounded today. They converge with a future shared CLI/MCP registry under CLI-007.1; no CLI `--schema` contract exists yet. | Design-enforced |
-| NFR-4 | The non-persistent server is hardware-verified. Destructive save and each newly added operation remain provisional until their own hardware smoke. | Docs-enforced |
+| NFR-4 | The non-persistent server is hardware-verified per operation. A changed host contract remains provisional until its own hardware smoke, even when the underlying wire operation was already verified. | Docs-enforced |
 | NFR-5 | Agent-generated tests must not be the sole basis for accepting safety-surface behaviour. Cross-check against the client layer (150) and a real device. | AGENTS.md assurance |
 | NFR-6 | Tool execution failures use MCP's model-correctable structured-error path with top-level `code` and `error` fields; transport and server faults remain JSON-RPC errors. | Protocol-enforced |
 
@@ -156,6 +156,9 @@ AI coding agents editing patches via MCP, and the maintainers who gate what an a
 - [x] The non-persistent tool surface passed hardware smoke on 2026-08-06 against CorOS 4.0.1.
 - [x] A normally installed `cortex-mcp` resolves the sibling `cortex`, starts an auto-managed owner without a separate manual session, and writes no non-MCP data to stdout. Process tests cover two concurrent missing-daemon launches converging on one endpoint and a long-lived MCP process restarting after request-idle release.
 - [x] Typed daemon error codes survive the process boundary and appear in MCP structured tool errors. Tests cover leaf-error classification, a downcastable host error from a real daemon process, daemon reconnect/validation categories, and an official-SDK MCP call receiving `dsp_refused`.
+- [x] Routing schemas expose closed string enums, require only `row` and `port`, reject numeric/unknown values, and preserve typed routes through MCP JSON, daemon protocol v11 and core conversion.
+- [x] Parameter, bypass, removal, routing, and split success requires a complete matching live-grid read; mismatches become `GridWriteUnconfirmed` and daemon `outcome_unconfirmed`.
+- [x] The updated official-client hardware smoke passed typed routing and mandatory per-call read-back against the real daemon/core path on CorOS 4.0.1 on 2026-08-11, with USER `6A` restored by recall.
 
 ## Non-Goals
 

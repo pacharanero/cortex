@@ -4,8 +4,8 @@
 //! # cortex-rs
 //!
 //! Low-level Rust crate for the Neural DSP **Quad Cortex** over the Cortex
-//! Control USB HID protocol. **Nano Cortex** support is planned, but its
-//! transport compatibility is unverified. A port of the protocol behaviour
+//! Control USB HID protocol. **Nano Cortex** HID framing and state reads are
+//! hardware-verified, but runtime support is not yet implemented. A port of the protocol behaviour
 //! established by the MIT-licensed
 //! [`stokes-audio/pyquadcortex`](https://github.com/stokes-audio/pyquadcortex)
 //! Python library, re-verified against a real Quad Cortex on Linux.
@@ -102,7 +102,7 @@ pub use client::{
 };
 pub use device::DeviceKind;
 pub use framing::{Flags, Frame, FrameReassembler, ReportId};
-pub use grid::{Row, Value};
+pub use grid::{GridInputPort, GridOutputPort, Row, Value};
 pub use helpers::{
     Block as PresetBlock, GAIN_REDUCTION_PARAM, OptionCount, OptionSelector, RowAvailability,
     RowStatus, Split, StompAssignment, blocks, free_rows, input_chain_rows,
@@ -205,6 +205,11 @@ pub enum Error {
     /// A block move may have landed, but live-grid read-back did not prove it.
     #[error("block move outcome unconfirmed: {0}")]
     BlockMoveUnconfirmed(String),
+
+    /// A working-grid write was sent, but a complete live-grid read did not
+    /// show the requested state.
+    #[error("grid write outcome unconfirmed: {0}")]
+    GridWriteUnconfirmed(String),
 
     /// A row was addressed that cannot hold what was asked of it - an odd
     /// row for a splitter, or screen row 0, which does not exist.

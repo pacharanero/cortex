@@ -144,7 +144,7 @@ The transport layer (`100`), the message/domain layers (`120`/`130`), the CLI (`
 - **Frame-level gzip decompression.** Owned by `100-transport` (`Transport::request`); the framing layer operates on raw frames, not decompressed bodies.
 - **Field-level gzip (inside protobuf `bytes` fields).** Owned by the domain layer (`130`).
 - **`request_id` correlation, continuity policy, and unsolicited-push dispatch.** Owned by the implemented session layer (`140-session`).
-- **Nano Cortex framing.** No shared shape has been demonstrated. Third-party observation reports 65-byte Nano HID reports rather than the Quad Cortex's 129; define Nano framing only after a real exchange is captured.
+- **Nano Cortex application envelope.** Hardware established the same report IDs, length/flag fields, and `FIRST`/middle/`LAST` reassembly at a 65-byte report size. The Nano body ends in a command-specific four-byte footer rather than the Quad's eight-byte message-type trailer; encoding that envelope is separate NANO-001 work.
 
 ## Dependencies
 
