@@ -71,6 +71,8 @@ Maintainers, AI coding agents, and downstream crate consumers who decode or enco
 | FR-11 | The build script does not require network access; `protoc` is its only system dependency. Default HID builds have separate platform prerequisites owned by zone 100. | Must Have |
 | FR-12 | `Preset.proto` defines `BinaryPreset`, `Chain`, `Model`, `Param`, `ParamValue`, `Bypass`, `ColBypass`, `SceneBypass`, `SplitControlPoints`, `Expression`, `ExpressionBypassInfo`, `MidiMessageInfo`, `LegacyStompModeStompData`, `StompModeAssignment`, `SlotNotification`. | Must Have |
 | FR-13 | `ProductionAutomation.proto` defines the full message set referenced by `CortexMessageType`: `VersionMessage`, `GridMessage`, `RecallPresetMessage`, `SceneMessage`, `FileMessage`, `IOSettingsMessage`, `DiagnosticsMessage`, `ModeMessage`, `KeepAliveMessage`, `ConnectionMessage`, `ModelRepoMessage`, `ResetCommsBuffersMessage`, `SuspendConnectionMessage`, and the remaining production-automation messages. | Must Have |
+| FR-14 | A compile-time Rust registry maps every concrete operational `CortexMessageType` value 1 through 70 to exactly one generated protobuf struct and exposes a typed decoded enum, `decode_registered`, `registered_name`, reverse message type lookup, and an ordered registry table from one macro source. | Must Have |
+| FR-15 | `Undefined=0` and `NumberOfMessageTypes=71` are rejected as sentinels. Unknown future numeric trailer tags are rejected while retaining their original `u16`; they are never coerced to `Undefined`. | Must Have |
 
 ### Non-Functional Requirements
 
@@ -80,6 +82,7 @@ Maintainers, AI coding agents, and downstream crate consumers who decode or enco
 | NFR-2 | The generated module compiles with `#![forbid(unsafe_code)]` and `clippy::pedantic` at the crate level (suppressed inside `proto` via `#[allow(...)]`). | CI-enforced |
 | NFR-3 | The `.proto` files are not modified beyond the `package` line added to `Preset.proto` and the SPDX header; any further change is a deliberate protocol-version event recorded in [roadmap.md](../roadmap.md) under PROT-003. | Review-enforced |
 | NFR-4 | `reuse lint` passes for the `.proto` files (MIT-licensed, copyright Stokes) and `build.rs` (AGPL-licensed, copyright Dr Marcus Baw). | CI-enforced |
+| NFR-5 | Adding a generated `CortexMessageType` variant makes the registry's exhaustive matches fail to compile until the new concrete type or sentinel is classified. Registry decoding remains opt-in and does not decode or allocate every inbound message on the session hot path. | Compile-time / architectural invariant |
 
 ## Acceptance Criteria
 
@@ -90,9 +93,12 @@ Maintainers, AI coding agents, and downstream crate consumers who decode or enco
 - [x] `cortex_rs::proto::version_message::DeviceType` exposes `Qc=0` and `Atma=1`.
 - [x] `cargo build -p cortex-rs --no-default-features` succeeds with `protoc` present and no HID hardware.
 - [x] `reuse lint` passes for the proto directory and the build script.
+- [x] The Rust registry contains exactly the 70 concrete values, decodes an empty default body for each generated struct, and round-trips every decoded variant to its generated enum value.
+- [x] Both sentinels and unknown future numeric values are rejected without collapsing their tags.
 
 ## Non-Goals
 
+- Operational meaning or support claims for registered messages; the registry records only the schema's tag-to-struct relationship.
 - The typed domain model that wraps these proto types (owned by [130-domain-model](../130-domain-model/spec.md)).
 - Frame-level gzip decompression (transport/session) and field-level catalog decompression (zone 130).
 - On-the-fly schema recovery or runtime `.proto` parsing; the schema is compile-time only.

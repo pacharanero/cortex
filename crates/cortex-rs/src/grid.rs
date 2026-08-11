@@ -31,9 +31,10 @@
 //! @see spec/130-domain-model/spec.md
 
 use crate::proto::{
-    BinaryPreset, Bypass, Chain, ColBypass, GridMessage, GridMoveElement, GridMoveMessage, Model,
-    Param, ParamValue, SceneBypass, binary_preset, bypass, chain, col_bypass, grid_message,
-    message_action::Enum as MessageAction, model, param, param_value,
+    BinaryPreset, Bypass, Chain, ColBypass, Expression, ExpressionBypassInfo, GridMessage,
+    GridMoveElement, GridMoveMessage, Model, Param, ParamValue, SceneBypass, StompModeAssignment,
+    binary_preset, bypass, chain, col_bypass, grid_message, message_action::Enum as MessageAction,
+    model, param, param_value,
 };
 
 /// A grid row, which exists to stop the zero-based/one-based confusion being
@@ -122,6 +123,31 @@ pub enum Value {
     Text(String),
 }
 
+/// A row-level control stored outside `chain.models` but addressed by a fixed
+/// model id.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SubControl {
+    /// The mixer where an even row's two lanes recombine (model 11000).
+    Mixer,
+    /// One row's output volume, pan, mute, and solo controls (model 23000).
+    LaneOutput,
+    /// One row's input noise gate (model 28000).
+    InputGate,
+}
+
+/// Model id of the preset-local tempo and metronome control.
+pub const TEMPO_CONTROL: u32 = 25_000;
+
+impl SubControl {
+    const fn model_id(self) -> u32 {
+        match self {
+            Self::Mixer => 11_000,
+            Self::LaneOutput => 23_000,
+            Self::InputGate => 28_000,
+        }
+    }
+}
+
 impl Value {
     fn into_param_value(self) -> ParamValue {
         ParamValue {
@@ -165,6 +191,231 @@ fn keyed_model(column: u32) -> Model {
         column: Some(model::Column::Column(column)),
         ..Default::default()
     }
+}
+
+fn normalised_param(param_index: u32, value: f32) -> crate::Result<Param> {
+    if !value.is_finite() || !(0.0..=1.0).contains(&value) {
+        return Err(crate::Error::InvalidParameter(format!(
+            "normalised values are 0.0-1.0, got {value}"
+        )));
+    }
+    Ok(Param {
+        index: Some(param::Index::Index(param_index)),
+        param_values: vec![Value::Normalised(value).into_param_value()],
+        ..Default::default()
+    })
+}
+
+fn scene_mode_param(param_index: u32, enabled: bool) -> Param {
+    Param {
+        index: Some(param::Index::Index(param_index)),
+        scene_mode: Some(param::SceneMode::SceneMode(enabled)),
+        ..Default::default()
+    }
+}
+
+fn require_branch_row(row: Row, control: &str) -> crate::Result<()> {
+    if !matches!(row.wire(), 0 | 2) {
+        return Err(crate::Error::InvalidRow(format!(
+            "row {} (screen row {}) has no {control}: only wire rows 0 and 2 can branch",
+            row.wire(),
+            row.screen()
+        )));
+    }
+    Ok(())
+}
+
+fn require_grid_row(row: Row) -> crate::Result<()> {
+    if row.wire() > 3 {
+        return Err(crate::Error::InvalidRow(format!(
+            "wire rows are numbered 0-3, got {}",
+            row.wire()
+        )));
+    }
+    Ok(())
+}
+
+fn require_grid_cell(row: Row, column: u32) -> crate::Result<()> {
+    require_grid_row(row)?;
+    if column > 7 {
+        return Err(crate::Error::InvalidParameter(format!(
+            "grid columns are numbered 0-7, got {column}"
+        )));
+    }
+    Ok(())
+}
+
+/// Remove any STOMP assignment for one grid cell.
+///
+/// This is the first half of assignment: the device requires DELETE followed
+/// by UPDATE, and an UPDATE alone leaves the previous assignment in place.
+///
+/// # Errors
+///
+/// Returns an invalid row or parameter error unless the cell is within the
+/// four-by-eight grid.
+pub fn clear_stomp_assignment(row: Row, column: u32) -> crate::Result<GridMessage> {
+    require_grid_cell(row, column)?;
+    Ok(grid(
+        MessageAction::Delete,
+        BinaryPreset {
+            stomp_mode_assignments: vec![StompModeAssignment {
+                row: row.wire(),
+                column,
+                ..Default::default()
+            }],
+            ..Default::default()
+        },
+    ))
+}
+
+/// Build the UPDATE half of assigning one cell to a STOMP footswitch.
+///
+/// # Errors
+///
+/// Returns an invalid row or parameter error unless the cell is within the
+/// four-by-eight grid and the footswitch is 0-7.
+pub fn set_stomp_assignment(row: Row, column: u32, footswitch: u32) -> crate::Result<GridMessage> {
+    require_grid_cell(row, column)?;
+    if footswitch > 7 {
+        return Err(crate::Error::InvalidParameter(format!(
+            "footswitches are numbered 0-7 (A-H), got {footswitch}"
+        )));
+    }
+    Ok(grid(
+        MessageAction::Update,
+        BinaryPreset {
+            stomp_mode_assignments: vec![StompModeAssignment {
+                row: row.wire(),
+                column,
+                stomp_index: footswitch,
+            }],
+            ..Default::default()
+        },
+    ))
+}
+
+/// Set whether one preset-local STOMP footswitch is momentary.
+///
+/// # Errors
+///
+/// Returns an invalid parameter error unless the footswitch is 0-7.
+pub fn set_stomp_momentary(footswitch: u32, momentary: bool) -> crate::Result<GridMessage> {
+    if footswitch > 7 {
+        return Err(crate::Error::InvalidParameter(format!(
+            "footswitches are numbered 0-7 (A-H), got {footswitch}"
+        )));
+    }
+    Ok(grid(
+        MessageAction::Update,
+        BinaryPreset {
+            stomp_is_momentary: [(footswitch, momentary)].into_iter().collect(),
+            ..Default::default()
+        },
+    ))
+}
+
+/// Set one entry in either preset-local STOMP label map.
+///
+/// # Errors
+///
+/// Returns an invalid parameter error unless the footswitch is 0-7.
+pub fn set_stomp_label(footswitch: u32, label: String, single: bool) -> crate::Result<GridMessage> {
+    if footswitch > 7 {
+        return Err(crate::Error::InvalidParameter(format!(
+            "footswitches are numbered 0-7 (A-H), got {footswitch}"
+        )));
+    }
+    let mut preset = BinaryPreset::default();
+    if single {
+        preset.single_stomp_labels.insert(footswitch, label);
+    } else {
+        preset.stomp_labels.insert(footswitch, label);
+    }
+    Ok(grid(MessageAction::Update, preset))
+}
+
+/// Assign one expression pedal and normalized sweep range to a block parameter.
+///
+/// # Errors
+///
+/// Returns an invalid row or parameter error for a bad cell, a pedal other than
+/// 1 or 2, or a non-finite or out-of-range endpoint.
+pub fn set_expression(
+    row: Row,
+    column: u32,
+    param_index: u32,
+    pedal: i32,
+    minimum: f32,
+    maximum: f32,
+) -> crate::Result<GridMessage> {
+    require_grid_cell(row, column)?;
+    if !matches!(pedal, 1 | 2) {
+        return Err(crate::Error::InvalidParameter(format!(
+            "expression pedals are numbered 1 or 2, got {pedal}"
+        )));
+    }
+    normalised_param(param_index, minimum)?;
+    normalised_param(param_index, maximum)?;
+    let mut chain = keyed_chain(row);
+    let mut model = keyed_model(column);
+    model.params.push(Param {
+        index: Some(param::Index::Index(param_index)),
+        expression: Some(param::Expression::Expression(pedal)),
+        expression_min: Some(param::ExpressionMin::ExpressionMin(minimum)),
+        expression_max: Some(param::ExpressionMax::ExpressionMax(maximum)),
+        ..Default::default()
+    });
+    chain.models.push(model);
+    Ok(grid(MessageAction::Update, preset_with_chain(chain)))
+}
+
+/// Assign one expression pedal to block bypass, including its behavior.
+///
+/// # Errors
+///
+/// Returns an invalid row or parameter error for a bad cell, pedal, mode, or
+/// delay above 5000 ms.
+pub fn set_expression_bypass(
+    row: Row,
+    column: u32,
+    pedal: i32,
+    mode: u32,
+    invert: bool,
+    delay_ms: u32,
+    latch_emulation: bool,
+) -> crate::Result<GridMessage> {
+    require_grid_cell(row, column)?;
+    if !matches!(pedal, 1 | 2) {
+        return Err(crate::Error::InvalidParameter(format!(
+            "expression pedals are numbered 1 or 2, got {pedal}"
+        )));
+    }
+    if mode > 2 {
+        return Err(crate::Error::InvalidParameter(format!(
+            "expression bypass modes are numbered 0-2, got {mode}"
+        )));
+    }
+    if delay_ms > 5_000 {
+        return Err(crate::Error::InvalidParameter(format!(
+            "expression bypass delay is 0-5000 ms, got {delay_ms}"
+        )));
+    }
+    let mut chain = keyed_chain(row);
+    let mut model = keyed_model(column);
+    model.bypass_expression.push(Expression {
+        expression: pedal,
+        expression_min: 0.0,
+        expression_max: 1.0,
+    });
+    model.expression_bypass_info.push(ExpressionBypassInfo {
+        r#type: mode,
+        invert,
+        delay_ms,
+        latch_emulation,
+    });
+    chain.models.push(model);
+    Ok(grid(MessageAction::Update, preset_with_chain(chain)))
 }
 
 /// Re-point one grid row's INPUT.
@@ -236,6 +487,152 @@ pub fn set_param_scene_mode(row: Row, column: u32, param_index: u32, enabled: bo
     });
     chain.models.push(model);
     grid(MessageAction::Update, preset_with_chain(chain))
+}
+
+/// Set one preset-local tempo or metronome parameter.
+///
+/// Tempo is the exception to ordinary grid keying: `tempo_program_data` sits
+/// outside `chains` and is applied without a row or column key. The model hash
+/// and parameter index remain explicit.
+///
+/// # Errors
+///
+/// Returns [`crate::Error::InvalidParameter`] unless `value` is finite and in
+/// 0..=1.
+pub fn set_tempo_param(param_index: u32, value: f32) -> crate::Result<GridMessage> {
+    let preset = BinaryPreset {
+        tempo_program_data: vec![Model {
+            hash: Some(model::Hash::Hash(TEMPO_CONTROL)),
+            params: vec![normalised_param(param_index, value)?],
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+    Ok(grid(MessageAction::Update, preset))
+}
+
+/// Set one combined-splitter parameter on an even row.
+///
+/// This writes `combined_splitter`, never the read-only `splitter` view, and
+/// deliberately supplies no model hash because the device's own writable
+/// shape has none.
+///
+/// # Errors
+///
+/// Returns [`crate::Error::InvalidRow`] for an odd row or
+/// [`crate::Error::InvalidParameter`] unless `value` is finite and in 0..=1.
+pub fn set_splitter_param(row: Row, param_index: u32, value: f32) -> crate::Result<GridMessage> {
+    require_branch_row(row, "splitter")?;
+    let mut chain = keyed_chain(row);
+    chain.combined_splitter.push(Model {
+        params: vec![normalised_param(param_index, value)?],
+        ..Default::default()
+    });
+    Ok(grid(MessageAction::Update, preset_with_chain(chain)))
+}
+
+/// Set a combined-splitter parameter's scene-following flag, without a value.
+///
+/// # Errors
+///
+/// Returns [`crate::Error::InvalidRow`] for an odd row.
+pub fn set_splitter_param_scene_mode(
+    row: Row,
+    param_index: u32,
+    enabled: bool,
+) -> crate::Result<GridMessage> {
+    require_branch_row(row, "splitter")?;
+    let mut chain = keyed_chain(row);
+    chain.combined_splitter.push(Model {
+        params: vec![scene_mode_param(param_index, enabled)],
+        ..Default::default()
+    });
+    Ok(grid(MessageAction::Update, preset_with_chain(chain)))
+}
+
+/// Set one mixer, lane-output, or input-gate parameter.
+///
+/// The collection and its required model id are selected together by
+/// [`SubControl`], preventing a valid id from being paired with the wrong
+/// repeated field.
+///
+/// # Errors
+///
+/// Returns [`crate::Error::InvalidRow`] when a mixer is addressed on an odd
+/// row or [`crate::Error::InvalidParameter`] unless `value` is finite and in
+/// 0..=1.
+pub fn set_sub_control_param(
+    row: Row,
+    control: SubControl,
+    param_index: u32,
+    value: f32,
+) -> crate::Result<GridMessage> {
+    if control == SubControl::Mixer {
+        require_branch_row(row, "mixer")?;
+    } else {
+        require_grid_row(row)?;
+    }
+    let mut chain = keyed_chain(row);
+    let model = Model {
+        hash: Some(model::Hash::Hash(control.model_id())),
+        params: vec![normalised_param(param_index, value)?],
+        ..Default::default()
+    };
+    match control {
+        SubControl::Mixer => chain.mixer.push(model),
+        SubControl::LaneOutput => chain.output_control.push(model),
+        SubControl::InputGate => chain.input_control.push(model),
+    }
+    Ok(grid(MessageAction::Update, preset_with_chain(chain)))
+}
+
+/// Set a mixer, lane-output, or input-gate parameter's scene-following flag.
+///
+/// The flag travels without a value because packing both silently drops the
+/// flag.
+///
+/// # Errors
+///
+/// Returns [`crate::Error::InvalidRow`] when a mixer is addressed on an odd
+/// row.
+pub fn set_sub_control_param_scene_mode(
+    row: Row,
+    control: SubControl,
+    param_index: u32,
+    enabled: bool,
+) -> crate::Result<GridMessage> {
+    if control == SubControl::Mixer {
+        require_branch_row(row, "mixer")?;
+    } else {
+        require_grid_row(row)?;
+    }
+    let mut chain = keyed_chain(row);
+    let model = Model {
+        hash: Some(model::Hash::Hash(control.model_id())),
+        params: vec![scene_mode_param(param_index, enabled)],
+        ..Default::default()
+    };
+    match control {
+        SubControl::Mixer => chain.mixer.push(model),
+        SubControl::LaneOutput => chain.output_control.push(model),
+        SubControl::InputGate => chain.input_control.push(model),
+    }
+    Ok(grid(MessageAction::Update, preset_with_chain(chain)))
+}
+
+/// Mute or unmute the split/mix path on an even row.
+///
+/// The writable field is `split_bypass`; `mix_bypass` is the read-back field
+/// and writes to it are ignored. One entry changes all eight scenes.
+///
+/// # Errors
+///
+/// Returns [`crate::Error::InvalidRow`] for an odd row.
+pub fn set_split_mute(row: Row, muted: bool) -> crate::Result<GridMessage> {
+    require_branch_row(row, "splitter or mixer")?;
+    let mut chain = keyed_chain(row);
+    chain.split_bypass.push(SceneBypass { bypass: muted });
+    Ok(grid(MessageAction::Update, preset_with_chain(chain)))
 }
 
 /// Bypass or enable one block.
@@ -331,14 +728,7 @@ pub fn move_block(
 /// rows 1 and 3 have no splitter and a write addressed there does nothing.
 /// Refusing beats sending a message that is silently discarded.
 pub fn set_split(row: Row, split: i32, mix: i32) -> crate::Result<GridMessage> {
-    if !row.can_branch() {
-        return Err(crate::Error::InvalidRow(format!(
-            "row {} (screen row {}) has no splitter: a branch can only originate on \
-             wire row 0 or 2, whose parallel lane is the row below it",
-            row.wire(),
-            row.screen()
-        )));
-    }
+    require_branch_row(row, "splitter")?;
     let mut chain = keyed_chain(row);
     chain
         .split_control_points
@@ -447,6 +837,13 @@ mod tests {
             set_chain_output(Row::from_wire(2), 19),
             set_param(Row::from_wire(2), 3, 0, Value::Normalised(0.5)),
             set_param_scene_mode(Row::from_wire(2), 3, 0, true),
+            set_expression(Row::from_wire(2), 3, 0, 1, 0.0, 1.0).unwrap(),
+            set_expression_bypass(Row::from_wire(2), 3, 1, 0, false, 0, false).unwrap(),
+            set_splitter_param(Row::from_wire(2), 3, 0.5).unwrap(),
+            set_sub_control_param(Row::from_wire(2), SubControl::Mixer, 0, 0.5).unwrap(),
+            set_sub_control_param(Row::from_wire(2), SubControl::LaneOutput, 1, 0.5).unwrap(),
+            set_sub_control_param(Row::from_wire(2), SubControl::InputGate, 1, 0.5).unwrap(),
+            set_split_mute(Row::from_wire(2), true).unwrap(),
             set_block(Row::from_wire(2), 3, 1001),
             remove_block(Row::from_wire(2), 3),
         ] {
@@ -549,6 +946,38 @@ mod tests {
     }
 
     #[test]
+    fn tempo_write_uses_hash_25000_without_a_row_key() {
+        let message = decode(&set_tempo_param(7, 1.0 / 3.0).unwrap());
+        assert_eq!(message.action, MessageAction::Update as i32);
+        let preset = preset_of(&message).unwrap();
+        assert!(preset.chains.is_empty());
+        assert_eq!(preset.tempo_program_data.len(), 1);
+        let tempo = &preset.tempo_program_data[0];
+        assert_eq!(tempo.hash, Some(model::Hash::Hash(TEMPO_CONTROL)));
+        assert!(tempo.column.is_none());
+        assert_eq!(tempo.params.len(), 1);
+        assert_eq!(tempo.params[0].index, Some(param::Index::Index(7)));
+        assert_eq!(tempo.params[0].scene_mode, None);
+        assert_eq!(
+            tempo.params[0].param_values[0].value,
+            Some(param_value::Value::FloatValue(1.0 / 3.0))
+        );
+    }
+
+    #[test]
+    fn tempo_write_accepts_boundaries_and_rejects_non_finite_or_out_of_range_values() {
+        for boundary in [0.0, 1.0] {
+            assert!(set_tempo_param(0, boundary).is_ok());
+        }
+        for invalid in [-f32::INFINITY, -0.001, 1.001, f32::INFINITY, f32::NAN] {
+            assert!(matches!(
+                set_tempo_param(0, invalid),
+                Err(crate::Error::InvalidParameter(_))
+            ));
+        }
+    }
+
+    #[test]
     fn a_value_write_carries_no_scene_mode_flag() {
         // The converse: a plain value write must not set the flag, or it
         // would promote a parameter the caller never asked to promote.
@@ -559,6 +988,106 @@ mod tests {
             Value::Normalised(0.1),
         )));
         assert_eq!(chain.models[0].params[0].scene_mode, None);
+    }
+
+    #[test]
+    fn stomp_assignment_preserves_zero_valued_keys_and_actions() {
+        let delete = decode(&clear_stomp_assignment(Row::from_wire(0), 0).unwrap());
+        assert_eq!(delete.action, MessageAction::Delete as i32);
+        let assignment = &preset_of(&delete).unwrap().stomp_mode_assignments[0];
+        assert_eq!((assignment.row, assignment.column), (0, 0));
+
+        let update = decode(&set_stomp_assignment(Row::from_wire(0), 0, 0).unwrap());
+        assert_eq!(update.action, MessageAction::Update as i32);
+        let assignment = &preset_of(&update).unwrap().stomp_mode_assignments[0];
+        assert_eq!(
+            (assignment.row, assignment.column, assignment.stomp_index),
+            (0, 0, 0)
+        );
+    }
+
+    #[test]
+    fn stomp_map_builders_write_only_the_selected_zero_key() {
+        let momentary = decode(&set_stomp_momentary(0, true).unwrap());
+        let preset = preset_of(&momentary).unwrap();
+        assert_eq!(preset.stomp_is_momentary.get(&0), Some(&true));
+        assert!(preset.stomp_labels.is_empty());
+        assert!(preset.single_stomp_labels.is_empty());
+
+        let general = decode(&set_stomp_label(0, "Group".into(), false).unwrap());
+        let preset = preset_of(&general).unwrap();
+        assert_eq!(
+            preset.stomp_labels.get(&0).map(String::as_str),
+            Some("Group")
+        );
+        assert!(preset.single_stomp_labels.is_empty());
+
+        let single = decode(&set_stomp_label(0, "Single".into(), true).unwrap());
+        let preset = preset_of(&single).unwrap();
+        assert_eq!(
+            preset.single_stomp_labels.get(&0).map(String::as_str),
+            Some("Single")
+        );
+        assert!(preset.stomp_labels.is_empty());
+    }
+
+    #[test]
+    fn expression_assignment_is_keyed_and_preserves_reversed_range() {
+        let chain = only_chain(&decode(
+            &set_expression(Row::from_wire(0), 0, 0, 2, 0.9, 0.1).unwrap(),
+        ));
+        assert_eq!(chain_row(&chain), Some(0));
+        assert_eq!(chain.models[0].column, Some(model::Column::Column(0)));
+        let parameter = &chain.models[0].params[0];
+        assert_eq!(parameter.index, Some(param::Index::Index(0)));
+        assert_eq!(parameter.expression, Some(param::Expression::Expression(2)));
+        assert_eq!(
+            parameter.expression_min,
+            Some(param::ExpressionMin::ExpressionMin(0.9))
+        );
+        assert_eq!(
+            parameter.expression_max,
+            Some(param::ExpressionMax::ExpressionMax(0.1))
+        );
+        assert!(parameter.param_values.is_empty());
+    }
+
+    #[test]
+    fn expression_bypass_writes_both_halves_at_zero_cell() {
+        let chain = only_chain(&decode(
+            &set_expression_bypass(Row::from_wire(0), 0, 1, 2, true, 250, true).unwrap(),
+        ));
+        assert_eq!(chain.models[0].column, Some(model::Column::Column(0)));
+        assert_eq!(
+            chain.models[0].bypass_expression,
+            vec![Expression {
+                expression: 1,
+                expression_min: 0.0,
+                expression_max: 1.0,
+            }]
+        );
+        assert_eq!(
+            chain.models[0].expression_bypass_info,
+            vec![ExpressionBypassInfo {
+                r#type: 2,
+                invert: true,
+                delay_ms: 250,
+                latch_emulation: true,
+            }]
+        );
+    }
+
+    #[test]
+    fn stomp_and_expression_builders_reject_invalid_addresses_and_values() {
+        assert!(set_stomp_assignment(Row::from_wire(4), 0, 0).is_err());
+        assert!(clear_stomp_assignment(Row::from_wire(0), 8).is_err());
+        assert!(set_stomp_momentary(8, true).is_err());
+        assert!(set_expression(Row::from_wire(0), 0, 0, 0, 0.0, 1.0).is_err());
+        assert!(set_expression(Row::from_wire(0), 0, 0, 1, -0.1, 1.0).is_err());
+        assert!(set_expression(Row::from_wire(0), 0, 0, 2, 0.0, f32::NAN).is_err());
+        assert!(set_expression_bypass(Row::from_wire(0), 8, 1, 0, false, 0, false).is_err());
+        assert!(set_expression_bypass(Row::from_wire(0), 0, 1, 3, false, 0, false).is_err());
+        assert!(set_expression_bypass(Row::from_wire(0), 0, 1, 0, false, 5_001, false).is_err());
     }
 
     // -- bypass ------------------------------------------------------------
@@ -589,6 +1118,136 @@ mod tests {
         let message = decode(&set_bypass(Row::from_wire(0), 1, false));
         let preset = preset_of(&message).expect("has a preset");
         assert_eq!(preset.bypass[0].col_bypass[0].scene_mode, None);
+    }
+
+    // -- row-level controls ------------------------------------------------
+
+    #[test]
+    fn splitter_value_uses_combined_splitter_without_an_invented_hash() {
+        let chain = only_chain(&decode(
+            &set_splitter_param(Row::from_wire(0), 3, 0.25).unwrap(),
+        ));
+        assert!(chain.splitter.is_empty());
+        assert!(chain.models.is_empty());
+        assert!(chain.mixer.is_empty());
+        assert_eq!(chain.combined_splitter.len(), 1);
+        let splitter = &chain.combined_splitter[0];
+        assert!(splitter.hash.is_none());
+        let parameter = &splitter.params[0];
+        assert_eq!(parameter.index, Some(param::Index::Index(3)));
+        assert_eq!(parameter.scene_mode, None);
+        assert_eq!(
+            parameter.param_values[0].value,
+            Some(param_value::Value::FloatValue(0.25))
+        );
+    }
+
+    #[test]
+    fn hash_addressed_sub_controls_use_their_exact_collections_and_ids() {
+        for (control, expected_hash) in [
+            (SubControl::Mixer, 11_000),
+            (SubControl::LaneOutput, 23_000),
+            (SubControl::InputGate, 28_000),
+        ] {
+            let chain = only_chain(&decode(
+                &set_sub_control_param(Row::from_wire(0), control, 2, 0.75).unwrap(),
+            ));
+            let selected = match control {
+                SubControl::Mixer => &chain.mixer,
+                SubControl::LaneOutput => &chain.output_control,
+                SubControl::InputGate => &chain.input_control,
+            };
+            assert_eq!(selected.len(), 1);
+            assert_eq!(selected[0].hash, Some(model::Hash::Hash(expected_hash)));
+            assert_eq!(selected[0].params[0].index, Some(param::Index::Index(2)));
+            assert_eq!(
+                selected[0].params[0].param_values[0].value,
+                Some(param_value::Value::FloatValue(0.75))
+            );
+            assert!(chain.models.is_empty());
+            assert!(chain.splitter.is_empty());
+            assert!(chain.combined_splitter.is_empty());
+            assert_eq!(chain.mixer.is_empty(), control != SubControl::Mixer);
+            assert_eq!(
+                chain.output_control.is_empty(),
+                control != SubControl::LaneOutput
+            );
+            assert_eq!(
+                chain.input_control.is_empty(),
+                control != SubControl::InputGate
+            );
+        }
+    }
+
+    #[test]
+    fn row_level_scene_mode_is_always_separate_from_the_value() {
+        let splitter = only_chain(&decode(
+            &set_splitter_param_scene_mode(Row::from_wire(0), 3, true).unwrap(),
+        ));
+        let splitter_param = &splitter.combined_splitter[0].params[0];
+        assert_eq!(
+            splitter_param.scene_mode,
+            Some(param::SceneMode::SceneMode(true))
+        );
+        assert!(splitter_param.param_values.is_empty());
+
+        for control in [
+            SubControl::Mixer,
+            SubControl::LaneOutput,
+            SubControl::InputGate,
+        ] {
+            let chain = only_chain(&decode(
+                &set_sub_control_param_scene_mode(Row::from_wire(0), control, 1, true).unwrap(),
+            ));
+            let parameter = match control {
+                SubControl::Mixer => &chain.mixer[0].params[0],
+                SubControl::LaneOutput => &chain.output_control[0].params[0],
+                SubControl::InputGate => &chain.input_control[0].params[0],
+            };
+            assert_eq!(
+                parameter.scene_mode,
+                Some(param::SceneMode::SceneMode(true))
+            );
+            assert!(parameter.param_values.is_empty());
+        }
+    }
+
+    #[test]
+    fn split_mute_writes_split_bypass_and_never_mix_bypass() {
+        for muted in [false, true] {
+            let chain = only_chain(&decode(&set_split_mute(Row::from_wire(2), muted).unwrap()));
+            assert_eq!(chain.split_bypass, vec![SceneBypass { bypass: muted }]);
+            assert!(chain.mix_bypass.is_empty());
+        }
+    }
+
+    #[test]
+    fn branch_controls_refuse_odd_rows_and_bad_values() {
+        for row in [1, 3] {
+            let row = Row::from_wire(row);
+            assert!(matches!(
+                set_splitter_param(row, 0, 0.5),
+                Err(crate::Error::InvalidRow(_))
+            ));
+            assert!(matches!(
+                set_sub_control_param(row, SubControl::Mixer, 0, 0.5),
+                Err(crate::Error::InvalidRow(_))
+            ));
+            assert!(matches!(
+                set_split_mute(row, true),
+                Err(crate::Error::InvalidRow(_))
+            ));
+        }
+        for invalid in [-0.01, 1.01, f32::NAN, f32::INFINITY] {
+            assert!(matches!(
+                set_splitter_param(Row::from_wire(0), 0, invalid),
+                Err(crate::Error::InvalidParameter(_))
+            ));
+            assert!(matches!(
+                set_sub_control_param(Row::from_wire(0), SubControl::InputGate, 0, invalid),
+                Err(crate::Error::InvalidParameter(_))
+            ));
+        }
     }
 
     // -- blocks ------------------------------------------------------------
@@ -680,6 +1339,10 @@ mod tests {
         for message in [
             set_chain_input(Row::from_wire(0), 1),
             set_param(Row::from_wire(0), 0, 0, Value::Normalised(0.0)),
+            set_tempo_param(0, 0.0).unwrap(),
+            set_splitter_param(Row::from_wire(0), 0, 0.0).unwrap(),
+            set_sub_control_param(Row::from_wire(0), SubControl::Mixer, 0, 0.0).unwrap(),
+            set_split_mute(Row::from_wire(0), true).unwrap(),
             set_bypass(Row::from_wire(0), 0, true),
             set_block(Row::from_wire(0), 0, 1),
         ] {

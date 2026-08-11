@@ -96,6 +96,15 @@ impl LocalListener {
         Err(unsupported())
     }
 
+    /// Nonblocking mode is unavailable until the named-pipe adapter lands.
+    ///
+    /// # Errors
+    ///
+    /// Always returns [`std::io::ErrorKind::Unsupported`] in this placeholder.
+    pub fn set_nonblocking(&self, _nonblocking: bool) -> std::io::Result<()> {
+        Err(unsupported())
+    }
+
     /// Named pipes leave no filesystem endpoint to remove.
     ///
     /// # Errors

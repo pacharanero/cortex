@@ -87,6 +87,7 @@ Key points ported from `pyquadcortex`:
 - The `session_id` is a fresh UUID4 `.hex()` string (32 hex chars, no dashes). The device echoes it; the reply is correlated by `request_id` via the normal `request()` path.
 - Issue the `Version` READ before the UPDATE and cache its non-empty reply. The device later sends its own id-less `Version` READ, so ordering this inside the handshake prevents a caller's `version()` request from racing it.
 - Wait for the `ModelRepo` payload before announcing the connection and subscriptions. Firing the burst together queued the catalog behind requests the client itself created; pacing reduced the transfer from 5.06 s to 0.67 s, matching Cortex Control's 0.65 s.
+- Keep the catalog generation-local and in memory. Non-empty `NewModels`, a stream gap, or a generation change removes the raw payload; the daemon evicts its separately parsed form whenever no exact current payload exists. A fresh payload is keyed by generation and revision before it can supply block names or parameter metadata.
 - The 22 subscribe READs are fire-and-forget `send` calls (not `request`), because their replies are unsolicited pushes the device emits over time, not prompt same-type echoes.
 - `CPULoad` is subscribed separately with `CREATE` and a request id. A READ is silently ignored.
 - Settling is adaptive: sleep for the caller-provided floor (2 s by default), then wait until non-heartbeat traffic has been quiet for 1.5 s, with a 30 s ceiling. `GlobalTempo` is excluded because its continuous clock traffic would otherwise force every handshake to the ceiling.
@@ -130,6 +131,8 @@ A full four-row, positional `RecallPreset` is the live-grid baseline. Sparse `Gr
 Version, model-repository payload, CPU load, active scene, dirty state, selected slot, and complete per-folder `File{UPDATE}` listings are also retained. `File` mutation acknowledgements invalidate the named listing rather than masquerading as a one-item snapshot. The device's later empty `Version{READ}` is ignored so it cannot erase the handshake identity.
 
 One cache handle survives host reconnect. Every attached `Session` begins a generation, and reducer calls carry that token; delivery from a stopped old RX thread is therefore ignored after replacement. Invalidation happens before reconnect backoff, not after success. `Session` owns the link in a removable slot: `close()` joins workers and takes the link before replacement open, so retained session references cannot retain the HID lease. The daemon's read/write operation gate covers health recheck, selected-session use, handle release and replacement handshake.
+
+The host's auto-managed idle verdict does not weaken that lifetime boundary. It is request-based and cannot fire while an operation is in flight; after it fires, the daemon interrupts reconnect backoff, acquires the operation write gate, and calls `Session::close()` before removing its endpoint. Explicitly started sessions have no idle verdict.
 
 ---
 

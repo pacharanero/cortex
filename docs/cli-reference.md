@@ -230,6 +230,7 @@ Presets: list, inspect, recall, prepare/save, or delete
 Usage: cortex preset [OPTIONS] <COMMAND>
 
 Commands:
+  copy          Copy a stored preset through destination preparation, source recall, and save
   delete        Delete a preset from a setlist, by name
   move          Move a preset to an empty slot in the same setlist
   prepare-save  Prepare a save destination before editing the working grid
@@ -240,6 +241,68 @@ Commands:
   help          Print this message or the help of the given subcommand(s)
 
 Options:
+      --format <FORMAT>
+          Output format. `text` is for humans; `json` is for scripts and agents, and is stable enough to parse.
+
+          Only the RESULT changes format. Progress, warnings, and errors always go to stderr as plain text, so `cortex preset list --format json | jq` gets clean JSON regardless.
+
+          Possible values:
+          - text: Human-readable, the default
+          - json: Machine-readable JSON
+
+          [default: text]
+
+      --zero-based
+          Take `--row` as 0-3 rather than the 1-4 shown on the unit.
+
+          The unit labels its rows 1-4 and the wire numbers them 0-3, so the default matches what a player sees. Scripts and agents generally have a zero-based index already, and converting it back by hand is exactly the sort of arithmetic that silently edits the wrong row.
+
+  -n, --dry-run
+          Print the operation plan without changing device or local state. Read-only commands accept and ignore this flag
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+  -V, --version
+          Print version
+```
+
+#### `cortex preset copy`
+
+Copy a stored preset through destination preparation, source recall, and save.
+
+```text
+Copy a stored preset through destination preparation, source recall, and save.
+
+WRITES TO THE UNIT and changes what is loaded. The destination is recalled and backed up before the source is recalled.
+
+Usage: cortex preset copy [OPTIONS] --from <BANK+LETTER> --to <BANK+LETTER>
+
+Options:
+      --from-setlist <PATH>
+          Source setlist path
+
+          [default: "/media/p4/Presets/My Presets"]
+
+      --from <BANK+LETTER>
+          Source slot
+
+      --to-setlist <PATH>
+          Destination setlist path
+
+          [default: "/media/p4/Presets/My Presets"]
+
+      --to <BANK+LETTER>
+          Destination slot
+
+      --name <NAME>
+          Destination name. Defaults to the recalled source preset's name
+
+      --instrument <INSTRUMENT>
+          Preferred-instrument metadata
+
+          [default: guitar]
+
       --format <FORMAT>
           Output format. `text` is for humans; `json` is for scripts and agents, and is stable enough to parse.
 
@@ -442,6 +505,11 @@ Options:
 
       --name <NAME>
           Name to save under. Omit to keep the slot's existing name
+
+      --instrument <INSTRUMENT>
+          Preferred-instrument metadata
+
+          [default: guitar]
 
       --format <FORMAT>
           Output format. `text` is for humans; `json` is for scripts and agents, and is stable enough to parse.
@@ -647,10 +715,136 @@ Setlists: the folders of presets the unit holds
 Usage: cortex setlist [OPTIONS] <COMMAND>
 
 Commands:
-  list  List every folder the device knows: setlists, captures, IR libraries
-  help  Print this message or the help of the given subcommand(s)
+  create     Create a new USER setlist as a sibling of My Presets
+  delete     Delete a USER setlist and all presets it contains
+  duplicate  Duplicate a USER setlist through create plus recall/save per preset
+  list       List every folder the device knows: setlists, captures, IR libraries
+  help       Print this message or the help of the given subcommand(s)
 
 Options:
+      --format <FORMAT>
+          Output format. `text` is for humans; `json` is for scripts and agents, and is stable enough to parse.
+
+          Only the RESULT changes format. Progress, warnings, and errors always go to stderr as plain text, so `cortex preset list --format json | jq` gets clean JSON regardless.
+
+          Possible values:
+          - text: Human-readable, the default
+          - json: Machine-readable JSON
+
+          [default: text]
+
+      --zero-based
+          Take `--row` as 0-3 rather than the 1-4 shown on the unit.
+
+          The unit labels its rows 1-4 and the wire numbers them 0-3, so the default matches what a player sees. Scripts and agents generally have a zero-based index already, and converting it back by hand is exactly the sort of arithmetic that silently edits the wrong row.
+
+  -n, --dry-run
+          Print the operation plan without changing device or local state. Read-only commands accept and ignore this flag
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+  -V, --version
+          Print version
+```
+
+#### `cortex setlist create`
+
+Create a new USER setlist as a sibling of My Presets.
+
+```text
+Create a new USER setlist as a sibling of My Presets
+
+Usage: cortex setlist create [OPTIONS] --name <NAME>
+
+Options:
+      --name <NAME>
+          Single setlist name, not a path
+
+      --format <FORMAT>
+          Output format. `text` is for humans; `json` is for scripts and agents, and is stable enough to parse.
+
+          Only the RESULT changes format. Progress, warnings, and errors always go to stderr as plain text, so `cortex preset list --format json | jq` gets clean JSON regardless.
+
+          Possible values:
+          - text: Human-readable, the default
+          - json: Machine-readable JSON
+
+          [default: text]
+
+      --zero-based
+          Take `--row` as 0-3 rather than the 1-4 shown on the unit.
+
+          The unit labels its rows 1-4 and the wire numbers them 0-3, so the default matches what a player sees. Scripts and agents generally have a zero-based index already, and converting it back by hand is exactly the sort of arithmetic that silently edits the wrong row.
+
+  -n, --dry-run
+          Print the operation plan without changing device or local state. Read-only commands accept and ignore this flag
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+  -V, --version
+          Print version
+```
+
+#### `cortex setlist delete`
+
+Delete a USER setlist and all presets it contains.
+
+```text
+Delete a USER setlist and all presets it contains
+
+Usage: cortex setlist delete [OPTIONS] --name <NAME>
+
+Options:
+      --name <NAME>
+          Single setlist name, not a path. My Presets is always refused
+
+      --format <FORMAT>
+          Output format. `text` is for humans; `json` is for scripts and agents, and is stable enough to parse.
+
+          Only the RESULT changes format. Progress, warnings, and errors always go to stderr as plain text, so `cortex preset list --format json | jq` gets clean JSON regardless.
+
+          Possible values:
+          - text: Human-readable, the default
+          - json: Machine-readable JSON
+
+          [default: text]
+
+      --zero-based
+          Take `--row` as 0-3 rather than the 1-4 shown on the unit.
+
+          The unit labels its rows 1-4 and the wire numbers them 0-3, so the default matches what a player sees. Scripts and agents generally have a zero-based index already, and converting it back by hand is exactly the sort of arithmetic that silently edits the wrong row.
+
+  -n, --dry-run
+          Print the operation plan without changing device or local state. Read-only commands accept and ignore this flag
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+  -V, --version
+          Print version
+```
+
+#### `cortex setlist duplicate`
+
+Duplicate a USER setlist through create plus recall/save per preset.
+
+```text
+Duplicate a USER setlist through create plus recall/save per preset
+
+Usage: cortex setlist duplicate [OPTIONS] --source <NAME> --destination <NAME>
+
+Options:
+      --source <NAME>
+          Source setlist name under the USER root
+
+      --destination <NAME>
+          New destination setlist name under the USER root
+
+      --limit <LIMIT>
+          Copy at most this many occupied presets
+
       --format <FORMAT>
           Output format. `text` is for humans; `json` is for scripts and agents, and is stable enough to parse.
 

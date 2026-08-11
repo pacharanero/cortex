@@ -57,7 +57,7 @@ Ordinary commands call `QuadCortex` directly or send typed requests to the persi
 
 ### Behaviour
 
-The clap derive tree is noun-then-verb: `session`, `preset`, `setlist`, `grid`, `block`, `row` and `device` group the operations a player recognises. Explicitly invoking a mutating command executes it by default; global `-n`/`--dry-run` classifies the command and returns before any IPC, HID, process or filesystem boundary. Read-only commands accept and ignore the flag. `preset move` names exact source and destination slots and refuses an occupied destination from a fresh listing. `scene` is a deliberate direct action; `catalog`, `completions` and trace decoding complete the current surface. The generated [CLI reference](../../docs/cli-reference.md) is the authoritative command inventory.
+The clap derive tree is noun-then-verb: `session`, `preset`, `setlist`, `grid`, `block`, `row` and `device` group the operations a player recognises. Explicitly invoking a mutating command executes it by default; global `-n`/`--dry-run` classifies the command and returns before any IPC, HID, process or filesystem boundary. Read-only commands accept and ignore the flag. `preset move` names exact source and destination slots and refuses an occupied destination from a fresh listing. `preset copy` exposes both exact slots and typed instrument metadata; `setlist create|delete|duplicate` accept safe USER names and surface partial duplication. `scene` is a deliberate direct action; `catalog`, `completions` and trace decoding complete the current surface. The generated [CLI reference](../../docs/cli-reference.md) is the authoritative command inventory.
 
 ### Design choice: `arg_required_else_help = true`
 
@@ -69,7 +69,15 @@ clap's `subcommand_required = true` exits with a non-zero code and a "missing su
 
 ### Device routing
 
-`cortex session start` owns one subscribed connection and serves typed line-delimited requests over local IPC. Ordinary commands use it when available and otherwise open one bounded direct session. The endpoint is claimed before the handshake so a second process cannot race startup and wedge the device. `cortex-host` owns the platform seam: an owner-only Unix domain socket today, and a future current-user Windows named pipe. Cached values are served only while their generation is usable; missing values fall back to explicit reads.
+`cortex session start` owns one subscribed connection and serves typed line-delimited requests over local IPC. Ordinary commands use it when available and otherwise open one bounded direct session. The endpoint is claimed before the handshake so a second process cannot race startup and wedge the device. `cortex-host` owns the platform seam and concurrent accept/request lifecycle: an owner-only Unix domain socket today, and a future current-user Windows named pipe. Cached values are served only while their generation is usable; missing values fall back to explicit reads.
+
+### Request-based lifecycle
+
+An ordinary explicit `cortex session start`, foreground or detached, is persistent and exits only through shutdown, terminal/process termination, or failure. A host that starts the installed sibling binary uses the deliberately separate hidden contract `cortex session start --foreground --auto-managed --idle-timeout-seconds N`. Requiring both arguments prevents a user-started daemon from unexpectedly inheriting host lifecycle.
+
+The host server accepts connections concurrently. Activity starts only when one complete line parses as a typed request, stays active through handler execution and response writing, and restarts the full timeout on completion even when the response reports an operation error. This makes status/version-gate requests real activity while excluding connected-but-silent clients, blank lines, and malformed traffic. The idle verdict requires zero in-flight requests, so one slow operation is protected while another client can still query status or request shutdown. Device-backed requests share one fail-fast mutex with reconnect: a second device operation is refused rather than queued, because a queued mutation could outlive its caller's IPC timeout and execute unexpectedly. Shutdown stops admission, interrupts reconnect backoff and waits for that mutex before closing HID and acknowledging. A three-second watchdog handles a genuinely hung operation by exiting without an acknowledgement; this bounds HID ownership but can interrupt the active operation, so it is not described as a graceful drain.
+
+On idle expiry, normal daemon teardown is used rather than process kill: reconnect waits are interrupted, the operation write gate drains requests, `Session::close()` explicitly releases the old HID link, and only then is the endpoint removed. A protocol-skewed client receives status, refuses further work with the explicit stop/restart instruction, and leaves the daemon running until its ordinary timeout; only cross-version `Shutdown` bypasses the compatibility refusal.
 
 ### Design choice: `--format` as a global flag
 

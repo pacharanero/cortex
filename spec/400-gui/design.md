@@ -15,7 +15,9 @@ tags: ["gui", "tauri", "daemon", "state", "fixtures"]
 
 The production flow is `React -> named Tauri command -> managed Rust AppState -> cortex-host::DaemonClient -> held cortex session -> cortex-rs -> USB HID`. The GUI never opens HID, constructs `QuadCortex`, sends arbitrary daemon requests from TypeScript, or reimplements protocol/domain behavior in the webview.
 
-`AppState` owns one reusable backend configuration containing `DaemonClient`. Connections remain short-lived per dashboard request because the daemon currently serves one accepted connection until EOF; a permanently open GUI socket would monopolise the accept loop and starve CLI/MCP clients. The daemon remains the sole long-lived USB owner.
+`AppState` owns one reusable backend configuration containing `DaemonClient`. Connections remain short-lived per dashboard request; the daemon serves accepted connections concurrently, and request completion is the lifecycle activity boundary shared by GUI, CLI, and MCP. The daemon remains the sole long-lived USB owner.
+
+Window close needs no host-use lease or Tauri-specific shutdown protocol. Each GUI operation owns a short-lived socket; process/window close drops it within the operating system's bounded process teardown. If the daemon has already parsed that request, daemon-side in-flight accounting protects it through completion and then starts the ordinary idle period. The GUI must not send daemon `Shutdown` on close because an explicit daemon or another concurrent CLI/MCP user may own the same session.
 
 The backend command runs synchronous local IPC on Tauri's blocking pool and returns typed serialisable data. Command failures are structured as `{code,message}`. A daemon failure is never replaced with fixture data.
 

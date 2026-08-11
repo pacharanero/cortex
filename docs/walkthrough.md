@@ -101,7 +101,7 @@ cortex preset list --setlist "/opt/neuraldsp/Factory Library"
 
 ## Explore the model catalog
 
-This is the fun one. The catalog comes **from the device**, so it reflects installed model content rather than a hard-coded factory table. Do not assume it enumerates every user capture; capture listing remains separate work.
+This is the fun one. The catalog comes **from the device**, so it reflects installed block types rather than a hard-coded factory table. Its Neural Capture entries are block types, not individual captures; capture inventory comes from separate `File` listings.
 
 ```sh
 cortex catalog

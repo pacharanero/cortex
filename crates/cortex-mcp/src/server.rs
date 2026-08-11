@@ -4,10 +4,16 @@
 //! MCP tool registry and daemon request adapter.
 
 use std::borrow::Cow;
-use std::sync::Arc;
+use std::io::{Read as _, Write as _};
+use std::path::PathBuf;
+use std::process::{Command, Stdio};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
-use cortex_host::{DaemonClient, Request};
+use cortex_host::{
+    DAEMON_PROTOCOL_VERSION, DaemonClient, DaemonError, DaemonErrorCode, Request, Status,
+};
 use rmcp::model::{
     CacheScope, CallToolRequestParams, CallToolResponse, CallToolResult, DiscoverResult,
     Implementation, JsonObject, ListToolsResult, ProtocolVersion, ServerCapabilities, ServerInfo,
@@ -20,19 +26,145 @@ use serde_json::{Value, json};
 use crate::transport::BoundedStdioTransport;
 
 const CATALOG_TTL_MS: u64 = 60_000;
+const AUTO_MANAGED_IDLE: Duration = Duration::from_secs(60);
+const STARTUP_TIMEOUT: Duration = Duration::from_secs(120);
+const STARTUP_POLL: Duration = Duration::from_millis(200);
 const ROW_TRAP: &str = "Rows are zero-based 0-3 in this API but labelled 1-4 on the unit; the wrong row succeeds silently.";
+
+struct DaemonSupervisor {
+    client: Arc<DaemonClient>,
+    probe: DaemonClient,
+    startup: Mutex<()>,
+}
+
+impl DaemonSupervisor {
+    fn new() -> Self {
+        Self {
+            client: Arc::new(DaemonClient::default()),
+            probe: DaemonClient::default().with_timeout(Duration::from_secs(2)),
+            startup: Mutex::new(()),
+        }
+    }
+
+    fn ensure(&self) -> Result<()> {
+        let _startup = self
+            .startup
+            .lock()
+            .map_err(|_| anyhow::anyhow!("daemon startup gate is unavailable"))?;
+        let deadline = Instant::now() + STARTUP_TIMEOUT;
+        while Instant::now() < deadline {
+            if let Some(status) = self.ready_status() {
+                ensure_status_compatible(&status)?;
+                return Ok(());
+            }
+            if !self.probe.is_running() {
+                self.start_sibling(deadline)?;
+            }
+            std::thread::sleep(STARTUP_POLL);
+        }
+        anyhow::bail!(
+            "the auto-managed cortex session did not become ready within {}s",
+            STARTUP_TIMEOUT.as_secs()
+        )
+    }
+
+    fn ready_status(&self) -> Option<Status> {
+        self.probe.status().ok()
+    }
+
+    fn start_sibling(&self, deadline: Instant) -> Result<()> {
+        let sibling = sibling_cortex_binary()?;
+        let _ = writeln!(
+            std::io::stderr(),
+            "cortex-mcp: starting auto-managed session with {}",
+            sibling.display()
+        );
+        let idle_seconds = AUTO_MANAGED_IDLE.as_secs().to_string();
+        let mut child = Command::new(&sibling)
+            .args([
+                "session",
+                "start",
+                "--auto-managed",
+                "--idle-timeout-seconds",
+                &idle_seconds,
+            ])
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()
+            .with_context(|| format!("starting sibling cortex binary at {}", sibling.display()))?;
+        while Instant::now() < deadline {
+            if let Some(status) = child.try_wait().context("waiting for sibling cortex")? {
+                let stderr = read_child_stderr(&mut child);
+                if status.success() || self.probe.is_running() {
+                    return Ok(());
+                }
+                anyhow::bail!(
+                    "sibling cortex could not start an auto-managed session ({status}): {}",
+                    stderr.trim()
+                );
+            }
+            std::thread::sleep(STARTUP_POLL);
+        }
+        let _ = child.kill();
+        let _ = child.wait();
+        let stderr = read_child_stderr(&mut child);
+        anyhow::bail!(
+            "sibling cortex did not finish startup within {}s: {}",
+            STARTUP_TIMEOUT.as_secs(),
+            stderr.trim()
+        )
+    }
+}
+
+fn read_child_stderr(child: &mut std::process::Child) -> String {
+    let mut stderr = String::new();
+    if let Some(mut pipe) = child.stderr.take() {
+        let _ = pipe.read_to_string(&mut stderr);
+    }
+    stderr
+}
+
+fn ensure_status_compatible(status: &Status) -> Result<()> {
+    let version = status.daemon_version.parse::<u32>().unwrap_or(0);
+    if version != DAEMON_PROTOCOL_VERSION {
+        anyhow::bail!(
+            "daemon protocol version mismatch: cortex-mcp expects {DAEMON_PROTOCOL_VERSION}, daemon reports {version}. Run `cortex session stop` to stop the old daemon, then retry."
+        );
+    }
+    Ok(())
+}
+
+fn sibling_cortex_binary() -> Result<PathBuf> {
+    let path = if let Some(path) = std::env::var_os("CORTEX_CLI_PATH") {
+        PathBuf::from(path)
+    } else {
+        let current = std::env::current_exe().context("locating cortex-mcp executable")?;
+        sibling_path(&current)
+    };
+    if !path.is_file() {
+        anyhow::bail!(
+            "could not find the sibling cortex binary at {}; install cortex and cortex-mcp together, or set CORTEX_CLI_PATH",
+            path.display()
+        );
+    }
+    Ok(path)
+}
+
+fn sibling_path(current_executable: &std::path::Path) -> PathBuf {
+    current_executable.with_file_name(format!("cortex{}", std::env::consts::EXE_SUFFIX))
+}
 
 #[derive(Clone)]
 struct CortexMcp {
-    client: Arc<DaemonClient>,
+    daemon: Arc<DaemonSupervisor>,
     tools: Arc<Vec<Tool>>,
 }
 
 pub async fn serve() -> Result<()> {
-    let client = DaemonClient::default();
-    client.require_compatible()?;
+    let daemon = Arc::new(DaemonSupervisor::new());
+    daemon.ensure()?;
     let server = CortexMcp {
-        client: Arc::new(client),
+        daemon,
         tools: Arc::new(tools()),
     };
     let service = rmcp::serve_server(server, BoundedStdioTransport::stdio())
@@ -108,18 +240,27 @@ impl ServerHandler for CortexMcp {
                     .with_description("Provisional, non-persistent live-grid tools for the Neural DSP Quad Cortex")
                     .with_website_url("https://github.com/pacharanero/cortex"),
             )
-            .with_instructions("Requires `cortex session start`. Tools may recall presets or alter the unsaved working grid, but this server exposes no save or delete operation.")
+            .with_instructions("Starts and reuses an auto-managed cortex session when needed. Tools may recall presets or alter the unsaved working grid, but this server exposes no save or delete operation.")
     }
 }
 
 impl CortexMcp {
     fn call_sync(&self, request: CallToolRequestParams) -> Result<CallToolResult, ErrorData> {
+        if let Err(error) = self.daemon.ensure() {
+            return Ok(tool_error_code(
+                DaemonErrorCode::DeviceUnavailable,
+                error.to_string(),
+            ));
+        }
         let name = request.name.as_ref();
         let args = Value::Object(request.arguments.unwrap_or_default());
         let result = self.dispatch(name, &args);
         Ok(match result {
             Ok(value) => CallToolResult::structured(value),
-            Err(error) => tool_error(error.to_string()),
+            Err(error) => match error.downcast_ref::<DaemonError>() {
+                Some(daemon) => tool_error_code(daemon.code, daemon.message.clone()),
+                None => tool_error(error.to_string()),
+            },
         })
     }
 
@@ -228,7 +369,7 @@ impl CortexMcp {
             },
             "search_catalog" => {
                 let query = string_arg(args, "query")?;
-                let payload = self.client.request_value(&Request::Catalog {
+                let payload = self.daemon.client.request_value(&Request::Catalog {
                     timeout_seconds: 15,
                 })?;
                 let bytes: Vec<u8> =
@@ -238,7 +379,7 @@ impl CortexMcp {
             }
             _ => anyhow::bail!("unknown tool: {name}"),
         };
-        let value = self.client.request_value(&request)?;
+        let value = self.daemon.client.request_value(&request)?;
         if name == "list_blocks" {
             let preset: cortex_rs::view::Preset = serde_json::from_value(value)?;
             return Ok(serde_json::to_value(preset.blocks)?);
@@ -248,7 +389,14 @@ impl CortexMcp {
 }
 
 fn tool_error(message: impl Into<String>) -> CallToolResult {
-    CallToolResult::structured_error(json!({ "error": message.into() }))
+    tool_error_code(DaemonErrorCode::Internal, message)
+}
+
+fn tool_error_code(code: DaemonErrorCode, message: impl Into<String>) -> CallToolResult {
+    CallToolResult::structured_error(json!({
+        "code": code,
+        "error": message.into(),
+    }))
 }
 
 fn tools() -> Vec<Tool> {
@@ -618,5 +766,36 @@ mod tests {
                 tool.name
             );
         }
+    }
+
+    #[test]
+    fn installed_mcp_finds_cortex_in_the_same_directory() {
+        let current = PathBuf::from(format!(
+            "/opt/cortex/bin/cortex-mcp{}",
+            std::env::consts::EXE_SUFFIX
+        ));
+        assert_eq!(
+            sibling_path(&current),
+            PathBuf::from(format!(
+                "/opt/cortex/bin/cortex{}",
+                std::env::consts::EXE_SUFFIX
+            ))
+        );
+    }
+
+    #[test]
+    fn incompatible_daemons_are_refused_not_replaced() {
+        let status = Status {
+            daemon_version: DAEMON_PROTOCOL_VERSION.saturating_sub(1).to_string(),
+            uptime_seconds: 0,
+            auto_managed: false,
+            idle_timeout_seconds: None,
+            device: cortex_host::DeviceHealth::Failed {
+                error: "fixture".into(),
+            },
+            cache: cortex_host::CacheStatus::default(),
+        };
+        let error = ensure_status_compatible(&status).unwrap_err();
+        assert!(error.to_string().contains("cortex session stop"));
     }
 }

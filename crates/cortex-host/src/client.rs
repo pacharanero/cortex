@@ -9,9 +9,29 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use serde::de::DeserializeOwned;
 
-use crate::{DAEMON_PROTOCOL_VERSION, LocalConnection, LocalEndpoint, Request, Response, Status};
+use crate::{
+    DAEMON_PROTOCOL_VERSION, DaemonErrorCode, LocalConnection, LocalEndpoint, Request, Response,
+    Status,
+};
 
 const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// A daemon-declared request failure preserved across local IPC.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DaemonError {
+    /// Stable category for programmatic handling.
+    pub code: DaemonErrorCode,
+    /// Human-readable diagnostic from the daemon.
+    pub message: String,
+}
+
+impl std::fmt::Display for DaemonError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for DaemonError {}
 
 /// A reusable client configuration for short-lived daemon connections.
 #[derive(Debug, Clone)]
@@ -56,6 +76,23 @@ impl DaemonClient {
     /// Returns an error when no daemon is listening, socket I/O fails, the
     /// response is malformed, or the daemon protocol version is incompatible.
     pub fn require_compatible(&self) -> Result<Status> {
+        let status = self.status()?;
+        ensure_compatible(&status, &Request::Status)?;
+        Ok(status)
+    }
+
+    /// Read daemon status without requiring this client's protocol version.
+    ///
+    /// This is only for lifecycle negotiation: a host can distinguish a
+    /// compatible daemon, an incompatible daemon that must be left alone, and
+    /// an endpoint still starting. Ordinary requests must use
+    /// [`Self::require_compatible`] or [`Self::request_value`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when no daemon is listening, socket I/O fails, or the
+    /// status response is malformed.
+    pub fn status(&self) -> Result<Status> {
         let stream = LocalConnection::connect(&self.endpoint).with_context(|| {
             format!(
                 "no held cortex session is listening at {}; start one with `cortex session start`",
@@ -63,9 +100,7 @@ impl DaemonClient {
             )
         })?;
         let (mut writer, mut reader) = self.prepare(stream)?;
-        let status = Self::read_status(&mut writer, &mut reader)?;
-        ensure_compatible(&status, &Request::Status)?;
-        Ok(status)
+        Self::read_status(&mut writer, &mut reader)
     }
 
     /// Send one request and return its untyped success payload.
@@ -141,7 +176,7 @@ fn read_response(reader: &mut BufReader<LocalConnection>) -> Result<serde_json::
     }
     match serde_json::from_str::<Response>(&reply).context("decoding cortex session envelope")? {
         Response::Ok { data } => Ok(data),
-        Response::Error { message } => anyhow::bail!(message),
+        Response::Error { code, message } => Err(DaemonError { code, message }.into()),
     }
 }
 
@@ -157,11 +192,23 @@ pub fn is_running() -> bool {
 /// that failed after connecting.
 #[must_use]
 pub fn request(request: &Request) -> Option<Result<serde_json::Value>> {
+    request_with_timeout(request, DEFAULT_REQUEST_TIMEOUT)
+}
+
+/// Send one request with a caller-selected IPC timeout when a daemon is listening.
+///
+/// Long compositions such as setlist duplication can legitimately exceed the
+/// ordinary one-minute request bound.
+#[must_use]
+pub fn request_with_timeout(
+    request: &Request,
+    timeout: Duration,
+) -> Option<Result<serde_json::Value>> {
     let client = DaemonClient::default();
     if !client.is_running() {
         return None;
     }
-    Some(client.request_value(request))
+    Some(client.with_timeout(timeout).request_value(request))
 }
 
 #[cfg(test)]
@@ -172,6 +219,8 @@ mod tests {
         Status {
             daemon_version: version.to_string(),
             uptime_seconds: 0,
+            auto_managed: false,
+            idle_timeout_seconds: None,
             device: crate::DeviceHealth::Failed {
                 error: "fixture".into(),
             },

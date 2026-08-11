@@ -6,14 +6,16 @@ The current tool surface can read device and preset state, recall presets, switc
 
 ## Before registering it
 
-Install both binaries using the [installation guide](install.md), connect the Quad Cortex, and quit Cortex Control. Start the one process that owns the USB interface:
+Install both binaries together using the [installation guide](install.md), connect the Quad Cortex, and quit Cortex Control. `cortex-mcp` locates the sibling `cortex` binary and starts an auto-managed device session when the agent connects. No separate startup command is required.
+
+To hold the device connection independently of an MCP harness, start an explicit persistent session:
 
 ```sh
 cortex session start
 cortex session status
 ```
 
-The MCP server currently requires that held session to be running before the agent starts it. Automatic daemon startup and idle shutdown are the next distribution lifecycle step.
+An explicitly user-started session remains persistent until `cortex session stop`. An MCP-started session instead exits after 60 seconds without a completed request; the same running MCP process starts a replacement automatically on its next tool call. Concurrent MCP launches converge on the endpoint claim, and an existing explicit session is reused rather than replaced.
 
 ## Safety and conventions
 
@@ -62,7 +64,7 @@ Configuration filenames and top-level keys differ between harnesses, so use that
 
 ## Troubleshooting
 
-- `no held cortex session is listening`: run `cortex session start`, then restart or reconnect the MCP server.
+- `could not find the sibling cortex binary`: install `cortex` and `cortex-mcp` together in the same directory. `CORTEX_CLI_PATH` can identify an explicit binary when a development harness separates them.
 - `device not found`: install the udev rule, replug the unit, and make sure Cortex Control or a VM is not holding it.
-- `daemon protocol version mismatch`: run `cortex session stop`, then `cortex session start` so both installed binaries use the same protocol version.
+- `daemon protocol version mismatch`: run `cortex session stop`, then retry the MCP connection. The server refuses to kill or replace an incompatible owner automatically.
 - MCP connects but a tool reports `reconnecting`: wait for `cortex session status` to return `connected`; operations fail closed while the daemon rebuilds live state.

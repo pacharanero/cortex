@@ -26,6 +26,7 @@ The schema is vendored, not re-derived. We do not run a recovery pass against Co
 | `crates/cortex-rs/proto/Preset.proto` | `BinaryPreset`, `Chain`, `Model`, `Param`, `ParamValue`, `Bypass`, scene/bypass/expression/MIDI types | MIT (Stokes) |
 | `crates/cortex-rs/proto/ProductionAutomation.proto` | `CortexMessageType`, `MessageAction`, `VersionMessage`, `GridMessage`, `FileMessage`, and the full production-automation message set | MIT (Stokes) |
 | `crates/cortex-rs/src/lib.rs` (the `proto` module block) | `include!` of the generated file into `cortex_rs::proto` | AGPL-3.0-or-later (Dr Marcus Baw) |
+| `crates/cortex-rs/src/registry.rs` | Exhaustive operational tag-to-generated-struct registry and opt-in typed decode | AGPL-3.0-or-later (Dr Marcus Baw) |
 
 The generated `cortex_protobuf_v2.rs` lives in `$OUT_DIR` and is not committed; it is rebuilt on every `cargo build` that touches a `.proto` file.
 
@@ -81,6 +82,14 @@ There is no version field on the wire (see AGENTS.md). A CorOS update can add `C
 - **Unknown fields are ignored; known absent fields default.** Proto3 decode remains forward-compatible with additional fields, while optional and oneof accessors are `None` only when a known field is absent.
 - **Schema edits are events.** Any change to a `.proto` file (beyond the SPDX header and the `package` line on `Preset.proto`) is a protocol-version event and must be recorded in [roadmap.md](../roadmap.md) under PROT-003, with the CorOS version that introduced it.
 
+## [DES-REGISTRY] Operational Message Registry
+
+`registry.rs` has one macro invocation listing each concrete generated enum variant, generated protobuf struct, and exact protobuf name. The macro generates `DecodedMessage`, its reverse `message_type()`, `decode_registered`, the `REGISTRY` table, and the internal name lookup. This is deliberately explicit rather than the Python reference's runtime descriptor-and-name fallback: Rust has no generated runtime descriptor here, and an explicit exhaustive `match` makes schema drift a compile failure rather than a silently missing registration.
+
+The generated enum is matched without a wildcard. `Undefined` and `NumberOfMessageTypes` are the only non-operational arms. If the vendored schema adds a variant, compilation fails until it is classified. Numeric conversion happens from the trailer's original `u16`; an unknown future value produces `RegistryError::Unknown(value)`, retaining that value rather than substituting `Undefined`.
+
+Typed decode remains opt-in. `Session` continues to route an `InboundMessage` containing the decompressed raw body and performs only its existing best-effort `request_id` probe. This avoids allocating the largest generated message variant and decoding every device push merely to correlate or reduce the handful of types the session uses. The schema-independent CLI trace decoder also remains unchanged, including its `<unknown N>` rendering and generic protobuf field dump.
+
 ## [DES-LICENSING] Licensing and Attribution Design
 
 The `.proto` files are MIT-licensed material vendored under the MIT distribution terms. They carry their own SPDX header so `reuse lint` attributes them correctly to Stokes, not to Dr Marcus Baw:
@@ -120,6 +129,6 @@ This zone is Layer 3. It has no dependency on any higher layer; the dependency a
 
 ## [DES-TEST] Testing Strategy
 
-- **No unit tests in this zone.** The generated types are tested by use: the domain layer (130) and the framing layer (110) exercise them in decode tests.
+- **Registry unit tests.** Iterate the generated registry table to require exactly 70 entries in numeric order, check every generated enum/name mapping, decode the empty default protobuf for every struct, and reverse-round-trip every `DecodedMessage` variant. Separate tests reject both sentinels, retain several unknown future numeric tags, and preserve a registered tag on malformed protobuf input.
 - **Build-time check.** `cargo build -p cortex-rs --no-default-features` is the smoke test for this zone: if `protoc` is missing or a `.proto` file is malformed, the build fails.
 - **Conformance reference.** The `pyquadcortex` offline test suite exercises the same schema; cross-checking against it is done at the domain layer, not here.

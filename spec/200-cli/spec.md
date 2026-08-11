@@ -108,12 +108,17 @@ Linux users with a Quad Cortex, script writers, AI coding agents driving the CLI
 
 | ID | Requirement | Priority |
 | --- | --- | --- |
-| FR-18 | `cortex session start` claims its owner-only local IPC endpoint before opening the exclusive HID interface, performs one subscribed handshake, and serves line-delimited JSON requests until stopped. Unix uses a domain socket; Windows will use a current-user named pipe behind the same host facade. | Must Have |
+| FR-18 | Explicit `cortex session start` claims its owner-only local IPC endpoint before opening the exclusive HID interface, performs one subscribed handshake, and serves line-delimited JSON requests until explicitly stopped. It never acquires an idle timeout. Unix uses a domain socket; Windows will use a current-user named pipe behind the same host facade. | Must Have |
 | FR-19 | Every ordinary device command uses the daemon when it is running and falls back to one direct session otherwise. Diagnostics that can use held state, including `device probe`, route through it; no command opens a second HID connection while the daemon owns the interface. | Must Have |
 | FR-20 | The daemon serves only responsive `Live` cache entries, falls back to explicit reads for missing state, and reports cache phase/generation/revision and reducer counters in `session status`. | Must Have |
 | FR-21 | A background monitor invalidates state before replacing a silent or continuity-invalidated session, excludes and drains device operations, explicitly releases the old handle before opening another, retries the full subscribed handshake with exponential backoff capped at 30 seconds, and exposes connected/reconnecting/failed status. | Must Have |
 | FR-22 | Requests received during reconnect fail immediately with the attempt and last error; status and shutdown remain available. | Must Have |
 | FR-23 | `cortex preset move --from <slot> --to <slot>` routes through the versioned daemon protocol when held, otherwise uses one direct client session. It executes by default; `-n`/`--dry-run` reports the exact source, destination, and setlist without opening a session or changing the unit. Execution delegates source-path resolution, occupancy refusal, and listing-convergence checks to `QuadCortex::move_preset`; MCP exposes no corresponding tool. | Must Have |
+| FR-24 | `preset save` and `preset copy` expose `--instrument none|guitar|bass|synth|vocal|other`; save defaults to Guitar to preserve the previous CLI wire value. Copy names exact source/destination slots and routes through destination preparation before source recall. | Must Have |
+| FR-25 | `setlist create|delete|duplicate` accept names rather than arbitrary destination paths, route through the daemon when held, execute by default, and produce complete no-I/O dry-run plans. Duplicate output includes its destination and partial progress on failure. | Must Have |
+| FR-26 | A host may start the same binary with the hidden `--auto-managed --idle-timeout-seconds N` contract. Only parsed requests count as activity; a request remains in flight through response writing, completion restarts the full timeout, and open sockets, blank lines, and malformed input do not retain the daemon. Idle exit is impossible while any request is in flight. | Must Have |
+| FR-27 | Accepted client connections are served concurrently. A long device request cannot monopolise the listener: status remains available, while another device request fails rather than queueing an operation that could execute after its caller times out. Shutdown stops admission and waits for the exclusive operation gate before closing HID and acknowledging. If the operation remains hung for three seconds, the daemon exits without acknowledging; process exit releases HID but may interrupt that operation. Idle teardown runs only with no request in flight. | Must Have |
+| FR-28 | The initial status request used for protocol compatibility is ordinary valid activity. A mismatched client refuses further work and names explicit stop/restart; it does not silently replace or kill the daemon. Cross-version shutdown remains available. | Must Have |
 
 ### Non-Functional Requirements
 
@@ -139,6 +144,8 @@ Linux users with a Quad Cortex, script writers, AI coding agents driving the CLI
 - [ ] `cortex --schema` emits a JSON Schema of command inputs.
 - [x] Every command honours `--format text|json`.
 - [x] An exclusivity-aware reconnect test retains an old `Arc<Session>`, proves its lease drops before the first replacement attempt, fails that attempt, succeeds on the second, swaps the session, and advances the retained cache generation even when the old link remained responsive after continuity invalidation.
+- [x] Fake endpoint/process tests prove auto-managed idle exit, timeout reset after a request, in-flight protection, explicit persistence, endpoint cleanup, and a second client completing while another request is slow.
+- [x] The ignored real-device lifecycle test passed on CorOS 4.0.1: idle exit released HID and a replacement direct client completed one non-mutating version read.
 
 ## Non-Goals
 

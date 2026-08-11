@@ -10,20 +10,30 @@
 //! @see spec/140-session/spec.md
 
 use std::collections::HashMap;
+#[cfg(test)]
 use std::io::{BufRead, BufReader, Write};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, Mutex, TryLockError};
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
+#[cfg(test)]
+use cortex_host::LocalConnection;
 use cortex_host::{
-    CacheStatus, DAEMON_PROTOCOL_VERSION, DaemonClient, DeviceHealth, LocalConnection,
-    LocalEndpoint, LocalListener, PrepareSaveResult, Request, Response, Status, log_path,
+    CacheStatus, DAEMON_PROTOCOL_VERSION, DaemonClient, DaemonErrorCode, DaemonLifecycle,
+    DeviceHealth, LocalEndpoint, LocalListener, PrepareSaveResult, Request, Response, Status,
+    log_path, serve_listener,
 };
 use cortex_rs::{DeviceKind, QuadCortex, Session};
 
 /// How long a request may take before the daemon gives up on the device.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+const COPY_DEVICE_STEP_TIMEOUT: Duration = Duration::from_secs(40);
+const SETLIST_DEVICE_TIMEOUT: Duration = Duration::from_secs(60);
+pub const COPY_IPC_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+pub const SETLIST_IPC_TIMEOUT: Duration = Duration::from_secs(3 * 60);
+pub const SAVE_IPC_TIMEOUT: Duration = Duration::from_secs(3 * 60);
+pub const DUPLICATE_IPC_TIMEOUT: Duration = Duration::from_secs(48 * 60 * 60);
 
 /// How long teardown gets before the process exits regardless.
 const SHUTDOWN_GRACE: Duration = Duration::from_secs(3);
@@ -114,10 +124,14 @@ struct Daemon {
     /// Next preparation token id.
     next_token: AtomicU64,
     health: Arc<Mutex<RuntimeHealth>>,
-    /// Excludes reconnect/recovery from every in-flight device operation.
-    operations: Arc<RwLock<()>>,
+    /// Serializes device operations and excludes reconnect/recovery.
+    operations: Arc<Mutex<()>>,
+    accepting_device_requests: AtomicBool,
     reconnect: Arc<ReconnectControl>,
     started: Instant,
+    lifecycle: DaemonLifecycle,
+    force_exit_on_shutdown: bool,
+    shutdown_ready: Arc<AtomicBool>,
 }
 
 impl Daemon {
@@ -126,7 +140,7 @@ impl Daemon {
     /// Subscribed, not minimal, and that is the whole point: subscribing is
     /// how the device reports edits made by the PLAYER on the hardware. It
     /// is expensive per command and correct once per session.
-    fn connect() -> Result<Self> {
+    fn connect(lifecycle: DaemonLifecycle) -> Result<Self> {
         eprintln!("cortex session: opening device ...");
         let session = Arc::new(Session::open(DeviceKind::QuadCortex)?);
 
@@ -142,7 +156,7 @@ impl Daemon {
             started.elapsed().as_secs_f32()
         );
 
-        let daemon = Self::over(session);
+        let daemon = Self::over_with_lifecycle(session, lifecycle, true);
         daemon.seed_live_state();
         Ok(daemon)
     }
@@ -153,7 +167,16 @@ impl Daemon {
     /// exercised without a device: everything interesting here - the socket
     /// protocol, the status shape, how a failed call is reported - is
     /// independent of how the session was obtained.
+    #[cfg(test)]
     fn over(session: Arc<Session>) -> Self {
+        Self::over_with_lifecycle(session, DaemonLifecycle::Explicit, false)
+    }
+
+    fn over_with_lifecycle(
+        session: Arc<Session>,
+        lifecycle: DaemonLifecycle,
+        force_exit_on_shutdown: bool,
+    ) -> Self {
         let state = session.state_cache();
         Self {
             session: Arc::new(Mutex::new(session)),
@@ -162,9 +185,13 @@ impl Daemon {
             preparations: Mutex::new(HashMap::new()),
             next_token: AtomicU64::new(1),
             health: Arc::new(Mutex::new(RuntimeHealth::Connected)),
-            operations: Arc::new(RwLock::new(())),
+            operations: Arc::new(Mutex::new(())),
+            accepting_device_requests: AtomicBool::new(true),
             reconnect: Arc::new(ReconnectControl::default()),
             started: Instant::now(),
+            lifecycle,
+            force_exit_on_shutdown,
+            shutdown_ready: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -185,13 +212,20 @@ impl Daemon {
 
     /// Parsed model catalog matching the cache's exact payload revision.
     fn catalog(&self) -> Option<cortex_rs::Catalog> {
-        let payload = self.state.model_repo()?;
         let mut parsed = self.catalog.lock().unwrap();
+        let Some(payload) = self.state.model_repo() else {
+            // NewModels, a stream gap, or a new generation invalidates the raw
+            // payload. Evict the separately parsed form at the same boundary
+            // so name and parameter resolution cannot retain an older repo.
+            *parsed = None;
+            return None;
+        };
         if let Some((generation, revision, catalog)) = parsed.as_ref() {
             if *generation == payload.generation && *revision == payload.revision {
                 return Some(catalog.clone());
             }
         }
+        *parsed = None;
         let catalog = cortex_rs::Catalog::parse(&payload.value).ok()?;
         *parsed = Some((payload.generation, payload.revision, catalog.clone()));
         Some(catalog)
@@ -213,16 +247,20 @@ impl Daemon {
     }
 
     /// Explain why a device request cannot currently run.
-    fn unavailable(&self) -> Option<String> {
+    fn unavailable(&self) -> Option<(DaemonErrorCode, String)> {
         match self.health.lock().unwrap().clone() {
             RuntimeHealth::Connected => None,
             RuntimeHealth::Reconnecting {
                 attempts,
                 last_error,
-            } => Some(format!(
-                "device reconnecting (attempt {attempts}): {last_error}"
+            } => Some((
+                DaemonErrorCode::Reconnecting,
+                format!("device reconnecting (attempt {attempts}): {last_error}"),
             )),
-            RuntimeHealth::Failed { error } => Some(format!("device connection failed: {error}")),
+            RuntimeHealth::Failed { error } => Some((
+                DaemonErrorCode::DeviceUnavailable,
+                format!("device connection failed: {error}"),
+            )),
         }
     }
 
@@ -232,23 +270,46 @@ impl Daemon {
     /// failed request must not take the daemon down with it - the session is
     /// shared by every other client.
     fn handle(&self, request: Request) -> Response {
-        let needs_device = !matches!(
-            &request,
-            Request::Status | Request::ReconnectNow | Request::Shutdown
-        );
+        if matches!(request, Request::Shutdown) {
+            return self.begin_shutdown();
+        }
+        let needs_device = !matches!(&request, Request::Status | Request::ReconnectNow);
         if needs_device {
-            if let Some(message) = self.unavailable() {
-                return Response::error(message);
+            if !self.accepting_device_requests.load(Ordering::Acquire) {
+                return Response::coded_error(
+                    DaemonErrorCode::ShuttingDown,
+                    "cortex session is shutting down",
+                );
+            }
+            if let Some((code, message)) = self.unavailable() {
+                return Response::coded_error(code, message);
             }
         }
         let _operation = if needs_device {
-            Some(self.operations.read().unwrap())
+            match self.operations.try_lock() {
+                Ok(operation) => Some(operation),
+                Err(TryLockError::WouldBlock) => {
+                    return Response::coded_error(
+                        DaemonErrorCode::Busy,
+                        "another device operation is already in progress; retry after it completes",
+                    );
+                }
+                Err(TryLockError::Poisoned(_)) => {
+                    return Response::error("device operation gate is unavailable");
+                }
+            }
         } else {
             None
         };
         if needs_device {
-            if let Some(message) = self.unavailable() {
-                return Response::error(message);
+            if !self.accepting_device_requests.load(Ordering::Acquire) {
+                return Response::coded_error(
+                    DaemonErrorCode::ShuttingDown,
+                    "cortex session is shutting down",
+                );
+            }
+            if let Some((code, message)) = self.unavailable() {
+                return Response::coded_error(code, message);
             }
         }
         match request {
@@ -459,7 +520,7 @@ impl Daemon {
                             Response::error(format!("serialising parameter write: {e}"))
                         })
                     }
-                    Err(error) => Response::error(error.to_string()),
+                    Err(error) => Response::cortex_error(&error),
                 }
             }
             Request::SetBlock {
@@ -486,7 +547,7 @@ impl Daemon {
                             Response::error(format!("serialising block placement: {e}"))
                         })
                     }
-                    Err(error) => Response::error(error.to_string()),
+                    Err(error) => Response::cortex_error(&error),
                 }
             }
             Request::SetBypass {
@@ -541,7 +602,7 @@ impl Daemon {
             } => {
                 let validated_policy = match policy_for_slots(&setlist, &[&slot]) {
                     Ok(p) => p,
-                    Err(e) => return Response::error(e.to_string()),
+                    Err(e) => return Response::cortex_error(&e),
                 };
                 let client = self.client();
                 let result = client.prepare_save_before_editing(
@@ -566,13 +627,14 @@ impl Daemon {
                             Response::error(format!("serialising preparation: {e}"))
                         })
                     }
-                    Err(error) => Response::error(error.to_string()),
+                    Err(error) => Response::cortex_error(&error),
                 }
             }
             Request::CommitSave {
                 token,
                 confirmed,
                 name,
+                instrument,
                 timeout_seconds,
             } => {
                 let entry = self
@@ -587,11 +649,11 @@ impl Daemon {
                     });
                 let (policy, preparation) = match entry {
                     Ok(pair) => pair,
-                    Err(e) => return Response::error(e.to_string()),
+                    Err(e) => return Response::cortex_error(&e),
                 };
                 let confirmation = match cortex_rs::safety::SaveConfirmation::explicit(confirmed) {
                     Ok(c) => c,
-                    Err(e) => return Response::error(e.to_string()),
+                    Err(e) => return Response::cortex_error(&e),
                 };
                 let client = self.client();
                 let result = client.save_prepared(
@@ -599,13 +661,14 @@ impl Daemon {
                     preparation,
                     confirmation,
                     name.as_deref(),
+                    instrument,
                     Duration::from_secs(timeout_seconds),
                 );
                 match result {
-                    Ok(receipt) => Response::ok(&receipt.view()).unwrap_or_else(|e| {
+                    Ok(receipt) => Response::ok(&receipt.result_view()).unwrap_or_else(|e| {
                         Response::error(format!("serialising save receipt: {e}"))
                     }),
-                    Err(error) => Response::error(error.to_string()),
+                    Err(error) => Response::cortex_error(&error),
                 }
             }
             Request::DeletePreset { setlist, name } => self.respond(move |c| {
@@ -619,14 +682,15 @@ impl Daemon {
                 confirmed,
             } => {
                 if !confirmed {
-                    return Response::error(
+                    return Response::coded_error(
+                        DaemonErrorCode::SafetyRefused,
                         cortex_rs::Error::UnsafeMove("explicit confirmation is required".into())
                             .to_string(),
                     );
                 }
                 let policy = match policy_for_slots(&setlist, &[&from_slot, &to_slot]) {
                     Ok(policy) => policy,
-                    Err(error) => return Response::error(error.to_string()),
+                    Err(error) => return Response::cortex_error(&error),
                 };
                 self.respond(move |c| {
                     c.move_preset(
@@ -639,22 +703,106 @@ impl Daemon {
                     .map(|()| serde_json::json!({ "from_slot": from_slot, "to_slot": to_slot }))
                 })
             }
+            Request::CopyPreset {
+                from_setlist,
+                from_slot,
+                to_setlist,
+                to_slot,
+                name,
+                instrument,
+                confirmed,
+            } => {
+                if !confirmed {
+                    return Response::coded_error(
+                        DaemonErrorCode::SafetyRefused,
+                        "explicit confirmation is required",
+                    );
+                }
+                let policy = match policy_for_slots(&to_setlist, &[&to_slot]) {
+                    Ok(policy) => policy,
+                    Err(error) => return Response::cortex_error(&error),
+                };
+                self.respond(move |c| {
+                    c.copy_preset(
+                        &policy,
+                        &from_setlist,
+                        &from_slot,
+                        &to_setlist,
+                        &to_slot,
+                        name.as_deref(),
+                        instrument,
+                        cortex_rs::RecallConsent::DiscardWorkingCopy,
+                        COPY_DEVICE_STEP_TIMEOUT,
+                    )
+                })
+            }
+            Request::CreateSetlist { name, confirmed } => {
+                if !confirmed {
+                    return Response::coded_error(
+                        DaemonErrorCode::SafetyRefused,
+                        "explicit confirmation is required",
+                    );
+                }
+                self.respond(move |c| c.create_setlist(&name, SETLIST_DEVICE_TIMEOUT))
+            }
+            Request::DeleteSetlist { name, confirmed } => {
+                if !confirmed {
+                    return Response::coded_error(
+                        DaemonErrorCode::SafetyRefused,
+                        "explicit confirmation is required",
+                    );
+                }
+                self.respond(move |c| {
+                    c.delete_setlist(&name, SETLIST_DEVICE_TIMEOUT)
+                        .map(|()| serde_json::json!({ "deleted": name }))
+                })
+            }
+            Request::DuplicateSetlist {
+                source_name,
+                destination_name,
+                limit,
+                confirmed,
+            } => {
+                if !confirmed {
+                    return Response::coded_error(
+                        DaemonErrorCode::SafetyRefused,
+                        "explicit confirmation is required",
+                    );
+                }
+                self.respond(move |c| {
+                    c.duplicate_setlist(
+                        &source_name,
+                        &destination_name,
+                        limit,
+                        cortex_rs::RecallConsent::DiscardWorkingCopy,
+                        Duration::from_secs(60),
+                    )
+                })
+            }
             Request::CpuLoad => match self.state.cpu_load() {
                 Some(load) if self.cache_is_usable() => {
                     Response::ok(&cortex_rs::view::CpuLoad::from(&load.value))
                         .unwrap_or_else(|e| Response::error(format!("CpuLoad: {e}")))
                 }
-                None => Response::error(
+                None => Response::coded_error(
+                    DaemonErrorCode::NotReady,
                     "no CPU load received yet - the device pushes it about once a second \
                      after subscribing"
                         .to_string(),
                 ),
-                Some(_) => Response::error("the device is not currently responsive"),
+                Some(_) => Response::coded_error(
+                    DaemonErrorCode::DeviceUnavailable,
+                    "the device is not currently responsive",
+                ),
             },
-            // Handled by the caller, which needs to stop the accept loop.
-            Request::Shutdown => Response::ok(&serde_json::json!({ "stopping": true }))
-                .unwrap_or_else(|e| Response::error(format!("{e}"))),
+            Request::Shutdown => unreachable!("shutdown is handled before device admission"),
         }
+    }
+
+    fn begin_shutdown(&self) -> Response {
+        self.shutdown();
+        Response::ok(&serde_json::json!({ "stopping": true }))
+            .unwrap_or_else(|error| Response::error(error.to_string()))
     }
 
     fn reconnect_now(&self) -> Response {
@@ -662,7 +810,10 @@ impl Daemon {
             RuntimeHealth::Reconnecting { .. } => true,
             RuntimeHealth::Connected => !self.session().is_responsive(),
             RuntimeHealth::Failed { error } => {
-                return Response::error(format!("reconnect monitor failed: {error}"));
+                return Response::coded_error(
+                    DaemonErrorCode::DeviceUnavailable,
+                    format!("reconnect monitor failed: {error}"),
+                );
             }
         };
         if requested {
@@ -683,7 +834,7 @@ impl Daemon {
         match call(&self.client()) {
             Ok(value) => Response::ok(&value)
                 .unwrap_or_else(|e| Response::error(format!("serialising response: {e}"))),
-            Err(e) => Response::error(e.to_string()),
+            Err(e) => Response::cortex_error(&e),
         }
     }
 
@@ -721,6 +872,8 @@ impl Daemon {
         Status {
             daemon_version: DAEMON_PROTOCOL_VERSION.to_string(),
             uptime_seconds: self.started.elapsed().as_secs(),
+            auto_managed: self.lifecycle.is_auto_managed(),
+            idle_timeout_seconds: self.lifecycle.idle_timeout().map(|value| value.as_secs()),
             device,
             cache: CacheStatus {
                 generation: state.generation,
@@ -770,9 +923,29 @@ impl Daemon {
     }
 
     fn shutdown(&self) {
+        self.accepting_device_requests
+            .store(false, Ordering::Release);
         self.reconnect.stopping.store(true, Ordering::Relaxed);
-        let _operation = self.operations.write().unwrap();
+        if self.force_exit_on_shutdown && !self.shutdown_ready.load(Ordering::Acquire) {
+            let shutdown_ready = Arc::clone(&self.shutdown_ready);
+            std::thread::spawn(move || {
+                std::thread::sleep(SHUTDOWN_GRACE);
+                if shutdown_ready.load(Ordering::Acquire) {
+                    return;
+                }
+                eprintln!(
+                    "cortex session: device operation did not finish within {}s; exiting without acknowledging shutdown",
+                    SHUTDOWN_GRACE.as_secs()
+                );
+                std::process::exit(0);
+            });
+        }
+        // The same exclusive gate covers ordinary operations and reconnect.
+        // Closing under it means a successful explicit response proves no
+        // device call can continue after the acknowledgement.
+        let _operation = self.operations.lock().unwrap();
         self.session().close();
+        self.shutdown_ready.store(true, Ordering::Release);
     }
 }
 
@@ -820,7 +993,7 @@ fn reconnect_loop<F>(
     state: cortex_rs::DeviceStateCache,
     health: Arc<Mutex<RuntimeHealth>>,
     reconnect: Arc<ReconnectControl>,
-    operations: Arc<RwLock<()>>,
+    operations: Arc<Mutex<()>>,
     timings: ReconnectTimings,
     connect: F,
 ) where
@@ -850,7 +1023,7 @@ fn reconnect_loop<F>(
 
         // Health changes first so no new request can acquire the operation
         // side while recovery waits for existing calls to drain.
-        let _recovery = operations.write().unwrap();
+        let _recovery = operations.lock().unwrap();
 
         // The old handle must be gone before opening another. Concurrent HID
         // ownership is accepted initially and wedges the next request.
@@ -899,8 +1072,8 @@ fn reconnect_loop<F>(
     }
 }
 
-/// Run the daemon until told to stop.
-pub fn run() -> Result<()> {
+/// Run the daemon until explicitly stopped or its host-managed idle bound expires.
+pub fn run(lifecycle: DaemonLifecycle) -> Result<()> {
     let endpoint = LocalEndpoint::daemon();
 
     // Claim local IPC BEFORE the handshake, not after.
@@ -933,7 +1106,7 @@ pub fn run() -> Result<()> {
 
     // The endpoint now exists, so a failed handshake must clear it on the way
     // out; otherwise the next start finds a file it has to treat as stale.
-    let daemon = match Daemon::connect() {
+    let daemon = match Daemon::connect(lifecycle) {
         Ok(daemon) => daemon,
         Err(e) => {
             let _ = listener.cleanup_endpoint();
@@ -942,39 +1115,23 @@ pub fn run() -> Result<()> {
     };
 
     eprintln!("cortex session: listening on {endpoint}");
-    eprintln!("cortex session: stop with `cortex session stop`, or Ctrl-C if attached");
+    match lifecycle {
+        DaemonLifecycle::Explicit => {
+            eprintln!("cortex session: stop with `cortex session stop`, or Ctrl-C if attached");
+        }
+        DaemonLifecycle::AutoManaged { idle_timeout } => eprintln!(
+            "cortex session: auto-managed; exits after {}s without a completed request",
+            idle_timeout.as_secs()
+        ),
+    }
     daemon.start_reconnect_monitor();
 
-    loop {
-        let stream = match listener.accept() {
-            Ok(s) => s,
-            Err(e) => {
-                eprintln!("cortex session: accept failed: {e}");
-                continue;
-            }
-        };
-        if serve(&daemon, stream) == Control::Stop {
-            break;
-        }
+    let serving = serve_listener(&listener, lifecycle, &|request| daemon.handle(request));
+    if matches!(serving, Ok(cortex_host::ServerExit::IdleTimeout)) {
+        eprintln!("cortex session: request-idle timeout reached");
     }
 
     eprintln!("cortex session: shutting down");
-
-    // Teardown talks to the device, and a wedged device is exactly the state
-    // someone reaches for `--stop` in. Observed: a daemon whose session had
-    // gone silent acknowledged the stop, then outlived it by minutes and
-    // needed SIGTERM. The client had already been told "stopped", so it
-    // looked done while still holding the HID interface - which blocks the
-    // next session from starting. Bound it: the disconnect below is
-    // fire-and-forget, so there is nothing left worth waiting for.
-    std::thread::spawn(|| {
-        std::thread::sleep(SHUTDOWN_GRACE);
-        eprintln!(
-            "cortex session: teardown did not finish within {}s; exiting anyway",
-            SHUTDOWN_GRACE.as_secs()
-        );
-        std::process::exit(0);
-    });
 
     daemon.shutdown();
     // Last, so the endpoint never outlives our claim on the device: while it
@@ -982,17 +1139,20 @@ pub fn run() -> Result<()> {
     // themselves. A file left behind by a forced exit is inert - nothing is
     // listening on it - and the next start clears it as stale.
     let _ = listener.cleanup_endpoint();
+    serving?;
     Ok(())
 }
 
 /// Whether the accept loop should continue.
 #[derive(Debug, PartialEq, Eq)]
+#[cfg(test)]
 enum Control {
     Continue,
     Stop,
 }
 
 /// Serve one connection. A client may send several requests on one stream.
+#[cfg(test)]
 fn serve(daemon: &Daemon, stream: LocalConnection) -> Control {
     let peer = match stream.try_clone() {
         Ok(s) => s,
@@ -1026,7 +1186,10 @@ fn serve(daemon: &Daemon, stream: LocalConnection) -> Control {
                 }
                 response
             }
-            Err(e) => Response::error(format!("could not parse request: {e}")),
+            Err(e) => Response::coded_error(
+                DaemonErrorCode::InvalidRequest,
+                format!("could not parse request: {e}"),
+            ),
         };
 
         if write_response(&mut writer, &response).is_err() {
@@ -1038,9 +1201,12 @@ fn serve(daemon: &Daemon, stream: LocalConnection) -> Control {
     Control::Continue
 }
 
+#[cfg(test)]
 fn write_response(writer: &mut LocalConnection, response: &Response) -> std::io::Result<()> {
-    let mut line = serde_json::to_string(response)
-        .unwrap_or_else(|e| format!(r#"{{"status":"error","message":"{e}"}}"#));
+    let mut line = serde_json::to_string(response).unwrap_or_else(|_| {
+        r#"{"status":"error","code":"internal","message":"could not serialise response"}"#
+            .to_string()
+    });
     line.push('\n');
     writer.write_all(line.as_bytes())?;
     writer.flush()
@@ -1083,7 +1249,7 @@ unsafe extern "C" {
 ///
 /// Returns an error if a session is already running, if the child cannot be
 /// spawned, or if it exits or goes quiet before it starts serving.
-pub fn start_detached() -> Result<()> {
+pub fn start_detached(lifecycle: DaemonLifecycle) -> Result<()> {
     if is_running() {
         anyhow::bail!(
             "a cortex session is already running. \
@@ -1097,8 +1263,13 @@ pub fn start_detached() -> Result<()> {
     let exe = std::env::current_exe()?;
 
     let mut cmd = std::process::Command::new(exe);
-    cmd.args(["session", "start", "--foreground"])
-        .stdin(std::process::Stdio::null())
+    cmd.args(["session", "start", "--foreground"]);
+    if let DaemonLifecycle::AutoManaged { idle_timeout } = lifecycle {
+        cmd.arg("--auto-managed")
+            .arg("--idle-timeout-seconds")
+            .arg(idle_timeout.as_secs().to_string());
+    }
+    cmd.stdin(std::process::Stdio::null())
         .stdout(file.try_clone()?)
         .stderr(file);
 
@@ -1177,6 +1348,14 @@ pub fn request(request: &Request) -> Option<Result<serde_json::Value>> {
     cortex_host::request(request)
 }
 
+/// Send a composition whose legitimate duration exceeds the ordinary IPC bound.
+pub fn request_with_timeout(
+    request: &Request,
+    timeout: Duration,
+) -> Option<Result<serde_json::Value>> {
+    cortex_host::request_with_timeout(request, timeout)
+}
+
 #[cfg(test)]
 fn request_on(stream: LocalConnection, request: &Request) -> Result<serde_json::Value> {
     stream.set_read_timeout(Some(SOCKET_REQUEST_TIMEOUT))?;
@@ -1197,7 +1376,7 @@ fn request_on(stream: LocalConnection, request: &Request) -> Result<serde_json::
     let status: Response = serde_json::from_str(&status_reply)?;
     let status_data = match status {
         Response::Ok { data } => data,
-        Response::Error { message } => anyhow::bail!("{message}"),
+        Response::Error { message, .. } => anyhow::bail!("{message}"),
     };
     let daemon_version: u32 = status_data
         .get("daemon_version")
@@ -1226,7 +1405,7 @@ fn request_on(stream: LocalConnection, request: &Request) -> Result<serde_json::
     reader.read_line(&mut reply)?;
     match serde_json::from_str::<Response>(&reply)? {
         Response::Ok { data } => Ok(data),
-        Response::Error { message } => anyhow::bail!("{message}"),
+        Response::Error { message, .. } => anyhow::bail!("{message}"),
     }
 }
 
@@ -1281,6 +1460,33 @@ mod tests {
         Daemon::over(Arc::new(
             Session::over(link).expect("session over a fake link"),
         ))
+    }
+
+    fn fake_daemon_with_link() -> (Daemon, FakeLink) {
+        let link = FakeLink::new();
+        let daemon = Daemon::over(Arc::new(
+            Session::over(link.clone()).expect("session over a fake link"),
+        ));
+        (daemon, link)
+    }
+
+    fn push_state<T: prost::Message>(
+        daemon: &Daemon,
+        link: &FakeLink,
+        message_type: cortex_rs::proto::cortex_message_type::Enum,
+        message: &T,
+    ) {
+        let before = daemon.state.status().revision;
+        link.push_inbound(inbound(message_type as u16, &message.encode_to_vec()));
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while Instant::now() < deadline && daemon.state.status().revision == before {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        assert_ne!(
+            daemon.state.status().revision,
+            before,
+            "fake state push was not observed"
+        );
     }
 
     fn inbound(message_type: u16, body: &[u8]) -> Vec<u8> {
@@ -1356,9 +1562,10 @@ mod tests {
     #[test]
     fn cpu_load_before_any_push_explains_itself() {
         let daemon = fake_daemon();
-        let Response::Error { message } = daemon.handle(Request::CpuLoad) else {
+        let Response::Error { code, message } = daemon.handle(Request::CpuLoad) else {
             panic!("a fake session has received no CPU load, so this cannot succeed");
         };
+        assert_eq!(code, DaemonErrorCode::NotReady);
         // The first push lands about 8s after subscribing, so "nothing yet"
         // is a normal state and has to read like one.
         assert!(
@@ -1369,9 +1576,93 @@ mod tests {
     }
 
     #[test]
+    fn parsed_catalog_tracks_new_models_and_the_exact_replacement_payload() {
+        use cortex_rs::proto::{ModelRepoMessage, NewModelsMessage, model_repo_message};
+
+        let (daemon, link) = fake_daemon_with_link();
+        push_state(
+            &daemon,
+            &link,
+            cortex_rs::proto::cortex_message_type::Enum::ModelRepo,
+            &ModelRepoMessage {
+                model_repo_payload: Some(model_repo_message::ModelRepoPayload::ModelRepoPayload(
+                    vec![0xa1],
+                )),
+                ..Default::default()
+            },
+        );
+        let payload = daemon.state.model_repo().expect("catalog A payload");
+        let catalog_a = cortex_rs::Catalog::from_xml(
+            r#"<Models><Category id="1" name="Fictional"><Model id="41" name="Catalog A"><Parameter name="OLD" type="float" min="0" max="1"/></Model></Category></Models>"#,
+        )
+        .expect("catalog A");
+        *daemon.catalog.lock().unwrap() = Some((payload.generation, payload.revision, catalog_a));
+        assert_eq!(daemon.catalog().unwrap().get(41).unwrap().name, "Catalog A");
+
+        push_state(
+            &daemon,
+            &link,
+            cortex_rs::proto::cortex_message_type::Enum::NewModels,
+            &NewModelsMessage::default(),
+        );
+        assert_eq!(
+            daemon.catalog().unwrap().get(41).unwrap().name,
+            "Catalog A",
+            "an empty NewModels announcement must not invalidate catalog A"
+        );
+
+        push_state(
+            &daemon,
+            &link,
+            cortex_rs::proto::cortex_message_type::Enum::NewModels,
+            &NewModelsMessage {
+                models: vec![42],
+                ..Default::default()
+            },
+        );
+
+        assert!(daemon.catalog().is_none());
+        assert!(
+            daemon.catalog.lock().unwrap().is_none(),
+            "parsed catalog A must not survive invalidation for later name or parameter resolution"
+        );
+        assert!(
+            daemon.session().captured_model_repo().is_none(),
+            "client-side named parameter resolution must not recover catalog A"
+        );
+
+        push_state(
+            &daemon,
+            &link,
+            cortex_rs::proto::cortex_message_type::Enum::ModelRepo,
+            &ModelRepoMessage {
+                model_repo_payload: Some(model_repo_message::ModelRepoPayload::ModelRepoPayload(
+                    vec![0xb2],
+                )),
+                ..Default::default()
+            },
+        );
+        let payload = daemon.state.model_repo().expect("catalog B payload");
+        let catalog_b = cortex_rs::Catalog::from_xml(
+            r#"<Models><Category id="1" name="Fictional"><Model id="41" name="Catalog B"><Parameter name="NEW" type="float" min="0" max="1"/></Model></Category></Models>"#,
+        )
+        .expect("catalog B");
+        *daemon.catalog.lock().unwrap() = Some((payload.generation, payload.revision, catalog_b));
+        let current = daemon.catalog().expect("parsed catalog B");
+        let model = current.get(41).expect("model from B");
+        assert_eq!(model.name, "Catalog B");
+        assert!(model.parameter("NEW").is_some());
+        assert!(
+            model.parameter("OLD").is_none(),
+            "name and parameter resolution must use B rather than stale A"
+        );
+        daemon.shutdown();
+    }
+
+    #[test]
     fn an_unconfirmed_preset_move_is_refused_before_device_io() {
         let daemon = fake_daemon();
-        let Response::Error { message } = daemon.handle(Request::MovePreset {
+        let Response::Error { code, message } = daemon.handle(Request::MovePreset {
             setlist: cortex_rs::client::USER_SETLIST.into(),
             from_slot: "2A".into(),
             to_slot: "2B".into(),
@@ -1383,6 +1674,61 @@ mod tests {
             message.contains("confirmation"),
             "unexpected error: {message}"
         );
+        assert_eq!(code, DaemonErrorCode::SafetyRefused);
+        daemon.shutdown();
+    }
+
+    #[test]
+    fn an_unconfirmed_setlist_create_is_refused_before_device_io() {
+        let daemon = fake_daemon();
+        let response = daemon.handle(Request::CreateSetlist {
+            name: "Fictional Setlist".into(),
+            confirmed: false,
+        });
+        assert!(
+            matches!(response, Response::Error { message, .. } if message.contains("confirmation"))
+        );
+        daemon.shutdown();
+    }
+
+    #[test]
+    fn concurrent_device_requests_are_refused_by_the_exclusive_operation_gate() {
+        let daemon = Arc::new(fake_daemon());
+        let held = daemon.operations.lock().unwrap();
+        assert!(matches!(
+            daemon.handle(Request::Status),
+            Response::Ok { .. }
+        ));
+        let response = daemon.handle(Request::CpuLoad);
+        assert!(matches!(
+            response,
+            Response::Error { message, .. } if message.contains("already in progress")
+        ));
+        drop(held);
+        daemon.shutdown();
+    }
+
+    #[test]
+    fn shutdown_is_not_acknowledged_until_the_device_gate_is_released() {
+        let daemon = Arc::new(fake_daemon());
+        let held = daemon.operations.lock().unwrap();
+        let worker_daemon = Arc::clone(&daemon);
+        let (sent, received) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            sent.send(worker_daemon.handle(Request::Shutdown)).unwrap();
+        });
+
+        assert!(
+            received.recv_timeout(Duration::from_millis(50)).is_err(),
+            "shutdown was acknowledged while a device operation was in flight"
+        );
+        assert!(!daemon.accepting_device_requests.load(Ordering::Acquire));
+        drop(held);
+        assert!(matches!(
+            received.recv_timeout(Duration::from_secs(1)).unwrap(),
+            Response::Ok { .. }
+        ));
+        worker.join().unwrap();
         daemon.shutdown();
     }
 
@@ -1393,9 +1739,10 @@ mod tests {
             attempts: 3,
             last_error: "device unplugged".into(),
         };
-        let Response::Error { message } = daemon.handle(Request::ActiveScene) else {
+        let Response::Error { code, message } = daemon.handle(Request::ActiveScene) else {
             panic!("a request must not wait on a session being replaced");
         };
+        assert_eq!(code, DaemonErrorCode::Reconnecting);
         assert!(message.contains("attempt 3"), "unexpected error: {message}");
         let Response::Ok { data } = daemon.handle(Request::Status) else {
             panic!("status must remain available while reconnecting");
@@ -1435,7 +1782,7 @@ mod tests {
         let slot = Arc::new(Mutex::new(initial));
         let health = Arc::new(Mutex::new(RuntimeHealth::Connected));
         let reconnect = Arc::new(ReconnectControl::default());
-        let operations = Arc::new(RwLock::new(()));
+        let operations = Arc::new(Mutex::new(()));
         let attempts = Arc::new(AtomicUsize::new(0));
         let connector_attempts = attempts.clone();
         let connector_lease = active_lease.clone();
@@ -1517,9 +1864,26 @@ mod tests {
     }
 
     #[test]
+    fn shutdown_interrupts_reconnect_backoff() {
+        let reconnect = Arc::new(ReconnectControl::default());
+        let worker_reconnect = reconnect.clone();
+        let started = Instant::now();
+        let worker = std::thread::spawn(move || worker_reconnect.wait(Duration::from_secs(10)));
+
+        std::thread::sleep(Duration::from_millis(20));
+        reconnect.stopping.store(true, Ordering::Release);
+
+        assert!(!worker.join().unwrap());
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "shutdown should interrupt rather than wait out reconnect backoff"
+        );
+    }
+
+    #[test]
     fn untrusted_socket_rows_are_rejected_before_device_io() {
         let daemon = fake_daemon();
-        let Response::Error { message } = daemon.handle(Request::SetBlock {
+        let Response::Error { code, message } = daemon.handle(Request::SetBlock {
             row: 4,
             column: 0,
             model: 42,
@@ -1529,13 +1893,14 @@ mod tests {
             panic!("an out-of-range socket row must be rejected");
         };
         assert!(message.contains("0-3"), "unexpected error: {message}");
+        assert_eq!(code, DaemonErrorCode::InvalidRow);
         daemon.shutdown();
     }
 
     #[test]
     fn invalid_parameter_values_are_rejected_before_device_io() {
         let daemon = fake_daemon();
-        let Response::Error { message } = daemon.handle(Request::SetParam {
+        let Response::Error { code, message } = daemon.handle(Request::SetParam {
             row: 0,
             column: 0,
             target: cortex_rs::ParameterTarget::Index(0),
@@ -1547,6 +1912,7 @@ mod tests {
             panic!("an out-of-range parameter value must be rejected");
         };
         assert!(message.contains("0.0-1.0"), "unexpected error: {message}");
+        assert_eq!(code, DaemonErrorCode::InvalidParameter);
         daemon.shutdown();
     }
 

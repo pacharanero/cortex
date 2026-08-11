@@ -35,7 +35,7 @@ Start with `pyquadcortex/docs/protocol.md` (especially "Operation coverage") and
 
 ### What it has that we do not
 
-Most planned items in PROT-006.4 through PROT-006.15 already have an implementation or a documented investigation there: the remaining reads, `move_block`, the splitter/mixer/lane/gate group, tempo methods, stomp/expression/MIDI, file operations, captures and IRs, global settings, I/O ports, and pinning/favourites. Scene copy/label/colour have now been ported and independently hardware-verified here. Verification varies by operation - read-back, confirmation on the unit, capture only, or a documented negative result - so copy the evidence level as carefully as the wire shape. Its ergonomic helper for selecting a list parameter by option **name** and centralising the `index / (count - 1)` arithmetic is now tracked in PROT-006.15.
+Most planned items in PROT-006.4 through PROT-006.15 already have an implementation or a documented investigation there: the remaining reads, `move_block`, the splitter/mixer/lane/gate group, tempo methods, stomp/expression/MIDI, file operations, captures and IRs, global settings, I/O ports, and pinning/favourites. Scene copy/label/colour have now been ported and independently hardware-verified here. Verification varies by operation - read-back, confirmation on the unit, capture only, or a documented negative result - so copy the evidence level as carefully as the wire shape. Its pure preset helpers and ergonomic helper for selecting a list parameter by option **name** and centralising the `index / (count - 1)` arithmetic were ported under PROT-006.15.
 
 ### Device behaviour that fails silently
 
@@ -72,6 +72,12 @@ It has never attempted capture export, and its IR *import* attempt failed - but 
 - **Outbound fragmentation is proven sound** to at least 26 fragments, so report chunking is not the failure. The remaining variables include payload content, action choice, and other message semantics.
 - A capture is referenced by a content hash concatenated with its display name, with no separator; the valid-reference shape is hardware-confirmed. An IR takes a library key rather than a path, and **the device does not validate that IR reference** - nonsense stores back byte-identical and only shows as a warning icon on the unit. Invalid-capture-reference behaviour is unestablished.
 - **Safety warning:** during repeated multi-kilobyte import attempts the unit's USB link died and needed a power cycle. Space these out.
+
+### On ModelRepo scope and freshness (PROT-008.7)
+
+The MIT-licensed catalog implementation corrects an earlier assumption in this project: `ModelRepo` does **not** enumerate individual Neural Captures. Its Neural Capture categories contain a small number of capture block types; the selected capture is a string parameter referencing a separate library entry, and saving a new capture does not add a catalog model. `pyquadcortex/docs/manual-coverage.md` independently directs capture inventory to `File` listings and states that the catalog does not grow on capture save.
+
+That evidence is licensed and hardware-based upstream, but the exclusion has not been independently measured on this project's local unit. A useful optional experiment is to compare `ModelRepo` bytes and `NewModels` traffic before and after entitlement changes on two units or accounts running the same CorOS. It is research evidence about repository scope and invalidation, not a remaining disk-cache deliverable.
 
 ---
 
@@ -143,9 +149,9 @@ The fact that justifies keeping it:
 
 - **Neural Captures appear to be encrypted, and user captures keyed to the unit's serial number.** PROT-007 now records this third possibility alongside compression and container questions. If it holds, a capture may not be parseable without deriving a key and may not import to a *different* unit at all, which undercuts the "move between units" motivation.
 
-Treat that as a **provisional, third-party, pre-`CorOS`-3 claim to be tested by trace**, not as fact. Everything in that project predates `CorOS` 3 while we are verified on 4.0.1.
+Treat the per-capture and serial-key claims as **provisional, third-party, pre-`CorOS`-3 claims**, not facts. A Cortex Control 4.0.1 trace now independently shows a whole-unit `LocalBackup` container whose Base64 payload has no compression/archive signature and measures 7.999772 bits/byte Shannon entropy, consistent with encryption. The old no-serial decrypt path did not yield recognisable plaintext, but the current cipher and serial-key scope remain unestablished.
 
-Secondary and lower value: it corroborates that the model catalog is the same artefact we now fetch over the wire, and that it changes across firmware releases - which supports caching it keyed by `CorOS` version. It also describes a consolidated on-device user-data archive containing only personal content, which suggests a single-blob acquisition route as an alternative to per-capture wire reads; our recovered schema does carry backup message types.
+Secondary and lower value: it corroborates that the model catalog is the same artefact we now fetch over the wire and that it changes across firmware releases. That does not prove CorOS is a sufficient cache key, particularly because installed entitlements may also affect catalog content. It also describes a consolidated on-device user-data archive containing only personal content, which suggests a single-blob acquisition route as an alternative to per-capture wire reads; our recovered schema does carry backup message types.
 
 The rooting route it documents is exactly what our stated preference for the USB route avoids.
 

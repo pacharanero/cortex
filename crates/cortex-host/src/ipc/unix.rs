@@ -169,6 +169,15 @@ impl LocalListener {
             .map(|(inner, _)| LocalConnection { inner })
     }
 
+    /// Configure whether accept returns immediately when no client is waiting.
+    ///
+    /// # Errors
+    ///
+    /// Returns the socket option error.
+    pub fn set_nonblocking(&self, nonblocking: bool) -> std::io::Result<()> {
+        self.inner.set_nonblocking(nonblocking)
+    }
+
     /// Remove this listener's filesystem endpoint while retaining its atomic claim.
     ///
     /// # Errors

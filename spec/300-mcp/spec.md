@@ -48,7 +48,7 @@ The non-persistent MCP host is hardware-verified against a real Quad Cortex thro
 
 ## Current Boundary
 
-The non-persistent milestone is complete and hardware-verified through an official SDK client. Current distribution still requires a separately started compatible daemon. The next MCP work is typed daemon failures and read-back/typed-routing hardening, followed by self-starting daemon lifecycle. Destructive save is a later independent milestone.
+The non-persistent milestone is complete and hardware-verified through an official SDK client. The installed MCP server now starts and lazily restarts an auto-managed sibling daemon when needed; an explicit compatible daemon is reused, and typed failures survive both host boundaries. The next MCP work is read-back and typed-routing hardening. Destructive save is a later independent milestone.
 
 ## User Stories
 
@@ -126,6 +126,7 @@ AI coding agents editing patches via MCP, and the maintainers who gate what an a
 | FR-42 | The server runs on stdio (the MCP transport) via `rmcp`. | Must Have |
 | FR-43 | The server logs safety-relevant events (refused save, prepared target, and slot backup) to stderr. | Should Have |
 | FR-44 | When no daemon endpoint exists, the installed MCP server starts the sibling `cortex session` owner before serving stdio. It never silently replaces a running incompatible daemon, and concurrent starts converge on the local IPC claim. | Should Have |
+| FR-45 | Daemon failures retain a stable machine-readable code across local IPC and MCP structured tool results while preserving a human-readable diagnostic. Model-correctable failures and retryable session states never require message parsing. | Must Have |
 
 ### Non-Functional Requirements
 
@@ -136,6 +137,7 @@ AI coding agents editing patches via MCP, and the maintainers who gate what an a
 | NFR-3 | Tool schemas are explicit and bounded today. They converge with a future shared CLI/MCP registry under CLI-007.1; no CLI `--schema` contract exists yet. | Design-enforced |
 | NFR-4 | The non-persistent server is hardware-verified. Destructive save and each newly added operation remain provisional until their own hardware smoke. | Docs-enforced |
 | NFR-5 | Agent-generated tests must not be the sole basis for accepting safety-surface behaviour. Cross-check against the client layer (150) and a real device. | AGENTS.md assurance |
+| NFR-6 | Tool execution failures use MCP's model-correctable structured-error path with top-level `code` and `error` fields; transport and server faults remain JSON-RPC errors. | Protocol-enforced |
 
 ## Acceptance Criteria
 
@@ -152,7 +154,8 @@ AI coding agents editing patches via MCP, and the maintainers who gate what an a
 - [x] The server runs on bounded stdio via `rmcp` and answers a real official-SDK MCP client.
 - [x] All tools delegate through the daemon to `QuadCortex`; none reimplement protocol or domain logic.
 - [x] The non-persistent tool surface passed hardware smoke on 2026-08-06 against CorOS 4.0.1.
-- [ ] A normally installed `cortex-mcp` can start from an agent harness without a separate manual `cortex session start`; startup writes no non-MCP data to stdout.
+- [x] A normally installed `cortex-mcp` resolves the sibling `cortex`, starts an auto-managed owner without a separate manual session, and writes no non-MCP data to stdout. Process tests cover two concurrent missing-daemon launches converging on one endpoint and a long-lived MCP process restarting after request-idle release.
+- [x] Typed daemon error codes survive the process boundary and appear in MCP structured tool errors. Tests cover leaf-error classification, a downcastable host error from a real daemon process, daemon reconnect/validation categories, and an official-SDK MCP call receiving `dsp_refused`.
 
 ## Non-Goals
 
@@ -179,7 +182,6 @@ AI coding agents editing patches via MCP, and the maintainers who gate what an a
 - **Scratch-range configuration.** Choose the host mechanism (GUI setting, config file, or MCP startup argument). `SavePolicy` validates supplied ranges but deliberately provides no default because the crate cannot know which slots are disposable.
 - **Backup retention and restoration.** The slot-backup blob (FR-4) could be written to a configurable backup directory with a timestamp. Restoring it still needs a verified device-side copy, import, or keyed replay path because an unkeyed whole-preset grid write is ignored; retention alone must not be presented as one-click rollback.
 - **Read-back verification.** After a `save_preset`, the server could `read_preset` the same slot and confirm it matches the working copy, surfacing a mismatch as a structured error.
-- **Daemon lifecycle.** The server already reuses the persistent daemon across tool calls. Remaining work is starting a missing compatible daemon and allowing request-based idle shutdown without owning a second lifecycle manager.
 - **Prepared-token registry.** MCP calls cannot carry the opaque Rust `SavePreparation` directly. The server must retain preparations under short-lived opaque IDs and expose only `SavePreparationView`; raw backups never cross into tool arguments.
 
 ## Glossary

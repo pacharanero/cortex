@@ -283,6 +283,12 @@ enum SessionCmd {
         /// handshake is misbehaving and you want to watch it happen.
         #[arg(long)]
         foreground: bool,
+        /// Mark this as a host-started daemon that may exit when request-idle.
+        #[arg(long, hide = true, requires = "idle_timeout_seconds")]
+        auto_managed: bool,
+        /// Exit after this many seconds with no request in flight or completed.
+        #[arg(long, hide = true, requires = "auto_managed", value_name = "SECONDS")]
+        idle_timeout_seconds: Option<u64>,
     },
     /// Report whether a session is running, and whether the device answers.
     #[command(after_help = "Examples:\n  cortex session status")]
@@ -295,6 +301,30 @@ enum SessionCmd {
 /// Commands acting on presets.
 #[derive(Subcommand, Debug)]
 enum PresetCmd {
+    /// Copy a stored preset through destination preparation, source recall, and save.
+    ///
+    /// WRITES TO THE UNIT and changes what is loaded. The destination is
+    /// recalled and backed up before the source is recalled.
+    Copy {
+        /// Source setlist path.
+        #[arg(long, value_name = "PATH", default_value = cortex_rs::client::USER_SETLIST)]
+        from_setlist: String,
+        /// Source slot.
+        #[arg(long, value_name = "BANK+LETTER")]
+        from: String,
+        /// Destination setlist path.
+        #[arg(long, value_name = "PATH", default_value = cortex_rs::client::USER_SETLIST)]
+        to_setlist: String,
+        /// Destination slot.
+        #[arg(long, value_name = "BANK+LETTER")]
+        to: String,
+        /// Destination name. Defaults to the recalled source preset's name.
+        #[arg(long, value_name = "NAME")]
+        name: Option<String>,
+        /// Preferred-instrument metadata.
+        #[arg(long, default_value = "guitar")]
+        instrument: cortex_rs::Instrument,
+    },
     /// Delete a preset from a setlist, by name.
     ///
     /// WRITES TO THE UNIT, and there is no undo on the device.
@@ -365,6 +395,9 @@ enum PresetCmd {
         /// Name to save under. Omit to keep the slot's existing name.
         #[arg(long, value_name = "NAME")]
         name: Option<String>,
+        /// Preferred-instrument metadata.
+        #[arg(long, default_value = "guitar")]
+        instrument: cortex_rs::Instrument,
     },
     /// List the presets in a setlist, in slot order.
     ///
@@ -430,6 +463,30 @@ enum PresetCmd {
 /// Commands acting on setlists.
 #[derive(Subcommand, Debug)]
 enum SetlistCmd {
+    /// Create a new USER setlist as a sibling of My Presets.
+    Create {
+        /// Single setlist name, not a path.
+        #[arg(long, value_name = "NAME")]
+        name: String,
+    },
+    /// Delete a USER setlist and all presets it contains.
+    Delete {
+        /// Single setlist name, not a path. My Presets is always refused.
+        #[arg(long, value_name = "NAME")]
+        name: String,
+    },
+    /// Duplicate a USER setlist through create plus recall/save per preset.
+    Duplicate {
+        /// Source setlist name under the USER root.
+        #[arg(long, value_name = "NAME")]
+        source: String,
+        /// New destination setlist name under the USER root.
+        #[arg(long, value_name = "NAME")]
+        destination: String,
+        /// Copy at most this many occupied presets.
+        #[arg(long)]
+        limit: Option<usize>,
+    },
     /// List every folder the device knows: setlists, captures, IR libraries.
     ///
     /// A single `File` READ makes the device enumerate all its folders, which
@@ -818,23 +875,48 @@ fn run(cli: Cli) -> Result<()> {
 
     match cli.command {
         Some(Command::Session { command }) => match command {
-            SessionCmd::Start { foreground } => {
+            SessionCmd::Start {
+                foreground,
+                auto_managed,
+                idle_timeout_seconds,
+            } => {
+                let lifecycle = session_lifecycle(auto_managed, idle_timeout_seconds)?;
                 if foreground {
-                    cmd_connect(false, false, fmt)
+                    connect::run(lifecycle)
                 } else {
-                    connect::start_detached()
+                    connect::start_detached(lifecycle)
                 }
             }
             SessionCmd::Status => cmd_connect(true, false, fmt),
             SessionCmd::Stop => cmd_connect(false, true, fmt),
         },
         Some(Command::Preset { command }) => match command {
+            PresetCmd::Copy {
+                from_setlist,
+                from,
+                to_setlist,
+                to,
+                name,
+                instrument,
+            } => cmd_preset_copy(
+                &from_setlist,
+                &from,
+                &to_setlist,
+                &to,
+                name.as_deref(),
+                instrument,
+                fmt,
+            ),
             PresetCmd::Delete { name, setlist } => cmd_preset_delete(&name, &setlist, fmt),
             PresetCmd::Move { from, to, setlist } => cmd_preset_move(&from, &to, &setlist, fmt),
             PresetCmd::PrepareSave { slot, setlist } => {
                 cmd_preset_prepare_save(&slot, &setlist, fmt)
             }
-            PresetCmd::Save { token, name } => cmd_preset_save(&token, name.as_deref(), fmt),
+            PresetCmd::Save {
+                token,
+                name,
+                instrument,
+            } => cmd_preset_save(&token, name.as_deref(), instrument, fmt),
             PresetCmd::List {
                 setlist,
                 include_empty,
@@ -853,6 +935,13 @@ fn run(cli: Cli) -> Result<()> {
             } => cmd_recall(&slot, &setlist, factory, fmt),
         },
         Some(Command::Setlist { command }) => match command {
+            SetlistCmd::Create { name } => cmd_setlist_create(&name, fmt),
+            SetlistCmd::Delete { name } => cmd_setlist_delete(&name, fmt),
+            SetlistCmd::Duplicate {
+                source,
+                destination,
+                limit,
+            } => cmd_setlist_duplicate(&source, &destination, limit, fmt),
             SetlistCmd::List { window, show_empty } => cmd_folders(window, show_empty, fmt),
         },
         Some(Command::Grid { command }) => match command {
@@ -984,6 +1073,23 @@ fn run(cli: Cli) -> Result<()> {
     }
 }
 
+fn session_lifecycle(
+    auto_managed: bool,
+    idle_timeout_seconds: Option<u64>,
+) -> Result<cortex_host::DaemonLifecycle> {
+    if !auto_managed {
+        return Ok(cortex_host::DaemonLifecycle::Explicit);
+    }
+    let seconds = idle_timeout_seconds
+        .ok_or_else(|| anyhow::anyhow!("--auto-managed requires --idle-timeout-seconds"))?;
+    if seconds == 0 {
+        anyhow::bail!("--idle-timeout-seconds must be greater than zero");
+    }
+    Ok(cortex_host::DaemonLifecycle::AutoManaged {
+        idle_timeout: Duration::from_secs(seconds),
+    })
+}
+
 fn plan(
     action: &'static str,
     effect: &'static str,
@@ -1037,10 +1143,18 @@ fn dry_run_plan(command: Option<&Command>) -> Result<Option<DryRunPlan>> {
     };
     let plan = match command {
         Command::Session { command } => match command {
-            SessionCmd::Start { foreground } => Some(plan(
+            SessionCmd::Start {
+                foreground,
+                auto_managed,
+                idle_timeout_seconds,
+            } => Some(plan(
                 "session start",
                 "local process and device session",
-                serde_json::json!({ "foreground": foreground }),
+                serde_json::json!({
+                    "foreground": foreground,
+                    "auto_managed": auto_managed,
+                    "idle_timeout_seconds": idle_timeout_seconds,
+                }),
                 &[
                     "claim the local endpoint",
                     "open and subscribe to the device",
@@ -1058,6 +1172,38 @@ fn dry_run_plan(command: Option<&Command>) -> Result<Option<DryRunPlan>> {
             )),
         },
         Command::Preset { command } => match command {
+            PresetCmd::Copy {
+                from_setlist,
+                from,
+                to_setlist,
+                to,
+                name,
+                instrument,
+            } => {
+                validate_slot(from)?;
+                validate_slot(to)?;
+                cortex_rs::SavePolicy::new(
+                    to_setlist,
+                    vec![cortex_rs::ScratchRange::new(to, to)?],
+                )?;
+                Some(plan(
+                    "preset copy",
+                    "working grid and persistent device storage",
+                    serde_json::json!({
+                        "from_setlist": from_setlist,
+                        "from": from,
+                        "to_setlist": to_setlist,
+                        "to": to,
+                        "name": name,
+                        "instrument": instrument,
+                    }),
+                    &[
+                        "prepare and back up the destination before source recall",
+                        "recall the source and save it to the destination",
+                        "read the stored name and instrument from a fresh listing",
+                    ],
+                ))
+            }
             PresetCmd::Delete { name, setlist } => {
                 if cortex_rs::client::is_factory_setlist(setlist) {
                     anyhow::bail!("{setlist} is the factory library and is not writable");
@@ -1101,10 +1247,14 @@ fn dry_run_plan(command: Option<&Command>) -> Result<Option<DryRunPlan>> {
                     ],
                 ))
             }
-            PresetCmd::Save { token, name } => Some(plan(
+            PresetCmd::Save {
+                token,
+                name,
+                instrument,
+            } => Some(plan(
                 "preset save",
                 "persistent device storage",
-                serde_json::json!({ "token": token, "name": name }),
+                serde_json::json!({ "token": token, "name": name, "instrument": instrument }),
                 &[
                     "validate and consume the prepared target",
                     "commit the working grid",
@@ -1146,6 +1296,51 @@ fn dry_run_plan(command: Option<&Command>) -> Result<Option<DryRunPlan>> {
             }
         },
         Command::Setlist { command } => match command {
+            SetlistCmd::Create { name } => {
+                cortex_rs::user_setlist_path(name)?;
+                Some(plan(
+                    "setlist create",
+                    "persistent device storage",
+                    serde_json::json!({ "name": name }),
+                    &[
+                        "refuse an existing name",
+                        "create and prove the fresh destination",
+                    ],
+                ))
+            }
+            SetlistCmd::Delete { name } => {
+                cortex_rs::user_setlist_path(name)?;
+                if name == "My Presets" {
+                    anyhow::bail!("My Presets is the default USER setlist and cannot be deleted");
+                }
+                Some(plan(
+                    "setlist delete",
+                    "persistent device storage",
+                    serde_json::json!({ "name": name }),
+                    &[
+                        "refuse protected setlists",
+                        "delete and poll fresh listings for absence",
+                    ],
+                ))
+            }
+            SetlistCmd::Duplicate {
+                source,
+                destination,
+                limit,
+            } => {
+                cortex_rs::user_setlist_path(source)?;
+                cortex_rs::user_setlist_path(destination)?;
+                Some(plan(
+                    "setlist duplicate",
+                    "working grid and persistent device storage",
+                    serde_json::json!({ "source": source, "destination": destination, "limit": limit }),
+                    &[
+                        "create and prove a new destination",
+                        "recall and save each selected occupied preset",
+                        "report a partial destination if any copy fails",
+                    ],
+                ))
+            }
             SetlistCmd::List { .. } => None,
         },
         Command::Grid { command } => match command {
@@ -1912,12 +2107,13 @@ fn cmd_preset_prepare_save(slot: &str, setlist: &str, fmt: Format) -> Result<()>
             "{slot} is not a slot. Slots are a bank number 1-32 then a letter A-H, e.g. 2B"
         );
     }
-    let Some(result) = connect::request(&cortex_host::Request::PrepareSave {
+    let request = cortex_host::Request::PrepareSave {
         setlist: setlist.to_string(),
         slot: slot.to_string(),
         recall_consent: cortex_rs::RecallConsent::RequireClean,
         timeout_seconds: 40,
-    }) else {
+    };
+    let Some(result) = connect::request_with_timeout(&request, connect::SAVE_IPC_TIMEOUT) else {
         anyhow::bail!(
             "saving requires `cortex session start`: preparation must survive until after editing"
         )
@@ -1933,21 +2129,188 @@ fn cmd_preset_prepare_save(slot: &str, setlist: &str, fmt: Format) -> Result<()>
 }
 
 /// Commit a token prepared before working-grid edits.
-fn cmd_preset_save(token: &str, name: Option<&str>, fmt: Format) -> Result<()> {
-    let Some(result) = connect::request(&cortex_host::Request::CommitSave {
+fn cmd_preset_save(
+    token: &str,
+    name: Option<&str>,
+    instrument: cortex_rs::Instrument,
+    fmt: Format,
+) -> Result<()> {
+    let request = cortex_host::Request::CommitSave {
         token: token.to_string(),
         confirmed: true,
         name: name.map(str::to_string),
+        instrument,
         timeout_seconds: 40,
-    }) else {
+    };
+    let Some(result) = connect::request_with_timeout(&request, connect::SAVE_IPC_TIMEOUT) else {
         anyhow::bail!("saving requires `cortex session start`; prepare the target before editing")
     };
-    let view: cortex_rs::SavePreparationView = serde_json::from_value(result?)?;
+    let receipt: cortex_rs::SaveReceiptView = serde_json::from_value(result?)?;
     report_edit(
         "save",
-        format!("{} in {}", view.target.slot, view.target.setlist),
+        format!(
+            "{} in {} stored as {:?}",
+            receipt.preparation.target.slot,
+            receipt.preparation.target.setlist,
+            receipt.stored.name
+        ),
         fmt,
     )
+}
+
+fn cmd_preset_copy(
+    from_setlist: &str,
+    from_slot: &str,
+    to_setlist: &str,
+    to_slot: &str,
+    name: Option<&str>,
+    instrument: cortex_rs::Instrument,
+    fmt: Format,
+) -> Result<()> {
+    validate_slot(from_slot)?;
+    validate_slot(to_slot)?;
+    let request = cortex_host::Request::CopyPreset {
+        from_setlist: from_setlist.to_string(),
+        from_slot: from_slot.to_string(),
+        to_setlist: to_setlist.to_string(),
+        to_slot: to_slot.to_string(),
+        name: name.map(str::to_string),
+        instrument,
+        confirmed: true,
+    };
+    if let Some(result) = connect::request_with_timeout(&request, connect::COPY_IPC_TIMEOUT) {
+        let receipt: cortex_rs::CopyPresetReceipt = serde_json::from_value(result?)?;
+        return emit(&receipt, fmt, |receipt| {
+            println!(
+                "copied {} to {} as {:?}",
+                receipt.source_slot,
+                cortex_rs::client::position_to_slot(receipt.stored.index),
+                receipt.stored.name
+            );
+        });
+    }
+
+    let (session, qc) = connected()?;
+    let policy = cortex_rs::SavePolicy::new(
+        to_setlist,
+        vec![cortex_rs::ScratchRange::new(to_slot, to_slot)?],
+    )?;
+    let result = qc.copy_preset(
+        &policy,
+        from_setlist,
+        from_slot,
+        to_setlist,
+        to_slot,
+        name,
+        instrument,
+        cortex_rs::RecallConsent::DiscardWorkingCopy,
+        Duration::from_secs(40),
+    );
+    qc.disconnect();
+    session.stop();
+    let receipt = result?;
+    emit(&receipt, fmt, |receipt| {
+        println!(
+            "copied {} to {} as {:?}",
+            receipt.source_slot,
+            cortex_rs::client::position_to_slot(receipt.stored.index),
+            receipt.stored.name
+        );
+    })
+}
+
+fn cmd_setlist_create(name: &str, fmt: Format) -> Result<()> {
+    cortex_rs::user_setlist_path(name)?;
+    let request = cortex_host::Request::CreateSetlist {
+        name: name.to_string(),
+        confirmed: true,
+    };
+    if let Some(result) = connect::request_with_timeout(&request, connect::SETLIST_IPC_TIMEOUT) {
+        let folder: cortex_rs::client::Folder = serde_json::from_value(result?)?;
+        return emit(&folder, fmt, |folder| println!("created {}", folder.key));
+    }
+    let (session, qc) = connected()?;
+    let result = qc.create_setlist(name, Duration::from_secs(60));
+    qc.disconnect();
+    session.stop();
+    let folder = result?;
+    emit(&folder, fmt, |folder| println!("created {}", folder.key))
+}
+
+fn cmd_setlist_delete(name: &str, fmt: Format) -> Result<()> {
+    cortex_rs::user_setlist_path(name)?;
+    if name == "My Presets" {
+        anyhow::bail!("My Presets is the default USER setlist and cannot be deleted");
+    }
+    let request = cortex_host::Request::DeleteSetlist {
+        name: name.to_string(),
+        confirmed: true,
+    };
+    if let Some(result) = connect::request_with_timeout(&request, connect::SETLIST_IPC_TIMEOUT) {
+        result?;
+        return report_edit("delete setlist", name.to_string(), fmt);
+    }
+    let (session, qc) = connected()?;
+    let result = qc.delete_setlist(name, Duration::from_secs(60));
+    qc.disconnect();
+    session.stop();
+    result?;
+    report_edit("delete setlist", name.to_string(), fmt)
+}
+
+fn cmd_setlist_duplicate(
+    source: &str,
+    destination: &str,
+    limit: Option<usize>,
+    fmt: Format,
+) -> Result<()> {
+    cortex_rs::user_setlist_path(source)?;
+    cortex_rs::user_setlist_path(destination)?;
+    let request = cortex_host::Request::DuplicateSetlist {
+        source_name: source.to_string(),
+        destination_name: destination.to_string(),
+        limit,
+        confirmed: true,
+    };
+    let receipt = if let Some(result) =
+        connect::request_with_timeout(&request, connect::DUPLICATE_IPC_TIMEOUT)
+    {
+        serde_json::from_value::<cortex_rs::DuplicateSetlistReceipt>(result?)?
+    } else {
+        let (session, qc) = connected()?;
+        let result = qc.duplicate_setlist(
+            source,
+            destination,
+            limit,
+            cortex_rs::RecallConsent::DiscardWorkingCopy,
+            Duration::from_secs(60),
+        );
+        qc.disconnect();
+        session.stop();
+        result?
+    };
+    emit(&receipt, fmt, |receipt| {
+        println!(
+            "destination: {} ({}/{} copied)",
+            receipt.destination.key,
+            receipt.copied.len(),
+            receipt.selected
+        );
+        if let Some(failure) = &receipt.failure {
+            println!("partial: {failure}");
+        }
+    })?;
+    if !receipt.complete() {
+        anyhow::bail!(
+            "duplicate left a partial destination at {}: {}",
+            receipt.destination.key,
+            receipt
+                .failure
+                .as_deref()
+                .unwrap_or("copy count did not converge")
+        );
+    }
+    Ok(())
 }
 
 /// Delete a preset by name.
@@ -2923,6 +3286,14 @@ fn cmd_connect(status: bool, stop: bool, fmt: Format) -> Result<()> {
             if let Some(uptime) = v.get("uptime_seconds") {
                 println!("uptime_seconds: {uptime}");
             }
+            if let Some(auto_managed) = v.get("auto_managed") {
+                println!("auto_managed: {auto_managed}");
+            }
+            if let Some(timeout) = v.get("idle_timeout_seconds") {
+                if !timeout.is_null() {
+                    println!("idle_timeout_seconds: {timeout}");
+                }
+            }
             if let Some(device) = v.get("device") {
                 println!("device: {}", device.get("state").unwrap_or(device));
                 for (label, key) in [("serial", "serial"), ("coros_version", "coros_version")] {
@@ -2979,7 +3350,7 @@ fn cmd_connect(status: bool, stop: bool, fmt: Format) -> Result<()> {
         });
     }
 
-    connect::run()
+    anyhow::bail!("internal error: session action was neither status nor stop")
 }
 
 #[cfg(test)]
@@ -3007,6 +3378,39 @@ mod tests {
                 .unwrap();
         assert!(save_cli.dry_run);
         assert!(dry_run_plan(save_cli.command.as_ref()).unwrap().is_some());
+        let Cli {
+            command:
+                Some(Command::Preset {
+                    command: PresetCmd::Save { instrument, .. },
+                }),
+            ..
+        } = save_cli
+        else {
+            panic!("expected preset save")
+        };
+        assert_eq!(instrument, cortex_rs::Instrument::Guitar);
+
+        let copy_cli = Cli::try_parse_from([
+            "cortex",
+            "preset",
+            "copy",
+            "--from",
+            "6A",
+            "--to",
+            "1A",
+            "--instrument",
+            "synth",
+        ])
+        .unwrap();
+        assert!(matches!(
+            copy_cli.command,
+            Some(Command::Preset {
+                command: PresetCmd::Copy {
+                    instrument: cortex_rs::Instrument::Synth,
+                    ..
+                }
+            })
+        ));
 
         assert!(
             Cli::try_parse_from([
@@ -3017,10 +3421,33 @@ mod tests {
     }
 
     #[test]
+    fn file_composition_ipc_timeouts_exceed_internal_device_budgets() {
+        assert!(connect::COPY_IPC_TIMEOUT > Duration::from_secs(7 * 40));
+        assert!(connect::SETLIST_IPC_TIMEOUT > Duration::from_secs(80));
+        assert!(connect::SAVE_IPC_TIMEOUT > Duration::from_secs(2 * 40));
+        assert!(
+            connect::DUPLICATE_IPC_TIMEOUT
+                > Duration::from_secs(u64::from(cortex_rs::client::SETLIST_SLOTS) * 7 * 60)
+        );
+    }
+
+    #[test]
     fn every_side_effect_class_has_a_dry_run_plan() {
         let cases: &[&[&str]] = &[
             &["cortex", "session", "start", "--dry-run"],
             &["cortex", "session", "stop", "--dry-run"],
+            &[
+                "cortex",
+                "preset",
+                "copy",
+                "--from",
+                "6A",
+                "--to",
+                "1A",
+                "--instrument",
+                "bass",
+                "--dry-run",
+            ],
             &[
                 "cortex",
                 "preset",
@@ -3051,6 +3478,34 @@ mod tests {
             &["cortex", "preset", "show", "--slot", "2A", "--dry-run"],
             &["cortex", "preset", "recall", "--slot", "2A", "--dry-run"],
             &["cortex", "scene", "--index", "2", "--dry-run"],
+            &[
+                "cortex",
+                "setlist",
+                "create",
+                "--name",
+                "Fictional Temp",
+                "--dry-run",
+            ],
+            &[
+                "cortex",
+                "setlist",
+                "delete",
+                "--name",
+                "Fictional Temp",
+                "--dry-run",
+            ],
+            &[
+                "cortex",
+                "setlist",
+                "duplicate",
+                "--source",
+                "My Presets",
+                "--destination",
+                "Fictional Duplicate",
+                "--limit",
+                "2",
+                "--dry-run",
+            ],
             &[
                 "cortex",
                 "scene",

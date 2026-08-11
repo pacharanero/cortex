@@ -31,9 +31,13 @@ fn preset_rows(preset: &crate::proto::BinaryPreset) -> Vec<Row> {
             // directly. A split of -1 means "no branch"; a mix of -1 means a
             // branch that never rejoins.
             let split = c.split_control_points.first();
+            let row = c.row.as_ref().map_or(row, |key| {
+                let chain::Row::Row(row) = key;
+                usize::try_from(*row).unwrap_or(usize::MAX)
+            });
             Row {
                 row,
-                screen_row: row + 1,
+                screen_row: row.saturating_add(1),
                 in_port: c.in_portid.as_ref().map(|p| {
                     let chain::InPortid::InPortid(v) = p;
                     *v
@@ -435,37 +439,32 @@ impl Preset {
             })
             .to_string();
 
-        let mut blocks = Vec::new();
-        for (row, chain) in preset.chains.iter().enumerate() {
-            for (column, model) in chain.models.iter().enumerate() {
-                // Every row reports 8 column slots; an empty one has no hash or a
-                // zero hash. Occupancy cannot be taken from models.len().
-                let Some(crate::proto::model::Hash::Hash(id)) = model.hash else {
-                    continue;
-                };
-                if id == 0 {
-                    continue;
-                }
-                let entry = catalog.and_then(|c| c.get(id));
-                blocks.push(Block {
+        let blocks = crate::helpers::blocks(preset)
+            .into_iter()
+            .filter_map(|block| {
+                let row = usize::try_from(block.row).ok()?;
+                let column = usize::try_from(block.column).ok()?;
+                let model = crate::helpers::model_at(preset, block.row, block.column)?;
+                let entry = catalog.and_then(|catalog| catalog.get(block.model_id));
+                Some(Block {
                     row,
                     // Rows are 0-based on the wire and 1-4 on screen; carrying
                     // both means a reader never has to remember which this is.
                     screen_row: row + 1,
                     column,
-                    model_id: id,
-                    name: entry.map(|m| m.name.clone()),
-                    category: entry.map(|m| m.category.clone()),
-                    based_on: entry.and_then(|m| m.based_on.clone()),
+                    model_id: block.model_id,
+                    name: entry.map(|model| model.name.clone()),
+                    category: entry.map(|model| model.category.clone()),
+                    based_on: entry.and_then(|model| model.based_on.clone()),
                     params: if with_params {
                         block_params(model, entry)
                     } else {
                         Vec::new()
                     },
                     bypass: cell_bypass(preset, row, column),
-                });
-            }
-        }
+                })
+            })
+            .collect();
 
         Preset {
             slot: slot.to_string(),
@@ -535,6 +534,25 @@ mod tests {
         assert_eq!(view.blocks.len(), 1, "the empty cell must stay absent");
         assert_eq!(view.blocks[0].column, 1);
         assert_eq!(view.blocks[0].model_id, 42);
+    }
+
+    #[test]
+    fn preset_view_uses_explicit_sparse_row_and_column_keys() {
+        let preset = crate::proto::BinaryPreset {
+            chains: vec![crate::proto::Chain {
+                row: Some(crate::proto::chain::Row::Row(2)),
+                models: vec![crate::proto::Model {
+                    hash: Some(crate::proto::model::Hash::Hash(42)),
+                    column: Some(crate::proto::model::Column::Column(0)),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let view = Preset::from_binary(&preset, None, "live", "/fictional/setlist", false);
+        assert_eq!((view.rows[0].row, view.rows[0].screen_row), (2, 3));
+        assert_eq!((view.blocks[0].row, view.blocks[0].column), (2, 0));
     }
 
     #[test]

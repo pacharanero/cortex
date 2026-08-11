@@ -293,6 +293,8 @@ mod tests {
         let status = Status {
             daemon_version: "4".into(),
             uptime_seconds: 1,
+            auto_managed: false,
+            idle_timeout_seconds: None,
             device: DeviceHealth::Reconnecting {
                 attempts: 2,
                 last_error: "device absent".into(),

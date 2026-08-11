@@ -58,7 +58,9 @@ A FIRST frame arriving mid-reassembly means the previous message was lost. The d
 
 ## Message envelope
 
-A reassembled message is `protobuf ++ 8-byte trailer`, and **the message-type tag lives in the trailer, not a header**: a little-endian `uint16` `CortexMessageType`. The generated enum has 72 variants, numbered 0 through the terminal sentinel value 71.
+A reassembled message is `protobuf ++ 8-byte trailer`, and **the message-type tag lives in the trailer, not a header**: a little-endian `uint16` `CortexMessageType`. The generated enum has 70 concrete operational values numbered 1 through 70, bracketed by `Undefined=0` and the terminal `NumberOfMessageTypes=71` sentinel. Neither sentinel is a message. Tags outside the recovered enum must remain numeric unknown values rather than being coerced to `Undefined`.
+
+Each concrete tag has a same-purpose generated protobuf struct (`Grid` to `GridMessage`, `IOSettings` to `IOSettingsMessage`, and so on). That structural registry says only how to decode a body; it does not establish that this project understands or safely supports the operation represented by every struct.
 
 Two independent kinds of gzip are in play, and a client needs both in different places:
 
@@ -184,6 +186,16 @@ Two traps in the capture itself, each of which makes a capture look one-sided ra
 
 Use the binary usbmon interface, via `dumpcap` or `tshark`. The text interface at `/sys/kernel/debug/usb/usbmon/<bus>u` truncates payload data, which drops bytes from the middle of a 128-byte body while still looking like a successful capture.
 
+## Local backups
+
+**Measured here** from Cortex Control 4.0.1 and a Quad Cortex running CorOS 4.0.1. Creating a local backup sends a 2-byte `LocalBackupMessage` containing only `request_id`; the action is absent and therefore means `CREATE`, not `READ`. The device replies with `UPDATE` messages whose `backup_json` strings must be concatenated in arrival order. Each reply explicitly carries `is_last_chunk`: false for every intermediate chunk and true for the final one.
+
+One measured backup was 1,016,596 JSON bytes split into six 150,000-character chunks and one 116,596-character final chunk. Including protobuf fields, those messages were six 150,008-byte bodies and one 116,604-byte body, carried by 8,072 HID reports. The first chunk arrived 4.688 seconds after the request and the final chunk completed 10.597 seconds after it. There is no chunk index, offset or advertised total, so losing or reordering one message cannot be repaired within the stream; discard the partial backup unless a final chunk arrives after uninterrupted ordered reassembly.
+
+The concatenated value is a JSON object with `author`, `author_id`, `compatibility`, `created`, `creator`, `creator_version`, `name`, `payload`, `payload_hash` and `type` fields. In the measured backup, `payload` was 1,016,248 Base64 characters decoding to 762,184 opaque bytes. Those bytes had no gzip or common archive signature, exposed almost no printable text, and measured 7.999772 bits of Shannon entropy per byte. This is consistent with an encrypted payload, corroborating the older third-party report, but the cipher, key scope and any compression inside the encrypted content remain unestablished. The documented pre-CorOS-3 no-serial decryption path did not produce recognisable plaintext from this CorOS 4.0.1 payload.
+
+This proves a complete opaque backup container can be read over USB. It does **not** prove that an individual Neural Capture or user IR can be extracted from that container, that the backup contains every such item, or that a backup from one unit can be restored to another. Do not present `LocalBackup` as per-capture export until decryption and content inventory establish those claims.
+
 ## Saving, renaming, deleting and moving a preset
 
 Save and delete were measured from this project's Cortex Control captures on `CorOS` 4.0.1. The move shape below comes from the MIT-licensed `pyquadcortex` project's Cortex Control capture and was hardware-verified from this Rust implementation on `CorOS` 4.0.1 with a prepared scratch preset moved `7A -> 7B -> 7A`, listing convergence in both directions, storage-revision advancement, and final deletion.
@@ -257,17 +269,33 @@ Move addresses the source by **full path** and the destination by **linear slot 
 
 Each of these is answered by a `File` reply, and a save is followed by a `RecallPreset` push carrying `reason: SAVE` (`RecallPresetReason.SAVE = 2`). That reason is the only thing distinguishing it from an ordinary recall, which matters for a client keeping a cache: a save changes the stored slot without the user having recalled anything.
 
-Do not correlate these replies by message type or non-empty body alone. On CorOS 4.0.1, targeted setlist reads return `File{UPDATE}` with exactly 256 unique indices; save acknowledgements return `File{CREATE}` with the target folder and slot index; delete acknowledgements return `File{DELETE}` with the target folder and full preset path. An unrelated folder announcement or one-item mutation must not report a destructive operation as successful. These broadcasts carry no usable request ID, so a delayed acknowledgement from an earlier identical operation cannot be distinguished from the current operation.
+Do not correlate these replies by message type or non-empty body alone. On CorOS 4.0.1, targeted setlist reads return `File{UPDATE}` with exactly 256 unique indices; save acknowledgements return `File{CREATE}` with the target folder and slot index; delete acknowledgements return `File{DELETE}` with the target folder and full preset path. An unrelated folder announcement or one-item mutation must not report a destructive operation as successful. These broadcasts carry no usable request ID, so a delayed acknowledgement from an earlier identical operation cannot be distinguished from the current operation. A timeout therefore leaves an identical retry ambiguous; inspect a fresh complete listing and do not retry a destructive operation blindly.
 
-Move does not rely on a `File{MOVE}` acknowledgement: prior-art hardware evidence shows that file mutations can land without a reply. After sending, the client polls fresh complete listings until the source slot is empty and the named preset occupies the destination. A materially changed complete listing advances the cache's storage revision even when no mutation acknowledgement arrived, so previously prepared save epochs fail closed. If storage does not converge before the deadline, the move outcome is explicitly unconfirmed and must be inspected rather than retried blindly.
+Move does not rely on a `File{MOVE}` acknowledgement: prior-art hardware evidence shows that file mutations can land without a reply. After sending, the client polls fresh complete listings until the source slot is empty and the named preset occupies the destination. A materially changed complete listing advances the cache's storage revision even when no mutation acknowledgement arrived, so previously prepared save epochs fail closed. If storage does not converge before the deadline, the move outcome is explicitly unconfirmed and must be inspected rather than retried blindly. The wire request carries neither a listing revision nor a compare-and-swap precondition, so another actor can change storage after the final listing check and before the write. Exact scratch-space authorization limits the consequence but cannot close that interval.
 
 File mutations are **eventually consistent**. `pyquadcortex` observed eleven successful deletes still present in a listing five seconds later; a fresh listing eventually reflected all of them. Do not use a fixed post-write sleep as verification. Poll until the expected listing state appears or a real deadline expires. The device may also de-duplicate a colliding name by truncating it and appending `_N`, so read the stored name back before issuing a later name-addressed delete.
 
-## Capture and IR transfer (provisional)
+### USER setlists and copy composition
+
+USER setlists are direct children of `/media/p4/Presets`, alongside `My Presets`; nesting one beneath `My Presets` creates an ignored ordinary folder rather than a setlist. Creation uses `File{CREATE, type: 0, folder{key: "/media/p4/Presets/<name>", name: <name>, is_factory: false}}`. Deletion uses the same folder identity with `action: DELETE`. Clients must reject path separators, dot components, the USER root itself, factory paths, and deletion of `My Presets` before writing. Creation and deletion are eventually consistent: use fresh directory listings to identify the actual created key and to poll deletion to absence. A requested name is not the final identity when the device applies collision handling.
+
+The device exposes no host-driven preset copy or setlist duplicate command. Preset copy is destination preparation/backup, then source recall, then ordinary save to the destination, followed by a fresh complete listing to obtain the stored name and instrument. Preparation must precede source recall because recalling an occupied destination afterwards would replace the very grid being copied. Setlist duplication is create followed by one recall/save for each occupied source slot. `BulkOperation` only narrates device-owned progress; replaying it does not duplicate anything. Generated-setlist hardware verification on CorOS 4.0.1 confirmed create, typed-instrument save, copy, recalled audio-state equality after composed duplication, delete convergence and complete cleanup.
+
+A newly subscribed but otherwise healthy cache can begin `Incomplete` when its initial live-grid seed is absent. Before preparing a composed copy, a side-effect-free `RecallPreset{READ}` of the currently loaded grid can supply that baseline and return the cache to `Live`; this repair path passed on hardware. It must not be generalized to `Invalidated`: invalidation means an update may have been lost, so individual reads cannot restore continuity and persistent operations continue to fail closed until a replacement subscribed handshake establishes a new generation.
+
+## Capture and IR selection; transfer remains provisional
 
 The file category is known: `FileMessage.type` is 0 for presets, 1 for IRs, and 2 for captures. That selects a library; it does not reveal the capture payload format.
 
-`pyquadcortex` has hardware-verified valid-reference shapes for capture and IR grid blocks: a capture is selected with a string formed from its content hash and display name, while an IR uses its library key. For IRs, the device stores a nonsensical reference byte-for-byte and only renders a warning on the unit, so a successful read-back does not prove the referenced IR exists. Invalid-capture-reference behaviour is unestablished.
+Read-only variable-length library listings use `File{READ, type, request_id}`. A candidate reply is accepted only when it is `File{UPDATE}`, echoes that request id, and names the requested folder after trailing-slash normalization. This correlation distinguishes a real empty folder from no answer and rejects unrelated folder floods or delayed responses. The schema provides no total item count, last-response flag, or other completion marker, so one correlated response is the observable response boundary rather than wire-level proof of library-wide completeness. On CorOS 4.0.1, repeated capture reads returned stable identical results, and one correlated response arrived for each of the loadable IR library and a user-IR folder.
+
+`pyquadcortex` has hardware-verified valid-reference shapes for capture and IR grid blocks. A capture block uses model 14000 by default (14001 is also observed) and stores its identity at string parameter index 5 as the device library entry's 64-character content-hash key immediately followed by its display name, with no separator. Selecting that string silently resets the block's other parameters to capture defaults, so place and confirm the block first, write index 5 second, then apply every other parameter. A caller-supplied follow-up at reserved index 5 is ambiguous and should be refused.
+
+IR Loader models are 29001 through 29008. Every loader has two slots: slot 0 stores IR PATH at string parameter 2 and IR NAME at 22; slot 1 uses 10 and 23. IR PATH is misleadingly named: it takes the exact non-filesystem `key` returned by the loadable IR library, while IR NAME takes that entry's display name. Write the key first and name second. The device stores nonsensical references byte-for-byte and reports failure only with a warning icon and missing-IR message on the unit, so successful host read-back proves storage but not loadability. Invalid-capture-reference behaviour is unestablished.
+
+Hardware selection tests on CorOS 4.0.1 confirmed the exact capture reference plus a parameter written after selection, and confirmed the exact user-IR key/name pair. A timed on-unit inspection of that real user IR showed no warning, establishing loadability for the selected entry without publishing its identity. Both tests changed only the working copy and restored the stored preset by recall.
+
+Choosing New Neural Capture while a host is connected broadcasts `NeuralCapture{try_to_show_dialog: true}` and waits for `NeuralCapture{UPDATE, show_dialog}`. Replying true hands the flow to the host; without a complete v1/v2 capture UI this makes the unit enter capture state while no usable interface is shown. Remaining silent also suppresses the on-unit flow. A false response is the provisional graceful decline for a connected client that does not support capture: install the waiter before prompting the operator, accept only `try_to_show_dialog: true`, and send exactly `NeuralCapture{UPDATE, show_dialog: false}`. This is unsupported-feature handling, not host capture support. `show_dialog_fail_reason` semantics remain unknown and clients should not invent or send one. Disconnect before using the unit-owned wizard.
 
 IR import is narrowed but unsolved. A candidate `File{CREATE, type: 1, total_bulk_create_count: 1, folder, ir_payload}` request does nothing if `total_bulk_create_count` is absent. Writes spanning 26 HID reports round-tripped exactly, proving the outbound fragmentation path; several candidate payload encodings still produced no imported IR. Repeated multi-kilobyte attempts coincided with the USB link dying until the unit was power-cycled, so destructive probes should be spaced out and run only with recoverable user data.
 
@@ -291,9 +319,41 @@ So a broadcast waiter takes a predicate, and a candidate it rejects leaves the w
 
 A recall command must not report completion after merely sending `SetlistPosition{UPDATE}`. The write is acted on before its expected USB stall, but the working grid changes asynchronously. Wait for the `RecallPreset` push carrying the recall's `request_id`; otherwise an immediate grid read can return the previous preset.
 
+### State reads can receive partial pushes
+
+The generated state messages use presence-bearing fields because a push may contain only the part that changed. Send a plain READ and wait for the field the API promises rather than accept the first same-type push. Hardware-verified predicates on CorOS 4.0.1 are `volume` for Master Volume, `status` for Looper, `input_port_id` for Tuner, a non-empty `settings.in_port` for I/O settings, `scene_block_bypass` for General Settings, and `bypassed` for Global EQ.
+
+`Mode` needs two distinct reads: active mode requires `mode` presence, while the configured cycle requires a present, non-empty `available_modes.modes`. A mode-only partial push must not be interpreted as an empty configured cycle.
+
+Recents and Favorites share `RecentsFavorites`. A plain READ asks for Recents, but transient empty pushes can arrive before the list, so an uncorrelated empty Recents push is not a reliable result. Favorites is requested with `is_favorites: true` and a fresh request id. Its reply may omit `is_favorites` and may contain zero items; match the echoed request id instead. The first Favorites request after connection may be dropped, so a bounded retry is appropriate. CorOS 4.0.1 hardware returned Recents and correctly completed an empty Favorites baseline through this request correlation.
+
+Favorites mutations operate on exactly one complete `RecentsFavoritesItem` at a time. Add uses `CREATE`, remove uses `DELETE`, and both set `is_favorites: true`. Require the same-operation echo to contain exactly the requested item, including folder and factory/plugin metadata, so a same-name item from another folder cannot confirm the write. Invented or mismatched metadata can be ignored silently by the device, so callers should pass an item obtained from Recents or Favorites. Add/remove with exact final-baseline restoration passed on CorOS 4.0.1.
+
+PinnedModels READ must carry a fresh request id and match its echo; CorOS 4.0.1 established this correlation for both empty-capable reads and mutation read-back. Mutations contain exactly one model id. Pinning uses the default `CREATE` action, which is omitted on the wire; `UPDATE` is ignored. Pinning appends without de-duplication, while `DELETE` removes every occurrence of the supplied id. Hardware verification pinned one previously unpinned model twice, observed both duplicates, unpinned once, observed no remaining occurrence, and restored the exact baseline.
+
+The Tuner `frequency` field is the reference-frequency offset from 440 Hz, not detected pitch. For example, an offset near `2.0` represents a 442 Hz reference. Upstream testing did not obtain the live needle stream over USB, so a Tuner read reports settings rather than played pitch.
+
+### Global-setting writes
+
+`GeneralSettings` top-level scalar fields are sparse, but its nested `master_volume_assignment`, `global_bypass_cab`, and `global_bypass_ir` messages are replacement groups. Writing one nested flag with its siblings omitted makes those siblings false. Read current state explicitly, merge intent, and write every flag in the affected nested state; restoration must retain complete groups rather than reconstructing them from a partial push.
+
+Do not provide a generic `GeneralSettings` writer to untrusted callers. The schema includes command-shaped power and reset fields, while `internal_midi_clock_enabled` was observed refusing writes. The typed implementation exposes only known writable settings and cannot represent power, reset, updater, reboot/shutdown, factory reset, or internal-MIDI-clock operations. `hold_timing` stores index 0-5 for 500-1000 ms in 100 ms steps. `scene_block_bypass` is the closed enumeration Always/Non-STOMP/Never overwrite = 0/1/2.
+
+Global EQ writes are sparse `parameters{parameter_index,value}` entries. Five bands use stride 5 with Gain/Frequency/Q/Type/Enabled offsets 0/1/2/3/4; Type is one of five list values encoded as index divided by 4, and Enabled uses 1.0 for active. OUT level and assignments are indices 25, 26 and 27. OUT level remains normalized 0-1 because no measured dB mapping exists. The top-level `bypassed` field independently disables the whole EQ.
+
+Mode cycle values 0-2 are base modes and 3-8 are ordered two-row hybrids. A cycle permits at most one hybrid, and a hybrid cannot be its only slot. Value 9 is deliberately refused: upstream hardware accepted and read it back but left the footswitches non-functional. Tuner input accepts only Input 1, Input 2, Input 1/2, Return 1, Return 2, USB 5, and USB 6; combined Return 1/2 was refused. Tuner reference is a finite -15 to +15 Hz offset, corresponding to the unit's 425-455 Hz range.
+
+On CorOS 4.0.1, an automated restoration-first run hardware-verified every exposed readable General Settings, nested assignment/bypass, Global EQ, mode/cycle and Tuner-settings mutation, then independently restored the complete baseline. Gig View and Tuner visibility are screen-only states with no established readable baseline; their low-level methods remain unverified and must not be described as hardware-verified UI behavior.
+
 ## The model catalog
 
 **Measured here.** The `ModelRepo` payload is `gzip(tar(ModelRepo.xml))`. On the unit tested: 46,704 bytes gzipped, 558,592 of tar, 556,732 of XML, describing **533 models in 31 categories with 3,809 parameters**.
+
+`ModelRepo` describes block types and their parameters. Its Neural Capture categories contain capture block types, not an inventory of individual user or factory captures. Individual capture inventory is read separately through request-correlated `File` listings with `type: 2`. This distinction is established by the MIT-licensed `pyquadcortex` implementation and hardware notes, which report that saving a capture does not grow `ModelRepo`; this project has hardware-verified both catalog parsing and separate capture listings on CorOS 4.0.1, but has not yet performed its own before/after capture-save exclusion measurement.
+
+The subscribed state reducer treats a non-empty `NewModels.models` announcement as invalidating the held `ModelRepo`; an empty announcement does not invalidate it. A later non-empty `ModelRepo` payload in the same physical-session generation becomes authoritative. Stream gaps and new generations clear both raw and parsed forms, and old-generation delivery is ignored, so block-name and named-parameter resolution cannot resume from an older payload.
+
+There is deliberately no transparent disk cache. The live handshake's `ModelRepo` READ is load-bearing on CorOS 4.0.1 and must still be fully received and drained before the handshake continues. A held session already serves its in-memory copy in about 0.02 seconds, while `cortex catalog --dump` and `--from-file` provide explicit offline snapshots. CorOS version alone is not a demonstrated content key: installed entitlements may also affect the repository, and whether two same-CorOS entitlement states produce different `ModelRepo` or `NewModels` traffic remains an optional hardware research question.
 
 Structure is `Models > Category > Model > Parameter`.
 
@@ -336,6 +396,51 @@ A preset freshly read from a recall carries **no** explicit row, so writing one 
 | Load a capture, then expect the block's old parameters | Upstream reports capture selection resets the block to the capture defaults; select it before writing the remaining parameters |
 | Place a block into a previously used empty cell | The separate bypass table persists for empty cells, so the new block inherits that cell's old bypass state |
 | Add a block while diffing unrelated rows | Combo-box selectors that enumerate blocks keep their selected index but are renormalised when the preset's block count changes |
+
+### Row-level splitter, mixer, output, and gate writes
+
+The following sparse `Grid{UPDATE}` shapes are exact-shape tested and hardware-verified by fresh live read-back on CorOS 4.0.1:
+
+| Control | Writable chain field | Model hash | Valid rows |
+| --- | --- | --- | --- |
+| Splitter parameter | `combined_splitter[]` | absent | 0 and 2 |
+| Mixer parameter | `mixer[]` | 11000 | 0 and 2 |
+| Lane output parameter | `output_control[]` | 23000 | 0-3 |
+| Input gate parameter | `input_control[]` | 28000 | 0-3 |
+
+Each model carries exactly one indexed `Param`. A value message carries one finite normalised `float_value` in 0..1 and no `scene_mode`. A promotion message carries `scene_mode` and no value. A scene-targeted edit is therefore the same ordered sequence used for ordinary block parameters: promotion when requested, `Scene{UPDATE}`, then value. Packing the flag and value together silently loses the flag.
+
+`combined_splitter` is not a hash-addressed alias for `splitter[]`: its writable shape has no hash, while `splitter[]` is the legacy read view and ignores writes. The hardware test had to read `combined_splitter` to observe the applied value; checking only the legacy view would have produced a false failure. Mixer, lane-output, and input-gate writes do require their fixed hashes in their respective collections. Gate catalogs may include live meter parameters; raw indices carry no writability metadata, so any name-based gate API must resolve through the catalog and reject `Meter` rather than presenting it as a setting.
+
+Split/mix mute is a separate control. Write one `SceneBypass` entry to `split_bypass`; never write `mix_bypass`, which is the reported state. One write changes all eight scene entries even though both schema fields are repeated. Only rows 0 and 2 can carry this control. Splitter, mixer, lane output, input gate and split mute all passed read-back, and recall restored the complete working-copy baseline.
+
+### Preset-local tempo and metronome writes
+
+The Tempo menu is a deliberate exception to the row-keyed grid rule. A sparse `Grid{UPDATE}` carries one model in `BinaryPreset.tempoProgramData`, with hash 25000, no row or column key, and one `Param` whose positional index is explicit. Its value is one finite normalised float in 0..1. This exact shape is hardware-verified on CorOS 4.0.1.
+
+The established screen-control indices are TEMPO 0, LED LIGHT 2, VOLUME 3, MUTE 4, PAN 5, TIME SIGNATURE 6, SUBDIVISIONS 7, SOUND 8, and ROUTING 9. Two catalog names are misleading: index 4 is MUTE even though the catalog calls it START, and index 7 is SUBDIVISIONS on screen but NOTELENGTH in the catalog. Stored tempo parameters are positional and can omit every `Param.index`, so reads must use vector position as the fallback index rather than discarding unindexed entries.
+
+The four established selector lists encode option zero through the last option as `option / (count - 1)`: subdivisions has 4 options, sound 6, routing 5, and time signature 21. The known orders are 1/4, 1/8, 1/8T, 1/16 for subdivisions; Blip, Block, Cowbell, Digital, Drum Kit, Soft Kit for sound; Multi, Headphones, Out 1/2, Out 3/4, Send 1/2 for routing; and the 21 time signatures from 2/4 through grouped 7/8 forms. Changing time signature may also rewrite STEPSTATE parameters 10-22, which hold beat accents, so read-back should verify the target rather than require unrelated parameter equality.
+
+No supported write is assigned to index 1. The catalog calls it TYPE, but changing the Tempo menu's MODE control produced no observed wire traffic in upstream testing. Internal MIDI clock writes likewise lack positive evidence. Neither operation should be inferred from a spare index or from read-only clock traffic.
+
+Hardware verification muted the metronome first, exercised all eight exposed write methods through fresh target read-back, and confirmed that final recall restored the complete `tempoProgramData` baseline. Time-signature verification deliberately ignored the device-owned STEPSTATE rewrite while still requiring the requested signature.
+
+### STOMP, expression, and per-preset MIDI output
+
+The following shapes are exact-shape/fake-link tested and hardware-verified on CorOS 4.0.1 through reversible STOMP/expression working-copy read-back and persistent MIDI save/recall read-back.
+
+A STOMP assignment requires two ordered `Grid` messages. First send `Grid{DELETE, preset{stomp_mode_assignments{row, column}}}`, then `Grid{UPDATE, preset{stomp_mode_assignments{row, column, stomp_index}}}`. UPDATE alone can leave the previous assignment in place. All three scalar keys lack presence, so row 0, column 0, and footswitch A encode as proto3 defaults and must not be treated as absent. `stomp_is_momentary`, `stomp_labels`, and `single_stomp_labels` are maps keyed by footswitch 0-7; each sparse update carries only the selected map entry.
+
+Expression parameter assignment is `Grid{UPDATE, preset{chains{row, models{column, params{index, expression, expression_min, expression_max}}}}}`. Pedal is 1 or 2. The endpoints are finite normalized values in 0..1; minimum above maximum is valid and reverses the sweep. Expression bypass writes both model collections together: `bypass_expression{expression, expression_min:0, expression_max:1}` and `expression_bypass_info{type, invert, delay_ms, latch_emulation}`. Mode numbering is STOP 0, SWITCH 1, HEEL_TOE 2, and delay is 0-5000 ms.
+
+Per-preset MIDI output is not a grid edit. Use trailer message type 8 (`MIDISettings`) with action UPDATE and one nested group: `general_midi_messages{messages{source, msg{...}}}` for footswitch/expression sources, or `preset_load_messages{messages{source:0, msg{...}}}` for preset load. Sources 0-7 are footswitches A-H and 8-9 are expression pedals 1-2. Each source replaces up to 12 messages. MIDI channels are 1-16 and all type-specific data values are 7-bit. Message layouts are CC type 1 `{CC number, value, 0}` for a footswitch, CC type 1 `{CC number, minimum, maximum}` for expression, CC Toggle type 2 `{CC number, minimum, maximum}`, and PC type 3 `{bank MSB, bank LSB, program}`.
+
+The stored read-back is positional: `BinaryPreset.midi_messages_general_v2` is 120 slots arranged as 10 sources by 12 messages, and an all-zero `MidiMessageInfo` is an empty slot. `BinaryPreset.midi_messages` separately holds non-empty messages sent when the preset loads.
+
+List-valued block parameters carry their rendered option names in `Param.dynamic_steps` in the current preset, not reliably in the catalog. Some lists include one option per block, so adding or removing a block changes their cardinality and renormalizes an unchanged selected index. A selected option is stored as `index / (count - 1)`; comparisons must recover the selected index using each preset's own count rather than compare the floats directly. Stored float32 values otherwise need a tolerance. Factory content can store NaN in unused parameter slots, where NaN should match only NaN. `input_control` positional parameter 2 is a sampled gain-reduction meter and must be excluded from settings equality across saves.
+
+A `MIDISettings` READ receives no reply on CorOS 4.0.1. Verification therefore requires saving and re-reading the preset, which is persistent and may emit MIDI on load. With outputs disconnected, the hardware test used low-valued messages in a generated temporary USER setlist and verified footswitch CC, CC Toggle, PC, expression CC and preset-load message families through both typed helpers and the raw 10x12 layout after save/recall. It then deleted all generated storage and restored the original preset.
 
 The DSP-budget trap is why `set_block` verifies. **Measured here**, and it corrected a bug worth describing.
 
@@ -396,7 +501,19 @@ The device acts on `SceneCopy.is_swap`, but its acknowledgement omits that flag 
 
 Top-level settings fields behave like sparse updates, but a nested submessage can replace the whole nested value. For structures such as `master_volume_assignment`, read the current value, merge the intended field, and write the complete submessage; sending one flag can silently clear its siblings.
 
-Some I/O fields must travel in a message by themselves. `pyquadcortex` reports output mute and input impedance mode being silently dropped when another field shared the same port entry, and USB dry/wet being dropped when packed with level. Use one-field messages for those controls and verify by read-back.
+Some I/O fields must travel in a message by themselves. Output mute and input impedance mode can be silently dropped when another field shares the same port entry, and USB dry/wet can be dropped when packed with level. Hardware verification confirms one writable control per `IOSettings{UPDATE}` for every input, output and USB patch. Repeat `input_port_id` or `output_port_id` in every per-port message; send MIDI Thru and each output-pairing flag alone too. Input ids are interleaved with combined entries: Input 1/2 are 1/2, combined Input 1/2 is 3, Return 1/2 are 4/5, and combined Return 1/2 is 6. In particular, Return 1 is not id 3.
+
+Successful dispatch does not confirm an I/O write. An explicit READ can still return stale state, so poll fresh complete reads for the intended value. CorOS 4.0.1 hardware measurement establishes that a complete reply is capability-shaped rather than uniform; absent fields in the following matrix are inapplicable, not incomplete:
+
+| Port kind | IDs | Fields present |
+| --- | --- | --- |
+| Input | 1, 2 | `level`, `input_zmode`, `input_type`, `ground_lift` |
+| Input | 4, 5 | `level`, `ground_lift` |
+| Output | 1, 4, 5 | `level`, `ground_lift`, `mute` |
+| Output | 2, 6, 7 | `level`, `mute` |
+| Output | 8, 9 | `level` |
+
+A restoration-grade I/O read requires exactly those four input and eight output identities with exactly their applicable fields, plus USB `level`/`hp_select`/`dry_wet`, MIDI Thru and both output-pairing flags. Order is not significant. `plugged`, headphone and expression-pedal fields are telemetry rather than part of the writable completion rule. The complete matrix and every applicable mutation passed on CorOS 4.0.1 with outputs disconnected. Discrete selector fields require valid encoded options rather than arbitrary normalized floats, and fresh reads can remain stale briefly, so poll eventual state before declaring failure or restoring. Pairings were exercised last, each member port was restored using only its applicable fields, and an independent final read matched the complete baseline.
 
 An accepted and stored value is not proof that the device supports it. One mode-cycle value observed upstream reads back successfully but leaves the footswitches inoperative; a typed client should refuse that value even though the protobuf accepts it.
 

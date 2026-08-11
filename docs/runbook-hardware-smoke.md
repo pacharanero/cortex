@@ -11,7 +11,7 @@ Record the CorOS version, firmware, and serial from step 1 alongside the result:
 - Quit Cortex Control. A second effective HID owner can silently wedge the first even though the open succeeds.
 - Connect the unit by USB and power it on.
 - **Headphones or nothing.** Several steps change what is heard.
-- Declare `SCRATCH_BANK`, `SCRATCH_SLOT`, `RESTORE_SLOT`, `ROW`, and `COLUMN`. Every slot in the scratch bank must be disposable; choose an empty grid cell after inspecting `cortex grid show`. The provisional move check additionally requires `MOVE_NAME`, its current `MOVE_FROM` slot, and a confirmed-empty `MOVE_TO` slot in that bank.
+- Declare `SCRATCH_BANK`, `SCRATCH_SLOT`, `RESTORE_SLOT`, `ROW`, and `COLUMN`. Every slot in the scratch bank must be disposable; choose an empty grid cell after inspecting `cortex grid show`. The move check additionally requires `MOVE_NAME`, its current `MOVE_FROM` slot, and a confirmed-empty `MOVE_TO` slot in that bank.
 
 !!! info "Why this is safe"
 
@@ -237,9 +237,21 @@ Record the cache generation, unplug the USB cable, wait for `cortex session stat
 - [ ] `cortex grid show` agrees with the unit after reconnect rather than showing pre-disconnect state
 - [ ] The first request after reconnect succeeds; a successful open alone is not evidence because overlapping HID ownership fails on the next request
 
+Do not inject malformed USB traffic into the unit. The remaining malformed-report recovery check may be completed only if a naturally occurring framing/envelope gap is observed in a trace: confirm the daemon marks the cache invalid, performs a full replacement handshake in a new generation, and succeeds on the next ordinary grid request. Otherwise record it as an unexercised hardware residual; offline fake-link injection already covers the deterministic recovery logic.
+
 Prepare a scratch-slot save token before unplugging, but do not edit or commit it. After reconnect, attempt the commit with explicit confirmation.
 
 - [ ] The pre-reconnect token is refused because its physical-session generation is stale
+
+With no explicit session running, exercise auto-managed idle release and a replacement non-mutating direct read through the ignored process test:
+
+```sh
+cargo test -p cortex-cli --test lifecycle-hardware auto_managed_daemon_releases_device_for_replacement_direct_read -- --ignored --exact --nocapture
+```
+
+- [ ] The auto-managed daemon reports ready, exits two seconds after its final status request, removes its endpoint, and the replacement direct `device version` read succeeds
+
+**Measured 2026-08-10 on CorOS 4.0.1:** passed. Idle expiry closed the HID handle, removed the socket endpoint, and a replacement direct version read succeeded. This verifies release through the next request, not merely through a successful second open.
 
 ## 12. Preset move and restore
 
@@ -287,11 +299,58 @@ cortex session stop
 
 - [ ] The session exits and releases the HID interface
 
+## 14. PROT-006.10 temporary setlists
+
+This ignored test creates uniquely named fictional USER setlists. It aborts before mutation if a generated name already exists, recalls one explicitly authorised existing USER preset only as a source, saves/copies presets with discriminating typed instrument tags, verifies fresh listings and recalled duplicate audio state, and duplicates through create plus recall/save rather than `BulkOperation`.
+
+```sh
+cargo test -p cortex-rs --test hardware-reads prot_006_10_file_operations_converge_and_cleanup -- --ignored --exact --nocapture
+```
+
+Cleanup is unconditional after connection: every destination with a returned creation receipt is deleted in reverse creation order and polled absent; generated names are then freshly enumerated so a create that landed without returning is also deleted. Finally the authorised restore preset is recalled and the client disconnects, whether the operation passed or failed. A cleanup or final-recall failure fails the test; if the main operation also failed, its error is reported after all cleanup attempts have run.
+
+**Measured 2026-08-10 on CorOS 4.0.1:** passed create, typed-instrument save, copy, recalled duplicate audio-state comparison, delete convergence and complete generated-storage cleanup. The initial subscribed cache was healthily `Incomplete`; the side-effect-free live-grid read repaired it before preparation. This is not permission to repair `Invalidated` state in place - invalidation still fails closed and requires a replacement handshake.
+
+## 15. PROT-006.13 I/O settings
+
+Before connecting USB, external speakers/amplifiers should be muted/disconnected and no phantom-sensitive path should be connected. The test changes global input and output settings, including levels, input type, mute, USB routing and output pairing. Do not run it through a live PA, powered monitor path, recording input, ribbon microphone or other path that could be harmed by a level, type, pairing or phantom-state interaction. The schema exposes no phantom-power write, but absence of a host field is not a safety interlock for connected equipment.
+
+Stop Cortex Control and any held `cortex session`, leave the Quad Cortex exclusively available, then run exactly:
+
+```sh
+cargo test -p cortex-rs --test hardware-reads prot_006_13_io_settings_mutate_poll_restore -- --ignored --exact --nocapture
+```
+
+The test refuses to mutate unless a complete capability-aware writable baseline includes the measured four input and eight output identities, USB, MIDI, both pairing couples and all four pairing members. It retains optional per-port fields and changes only baseline-present controls, using Input 1 and XLR Output 1 to exercise every setter. It polls fresh complete reads, restores immediately and requires two matching restoration reads. Pairings run last; after each pairing is restored, both member ports are rewritten using only their applicable baseline fields. Cleanup independently restores and compares every writable present field and requires two final complete baseline reads before disconnecting.
+
+**Measured 2026-08-10 on CorOS 4.0.1:** passed the complete capability matrix, every applicable field mutation, both pairings and independent final-baseline restoration with outputs disconnected. Two traps mattered: discrete selectors must be changed to a valid encoded option rather than an arbitrary float, and accepted writes may need eventual-consistency polling before read-back converges.
+
+## 16. Expanded PROT-006 verification
+
+Stop Cortex Control and any held daemon before each test. Keep audio and MIDI outputs disconnected for the tempo and persistent MIDI tests. These tests choose device-returned entries and generated temporary storage without printing private library identities:
+
+```sh
+cargo test -p cortex-rs --test hardware-reads wider_state_reads_answer_without_exposing_device_data -- --ignored --exact --nocapture
+cargo test -p cortex-rs --test hardware-reads row_level_grid_mutations_read_back_and_recall_cleanup -- --ignored --exact --nocapture
+cargo test -p cortex-rs --test hardware-reads tempo_mutations_read_back_and_recall_cleanup -- --ignored --exact --nocapture
+cargo test -p cortex-rs --test hardware-reads stomp_and_expression_mutations_read_back_and_recall_cleanup -- --ignored --exact --nocapture
+cargo test -p cortex-rs --test hardware-reads prot_006_9_midi_persists_in_saved_preset_and_cleanup -- --ignored --exact --nocapture
+cargo test -p cortex-rs --test hardware-reads capture_selection_reads_back_and_recall_cleanup -- --ignored --exact --nocapture
+cargo test -p cortex-rs --test hardware-reads capture_dialog_decline_is_graceful_and_session_stays_healthy -- --ignored --exact --nocapture
+CORTEX_VISUAL_PAUSE_SECONDS=15 cargo test -p cortex-rs --test hardware-reads user_ir_selection_reads_back_and_recall_cleanup -- --ignored --exact --nocapture
+cargo test -p cortex-rs --test hardware-reads prot_006_12_global_settings_mutate_poll_restore -- --ignored --exact --nocapture
+cargo test -p cortex-rs --test hardware-reads pin_and_favorite_mutations_restore_exact_state -- --ignored --exact --nocapture
+```
+
+**Measured 2026-08-10 on CorOS 4.0.1:** every listed test except the operator-assisted capture-dialog decline test passed; mutable tests restored their baselines. The wider reads included stable repeated request-correlated capture results, one correlated response from the loadable IR library and one from a user-IR folder, Recents, an empty Favorites baseline, request-correlated PinnedModels, Master Volume, Looper, Tuner settings, I/O and general settings, Global EQ, active mode and mode cycle. The IR responses have no completion marker and do not prove library-wide completeness. Row controls passed only when splitter verification used the writable `combined_splitter` state. Tempo muted first and all eight exposed methods read back before complete recall restoration. STOMP/expression and every persistent MIDI family passed typed-helper and raw 10x12 verification with generated-storage cleanup. Capture selection preserved its exact reference and a post-selection parameter; user-IR selection preserved its exact key/name, and timed visual inspection showed no warning. Global settings, EQ, mode and Tuner settings passed complete automated restoration. Pin duplicate/unpin-all and Favorite add/remove returned to exact initial state.
+
+The capture-dialog decline test remains unverified. It installs its waiter before printing the instruction. Tap New Neural Capture only after `[WAITING]` appears. It sends only `show_dialog: false`, observes NeuralCapture traffic for 10 seconds, fails on capture state/progress/A-B preparation, performs an active-scene read, and disconnects. After disconnect, manually open New Neural Capture again, confirm the on-unit wizard opens, then cancel it; this would prove the fallback was not stranded. Never send `show_dialog: true`: positive acceptance remains blocked until the complete v1/v2 host UI exists. Gig View and Tuner show/hide are visual-only methods and were not exercised by the automated global-settings test. Neither UI behavior is hardware-verified.
+
 ## Out of scope
 
 Not covered by this runbook:
 
 - MCP protocol/discovery behavior beyond the same daemon/core operations.
 - GUI write interactions and visual-polish coverage beyond the daemon read boundary above.
-- The wider unimplemented device API, capture/IR transfer, and most physical control paths.
+- Capture/IR payload transfer, the positive host-owned capture workflow, visual-only Gig View/Tuner visibility, and most physical control paths.
 - Everything on the Nano Cortex.

@@ -39,7 +39,7 @@ use cortex_rs::RecallConsent;
 /// Bump this whenever a `Request` variant changes shape or a new variant is
 /// added. A client that sees a mismatch refuses with an actionable message
 /// rather than sending a request the daemon will misparse.
-pub const DAEMON_PROTOCOL_VERSION: u32 = 7;
+pub const DAEMON_PROTOCOL_VERSION: u32 = 10;
 
 /// A request from a client to the daemon.
 ///
@@ -243,6 +243,8 @@ pub enum Request {
         confirmed: bool,
         /// New name, or `None` to keep the slot's existing name.
         name: Option<String>,
+        /// Preferred-instrument metadata written with the preset.
+        instrument: cortex_rs::Instrument,
         /// Maximum wait for the re-list and save, in seconds.
         timeout_seconds: u64,
     },
@@ -262,6 +264,48 @@ pub enum Request {
         /// Empty destination slot, e.g. `7B`.
         to_slot: String,
         /// Explicit confirmation from the host. Must be `true`.
+        confirmed: bool,
+    },
+    /// Copy a preset by preparing the destination, recalling the source, and saving. **Destructive.**
+    CopyPreset {
+        /// Source USER setlist path.
+        from_setlist: String,
+        /// Source slot.
+        from_slot: String,
+        /// Destination USER setlist path.
+        to_setlist: String,
+        /// Destination slot.
+        to_slot: String,
+        /// Optional destination name.
+        name: Option<String>,
+        /// Preferred-instrument metadata.
+        instrument: cortex_rs::Instrument,
+        /// Explicit confirmation from the host.
+        confirmed: bool,
+    },
+    /// Create one USER setlist. **Destructive.**
+    CreateSetlist {
+        /// Single safe destination name.
+        name: String,
+        /// Explicit confirmation from the host.
+        confirmed: bool,
+    },
+    /// Delete one USER setlist and all of its presets. **Destructive.**
+    DeleteSetlist {
+        /// Single safe setlist name.
+        name: String,
+        /// Explicit confirmation from the host.
+        confirmed: bool,
+    },
+    /// Duplicate one USER setlist through create plus recall/save. **Destructive.**
+    DuplicateSetlist {
+        /// Single safe source name.
+        source_name: String,
+        /// Single safe destination name.
+        destination_name: String,
+        /// Optional maximum occupied source entries to copy.
+        limit: Option<usize>,
+        /// Explicit confirmation from the host.
         confirmed: bool,
     },
     /// The most recent CPU load pushed by the device.
@@ -298,9 +342,90 @@ pub enum Response {
     },
     /// The request failed.
     Error {
+        /// Stable machine-readable failure category.
+        code: DaemonErrorCode,
         /// Intended for a human to read.
         message: String,
     },
+}
+
+/// Stable machine-readable categories for daemon failures.
+///
+/// These are deliberately broader than [`cortex_rs::Error`]: hosts need to
+/// decide whether an agent can correct a request, should retry later, or must
+/// repair the session without parsing human-readable diagnostics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DaemonErrorCode {
+    /// The request envelope or argument combination was malformed.
+    InvalidRequest,
+    /// A preset slot name was malformed.
+    InvalidSlot,
+    /// A requested entity was not found.
+    NotFound,
+    /// The device silently refused a block because DSP capacity was exhausted.
+    DspRefused,
+    /// A block move was malformed or unsafe.
+    InvalidBlockMove,
+    /// Read-back could not prove the final state of a write.
+    OutcomeUnconfirmed,
+    /// A row index or row topology was invalid.
+    InvalidRow,
+    /// A scene index was invalid.
+    InvalidScene,
+    /// A parameter selector or value was invalid.
+    InvalidParameter,
+    /// A persistent operation did not satisfy its safety policy.
+    SafetyRefused,
+    /// The requested device reply did not arrive before its deadline.
+    DeviceTimeout,
+    /// The device or its session is unavailable.
+    DeviceUnavailable,
+    /// The daemon is reconnecting and the request may be retried later.
+    Reconnecting,
+    /// Another exclusive device operation is currently running.
+    Busy,
+    /// The daemon has stopped admitting device work.
+    ShuttingDown,
+    /// A subscribed value has not arrived yet.
+    NotReady,
+    /// Device traffic was malformed or could not be decoded.
+    Protocol,
+    /// The daemon failed internally rather than rejecting the model's request.
+    Internal,
+}
+
+impl DaemonErrorCode {
+    /// Classify one leaf-crate error without inspecting its display text.
+    #[must_use]
+    pub fn from_cortex_error(error: &cortex_rs::Error) -> Self {
+        #[allow(unreachable_patterns)]
+        match error {
+            cortex_rs::Error::Framing(_)
+            | cortex_rs::Error::Decode(_)
+            | cortex_rs::Error::Trailer(_) => Self::Protocol,
+            cortex_rs::Error::ReadTimeout(_) => Self::DeviceTimeout,
+            cortex_rs::Error::DeviceSilent(_) | cortex_rs::Error::Session(_) => {
+                Self::DeviceUnavailable
+            }
+            cortex_rs::Error::InvalidSlot(_) => Self::InvalidSlot,
+            cortex_rs::Error::NotFound(_) => Self::NotFound,
+            cortex_rs::Error::BlockRefused(_) => Self::DspRefused,
+            cortex_rs::Error::InvalidBlockMove(_) => Self::InvalidBlockMove,
+            cortex_rs::Error::BlockMoveUnconfirmed(_)
+            | cortex_rs::Error::MoveUnconfirmed(_)
+            | cortex_rs::Error::SetlistUnconfirmed(_) => Self::OutcomeUnconfirmed,
+            cortex_rs::Error::InvalidRow(_) => Self::InvalidRow,
+            cortex_rs::Error::InvalidScene(_) => Self::InvalidScene,
+            cortex_rs::Error::InvalidParameter(_) => Self::InvalidParameter,
+            cortex_rs::Error::UnsafeSave(_) | cortex_rs::Error::UnsafeMove(_) => {
+                Self::SafetyRefused
+            }
+            // HID-only variants are absent when cortex-host's leaf dependency
+            // is built without its default feature.
+            _ => Self::DeviceUnavailable,
+        }
+    }
 }
 
 impl Response {
@@ -316,12 +441,25 @@ impl Response {
         Ok(Self::Ok { data })
     }
 
-    /// A failure carrying a human-readable message.
+    /// An internal failure carrying a human-readable message.
     #[must_use]
     pub fn error(message: impl Into<String>) -> Self {
+        Self::coded_error(DaemonErrorCode::Internal, message)
+    }
+
+    /// A failure carrying a stable code and a human-readable message.
+    #[must_use]
+    pub fn coded_error(code: DaemonErrorCode, message: impl Into<String>) -> Self {
         Self::Error {
+            code,
             message: message.into(),
         }
+    }
+
+    /// Classify and expose one leaf-crate error without parsing its message.
+    #[must_use]
+    pub fn cortex_error(error: &cortex_rs::Error) -> Self {
+        Self::coded_error(DaemonErrorCode::from_cortex_error(error), error.to_string())
     }
 }
 
@@ -337,6 +475,12 @@ pub struct Status {
     pub daemon_version: String,
     /// Seconds since the daemon started.
     pub uptime_seconds: u64,
+    /// Whether another host started this daemon on demand.
+    #[serde(default)]
+    pub auto_managed: bool,
+    /// Request-idle shutdown bound for an auto-managed daemon.
+    #[serde(default)]
+    pub idle_timeout_seconds: Option<u64>,
     /// Whether the device is currently answering.
     pub device: DeviceHealth,
     /// What the daemon has cached, and how fresh it is.
@@ -490,10 +634,23 @@ mod tests {
         let text = serde_json::to_string(&ok).unwrap();
         assert!(text.contains(r#""status":"ok""#), "{text}");
 
-        let err = Response::error("device not found");
+        let err = Response::coded_error(DaemonErrorCode::DeviceUnavailable, "device not found");
         let text = serde_json::to_string(&err).unwrap();
         assert!(text.contains(r#""status":"error""#), "{text}");
+        assert!(text.contains(r#""code":"device_unavailable""#), "{text}");
         assert!(text.contains("device not found"), "{text}");
+    }
+
+    #[test]
+    fn leaf_errors_have_stable_codes() {
+        assert_eq!(
+            DaemonErrorCode::from_cortex_error(&cortex_rs::Error::InvalidRow("4".into())),
+            DaemonErrorCode::InvalidRow
+        );
+        assert_eq!(
+            DaemonErrorCode::from_cortex_error(&cortex_rs::Error::BlockRefused("full".into())),
+            DaemonErrorCode::DspRefused
+        );
     }
 
     #[test]
@@ -555,6 +712,43 @@ mod tests {
                 ..
             } if from_slot == "2A" && to_slot == "2B"
         ));
+    }
+
+    #[test]
+    fn file_operation_requests_preserve_instrument_and_partial_limit() {
+        let requests = [
+            Request::CommitSave {
+                token: "save-fictional".into(),
+                confirmed: true,
+                name: Some("Fictional".into()),
+                instrument: cortex_rs::Instrument::Vocal,
+                timeout_seconds: 40,
+            },
+            Request::CopyPreset {
+                from_setlist: cortex_rs::client::USER_SETLIST.into(),
+                from_slot: "6A".into(),
+                to_setlist: "/media/p4/Presets/Fictional Destination".into(),
+                to_slot: "1A".into(),
+                name: None,
+                instrument: cortex_rs::Instrument::Bass,
+                confirmed: true,
+            },
+            Request::DuplicateSetlist {
+                source_name: "My Presets".into(),
+                destination_name: "Fictional Duplicate".into(),
+                limit: Some(2),
+                confirmed: true,
+            },
+            Request::CreateSetlist {
+                name: "Fictional Setlist".into(),
+                confirmed: true,
+            },
+        ];
+        for request in requests {
+            let value = serde_json::to_value(&request).unwrap();
+            let back: Request = serde_json::from_value(value.clone()).unwrap();
+            assert_eq!(serde_json::to_value(back).unwrap(), value);
+        }
     }
 
     #[test]

@@ -74,7 +74,7 @@ Maintainers, AI coding agents, and the CLI/MCP/GUI surfaces that consume the cra
 | FR-10 | `view::Block` exposes row, screen row, column, model identity/name, vendor attribution, parameters and bypass state. | Must Have |
 | FR-11 | `view::Scene` exposes index, label and colour; per-block scene bypass remains on each `view::Block`, avoiding a duplicated aggregate. | Should Have |
 | FR-12 | `Catalog::parse` eagerly and boundedly parses `gzip(tar(ModelRepo.xml))` into model/category/parameter metadata while retaining positional placeholders and the vendor's attribution verbatim. | Must Have |
-| FR-13 | Checked row and slot conversions plus input-level scaling are implemented once in the crate. Richer helpers such as `splits`, `free_rows`, and `row_status` remain roadmap work. | Should Have |
+| FR-13 | Checked row and slot conversions, input-level scaling, and pure preset navigation/parameter helpers are implemented once in the crate. `helpers` owns occupied blocks, splits, input rows, STOMP and MIDI reads, tempo and dynamic-list reads, branch-aware row availability, option normalization, and semantic parameter comparison. Explicit row/column/index keys override positional fallback. | Should Have |
 | FR-14 | A recalled preset carries NO explicit row; writing it back wholesale does nothing. The `Preset` wrapper documents this and the client layer (150) must set the row before writing. | Should Have |
 | FR-15 | Splitters and mixers exist only on rows 0 and 2. The `Grid` model enforces or at least documents this invariant. | Should Have |
 | FR-16 | The `UNITY_LEVEL` constant (10/13 = 0.76923077, representing 0 dB on the -100..+30 dB span) is exposed for parameter scaling. | Should Have |
@@ -102,7 +102,7 @@ Maintainers, AI coding agents, and the CLI/MCP/GUI surfaces that consume the cra
 - [x] `grid::Row` makes the row-numbering trap explicit and rejects invalid rows.
 - [x] `view::Scene` exposes A-H metadata in every preset view, while each block exposes its per-scene bypass state.
 - [x] `Catalog` parses the `ModelRepo` container and preserves parameter wire positions.
-- [x] Checked slot conversion and input-level scaling helpers are implemented. Richer grid-navigation helpers are independently tracked under PROT-006.15 rather than keeping the core domain requirement open.
+- [x] Checked slot conversion, input-level scaling, preset navigation, dynamic-option and semantic comparison helpers are implemented.
 - [x] `UNITY_LEVEL`, `input_level_db`, and `db_to_input_level` are exposed.
 
 ## Non-Goals
@@ -148,7 +148,7 @@ Splitters and mixers exist only on rows 0 and 2 (the rows that feed the two para
 
 ### Catalog provenance
 
-The catalog comes from the device as a `ModelRepo` message containing a gzip-compressed tar archive whose single relevant member is `ModelRepo.xml`. It is field-level gzip, distinct from frame-level gzip. It describes device-specific installed content; callers must not assume capture inclusion without evidence. Parsing yields model/category/parameter metadata used by every host surface.
+The catalog comes from the device as a `ModelRepo` message containing a gzip-compressed tar archive whose single relevant member is `ModelRepo.xml`. It is field-level gzip, distinct from frame-level gzip. It describes installed block types and their model/category/parameter metadata. Its Neural Capture entries are capture block types, not individual capture inventory; request-correlated `File` listings provide that inventory. This exclusion is established by licensed prior art and remains unmeasured on this project's local hardware.
 
 ### Glossary
 

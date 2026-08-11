@@ -98,15 +98,15 @@ The traps are not errors - the device does not refuse a wrong-row edit or a too-
 
 ### Behaviour
 
-The MCP process opens no `Transport`. It connects to the held `cortex session` daemon through the reusable host boundary. Every tool call uses that typed request client, so the daemon remains the one process holding HID. For distribution, a missing socket should cause the MCP process to locate the installed sibling `cortex` binary and invoke `cortex session start` before opening stdio; an existing incompatible daemon remains an explicit refusal rather than being killed behind another user's back.
+The MCP process opens no `Transport`. It connects to the held `cortex session` daemon through the reusable host boundary. Every tool call uses that typed request client, so the daemon remains the one process holding HID. A missing socket makes the MCP process locate the installed sibling `cortex` binary and invoke the auto-managed `cortex session start` contract before opening stdio. An existing incompatible daemon remains an explicit refusal rather than being killed behind another user's back.
 
 ### Design choice: reuse the daemon, do not become another owner
 
-`cortex-host` owns the extracted host-facing request boundary; `cortex-rs` remains free of host IPC and async-runtime dependencies. The MCP process constructs one host client at startup and serves stdio through `rmcp`. Today it fails clearly when no compatible daemon is available; the distribution lifecycle adds missing-daemon startup without changing that ownership boundary.
+`cortex-host` owns the extracted host-facing request boundary; `cortex-rs` remains free of host IPC and async-runtime dependencies. The MCP process constructs one supervised host client at startup and serves stdio through `rmcp`. The supervisor probes status without bypassing the daemon protocol-version gate, starts only when no owner exists, and rechecks before every tool so a long-lived MCP process recovers after request-idle release.
 
 ### Design choice: agent-triggered daemon lifecycle, not systemd
 
-The planned installed stdio lifecycle starts a missing daemon on demand. This is not implemented today: the current server fails clearly if no compatible daemon exists. The daemon will not be tied to one MCP connection because CLI, GUI and another harness may share it; request-based idle shutdown avoids a systemd user-service dependency.
+The installed stdio lifecycle starts a missing daemon on demand. `cortex-mcp` resolves `cortex` beside its own executable, invokes `cortex session start --auto-managed --idle-timeout-seconds 60`, and waits for a compatible status response before serving or dispatching a tool. Concurrent MCP processes may both reach the start command, but only one daemon wins the endpoint claim; losing callers accept that race only after the winner serves the expected protocol. Every completed request resets the idle timeout, in-flight requests prevent exit, and a later tool call restarts an owner that has already released the device. This avoids a systemd user-service dependency and does not tie ownership to one MCP process.
 
 ### Design choice: no per-tool-call reconnect
 
@@ -124,7 +124,7 @@ The shared `cortex session` owner reconnects with a surfaced health state, gener
 
 Each tool is a thin wrapper over a `QuadCortex` method. The tool parses its input (validated against `inputSchema`), calls the client method, and returns the result as JSON. The safety surface (above) gates the destructive tier.
 
-The implemented first milestone deliberately omits the destructive tier. Read, transient and working-copy tools are sufficient to research and build a preset in the live grid, and a recall reverses the experiment. `save_preset` appears only after MCP-specific policy, token lifecycle, restoration semantics, typed failures and hardware smoke are complete.
+The implemented first milestone deliberately omits the destructive tier. Read, transient and working-copy tools are sufficient to research and build a preset in the live grid, and a recall reverses the experiment. `save_preset` appears only after MCP-specific policy, token lifecycle, restoration semantics and hardware smoke are complete.
 
 ### Design choice: one tool per client method, grouped by tier
 
@@ -188,4 +188,5 @@ The server uses the `rmcp` crate on a `tokio` runtime. Stable `rmcp` 3.1.0 still
 - **Prepared-save token and backup retention are implemented in the shared crate.** The MCP server still needs an opaque token registry so it can retain `SavePreparation` between tool calls without serialising raw backups.
 - **Automatic restoration is not implemented.** The retained `BinaryPreset` can be persisted, but the device ignores an unkeyed whole-preset grid write. Restoration needs a separately verified device-side copy, import, or keyed replay path; hosts must not present the retained blob as one-click rollback yet.
 - **The reusable host boundary is extracted.** `cortex-host` owns the typed daemon protocol and synchronous short-lived local IPC client. It has no HID feature; CLI and MCP share it without putting host IPC into the leaf crate. Platform details stay behind `LocalEndpoint`, `LocalListener` and `LocalConnection`.
-- **Destructive MCP save is intentionally deferred.** The former core PROT-009 blockers are closed; MCP still needs configured policy, opaque token lifecycle, restoration semantics, typed failures and its own hardware smoke.
+- **Daemon failures remain typed across both boundaries.** Protocol v10 carries a `DaemonErrorCode` beside every human diagnostic. `cortex-host` turns that envelope into a downcastable `DaemonError`; MCP converts it to structured tool content with top-level `code` and `error` fields. The mapping matches `cortex_rs::Error` variants and explicit daemon lifecycle state, never display strings. JSON-RPC errors remain reserved for malformed MCP traffic and server failures rather than model-correctable tool outcomes.
+- **Destructive MCP save is intentionally deferred.** The former core PROT-009 blockers and typed daemon failures are closed; MCP still needs configured policy, opaque token lifecycle, restoration semantics and its own hardware smoke.

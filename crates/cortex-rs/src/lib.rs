@@ -60,8 +60,10 @@
 pub mod device;
 pub mod framing;
 pub mod grid;
+pub mod helpers;
 pub mod link;
 pub mod message;
+pub mod registry;
 pub mod safety;
 pub mod state;
 pub mod view;
@@ -83,14 +85,35 @@ pub mod proto {
 }
 
 pub use catalog::{Catalog, Model, Parameter, ParameterKind};
-pub use client::{ParameterInput, ParameterTarget, ParameterWrite, Placement, QuadCortex};
+pub use client::{
+    CAPTURE_FILE_NAME_PARAM, CopyPresetReceipt, DEFAULT_CAPTURE_MODEL, DuplicateSetlistReceipt,
+    ExpressionBypassMode, ExpressionPedal, FIRST_IR_LOADER_MODEL, Footswitch, FootswitchModeSlot,
+    GeneralSettingsPatch, GlobalBypassPatch, GlobalBypassRowsState, GlobalBypassState,
+    GlobalEqBandPatch, GlobalEqFilter, GlobalEqOutputPatch, InputPort, InputPortPatch, Instrument,
+    LAST_IR_LOADER_MODEL, LibraryEntry, MasterVolumeAssignment, MasterVolumeAssignmentPatch,
+    MetronomeRouting, MetronomeSound, MidiOut, MidiOutType, MidiSource, OutputPairingPatch,
+    OutputPort, OutputPortPatch, ParameterInput, ParameterTarget, ParameterWrite, Placement,
+    QuadCortex, SceneBypassBehavior, TempoParameter, TempoSubdivision, TimeSignature, TunerInput,
+    UsbPortPatch, build_decline_capture_dialog, build_global_bypass, build_global_eq_band,
+    build_global_eq_output, build_hold_timing, build_input_port_updates,
+    build_master_volume_assignment, build_midi_thru_update, build_mode_cycle,
+    build_output_pairing_updates, build_output_port_updates, build_settings_update,
+    build_usb_port_updates, user_setlist_path,
+};
 pub use device::DeviceKind;
 pub use framing::{Flags, Frame, FrameReassembler, ReportId};
 pub use grid::{Row, Value};
+pub use helpers::{
+    Block as PresetBlock, GAIN_REDUCTION_PARAM, OptionCount, OptionSelector, RowAvailability,
+    RowStatus, Split, StompAssignment, blocks, free_rows, input_chain_rows,
+    input_control_params_equal, midi_out, option_at, option_value, param_options, params_equal,
+    params_equal_with_tolerance, preset_load_midi_out, row_status, splits, stomp_assignments,
+    tempo_params,
+};
 pub use message::Message;
 pub use safety::{
     RecallConsent, SaveConfirmation, SavePolicy, SavePreparation, SavePreparationView, SaveReceipt,
-    SaveTarget, ScratchOverride, ScratchRange,
+    SaveReceiptView, SaveTarget, ScratchOverride, ScratchRange,
 };
 pub use session::ConnectMode;
 pub use session::{InboundMessage, Session};
@@ -207,6 +230,11 @@ pub enum Error {
     /// A preset move may have landed, but storage did not converge in time.
     #[error("preset move outcome unconfirmed: {0}")]
     MoveUnconfirmed(String),
+
+    /// A setlist mutation may have landed, but fresh directory listings did
+    /// not prove its final state before the deadline.
+    #[error("setlist operation outcome unconfirmed: {0}")]
+    SetlistUnconfirmed(String),
 
     /// The device was not found on the USB bus. On Linux, check the udev
     /// rule and that the device is powered on (see README -> Setup).

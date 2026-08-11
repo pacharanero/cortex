@@ -355,6 +355,17 @@ impl SavePreparation {
 /// Result of a gated save, retaining the preparation and its backup.
 pub struct SaveReceipt {
     preparation: SavePreparation,
+    stored: PresetEntry,
+}
+
+/// Serialisable result of committing a prepared save.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct SaveReceiptView {
+    /// Safe preparation summary.
+    pub preparation: SavePreparationView,
+    /// Actual entry from a fresh complete listing after save, including any
+    /// collision-adjusted name and the stored instrument tag.
+    pub stored: PresetEntry,
 }
 
 impl SaveReceipt {
@@ -362,6 +373,15 @@ impl SaveReceipt {
     #[must_use]
     pub fn view(&self) -> SavePreparationView {
         self.preparation.view()
+    }
+
+    /// Complete serialisable commit result.
+    #[must_use]
+    pub fn result_view(&self) -> SaveReceiptView {
+        SaveReceiptView {
+            preparation: self.preparation.view(),
+            stored: self.stored.clone(),
+        }
     }
 
     /// Retained pre-edit preset, if the overwritten target was occupied.
@@ -507,6 +527,7 @@ impl QuadCortex {
         preparation: SavePreparation,
         _confirmation: SaveConfirmation,
         name: Option<&str>,
+        instrument: crate::client::Instrument,
         timeout: Duration,
     ) -> crate::Result<SaveReceipt> {
         policy.authorize(&preparation.target, preparation.override_scratch)?;
@@ -528,13 +549,19 @@ impl QuadCortex {
             })?;
         let status = self.state_cache().status();
         preparation.validate_current(&status, &current_entry)?;
-        self.save_current_preset(
+        let stored = self.save_current_preset_with_baseline(
             &preparation.target.setlist,
             &preparation.target.slot,
+            preparation.target.position,
             name,
-            timeout,
+            instrument,
+            Some(current_entry),
+            std::time::Instant::now() + timeout,
         )?;
-        Ok(SaveReceipt { preparation })
+        Ok(SaveReceipt {
+            preparation,
+            stored,
+        })
     }
 }
 
@@ -614,6 +641,13 @@ mod tests {
                 index: Some(product_data::Index::Index(index)),
                 name: if index == 0 {
                     name.map(|name| product_data::Name::Name(name.into()))
+                } else {
+                    None
+                },
+                instrument: if index == 0 && name.is_some() {
+                    Some(product_data::Instrument::Instrument(
+                        crate::Instrument::Guitar as i32,
+                    ))
                 } else {
                     None
                 },
@@ -884,6 +918,7 @@ mod tests {
             preparation,
             SaveConfirmation::explicit(true).unwrap(),
             None,
+            crate::Instrument::Guitar,
             Duration::from_secs(1),
         ) else {
             panic!("an empty target must require a name");
@@ -943,6 +978,13 @@ mod tests {
                     ..Default::default()
                 },
             );
+            // 5. verify the actual collision-adjusted name and instrument.
+            wait_for_write(&fake, 4);
+            push_message(
+                &fake,
+                cortex_message_type::Enum::File,
+                &listing(Some("Fictional Saved")),
+            );
         });
         let policy = SavePolicy::new(USER, vec![ScratchRange::new("1A", "1A").unwrap()]).unwrap();
         let preparation = qc
@@ -967,12 +1009,17 @@ mod tests {
                 preparation,
                 SaveConfirmation::explicit(true).unwrap(),
                 Some("Fictional Saved"),
+                crate::Instrument::Guitar,
                 Duration::from_secs(1),
             )
             .unwrap();
         assert!(receipt.backup().is_some());
         responder.join().unwrap();
-        assert_eq!(link.write_count(), 4, "list, recall, re-list, save");
+        assert_eq!(
+            link.write_count(),
+            5,
+            "list, recall, re-list, save, verify listing"
+        );
         session.stop();
     }
 

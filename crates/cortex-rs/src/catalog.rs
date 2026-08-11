@@ -5,16 +5,17 @@
 //!
 //! Every block on the grid is stored as an integer model id. The catalog is
 //! what turns that into a name, a category, and the parameter list in wire
-//! index order. It comes FROM the device, so it covers whatever this unit
-//! actually has - purchased plugin models and the player's own Neural
-//! Captures included - which no hard-coded table could know.
+//! index order. It comes FROM the device, so it covers installed block types,
+//! including purchased plugin models. Its Neural Capture entries are capture
+//! block types, not the unit's inventory of individual captures; that inventory
+//! is reported separately through `File` listings.
 //!
 //! ## Container
 //!
 //! Confirmed against `CorOS` 4.0.1 (firmware `d14e`) on 2026-08-02: the
 //! `ModelRepo` payload is `gzip(tar(ModelRepo.xml))`. On that unit it was
 //! 46,704 bytes gzipped, 558,592 bytes of tar, and a 556,732-byte XML
-//! document describing 533 models in 32 categories with 3,809 parameters.
+//! document describing 533 models in 31 categories with 3,809 parameters.
 //!
 //! Note this gzip is the FIELD-level one (inside a protobuf `bytes` field),
 //! distinct from the frame-level gzip the transport already unwraps.

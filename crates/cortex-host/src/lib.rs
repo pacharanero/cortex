@@ -14,10 +14,12 @@
 mod client;
 mod ipc;
 mod protocol;
+mod server;
 
-pub use client::{DaemonClient, is_running, request};
+pub use client::{DaemonClient, DaemonError, is_running, request, request_with_timeout};
 pub use ipc::{BindResult, LocalClaim, LocalConnection, LocalEndpoint, LocalListener, log_path};
 pub use protocol::{
-    CacheStatus, DAEMON_PROTOCOL_VERSION, DeviceHealth, PrepareSaveResult, Request, Response,
-    Status,
+    CacheStatus, DAEMON_PROTOCOL_VERSION, DaemonErrorCode, DeviceHealth, PrepareSaveResult,
+    Request, Response, Status,
 };
+pub use server::{DaemonLifecycle, ServerExit, serve_listener};

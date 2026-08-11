@@ -26,6 +26,7 @@ The design principle is: never let a caller touch a raw `oneof` accessor without
 | `crates/cortex-rs/src/message.rs` | `Message` struct, `parse()`, `TRAILER_LEN` | Implemented |
 | `crates/cortex-rs/src/catalog.rs` | Bounded `gzip(tar(XML))` parser and model metadata | Implemented, hardware-verified |
 | `crates/cortex-rs/src/grid.rs` | Checked `Row` plus pure keyed update builders | Implemented; exposed operations hardware-verified |
+| `crates/cortex-rs/src/helpers.rs` | Pure preset topology, MIDI, tempo, dynamic-option and comparison helpers | Implemented from schema and upstream evidence |
 | `crates/cortex-rs/src/view.rs` | Stable serialisable host views | Implemented |
 | `crates/cortex-rs/src/safety.rs` | Save policy, preparations and validated commit flow | Implemented; core path hardware-verified |
 
@@ -78,7 +79,9 @@ The read side is represented by `view::Preset::{rows,blocks}`. The write side us
 
 ## [DES-HELPERS] Helper Functions
 
-Checked slot conversion, inverse conversion, dB scaling, row validation and `preset_has_block` are implemented. Richer helpers (`splits`, `free_rows`, `row_status`) remain in the roadmap; they should compose the existing typed views instead of introducing a second preset interpretation.
+Checked slot conversion, inverse conversion, dB scaling and row validation are implemented. `helpers.rs` is the canonical read-side interpretation of protobuf preset topology: explicit row, column and parameter keys override repeated-field position, while absent keys use position. It exposes occupied blocks, branches and reserved lanes, input-chain rows, zero-safe STOMP assignments, typed 10-by-12 MIDI storage, positional tempo values, current-preset dynamic options and list-aware parameter comparison. `view` and client occupancy checks reuse its keyed lookup rather than maintaining a second interpretation.
+
+Dynamic option names come from the current preset rather than the catalog because some lists enumerate the preset's blocks. `option_value` and `option_at` centralise `index / (count - 1)`. `params_equal` compares ordinary floats within tolerance, compares list values by selected index across changed cardinality, and treats NaN as equal only to NaN. Input-control comparison explicitly ignores positional index 2, the sampled gain-reduction meter rather than a setting.
 
 ## [DES-ROW-TRAP] The Row-Numbering Trap (authoritative design note)
 
@@ -90,14 +93,14 @@ This is the single most important safety invariant in the domain model, repeated
 - **Every helper that takes or returns a row documents this.** Not just one place - every signature.
 - **The MCP safety surface (300) repeats it in tool descriptions.** An agentic patch editor must not silently edit the wrong row.
 
-## [DES-SCALING] Parameter Scaling Design (planned)
+## [DES-SCALING] Parameter Scaling Design
 
 Two constants/helpers for parameter scaling:
 
 - `UNITY_LEVEL = 10.0 / 13.0` (= `0.76923077`). This is the parameter value that represents 0 dB on the -100..+30 dB span used by level parameters. The GUI uses it to render a "0 dB" tick.
 - `input_level_db(level) = -12.0 + 72.0 * level`. Input ports span -12 to +60 dB; this converts the normalised `level` (0.0..1.0) to dB. The IO-settings surface (a future message wrapper) uses it.
 
-These are free functions in `helpers.rs`, not methods, because they are pure conversions.
+These are free functions re-exported from the crate root. They remain in `client.rs` alongside the I/O settings types that consume them; preset interpretation is isolated in `helpers.rs`.
 
 ## [DES-LAYERS] Layer Map (cross-reference)
 

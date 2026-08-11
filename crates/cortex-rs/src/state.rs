@@ -890,6 +890,9 @@ fn apply_new_models(inner: &mut StateInner, _revision: u64, message: NewModelsMe
     if models.is_empty() {
         return Apply::Ignored;
     }
+    // The ids announce that the model set changed, but do not carry the new
+    // metadata. Refuse all resolution through the old repo until a fresh
+    // payload arrives in this generation.
     inner.model_repo = None;
     Apply::Applied
 }
@@ -1747,6 +1750,112 @@ mod tests {
             },
         );
         assert_eq!(cache.status().storage_revision, 1);
+    }
+
+    fn model_repo(payload: &[u8]) -> ModelRepoMessage {
+        ModelRepoMessage {
+            model_repo_payload: Some(
+                crate::proto::model_repo_message::ModelRepoPayload::ModelRepoPayload(
+                    payload.to_vec(),
+                ),
+            ),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn non_empty_new_models_invalidates_catalog_but_empty_does_not() {
+        let (cache, generation) = seeded_cache(false, false);
+        observe(
+            &cache,
+            generation,
+            MessageType::ModelRepo,
+            &model_repo(b"catalog A"),
+        );
+        let catalog_a = cache.model_repo().expect("catalog A");
+
+        observe(
+            &cache,
+            generation,
+            MessageType::NewModels,
+            &NewModelsMessage::default(),
+        );
+        let after_empty = cache.model_repo().expect("empty NewModels keeps A");
+        assert_eq!(after_empty.revision, catalog_a.revision);
+        assert_eq!(after_empty.value, b"catalog A");
+
+        observe(
+            &cache,
+            generation,
+            MessageType::NewModels,
+            &NewModelsMessage {
+                models: vec![9001],
+                ..Default::default()
+            },
+        );
+        assert!(cache.model_repo().is_none());
+        assert!(!cache.status().catalog);
+    }
+
+    #[test]
+    fn fresh_model_repo_replaces_invalidated_catalog_in_the_same_generation() {
+        let (cache, generation) = seeded_cache(false, false);
+        observe(
+            &cache,
+            generation,
+            MessageType::ModelRepo,
+            &model_repo(b"catalog A"),
+        );
+        observe(
+            &cache,
+            generation,
+            MessageType::NewModels,
+            &NewModelsMessage {
+                models: vec![9001],
+                ..Default::default()
+            },
+        );
+        observe(
+            &cache,
+            generation,
+            MessageType::ModelRepo,
+            &model_repo(b"catalog B"),
+        );
+
+        let current = cache.model_repo().expect("fresh catalog B");
+        assert_eq!(current.generation, generation);
+        assert_eq!(current.value, b"catalog B");
+    }
+
+    #[test]
+    fn catalog_cannot_cross_a_stream_gap_or_generation_boundary() {
+        let (cache, old_generation) = seeded_cache(false, false);
+        observe(
+            &cache,
+            old_generation,
+            MessageType::ModelRepo,
+            &model_repo(b"catalog A"),
+        );
+        cache.stream_gap(old_generation, "fictional catalog stream gap");
+        assert!(cache.model_repo().is_none());
+
+        let new_generation = cache.begin_generation();
+        observe(
+            &cache,
+            old_generation,
+            MessageType::ModelRepo,
+            &model_repo(b"late catalog A"),
+        );
+        assert!(cache.model_repo().is_none());
+        observe(
+            &cache,
+            new_generation,
+            MessageType::ModelRepo,
+            &model_repo(b"catalog B"),
+        );
+        let current = cache.model_repo().expect("new-generation catalog B");
+        assert_eq!(current.generation, new_generation);
+        assert_eq!(current.value, b"catalog B");
     }
 
     #[test]

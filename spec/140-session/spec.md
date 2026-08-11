@@ -66,6 +66,7 @@ The protocol facts and this Rust session implementation are hardware-verified ag
 | FR-24 | A malformed report, abandoned partial message, reassembly error, cap breach, or host-detected disconnect invalidates cached state. A replacement session starts a new generation and old-generation delivery is ignored. | Must Have |
 | FR-25 | `Session::open_with_state` / `over_with_state` attach a replacement physical session to one stable cache handle. `Session::is_responsive` uses the same measured ten-second silence limit as request fail-fast so a cache hit cannot conceal an unplug. | Must Have |
 | FR-26 | A stream gap remains `Invalidated` even if handshake settlement later finishes. The daemon treats `Invalidated` as a reconnect condition despite continuing heartbeats, excludes in-flight operations, releases the old link, and requires a new subscribed generation to return `Live`. | Must Have |
+| FR-27 | A non-empty `NewModels.models` invalidates the current generation's raw and parsed catalog; an empty list does not. A later non-empty `ModelRepo` in that generation replaces it. Stream gaps and generation changes clear catalog state, and old-generation delivery cannot repopulate it. | Must Have |
 
 ### Non-Functional Requirements
 
@@ -96,6 +97,8 @@ The protocol facts and this Rust session implementation are hardware-verified ag
 - [x] Cache reduction is non-consuming, sparse updates apply transactionally, ambiguous updates invalidate, old generations cannot repopulate new state, and a 135-update burst retains only the latest value.
 - [x] The fake-link RX test proves a malformed report invalidates continuity without killing later message delivery.
 - [x] Full handshake and a 90-second held idle session verified against a real Quad Cortex (CorOS 4.0.1).
+- [x] Host process tests prove request-idle teardown never overlaps an in-flight operation and retains explicit `Session::close()` as the release boundary.
+- [x] The ignored hardware lifecycle test passed on CorOS 4.0.1: an auto-managed idle exit released HID, removed its endpoint, and permitted a replacement direct version read.
 
 ---
 
@@ -191,6 +194,8 @@ The writer-starvation and handshake-pacing fixes removed the wild variance, but 
 Measured through the held session, `scene` takes about 0.07 seconds, `grid` 0.14 seconds, status 0.005 seconds, and the already-fetched catalog 0.02 seconds. This is also the correct architecture for the MCP server and GUI because the HID interface permits only one effective owner.
 
 `ConnectMode::Minimal` remains available for a one-shot path that needs no subscriptions; `ConnectMode::Subscribed` is correct for the held session because the pushes keep its cache current. The `ModelRepo` READ remains mandatory in both modes.
+
+The catalog is held only in memory. A transparent disk cache would not remove the mandatory live READ/drain, the held path already serves it in about 0.02 seconds, explicit CLI dump/from-file operations cover offline snapshots, and CorOS alone is not established as a complete content key. The remaining same-CorOS entitlement question is optional protocol research, not unfinished session performance work.
 
 ### Heartbeat and liveness (2026-08-02)
 

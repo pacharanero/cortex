@@ -447,7 +447,28 @@ impl Session {
     /// Currently always returns `Ok` (write errors are swallowed per the
     /// benign STALL).
     pub fn send(&self, message_type: MessageType, payload: &[u8]) -> crate::Result<()> {
-        let reports = encode_message(message_type as u16, payload);
+        self.send_many([(message_type, payload)])
+    }
+
+    /// Send several logical messages without allowing another sender or the
+    /// keepalive thread to interleave between them.
+    ///
+    /// Use this for device operations whose meaning depends on message order,
+    /// such as promote, switch scene, then write value. Each logical message
+    /// is framed independently, but the existing write lock is retained across
+    /// the complete sequence.
+    ///
+    /// # Errors
+    ///
+    /// Returns a session error if the session is closed.
+    pub fn send_many<'a>(
+        &self,
+        messages: impl IntoIterator<Item = (MessageType, &'a [u8])>,
+    ) -> crate::Result<()> {
+        let reports = messages
+            .into_iter()
+            .map(|(message_type, payload)| encode_message(message_type as u16, payload))
+            .collect::<Vec<_>>();
         let _lock = self.shared.write_lock.lock().unwrap();
         if !self.shared.running.load(Ordering::Acquire) {
             return Err(crate::Error::Session("session is closed".into()));
@@ -459,8 +480,10 @@ impl Session {
         let device = device
             .as_ref()
             .ok_or_else(|| crate::Error::Session("session is closed".into()))?;
-        for report in &reports {
-            let _ = device.write(report);
+        for message_reports in &reports {
+            for report in message_reports {
+                let _ = device.write(report);
+            }
         }
         Ok(())
     }
@@ -1338,7 +1361,29 @@ fn handle_message(body: &[u8], shared: &Shared) -> crate::Result<()> {
     // cannot drift - see `Message::decode`.
     let (msg, _gzipped) = crate::message::Message::decode(body)?;
 
-    let mt = MessageType::try_from(i32::from(msg.message_type)).unwrap_or(MessageType::Undefined);
+    let mt = match MessageType::try_from(i32::from(msg.message_type)) {
+        Ok(MessageType::Undefined | MessageType::NumberOfMessageTypes) => {
+            trace!("skipping sentinel message type {}", msg.message_type);
+            return Ok(());
+        }
+        Ok(message_type) => message_type,
+        Err(_) => {
+            trace!("skipping unknown message type {}", msg.message_type);
+            // The envelope proves that the device is alive, but an unknown
+            // operation may have changed any state this schema knows about.
+            // Count the traffic for liveness while refusing cache continuity.
+            shared.heard_anything.store(true, Ordering::Relaxed);
+            shared.last_any_inbound_ms.store(
+                u64::try_from(shared.started.elapsed().as_millis()).unwrap_or(u64::MAX),
+                Ordering::Relaxed,
+            );
+            shared.state.stream_gap(
+                shared.generation,
+                &format!("unknown message type {}", msg.message_type),
+            );
+            return Ok(());
+        }
+    };
     let request_id = extract_request_id(&msg.body);
 
     let inbound = InboundMessage {
@@ -2056,6 +2101,28 @@ mod link_tests {
         let heard = session.has_heard_from_device();
         session.stop();
         assert!(heard, "an inbound message did not register as contact");
+    }
+
+    #[test]
+    fn a_valid_unknown_message_counts_as_liveness_and_invalidates_the_cache() {
+        let link = FakeLink::new();
+        let session = session_over(&link);
+        link.push_inbound(inbound(72, &[]));
+
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while Instant::now() < deadline
+            && (!session.has_heard_from_device()
+                || session.state_cache().status().phase != crate::CachePhase::Invalidated)
+        {
+            thread::sleep(Duration::from_millis(20));
+        }
+        let heard = session.has_heard_from_device();
+        let status = session.state_cache().status();
+        session.stop();
+
+        assert!(heard, "valid unknown traffic must count as device contact");
+        assert_eq!(status.phase, crate::CachePhase::Invalidated);
+        assert_eq!(status.counters.stream_gaps, 1);
     }
 
     /// A malformed report must not wedge the loop or be mistaken for a
