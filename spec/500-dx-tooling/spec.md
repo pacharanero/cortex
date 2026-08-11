@@ -11,7 +11,7 @@ tags: ["dx", "tooling", "lint", "format", "test", "scripts", "editorconfig"]
 
 # 500 DX Tooling - Spec
 
-> The repo scripts and lint/format/test configuration. `s/test` and `s/lint` are the canonical local gates; CI additionally runs no-default tests, device-data lint, Windows cross-checks and platform setup that are not all duplicated locally.
+> The repo scripts and lint/format/test configuration. `s/test` and `s/lint` are the canonical local gates, now including no-default workspace clippy/tests; CI additionally runs Windows cross-checks and platform setup that are not duplicated locally.
 
 ## References
 
@@ -25,7 +25,7 @@ tags: ["dx", "tooling", "lint", "format", "test", "scripts", "editorconfig"]
 
 ## Problem Statement
 
-A maintainer or agent runs `s/test` for Rust formatting, all-feature clippy and workspace tests, then `s/lint` for formatting, clippy, the no-HID crate check, REUSE when installed, and real-device-data lint. CI remains broader: it adds no-default workspace clippy/tests and Windows host/MCP cross-checks. Closing that parity gap is planned rather than falsely promising that local green guarantees CI green.
+A maintainer or agent runs `s/test` for Rust formatting, all-feature clippy, default-feature workspace tests and no-default workspace tests, then `s/lint` for formatting, all-feature and no-default workspace clippy, REUSE when installed, and real-device-data lint. CI remains broader only in the Windows host/MCP cross-checks, which stay CI-only because they need a cross toolchain that is not guaranteed to be present locally. Local green no longer skips the no-default workspace clippy/test paths that used to be remote-only.
 
 This zone owns the scripts, the `.editorconfig`, and the lint/format config. The CI workflow itself is owned by zone 600; this zone mirrors it locally. `s/gui-dev` and `s/version++` exist. The version script synchronizes the Rust workspace, npm lock/package metadata and Tauri configuration in one release commit.
 
@@ -33,12 +33,13 @@ This zone owns the scripts, the `.editorconfig`, and the lint/format config. The
 
 | Claim | Status | Evidence |
 | --- | --- | --- |
-| `s/test` runs fmt + clippy + tests | Implemented | `s/test` runs `cargo fmt --all --check`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test --all` |
-| `s/lint` runs fmt + clippy + no-HID check + REUSE + device-data lint | Implemented | See `s/lint`; REUSE has a fallback message when unavailable |
+| `s/test` runs fmt + clippy + tests | Implemented | `s/test` runs `cargo fmt --all --check`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test --all`, `cargo test --all --no-default-features` |
+| `s/lint` runs fmt + clippy + no-HID check + REUSE + device-data lint | Implemented | `s/lint` runs `cargo fmt --all --check`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo clippy --all-targets --no-default-features -- -D warnings`, `reuse lint` when available, `s/lint-no-device-data` |
 | `.editorconfig` enforces UTF-8, LF, 4-space indent (2 for md/yaml/json), final newline | Implemented | `.editorconfig` at repo root |
 | `cargo fmt` and `cargo clippy` run in CI | Implemented | `.github/workflows/ci.yml` (owned by zone 600) |
 | `s/gui-dev` | Implemented | Runs the Tauri dev server from the repository-independent entry point |
 | `s/version++` | Implemented | Release script synchronizes Cargo, npm and Tauri versions, runs the Rust and frontend gates, then lands one release commit |
+| No-default workspace clippy/tests run locally, not only in CI | Implemented | `s/lint` runs `cargo clippy --all-targets --no-default-features -- -D warnings`; `s/test` runs `cargo test --all --no-default-features` |
 | Markdown lint | Planned | Not yet wired |
 
 ## User Stories
@@ -73,8 +74,8 @@ Maintainers and AI coding agents running the local gate before a commit.
 
 | ID | Requirement | Priority |
 | --- | --- | --- |
-| FR-1 | `s/test` runs `cargo fmt --all --check`, all-feature clippy and `cargo test --all`. | Must Have |
-| FR-2 | `s/lint` runs formatting, all-feature clippy, `cargo check --no-default-features -p cortex-rs`, `reuse lint` when available, and `s/lint-no-device-data`. | Must Have |
+| FR-1 | `s/test` runs `cargo fmt --all --check`, all-feature clippy, `cargo test --all` and `cargo test --all --no-default-features`. | Must Have |
+| FR-2 | `s/lint` runs formatting, all-feature clippy, no-default-features workspace clippy, `reuse lint` when available, and `s/lint-no-device-data`. | Must Have |
 | FR-3 | `.editorconfig` enforces UTF-8 charset, LF line endings, 4-space indent (2 for `*.md`/`*.yaml`/`*.yml`/`*.json`/`*.toml`, 4 for `*.rs`), final newline, and trailing-whitespace trim. | Must Have |
 | FR-4 | The `s/` scripts carry an SPDX header (`SPDX-FileCopyrightText` / `SPDX-License-Identifier`) and a one-line description of what they do. | Must Have |
 | FR-5 | The `s/` scripts `set -euo pipefail` and `cd` to the repo root via `git rev-parse --show-toplevel`, so they run from any working directory. | Must Have |
@@ -97,7 +98,7 @@ Maintainers and AI coding agents running the local gate before a commit.
 | NFR-2 | The `s/` scripts do not depend on the current working directory; they `cd` to the repo root first. | Review-enforced |
 | NFR-3 | `s/lint` degrades gracefully when `reuse` is not installed (stderr message, not a hard failure). | Implemented |
 | NFR-4 | `.editorconfig` is `root = true` so no parent `.editorconfig` is consulted. | Implemented |
-| NFR-5 | Local and CI gates document their differences. No-default workspace tests and host-platform cross-checks should move local when they are practical and deterministic. | Review-enforced |
+| NFR-5 | Local and CI gates document their differences. No-default workspace clippy/tests now run locally; host-platform cross-checks (the Windows cross-compile) remain CI-only because they need a cross toolchain not guaranteed to be present locally. | Implemented |
 
 ## Acceptance Criteria
 
@@ -108,6 +109,7 @@ Maintainers and AI coding agents running the local gate before a commit.
 - [x] The `s/` scripts carry SPDX headers.
 - [x] `s/gui-dev` runs the Tauri dev server.
 - [x] `s/version++` bumps the version across all current surfaces in one commit.
+- [x] `s/test` and `s/lint` run no-default-features workspace clippy and tests locally, matching CI's no-default job.
 - [ ] Markdown lint runs in `s/lint` and CI.
 - [ ] `s/install-hooks` and `.githooks/pre-commit` are wired.
 

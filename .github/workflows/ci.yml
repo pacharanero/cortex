@@ -67,13 +67,13 @@ jobs:
         run: cargo clippy --all-targets --all-features -- -D warnings
 
       - name: Clippy (no default features - leaf protocol surface only)
-        run: cargo clippy -p cortex-rs --all-targets --no-default-features -- -D warnings
+        run: cargo clippy --all-targets --no-default-features -- -D warnings
 
       - name: Tests (all features)
         run: cargo test --all
 
       - name: Tests (leaf engine, no default features)
-        run: cargo test -p cortex-rs --no-default-features
+        run: cargo test --all --no-default-features
 
       - name: Windows host-boundary cross-check
         run: |

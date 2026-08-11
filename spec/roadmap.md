@@ -252,7 +252,7 @@ Version synchronization is completed and tracked canonically under ENG-001.2.
 
 - [ ] **ENG-001.3**: `s/install-hooks` and `.githooks/pre-commit`. **Night: ready.** Follow the house-style hook installer and keep installation explicit
 - [ ] **ENG-001.4**: Markdown lint. **Night: ready.** Use the house-style maintained tool/config and avoid reflowing existing prose as drive-by cleanup
-- [ ] **ENG-001.5**: Close the documented local/CI parity gap where practical: no-default workspace clippy/tests locally, while keeping platform cross-checks CI-only when native toolchains are unavailable. **Night: ready.** Prefer extending canonical `s/test`/`s/lint` over adding another script
+- [x] **ENG-001.5**: Closed the documented local/CI parity gap where practical: `s/lint` now runs `cargo clippy --all-targets --no-default-features -- -D warnings` (workspace-wide, replacing the narrower `cortex-rs`-only `cargo check`) and `s/test` now runs `cargo test --all --no-default-features`, mirroring the two CI-only no-default jobs exactly. The Windows host/MCP cross-checks remain CI-only since they need a cross toolchain not guaranteed to be present locally
 
 ### ENG-002: CI
 
