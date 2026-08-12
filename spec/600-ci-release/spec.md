@@ -40,6 +40,8 @@ Release is only partly wired. `s/version++` and the auto-tag workflow exist; cra
 | CI runs `cargo test --all` (workspace default features) | Implemented | `.github/workflows/ci.yml` default-feature test step |
 | CI runs `cargo test --all --no-default-features` | Implemented | `.github/workflows/ci.yml` no-default workspace test step |
 | CI runs the REUSE license lint | Implemented | `.github/workflows/ci.yml` `reuse` job via `fsfe/reuse-action` |
+| CI type-checks and builds both GUI frontend modes (`npm run check`: fixture + Tauri) | Implemented | `.github/workflows/ci.yml` "Check fixture and Tauri frontends" step |
+| CI builds the full Tauri backend as a debug, unbundled boundary check | Implemented | `.github/workflows/ci.yml` "Tauri build boundary (debug, no bundle)" step: `npm run tauri --prefix gui -- build --debug --no-bundle --ci` |
 | Actions are pinned to SHA with `# vX.Y.Z` comments | Implemented | `actions/checkout@3d3c42e...# v7.0.1`, `dtolnay/rust-toolchain@e97e2d8...# v1`, `Swatinem/rust-cache@c193711...# v2.9.1`, `fsfe/reuse-action@676e2d5...# v6.0.0` |
 | Dependabot: Cargo, npm, pip and GitHub Actions, weekly, cooldown, grouping | Implemented | `.github/dependabot.yml` |
 | Zensical Pages deployment | Implemented and deployed | `.github/workflows/docs.yml` |
@@ -91,6 +93,8 @@ Maintainers merging PRs, and the downstream consumers who install the crate or t
 | FR-10 | Dependabot watches Cargo at the workspace root, npm under `gui`, pip at the root, and GitHub Actions, weekly with cooldown and routine-update grouping. | Must Have |
 | FR-11 | CI rejects real device identifiers and cross-checks `cortex-host` and `cortex-mcp` for `x86_64-pc-windows-gnu`. | Must Have |
 | FR-12 | The path-filtered docs workflow builds Zensical and deploys through GitHub Pages artifacts. | Must Have |
+| FR-13 | CI type-checks and builds both explicit GUI frontend modes (`npm run check --prefix gui`: fixture and Tauri). | Must Have |
+| FR-14 | CI builds the full Tauri Rust backend as a debug, unbundled boundary check (`npm run tauri --prefix gui -- build --debug --no-bundle --ci`), catching `tauri.conf.json`/icon/`beforeBuildCommand` integration failures that `cargo test`/`cargo clippy` alone do not exercise. | Must Have |
 | FR-20 | Auto-tag workflow is implemented: a version bump on `main` creates `vX.Y.Z` and directly invokes future release workflows rather than relying on tag-event recursion. Its first live release remains unevidenced. | Must Have |
 
 #### Planned
@@ -123,6 +127,7 @@ Maintainers merging PRs, and the downstream consumers who install the crate or t
 - [x] CI installs Rust native prerequisites, rejects real device data, cross-checks the Windows host boundary and caches Cargo.
 - [x] Auto-tag workflow is implemented for a `vX.Y.Z` tag on a version bump; no first live tag is claimed.
 - [x] Documentation builds and deploys through the artifact-based Pages workflow.
+- [x] CI type-checks/builds both GUI frontend modes and builds the full Tauri backend as a debug, unbundled boundary check.
 - [ ] crates.io publish workflow publishes on the release tag (requires approval before first use).
 - [ ] `cargo-dist` produces distributable Linux x86_64 `cortex` and `cortex-mcp` binaries on the release tag.
 - [ ] The release tag produces a GitHub Release with changelog notes.
@@ -131,7 +136,7 @@ Maintainers merging PRs, and the downstream consumers who install the crate or t
 ## Non-Goals
 
 - **The local gate.** Owned by zone 500 (`s/test`, `s/lint`). This zone mirrors it in CI.
-- **The GUI CI.** The GUI exists, but frontend lint/typecheck, Tauri build matrices and bundle tests are not in CI yet.
+- **GUI build matrices and bundle/installer tests.** Frontend typecheck/build and a single-target debug, unbundled Tauri build boundary are in CI (Linux only); a real bundle (`.deb`/AppImage) is not built or tested here, and native Windows/macOS Tauri builds remain out of scope until those hosts are supported.
 - **A macOS/Windows matrix.** The project is Linux-first today. Native Windows and macOS CI become required when their local IPC, process lifecycle, packaging and hardware paths are implemented.
 - **Hardware smoke in CI.** CI has no hardware; the hardware smoke runbook is manual (AGENTS.md). This zone does not attempt to connect to a real Quad Cortex.
 

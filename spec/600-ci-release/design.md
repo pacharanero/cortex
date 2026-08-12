@@ -64,6 +64,8 @@ jobs:
         run: cargo test --all
       - name: Tests (workspace, no default features)
         run: cargo test --all --no-default-features
+      - name: Tauri build boundary (debug, no bundle)
+        run: npm run tauri --prefix gui -- build --debug --no-bundle --ci
   reuse:
     name: REUSE licence lint
     runs-on: ubuntu-latest
@@ -107,6 +109,10 @@ The REUSE license lint is a separate job (`reuse`) rather than a step in `test`.
 ### Design choice: `protoc` installed via `apt`
 
 `prost-build` needs `protoc`; hidapi needs udev development files; and the Tauri workspace member needs WebKitGTK and related Linux libraries. CI installs the complete explicit package set with apt.
+
+### Design choice: a Tauri build boundary, debug and unbundled
+
+`cargo test --all` and `cargo clippy --all-targets --all-features` already compile `gui/src-tauri` as a workspace member, but neither one drives it through the Tauri CLI, so neither exercises `tauri-build`'s parse of `tauri.conf.json`, the declared icon files, or the `beforeBuildCommand` (`npm run build:tauri`) that produces `frontendDist`. A config typo, a missing icon, or a frontend build that the plain `vite build` step in "Check fixture and Tauri frontends" does not reach would only surface on a maintainer's machine or in a real release build. The added step runs `npm run tauri --prefix gui -- build --debug --no-bundle --ci`: `--debug` skips release-mode optimisation (this is a compile/config boundary, not a performance or distributable-artifact check), and `--no-bundle` skips packaging into a `.deb`/AppImage, which `bundle.active: false` in `tauri.conf.json` already opts out of pending CLI-004.4. `--ci` suppresses interactive prompts. This is the "Tauri build boundary" from ENG-002.2; producing a real installable bundle remains part of the future `cargo-dist`/GUI-bundle release pipeline, not this CI gate.
 
 ### Alternatives considered
 

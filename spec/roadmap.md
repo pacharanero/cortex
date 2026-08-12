@@ -259,7 +259,7 @@ Version synchronization is completed and tracked canonically under ENG-001.2.
 
 Release workflows live under CLI-004; this section tracks non-release CI gaps only.
 
-- [ ] **ENG-002.2**: Add frontend `npm run check` and a Tauri build boundary to CI. Add native Windows/macOS jobs only as those hosts become supported. **Night: ready.** Audit the existing partial frontend check first, add only the missing boundary, and use verified SHA-pinned Actions
+- [x] **ENG-002.2**: `npm run check --prefix gui` (fixture + Tauri frontend typecheck/build) was already in CI; the audit found the actual gap was the Tauri backend itself never running through the Tauri CLI. Added a `Tauri build boundary (debug, no bundle)` step running `npm run tauri --prefix gui -- build --debug --no-bundle --ci`, which drives `tauri-build`'s `tauri.conf.json`/icon parsing and the `beforeBuildCommand` frontend build that plain `cargo test`/`cargo clippy` never exercise. No new GitHub Action was needed, so no new SHA pin. Native Windows/macOS jobs remain future work behind those hosts' support
 
 ### ENG-003: Governance
 
