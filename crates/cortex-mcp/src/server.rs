@@ -291,6 +291,13 @@ impl CortexMcp {
             "list_folders" => Request::ListFolders {
                 window_seconds: u64_arg(args, "window_seconds", 2)?,
             },
+            "list_captures" => Request::ListCaptures {
+                timeout_seconds: u64_arg(args, "timeout_seconds", 30)?,
+            },
+            "list_irs" => Request::ListIrs {
+                folder: optional_string_arg(args, "folder")?,
+                timeout_seconds: u64_arg(args, "timeout_seconds", 30)?,
+            },
             "recall_preset" => {
                 let setlist = string_arg(args, "setlist")?;
                 Request::RecallPreset {
@@ -365,6 +372,22 @@ impl CortexMcp {
                 row: bounded_u32(args, "row", 0, 3)?,
                 split: i32_arg(args, "split")?,
                 mix: i32_arg_default(args, "mix", -1)?,
+            },
+            "set_capture" => Request::SetCapture {
+                row: bounded_u32(args, "row", 0, 3)?,
+                column: bounded_u32(args, "column", 0, 7)?,
+                capture: serde_json::from_value(required(args, "capture")?.clone())?,
+                model: optional_u32_arg(args, "model")?,
+                timeout_seconds: u64_arg(args, "timeout_seconds", 15)?,
+            },
+            "set_ir" => Request::SetIr {
+                row: bounded_u32(args, "row", 0, 3)?,
+                column: bounded_u32(args, "column", 0, 7)?,
+                ir: serde_json::from_value(required(args, "ir")?.clone())?,
+                slot: bounded_u32(args, "slot", 0, 1)?,
+                model: optional_u32_arg(args, "model")?,
+                folder: optional_string_arg(args, "folder")?,
+                timeout_seconds: u64_arg(args, "timeout_seconds", 15)?,
             },
             "search_catalog" => {
                 let query = string_arg(args, "query")?;
@@ -448,6 +471,19 @@ fn string_arg(args: &Value, name: &str) -> Result<String> {
         .with_context(|| format!("{name} must be a string"))?
         .to_string())
 }
+fn optional_string_arg(args: &Value, name: &str) -> Result<Option<String>> {
+    args.get(name).map_or(Ok(None), |value| {
+        if value.is_null() {
+            Ok(None)
+        } else {
+            value
+                .as_str()
+                .map(ToString::to_string)
+                .map(Some)
+                .with_context(|| format!("{name} must be a string or null"))
+        }
+    })
+}
 fn bool_arg(args: &Value, name: &str, default: bool) -> Result<bool> {
     args.get(name).map_or(Ok(default), |v| {
         v.as_bool()
@@ -458,6 +494,21 @@ fn u64_arg(args: &Value, name: &str, default: u64) -> Result<u64> {
     args.get(name).map_or(Ok(default), |v| {
         v.as_u64()
             .with_context(|| format!("{name} must be a non-negative integer"))
+    })
+}
+fn optional_u32_arg(args: &Value, name: &str) -> Result<Option<u32>> {
+    args.get(name).map_or(Ok(None), |value| {
+        if value.is_null() {
+            Ok(None)
+        } else {
+            u32::try_from(
+                value
+                    .as_u64()
+                    .with_context(|| format!("{name} must be an unsigned integer or null"))?,
+            )
+            .map(Some)
+            .with_context(|| format!("{name} exceeds u32"))
+        }
     })
 }
 fn u32_arg(args: &Value, name: &str) -> Result<u32> {

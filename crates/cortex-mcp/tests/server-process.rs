@@ -487,6 +487,51 @@ async fn hardware_smoke_builds_and_restores_a_live_grid() -> anyhow::Result<()> 
             serde_json::json!({"row":0,"column":0}),
         )
         .await?;
+        let captures = call(&client, "list_captures", serde_json::json!({})).await?;
+        let capture = captures
+            .structured_content
+            .as_ref()
+            .and_then(serde_json::Value::as_array)
+            .and_then(|entries| entries.first())
+            .cloned()
+            .context("device returned no selectable Neural Capture")?;
+        let selected = call(
+            &client,
+            "set_capture",
+            serde_json::json!({"row":0,"column":0,"capture":capture,"model":14000}),
+        )
+        .await?;
+        let blocks = selected
+            .structured_content
+            .as_ref()
+            .and_then(|value| value.get("blocks"))
+            .and_then(serde_json::Value::as_array)
+            .context("capture selection returned no live-grid blocks")?;
+        let expected = capture
+            .get("key")
+            .and_then(serde_json::Value::as_str)
+            .zip(capture.get("name").and_then(serde_json::Value::as_str))
+            .map(|(key, name)| format!("{key}{name}"))
+            .context("capture listing entry lacked key or name")?;
+        anyhow::ensure!(
+            blocks.iter().any(|block| {
+                block.get("row").and_then(serde_json::Value::as_u64) == Some(0)
+                    && block.get("column").and_then(serde_json::Value::as_u64) == Some(0)
+                    && block.get("model_id").and_then(serde_json::Value::as_u64) == Some(14_000)
+                    && block
+                        .get("params")
+                        .and_then(serde_json::Value::as_array)
+                        .is_some_and(|params| {
+                            params.iter().any(|parameter| {
+                                parameter.get("index").and_then(serde_json::Value::as_u64)
+                                    == Some(5)
+                                    && parameter.get("value")
+                                        == Some(&serde_json::Value::String(expected.clone()))
+                            })
+                        })
+            }),
+            "MCP Capture selection did not return the exact device-selected reference"
+        );
         anyhow::Ok(())
     }
     .await;

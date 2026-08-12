@@ -39,7 +39,7 @@ use cortex_rs::RecallConsent;
 /// Bump this whenever a `Request` variant changes shape or a new variant is
 /// added. A client that sees a mismatch refuses with an actionable message
 /// rather than sending a request the daemon will misparse.
-pub const DAEMON_PROTOCOL_VERSION: u32 = 11;
+pub const DAEMON_PROTOCOL_VERSION: u32 = 12;
 
 /// A request from a client to the daemon.
 ///
@@ -131,6 +131,48 @@ pub enum Request {
     /// The device model catalog.
     Catalog {
         /// Maximum wait when the handshake did not cache the catalog.
+        timeout_seconds: u64,
+    },
+    /// List existing Neural Captures from the device library.
+    ListCaptures {
+        /// Maximum wait for the correlated library listing.
+        timeout_seconds: u64,
+    },
+    /// List existing impulse responses from one device library folder.
+    ListIrs {
+        /// Device-returned library folder, or `None` for the default IR library.
+        folder: Option<String>,
+        /// Maximum wait for the correlated library listing.
+        timeout_seconds: u64,
+    },
+    /// Select one exact device-returned Neural Capture in the working grid.
+    SetCapture {
+        /// Zero-based wire row.
+        row: u32,
+        /// Zero-based column.
+        column: u32,
+        /// Exact device-returned capture identity.
+        capture: cortex_rs::LibraryEntry,
+        /// Place the default Capture block before selection when supplied.
+        model: Option<u32>,
+        /// Maximum wait for placement and library reads.
+        timeout_seconds: u64,
+    },
+    /// Select one exact device-returned impulse response in the working grid.
+    SetIr {
+        /// Zero-based wire row.
+        row: u32,
+        /// Zero-based column.
+        column: u32,
+        /// Exact device-returned IR identity.
+        ir: cortex_rs::LibraryEntry,
+        /// IR Loader slot, 0 or 1.
+        slot: u32,
+        /// Place a compatible IR Loader model before selection when supplied.
+        model: Option<u32>,
+        /// Device-returned library folder, or `None` for the default IR library.
+        folder: Option<String>,
+        /// Maximum wait for placement and library reads.
         timeout_seconds: u64,
     },
     /// Write a parameter value.

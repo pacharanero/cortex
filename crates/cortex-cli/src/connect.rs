@@ -35,6 +35,55 @@ pub const SETLIST_IPC_TIMEOUT: Duration = Duration::from_secs(3 * 60);
 pub const SAVE_IPC_TIMEOUT: Duration = Duration::from_secs(3 * 60);
 pub const DUPLICATE_IPC_TIMEOUT: Duration = Duration::from_secs(48 * 60 * 60);
 
+fn string_parameter_at(
+    preset: &cortex_rs::proto::BinaryPreset,
+    row: u32,
+    column: u32,
+    index: u32,
+) -> Option<&str> {
+    let model = preset
+        .chains
+        .iter()
+        .enumerate()
+        .find(|(position, chain)| {
+            let stored = chain.row.as_ref().map(|row| {
+                let cortex_rs::proto::chain::Row::Row(row) = row;
+                *row
+            });
+            stored.or_else(|| u32::try_from(*position).ok()) == Some(row)
+        })?
+        .1
+        .models
+        .iter()
+        .enumerate()
+        .find(|(position, model)| {
+            let stored = model.column.as_ref().map(|column| {
+                let cortex_rs::proto::model::Column::Column(column) = column;
+                *column
+            });
+            stored.or_else(|| u32::try_from(*position).ok()) == Some(column)
+        })?
+        .1;
+    let parameter = model
+        .params
+        .iter()
+        .enumerate()
+        .find(|(position, parameter)| {
+            let positional = u32::try_from(*position).ok();
+            let stored = parameter.index.as_ref().map(|index| {
+                let cortex_rs::proto::param::Index::Index(value) = index;
+                *value
+            });
+            stored.or(positional) == Some(index)
+        })?
+        .1;
+    let value = parameter.param_values.first()?.value.as_ref()?;
+    let cortex_rs::proto::param_value::Value::StringValue(value) = value else {
+        return None;
+    };
+    Some(value)
+}
+
 /// How long teardown gets before the process exits regardless.
 const SHUTDOWN_GRACE: Duration = Duration::from_secs(3);
 
@@ -488,6 +537,120 @@ impl Daemon {
                         c.fetch_model_repo(Duration::from_secs(timeout_seconds))
                             .map(|payload| serde_json::json!({ "payload": payload }))
                     }),
+                }
+            }
+            Request::ListCaptures { timeout_seconds } => {
+                self.respond(move |c| c.captures(Duration::from_secs(timeout_seconds)))
+            }
+            Request::ListIrs {
+                folder,
+                timeout_seconds,
+            } => self.respond(move |c| {
+                c.list_irs(folder.as_deref(), Duration::from_secs(timeout_seconds))
+            }),
+            Request::SetCapture {
+                row,
+                column,
+                capture,
+                model,
+                timeout_seconds,
+            } => {
+                let client = self.client();
+                let timeout = Duration::from_secs(timeout_seconds);
+                let result = (|| {
+                    let returned = client.captures(timeout)?;
+                    if !returned.contains(&capture) {
+                        return Err(cortex_rs::Error::NotFound(
+                            "capture must be selected from the current device listing".into(),
+                        ));
+                    }
+                    client.set_capture(
+                        cortex_rs::Row::try_from_wire(row)?,
+                        column,
+                        &capture,
+                        model,
+                        &[],
+                        timeout,
+                    )?;
+                    let preset = client.read_current_preset(timeout)?;
+                    let expected = format!("{}{}", capture.key, capture.name);
+                    if string_parameter_at(&preset, row, column, 5) != Some(expected.as_str()) {
+                        return Err(cortex_rs::Error::GridWriteUnconfirmed(
+                            "capture selector did not read back from the live grid".into(),
+                        ));
+                    }
+                    Ok(preset)
+                })();
+                match result {
+                    Ok(preset) => {
+                        self.repair_live_preset(timeout);
+                        Response::ok(&cortex_rs::view::Preset::from_binary(
+                            &preset,
+                            self.catalog().as_ref(),
+                            "(live grid)",
+                            "",
+                            true,
+                        ))
+                        .unwrap_or_else(|error| {
+                            Response::error(format!("serialising capture selection: {error}"))
+                        })
+                    }
+                    Err(error) => Response::cortex_error(&error),
+                }
+            }
+            Request::SetIr {
+                row,
+                column,
+                ir,
+                slot,
+                model,
+                folder,
+                timeout_seconds,
+            } => {
+                let client = self.client();
+                let timeout = Duration::from_secs(timeout_seconds);
+                let result = (|| {
+                    let returned = client.list_irs(folder.as_deref(), timeout)?;
+                    if !returned.contains(&ir) {
+                        return Err(cortex_rs::Error::NotFound(
+                            "IR must be selected from the current device listing".into(),
+                        ));
+                    }
+                    client.set_ir(
+                        cortex_rs::Row::try_from_wire(row)?,
+                        column,
+                        &ir,
+                        slot,
+                        model,
+                        timeout,
+                    )?;
+                    let preset = client.read_current_preset(timeout)?;
+                    let (key_index, name_index) = if slot == 0 { (2, 22) } else { (10, 23) };
+                    if string_parameter_at(&preset, row, column, key_index) != Some(ir.key.as_str())
+                        || string_parameter_at(&preset, row, column, name_index)
+                            != Some(ir.name.as_str())
+                    {
+                        return Err(cortex_rs::Error::GridWriteUnconfirmed(
+                            "IR key and name did not read back from the live grid".into(),
+                        ));
+                    }
+                    Ok(preset)
+                })();
+                match result {
+                    Ok(preset) => {
+                        self.repair_live_preset(timeout);
+                        Response::ok(&cortex_rs::view::Preset::from_binary(
+                            &preset,
+                            self.catalog().as_ref(),
+                            "(live grid)",
+                            "",
+                            true,
+                        ))
+                        .unwrap_or_else(|error| {
+                            Response::error(format!("serialising IR selection: {error}"))
+                        })
+                    }
+                    Err(error) => Response::cortex_error(&error),
                 }
             }
             // Rows arrive as plain wire indices and are rebuilt here, so

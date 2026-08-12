@@ -146,7 +146,7 @@ The `cortex` command-line surface over the crate.
 
 ### CLI-002: Format and output
 
-- [ ] **CLI-002.3**: `--schema` / `--print-schema` - JSON Schema of a command's inputs
+- [x] **CLI-002.3**: `cortex --schema --format json` emits the bounded agent-operation input registry shared with MCP (CLI-007.1)
 
 ### CLI-003: Preset and scene commands
 
@@ -190,6 +190,7 @@ The reason this project has an MCP server at all is that an agent can do things 
 
 ### MCP-002: Tool surface
 
+- [~] **MCP-002.5**: Non-persistent Capture/IR library and selection tools are implemented: shared schemas expose `list_captures`, `list_irs`, `set_capture`, and `set_ir`; the daemon fresh-lists and exact-matches `{key,name}` before selection, then fresh-reads the live grid before success. **Capture path HARDWARE-VERIFIED 2026-08-12:** an official MCP client listed an existing device Capture, selected it into USER `6A`'s unsaved grid, verified the exact selector string in the returned live grid, and unconditionally recalled `6A` for cleanup. **Exact residual:** run the equivalent MCP `list_irs`/`set_ir` smoke when an imported user IR is available; fresh strings alone do not prove the on-unit warning icon is absent
 - [ ] **MCP-002.4**: Destructive tool: `save_preset`. Core PROT-009 correctness blockers and typed daemon failures are closed; remaining work is an MCP-held exact-target preparation-token registry, explicit confirmation, restoration semantics and an MCP save hardware smoke
 
 ## GUI (GUI)

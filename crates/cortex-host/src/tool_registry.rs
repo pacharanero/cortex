@@ -98,6 +98,21 @@ fn reads() -> Vec<ToolSpec> {
             ),
             true,
         ),
+        spec(
+            "list_captures",
+            "List existing device Neural Captures. Choose an entry from this result before set_capture; capture creation and transfer are native-device workflows.",
+            timeout_schema(30),
+            true,
+        ),
+        spec(
+            "list_irs",
+            "List existing device IRs from the default or a named library folder. Choose an entry from this result before set_ir; IR transfer is a native-device workflow.",
+            object_schema(
+                &json!({"folder":{"type":["string","null"],"minLength":1},"timeout_seconds":{"type":"integer","minimum":1,"maximum":60,"default":30}}),
+                &[],
+            ),
+            true,
+        ),
     ]
 }
 
@@ -211,6 +226,28 @@ fn grid_edits() -> Vec<ToolSpec> {
             split_schema(),
             false,
         ),
+        spec(
+            "set_capture",
+            format!(
+                "Select an exact entry returned by list_captures in the unsaved grid. {ROW_TRAP} The daemon rechecks that key/name against a fresh device listing; set model 14000 to place a Capture block first. Capture creation and transfer are native-device workflows."
+            ),
+            cell_schema(
+                &json!({"capture":library_entry_schema(),"model":{"type":["integer","null"],"enum":[14000,null]},"timeout_seconds":{"type":"integer","minimum":1,"maximum":60,"default":15}}),
+                &["capture"],
+            ),
+            false,
+        ),
+        spec(
+            "set_ir",
+            format!(
+                "Select an exact entry returned by list_irs in one IR Loader slot on the unsaved grid. {ROW_TRAP} The daemon rechecks that key/name against a fresh device listing; model may place an IR Loader first. Read-back proves stored strings only, so inspect the unit for its warning icon."
+            ),
+            cell_schema(
+                &json!({"ir":library_entry_schema(),"slot":{"type":"integer","minimum":0,"maximum":1},"model":{"type":["integer","null"],"minimum":29001,"maximum":29008},"folder":{"type":["string","null"],"minLength":1},"timeout_seconds":{"type":"integer","minimum":1,"maximum":60,"default":15}}),
+                &["ir", "slot"],
+            ),
+            false,
+        ),
     ]
 }
 
@@ -235,6 +272,15 @@ fn read_schema() -> Map<String, Value> {
         &json!({"with_params":{"type":"boolean","default":true},"timeout_seconds":{"type":"integer","minimum":1,"maximum":60,"default":15}}),
         &[],
     )
+}
+fn timeout_schema(default: u64) -> Map<String, Value> {
+    object_schema(
+        &json!({"timeout_seconds":{"type":"integer","minimum":1,"maximum":60,"default":default}}),
+        &[],
+    )
+}
+fn library_entry_schema() -> Value {
+    json!({"type":"object","properties":{"key":{"type":"string","minLength":1},"name":{"type":"string","minLength":1}},"required":["key","name"],"additionalProperties":false})
 }
 fn stored_identity_schema() -> Map<String, Value> {
     object_schema(
