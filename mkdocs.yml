@@ -47,6 +47,7 @@ nav:
   - Cross-platform GUI: gui/first-draft.md
   - Install: install.md
   - Agent setup: agent-setup.md
+  - MCP tone-building demo: mcp-tone-building-demo.md
   - Walkthrough: walkthrough.md
   - CLI reference: cli-reference.md
   - Protocol:

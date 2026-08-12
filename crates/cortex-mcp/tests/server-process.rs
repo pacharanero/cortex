@@ -402,6 +402,8 @@ async fn hardware_smoke_builds_and_restores_a_live_grid() -> anyhow::Result<()> 
     )))?;
     let client = ().serve(transport).await?;
     let setlist = cortex_rs::client::USER_SETLIST;
+    let slot = std::env::var("CORTEX_HARDWARE_SMOKE_SLOT")
+        .context("set CORTEX_HARDWARE_SMOKE_SLOT to a confirmed-empty USER slot")?;
 
     let run = async {
         call(&client, "get_status", serde_json::json!({})).await?;
@@ -416,25 +418,31 @@ async fn hardware_smoke_builds_and_restores_a_live_grid() -> anyhow::Result<()> 
         call(
             &client,
             "recall_preset",
-            serde_json::json!({"setlist":setlist,"slot":"6A"}),
+            serde_json::json!({"setlist":setlist,"slot":slot}),
         )
         .await?;
         call(
             &client,
             "set_block",
-            serde_json::json!({"row":0,"column":0,"model":1001,"verify":true}),
+            serde_json::json!({"row":0,"column":0,"model":1091,"verify":true}),
         )
         .await?;
         call(
             &client,
             "set_param",
-            serde_json::json!({"row":0,"column":0,"target":{"by":"name","value":"GAIN"},"input":{"kind":"real","value":5.0}}),
+            serde_json::json!({"row":0,"column":0,"target":{"by":"name","value":"GAIN"},"input":{"kind":"real","value":6.0}}),
         )
         .await?;
         call(
             &client,
             "set_bypass",
             serde_json::json!({"row":0,"column":0,"bypass":true}),
+        )
+        .await?;
+        call(
+            &client,
+            "set_block",
+            serde_json::json!({"row":0,"column":1,"model":12006,"verify":true}),
         )
         .await?;
         call(
@@ -477,14 +485,28 @@ async fn hardware_smoke_builds_and_restores_a_live_grid() -> anyhow::Result<()> 
             blocks.iter().any(|block| {
                 block.get("row").and_then(serde_json::Value::as_u64) == Some(0)
                     && block.get("column").and_then(serde_json::Value::as_u64) == Some(0)
-                    && block.get("model_id").and_then(serde_json::Value::as_u64) == Some(1001)
+                    && block.get("model_id").and_then(serde_json::Value::as_u64) == Some(1091)
             }),
             "MCP-edited block was absent from live-grid read-back"
+        );
+        anyhow::ensure!(
+            blocks.iter().any(|block| {
+                block.get("row").and_then(serde_json::Value::as_u64) == Some(0)
+                    && block.get("column").and_then(serde_json::Value::as_u64) == Some(1)
+                    && block.get("model_id").and_then(serde_json::Value::as_u64) == Some(12006)
+            }),
+            "MCP-edited cab block was absent from live-grid read-back"
         );
         call(
             &client,
             "remove_block",
             serde_json::json!({"row":0,"column":0}),
+        )
+        .await?;
+        call(
+            &client,
+            "remove_block",
+            serde_json::json!({"row":0,"column":1}),
         )
         .await?;
         let captures = call(&client, "list_captures", serde_json::json!({})).await?;
@@ -539,7 +561,7 @@ async fn hardware_smoke_builds_and_restores_a_live_grid() -> anyhow::Result<()> 
     let restore = call(
         &client,
         "recall_preset",
-        serde_json::json!({"setlist":setlist,"slot":"6A"}),
+        serde_json::json!({"setlist":setlist,"slot":slot}),
     )
     .await;
     client.cancel().await?;
