@@ -149,5 +149,5 @@ The first draft establishes the stack, mockable frontend API boundary, a demo Ta
 ## Related roadmap items
 
 - **[DOCS-002](../roadmap.md)** - the factory preset reference (what each factory preset evokes, and how to set it up) is aimed at agents driving the MCP server, but the GUI wants the same data to annotate the patch browser. Build it as a shared, generated artefact rather than duplicating it per surface.
-- **[PROT-007](../roadmap.md)** - capture and IR export/import. The GUI is the natural home for a "back up my captures" workflow, since it is the surface a player already has open when they care about their captures.
+- **[PROT-007](../roadmap.md)** - capture and IR export/import are deliberate non-features. Capture and IR creation, transfer, backup, and cloud processing remain native-device workflows; selecting existing device captures and IRs in compatible blocks remains in scope. The GUI must not present an unsupported backup or import path.
 - **[FUTURE-007](../roadmap.md)** - audio feedback. If the analysis subsystem is built, the GUI is where its output belongs (a spectrum or gain-staging readout beside the grid), not the CLI.

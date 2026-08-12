@@ -134,7 +134,7 @@ AI coding agents editing patches via MCP, and the maintainers who gate what an a
 | --- | --- | --- |
 | NFR-1 | The MCP process opens zero HID transports; the held daemon remains the sole owner. | Review-enforced |
 | NFR-2 | A `save_preset` refusal is a structured error, not a silent no-op. The agent sees the refusal and the safe alternative. | Review-enforced |
-| NFR-3 | Tool schemas are explicit and bounded today. They converge with a future shared CLI/MCP registry under CLI-007.1; no CLI `--schema` contract exists yet. | Design-enforced |
+| NFR-3 | Tool schemas are explicit, bounded, and rendered from the shared `cortex-host::tool_registry`; `cortex --schema --format json` exposes the identical operation contracts. | Design-enforced |
 | NFR-4 | The non-persistent server is hardware-verified per operation. A changed host contract remains provisional until its own hardware smoke, even when the underlying wire operation was already verified. | Docs-enforced |
 | NFR-5 | Agent-generated tests must not be the sole basis for accepting safety-surface behaviour. Cross-check against the client layer (150) and a real device. | AGENTS.md assurance |
 | NFR-6 | Tool execution failures use MCP's model-correctable structured-error path with top-level `code` and `error` fields; transport and server faults remain JSON-RPC errors. | Protocol-enforced |

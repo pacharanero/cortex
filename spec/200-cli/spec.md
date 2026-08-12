@@ -36,6 +36,7 @@ The interesting requirements are not "parse args and print" but the house-style 
 | --- | --- | --- |
 | `cortex device version` returns the shared typed identity over direct or held-session paths | Hardware-verified | Succeeds against CorOS 4.0.1 and both paths agree |
 | `cortex --version` / `-V` prints the crate version | Implemented | clap `#[command(version)]` + `propagate_version` |
+| `cortex --schema --format json` emits the bounded agent-operation registry shared with MCP | Implemented | `cortex-host::tool_registry`; CLI and MCP tests |
 | `cortex completions <shell>` prints to stdout for bash, zsh, fish, powershell, elvish | Implemented | `clap_complete::generate` from the live `Cli::command()` |
 | SIGPIPE reset on Unix | Implemented | `libc_sigpipe_reset()` in `main()` before `Cli::parse()` |
 | `arg_required_else_help = true` | Implemented | Bare `cortex` prints help and exits successfully |
@@ -98,11 +99,11 @@ Linux users with a Quad Cortex, script writers, AI coding agents driving the CLI
 | FR-15 | `cortex setlist list` lists folders the device knows (delegates to `QuadCortex::list_folders`). | Should Have |
 | FR-17 | Ordinary commands delegate to `QuadCortex` directly or through the held daemon; the fast unconnected version diagnostic remains deliberately minimal. | Should Have |
 
-#### Planned
+#### Implemented machine discovery
 
 | ID | Requirement | Priority |
 | --- | --- | --- |
-| FR-16 | `cortex --schema` / `cortex --print-schema` emits a JSON Schema of command inputs - the authoritative input contract for scripts and agents. | Should Have |
+| FR-16 | `cortex --schema --format json` emits the bounded JSON Schema registry shared with MCP. The registry exposes stable agent-operation names, descriptions, read-only metadata and input contracts without opening a device. | Should Have |
 
 #### Persistent session
 
@@ -141,7 +142,7 @@ Linux users with a Quad Cortex, script writers, AI coding agents driving the CLI
 - [x] Errors go to stderr; stdout is clean data only.
 - [x] `cortex device version --format json` emits structured JSON on stdout.
 - [x] Preset recall/show/list, scene, setlist, grid, block, row, catalog and device operations are implemented and delegate to the client layer.
-- [ ] `cortex --schema` emits a JSON Schema of command inputs.
+- [x] `cortex --schema --format json` emits the bounded agent-operation input registry shared with MCP.
 - [x] Every command honours `--format text|json`.
 - [x] An exclusivity-aware reconnect test retains an old `Arc<Session>`, proves its lease drops before the first replacement attempt, fails that attempt, succeeds on the second, swaps the session, and advances the retained cache generation even when the old link remained responsive after continuity invalidation.
 - [x] Fake endpoint/process tests prove auto-managed idle exit, timeout reset after a request, in-flight protection, explicit persistence, endpoint cleanup, and a second client completing while another request is slow.

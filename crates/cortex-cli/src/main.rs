@@ -60,6 +60,10 @@ struct Cli {
     #[arg(long, global = true, value_enum, default_value = "text")]
     format: Format,
 
+    /// Print the shared agent-operation JSON Schemas used by cortex-mcp.
+    #[arg(long, global = true)]
+    schema: bool,
+
     /// Take `--row` as 0-3 rather than the 1-4 shown on the unit.
     ///
     /// The unit labels its rows 1-4 and the wire numbers them 0-3, so the
@@ -862,6 +866,28 @@ fn main() -> ExitCode {
 
 fn run(cli: Cli) -> Result<()> {
     let fmt = cli.format;
+    if cli.schema {
+        let tools = cortex_host::tool_registry::tools()
+            .into_iter()
+            .map(|tool| {
+                serde_json::json!({
+                    "name": tool.name,
+                    "description": tool.description,
+                    "input_schema": tool.input_schema,
+                    "read_only": tool.read_only,
+                })
+            })
+            .collect::<Vec<_>>();
+        return emit(&tools, fmt, |tools| {
+            for tool in tools {
+                println!(
+                    "{}: {}",
+                    tool["name"].as_str().unwrap_or_default(),
+                    tool["description"].as_str().unwrap_or_default()
+                );
+            }
+        });
+    }
     // Recorded rather than threaded through every row-taking command. Six
     // signatures would otherwise grow an argument that none of them decide.
     let _ = ZERO_BASED.set(cli.zero_based);
@@ -3394,6 +3420,14 @@ mod tests {
         // Catches conflicting args, bad defaults, and duplicate names at test
         // time rather than on first run.
         Cli::command().debug_assert();
+    }
+
+    #[test]
+    fn schema_is_available_without_a_device_command() {
+        let cli = Cli::try_parse_from(["cortex", "--schema"]).unwrap();
+        assert!(cli.schema);
+        assert!(cli.command.is_none());
+        assert!(!cortex_host::tool_registry::tools().is_empty());
     }
 
     #[test]

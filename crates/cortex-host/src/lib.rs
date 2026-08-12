@@ -15,6 +15,7 @@ mod client;
 mod ipc;
 mod protocol;
 mod server;
+pub mod tool_registry;
 
 pub use client::{DaemonClient, DaemonError, is_running, request, request_with_timeout};
 pub use ipc::{BindResult, LocalClaim, LocalConnection, LocalEndpoint, LocalListener, log_path};

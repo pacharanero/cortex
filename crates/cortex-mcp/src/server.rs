@@ -29,7 +29,6 @@ const CATALOG_TTL_MS: u64 = 60_000;
 const AUTO_MANAGED_IDLE: Duration = Duration::from_secs(60);
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(120);
 const STARTUP_POLL: Duration = Duration::from_millis(200);
-const ROW_TRAP: &str = "Rows are zero-based 0-3 in this API but labelled 1-4 on the unit; the wrong row succeeds silently.";
 
 struct DaemonSupervisor {
     client: Arc<DaemonClient>,
@@ -411,171 +410,17 @@ fn tool_error_code(code: DaemonErrorCode, message: impl Into<String>) -> CallToo
 }
 
 fn tools() -> Vec<Tool> {
-    vec![
-        tool(
-            "get_status",
-            "Read held-session health and cache status.",
-            empty_schema(),
-            true,
-        ),
-        tool(
-            "get_device_version",
-            "Read device identity and CorOS version.",
-            empty_schema(),
-            true,
-        ),
-        tool(
-            "get_active_scene",
-            "Read the active zero-based scene index (A-H is 0-7).",
-            empty_schema(),
-            true,
-        ),
-        tool(
-            "get_cpu_load",
-            "Read the most recent subscribed DSP CPU-load push.",
-            empty_schema(),
-            true,
-        ),
-        tool(
-            "read_current_preset",
-            "Read the live working grid without recalling a slot or discarding unsaved edits.",
-            read_schema(),
-            true,
-        ),
-        tool(
-            "list_blocks",
-            "List blocks on the live working grid without recalling a slot.",
-            read_schema(),
-            true,
-        ),
-        tool(
-            "read_preset",
-            "RECALLS a stored slot, discarding unsaved edits and resetting the active scene. Use read_current_preset during editing.",
-            stored_schema(),
-            false,
-        ),
-        tool(
-            "list_presets",
-            "List preset slots in a device setlist.",
-            list_schema(),
-            true,
-        ),
-        tool(
-            "list_folders",
-            "List folders announced by the device.",
-            object_schema(
-                json!({"window_seconds":{"type":"integer","minimum":1,"maximum":30,"default":2}}),
-                &[],
-            ),
-            true,
-        ),
-        tool(
-            "search_catalog",
-            "Search model names, categories and Neural DSP's verbatim attribution.",
-            object_schema(json!({"query":{"type":"string","minLength":1}}), &["query"]),
-            true,
-        ),
-        tool(
-            "recall_preset",
-            "Recall a stored preset. Changes what is heard, discards unsaved edits and resets the active scene; does not save.",
-            stored_identity_schema(),
-            false,
-        ),
-        tool(
-            "switch_scene",
-            "Switch scene A-H using zero-based index 0-7. Changes what is heard; does not save.",
-            object_schema(
-                json!({"scene":{"type":"integer","minimum":0,"maximum":7}}),
-                &["scene"],
-            ),
-            false,
-        ),
-        tool(
-            "set_scene_label",
-            "Set a scene label on the unsaved working copy. Scenes A-H are zero-based 0-7; does not save.",
-            scene_label_schema(),
-            false,
-        ),
-        tool(
-            "unlabel_scene",
-            "Clear a scene label on the unsaved working copy using the unit's one-space unlabelled value. Scenes A-H are zero-based 0-7; does not save.",
-            scene_schema("scene"),
-            false,
-        ),
-        tool(
-            "set_scene_color",
-            "Set a scene colour on the unsaved working copy as an ARGB uint32. Scenes A-H are zero-based 0-7; does not save.",
-            scene_color_schema(),
-            false,
-        ),
-        tool(
-            "copy_scene",
-            "Copy one scene's parameter, bypass, label and colour state onto another scene in the unsaved working copy. Scenes A-H are zero-based 0-7; does not save.",
-            scene_pair_schema("from_scene", "to_scene"),
-            false,
-        ),
-        tool(
-            "swap_scenes",
-            "Exchange two scenes' parameter, bypass, label and colour state in the unsaved working copy. Scenes A-H are zero-based 0-7; does not save.",
-            scene_pair_schema("first_scene", "second_scene"),
-            false,
-        ),
-        tool(
-            "set_block",
-            &format!(
-                "Place a model on the unsaved grid. {ROW_TRAP} DSP-capacity refusal is silent; verify defaults true and catches it by echo or read-back."
-            ),
-            cell_schema(
-                json!({"model":{"type":"integer","minimum":1},"verify":{"type":"boolean","default":true},"timeout_seconds":{"type":"integer","minimum":1,"maximum":60,"default":5}}),
-                &["model"],
-            ),
-            false,
-        ),
-        tool(
-            "set_param",
-            &format!(
-                "Set and read back one parameter on the unsaved grid. {ROW_TRAP} A scene-targeted write sends promote/switch/write and leaves that scene active."
-            ),
-            param_schema(),
-            false,
-        ),
-        tool(
-            "set_bypass",
-            &format!("Bypass or enable a block and verify it by live-grid read-back. {ROW_TRAP}"),
-            cell_schema(json!({"bypass":{"type":"boolean"}}), &["bypass"]),
-            false,
-        ),
-        tool(
-            "remove_block",
-            &format!(
-                "Remove a block and verify the cell is empty by live-grid read-back. {ROW_TRAP}"
-            ),
-            cell_schema(json!({}), &[]),
-            false,
-        ),
-        tool(
-            "set_chain_input",
-            &format!("Set and read back a typed row input on the unsaved grid. {ROW_TRAP}"),
-            routing_schema(cortex_rs::GridInputPort::ALL),
-            false,
-        ),
-        tool(
-            "set_chain_output",
-            &format!(
-                "Set and read back a typed row output on the unsaved grid. {ROW_TRAP} Internal next-row routes and the real multiple output are named explicitly."
-            ),
-            routing_schema(cortex_rs::GridOutputPort::ALL),
-            false,
-        ),
-        tool(
-            "set_split",
-            &format!(
-                "Set and read back row branch and rejoin columns on the unsaved grid. {ROW_TRAP} Only rows 0 and 2 can branch; split=-1 clears and mix=-1 means never rejoin."
-            ),
-            split_schema(),
-            false,
-        ),
-    ]
+    cortex_host::tool_registry::tools()
+        .into_iter()
+        .map(|spec| {
+            tool(
+                spec.name,
+                &spec.description,
+                spec.input_schema,
+                spec.read_only,
+            )
+        })
+        .collect()
 }
 
 fn tool(name: &'static str, description: &str, schema: JsonObject, read_only: bool) -> Tool {
@@ -591,99 +436,6 @@ fn tool(name: &'static str, description: &str, schema: JsonObject, read_only: bo
             .idempotent(read_only)
             .open_world(false),
     )
-}
-
-fn empty_schema() -> JsonObject {
-    object_schema(json!({}), &[])
-}
-fn read_schema() -> JsonObject {
-    object_schema(
-        json!({"with_params":{"type":"boolean","default":true},"timeout_seconds":{"type":"integer","minimum":1,"maximum":60,"default":15}}),
-        &[],
-    )
-}
-fn stored_identity_schema() -> JsonObject {
-    object_schema(
-        json!({"setlist":{"type":"string","minLength":1},"slot":{"type":"string","pattern":"^(?:[1-9]|[12][0-9]|3[0-2])[A-H]$"}}),
-        &["setlist", "slot"],
-    )
-}
-fn stored_schema() -> JsonObject {
-    let mut s = stored_identity_schema();
-    let p = s
-        .get_mut("properties")
-        .and_then(Value::as_object_mut)
-        .unwrap();
-    p.insert(
-        "with_params".into(),
-        json!({"type":"boolean","default":true}),
-    );
-    p.insert(
-        "timeout_seconds".into(),
-        json!({"type":"integer","minimum":1,"maximum":60,"default":15}),
-    );
-    s
-}
-fn list_schema() -> JsonObject {
-    object_schema(
-        json!({"setlist":{"type":"string","minLength":1},"include_empty":{"type":"boolean","default":false},"timeout_seconds":{"type":"integer","minimum":1,"maximum":120,"default":30}}),
-        &["setlist"],
-    )
-}
-fn routing_schema<T: serde::Serialize>(ports: &[T]) -> JsonObject {
-    object_schema(
-        json!({"row":{"type":"integer","minimum":0,"maximum":3,"description":ROW_TRAP},"port":{"type":"string","enum":serde_json::to_value(ports).expect("routing ports serialize")}}),
-        &["row", "port"],
-    )
-}
-fn split_schema() -> JsonObject {
-    object_schema(
-        json!({"row":{"type":"integer","minimum":0,"maximum":3,"description":ROW_TRAP},"split":{"type":"integer","minimum":-1,"maximum":7},"mix":{"type":"integer","minimum":-1,"maximum":7,"default":-1}}),
-        &["row", "split"],
-    )
-}
-fn scene_schema(name: &str) -> JsonObject {
-    object_schema(
-        json!({(name):{"type":"integer","minimum":0,"maximum":7}}),
-        &[name],
-    )
-}
-fn scene_label_schema() -> JsonObject {
-    object_schema(
-        json!({"scene":{"type":"integer","minimum":0,"maximum":7},"label":{"type":"string","minLength":1}}),
-        &["scene", "label"],
-    )
-}
-fn scene_color_schema() -> JsonObject {
-    object_schema(
-        json!({"scene":{"type":"integer","minimum":0,"maximum":7},"color":{"type":"integer","minimum":0,"maximum":4294967295_u64,"description":"ARGB uint32, e.g. 4294902466 for 0xFFFF02C2"}}),
-        &["scene", "color"],
-    )
-}
-fn scene_pair_schema(first: &str, second: &str) -> JsonObject {
-    object_schema(
-        json!({(first):{"type":"integer","minimum":0,"maximum":7},(second):{"type":"integer","minimum":0,"maximum":7}}),
-        &[first, second],
-    )
-}
-fn param_schema() -> JsonObject {
-    cell_schema(
-        json!({"target":{"oneOf":[{"type":"object","properties":{"by":{"const":"index"},"value":{"type":"integer","minimum":0}},"required":["by","value"]},{"type":"object","properties":{"by":{"const":"name"},"value":{"type":"string","minLength":1}},"required":["by","value"]}]},"input":{"oneOf":[{"type":"object","properties":{"kind":{"const":"normalised"},"value":{"type":"number","minimum":0,"maximum":1}},"required":["kind","value"]},{"type":"object","properties":{"kind":{"const":"real"},"value":{"type":"number"}},"required":["kind","value"]},{"type":"object","properties":{"kind":{"const":"text"},"value":{"type":"string"}},"required":["kind","value"]}]},"scene":{"type":["integer","null"],"minimum":0,"maximum":7},"promote":{"type":"boolean","default":false},"timeout_seconds":{"type":"integer","minimum":1,"maximum":60,"default":15}}),
-        &["target", "input"],
-    )
-}
-fn cell_schema(extra: Value, extra_required: &[&str]) -> JsonObject {
-    let mut properties = json!({"row":{"type":"integer","minimum":0,"maximum":3,"description":ROW_TRAP},"column":{"type":"integer","minimum":0,"maximum":7}});
-    properties
-        .as_object_mut()
-        .unwrap()
-        .extend(extra.as_object().unwrap().clone());
-    let mut required = vec!["row", "column"];
-    required.extend_from_slice(extra_required);
-    object_schema(properties, &required)
-}
-fn object_schema(properties: Value, required: &[&str]) -> JsonObject {
-    json!({"type":"object","properties":properties,"required":required,"additionalProperties":false}).as_object().unwrap().clone()
 }
 
 fn required<'a>(args: &'a Value, name: &str) -> Result<&'a Value> {
