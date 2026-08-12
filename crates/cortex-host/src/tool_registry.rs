@@ -57,6 +57,12 @@ fn reads() -> Vec<ToolSpec> {
             true,
         ),
         spec(
+            "analyze_cpu_fit",
+            "Explain the latest device-reported CPU load against the live grid. The Quad reports two DSP cores; rows are signal-chain lanes, not fixed cores. Returns only read-only, conservative rerouting guidance.",
+            empty_schema(),
+            true,
+        ),
+        spec(
             "read_current_preset",
             "Read the live working grid without recalling a slot or discarding unsaved edits.",
             read_schema(),

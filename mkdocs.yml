@@ -48,6 +48,7 @@ nav:
   - Install: install.md
   - Agent setup: agent-setup.md
   - MCP tone-building demo: mcp-tone-building-demo.md
+  - MCP CPU-fit demo: mcp-cpu-fit-demo.md
   - Walkthrough: walkthrough.md
   - CLI reference: cli-reference.md
   - Protocol:

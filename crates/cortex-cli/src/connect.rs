@@ -958,6 +958,32 @@ impl Daemon {
                     "the device is not currently responsive",
                 ),
             },
+            Request::AnalyzeCpuFit => match (self.state.cpu_load(), self.state.current_preset()) {
+                (Some(load), Some(preset)) if self.cache_is_usable() => {
+                    let cpu = cortex_rs::view::CpuLoad::from(&load.value);
+                    let grid = cortex_rs::view::Preset::from_binary(
+                        &preset.value,
+                        self.catalog().as_ref(),
+                        "(live grid)",
+                        "(live grid)",
+                        false,
+                    );
+                    Response::ok(&cortex_host::CpuFitAnalysis::from_live(&cpu, &grid))
+                        .unwrap_or_else(|error| Response::error(format!("CPU fit: {error}")))
+                }
+                (None, _) => Response::coded_error(
+                    DaemonErrorCode::NotReady,
+                    "no CPU load received yet - the device pushes it about once a second after subscribing",
+                ),
+                (_, None) => Response::coded_error(
+                    DaemonErrorCode::NotReady,
+                    "no live grid is available yet - wait for the subscribed session to settle",
+                ),
+                _ => Response::coded_error(
+                    DaemonErrorCode::DeviceUnavailable,
+                    "the device is not currently responsive",
+                ),
+            },
             Request::Shutdown => unreachable!("shutdown is handled before device admission"),
         }
     }

@@ -34,7 +34,7 @@ async fn official_client_discovers_and_calls_the_real_server() -> anyhow::Result
     let endpoint = LocalEndpoint::at(socket);
     let listener = LocalListener::bind(&endpoint)?.listener;
     // Startup compatibility, then compatibility + request for each tool call.
-    let daemon = std::thread::spawn(move || serve_daemon(listener, 9, false));
+    let daemon = std::thread::spawn(move || serve_daemon(listener, 11, false));
 
     let transport = TokioChildProcess::builder(
         tokio::process::Command::new(env!("CARGO_BIN_EXE_cortex-mcp")).configure(|command| {
@@ -47,6 +47,7 @@ async fn official_client_discovers_and_calls_the_real_server() -> anyhow::Result
     let client = ().serve(transport).await?;
     let tools = client.list_all_tools().await?;
     assert!(tools.iter().any(|tool| tool.name == "get_status"));
+    assert!(tools.iter().any(|tool| tool.name == "analyze_cpu_fit"));
     assert!(tools.iter().any(|tool| tool.name == "set_scene_label"));
     assert!(!tools.iter().any(|tool| tool.name.contains("save")));
     for destructive in [
@@ -113,6 +114,20 @@ async fn official_client_discovers_and_calls_the_real_server() -> anyhow::Result
         Some("fictional DSP capacity exhausted")
     );
     let result = client
+        .call_tool(CallToolRequestParams::new("analyze_cpu_fit"))
+        .await?;
+    assert_eq!(result.is_error, Some(false));
+    assert_eq!(
+        result
+            .structured_content
+            .as_ref()
+            .and_then(|value| value.get("advice"))
+            .and_then(serde_json::Value::as_array)
+            .and_then(|advice| advice.first())
+            .and_then(serde_json::Value::as_str),
+        Some("fictional CPU fit analysis")
+    );
+    let result = client
         .call_tool(
             CallToolRequestParams::new("set_chain_output").with_arguments(
                 serde_json::json!({"row":0,"port":"multiple"})
@@ -171,6 +186,10 @@ fn serve_connection(stream: LocalConnection, auto_managed: bool) {
                 DaemonErrorCode::DspRefused,
                 "fictional DSP capacity exhausted",
             ),
+            Request::AnalyzeCpuFit => Response::ok(&serde_json::json!({
+                "advice": ["fictional CPU fit analysis"],
+            }))
+            .expect("encode CPU fit response"),
             Request::SetRouting {
                 row: 0,
                 input: None,
@@ -567,6 +586,43 @@ async fn hardware_smoke_builds_and_restores_a_live_grid() -> anyhow::Result<()> 
     client.cancel().await?;
     restore?;
     run
+}
+
+#[tokio::test]
+#[ignore = "requires a real Quad Cortex and a subscribed held session"]
+async fn hardware_smoke_analyzes_cpu_fit_without_editing() -> anyhow::Result<()> {
+    let transport = TokioChildProcess::new(tokio::process::Command::new(env!(
+        "CARGO_BIN_EXE_cortex-mcp"
+    )))?;
+    let client = ().serve(transport).await?;
+    let result = call(&client, "analyze_cpu_fit", serde_json::json!({})).await?;
+    let analysis = result
+        .structured_content
+        .as_ref()
+        .context("CPU-fit analysis returned no structured result")?;
+    let cores = analysis
+        .get("cores")
+        .and_then(serde_json::Value::as_array)
+        .context("CPU-fit analysis returned no core breakdown")?;
+    anyhow::ensure!(
+        cores.len() == 2
+            && cores[0].get("core") == Some(&serde_json::json!(1))
+            && cores[1].get("core") == Some(&serde_json::json!(2)),
+        "CPU-fit analysis did not return the two device DSP cores"
+    );
+    anyhow::ensure!(
+        analysis
+            .get("advice")
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(|advice| advice.iter().any(|entry| {
+                entry
+                    .as_str()
+                    .is_some_and(|text| text.contains("not fixed core assignments"))
+            })),
+        "CPU-fit analysis did not retain the row-to-core safety guidance"
+    );
+    client.cancel().await?;
+    Ok(())
 }
 
 async fn call(

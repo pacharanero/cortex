@@ -24,6 +24,7 @@ An explicitly user-started session remains persistent until `cortex session stop
 - Recall and live-grid writes are audible but non-persistent. The server has no save or delete tool.
 - Routing tools take closed typed names rather than wire integers. Examples include `input1`, `return1`, `previous_row`, `xlr12`, `next_row3`, and `multiple`; MCP discovery exposes every accepted input and output name.
 - Parameter, bypass, removal, routing, and split writes return only after a complete live-grid read confirms the requested state. A mismatch is returned as `outcome_unconfirmed`; block placement retains its echo-or-read-back confirmation path.
+- `analyze_cpu_fit` is read-only. The Quad reports two DSP cores, while its four rows are signal-chain lanes; use the returned per-cell `on_core2` mapping rather than treating a row as a core. A cross-row move changes routing and must be fresh-read and auditioned.
 - Scene indices are zero-based 0-7 (A-H). `copy_scene` and `swap_scenes` move labels and colours as well as sound state. Scene colours are decimal ARGB `uint32` values in MCP schemas; copy/swap force a fresh live-grid read before returning because the device's acknowledgement omits its swap flag.
 
 The server exposes status, device version, active scene, CPU load, live/stored preset reads, block/folder/preset listings, catalog search, recall, scene switching and metadata/copy management, block placement/removal, read-back-verified parameter/bypass writes, typed chain input/output routing and split control. Use MCP discovery for the authoritative schemas.

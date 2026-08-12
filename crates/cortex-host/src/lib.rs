@@ -12,12 +12,14 @@
 #![warn(clippy::all, clippy::pedantic)]
 
 mod client;
+mod cpu_fit;
 mod ipc;
 mod protocol;
 mod server;
 pub mod tool_registry;
 
 pub use client::{DaemonClient, DaemonError, is_running, request, request_with_timeout};
+pub use cpu_fit::{CpuFitAnalysis, CpuFitCell, CpuFitCore};
 pub use ipc::{BindResult, LocalClaim, LocalConnection, LocalEndpoint, LocalListener, log_path};
 pub use protocol::{
     CacheStatus, DAEMON_PROTOCOL_VERSION, DaemonErrorCode, DeviceHealth, PrepareSaveResult,

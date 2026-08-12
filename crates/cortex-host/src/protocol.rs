@@ -39,7 +39,7 @@ use cortex_rs::RecallConsent;
 /// Bump this whenever a `Request` variant changes shape or a new variant is
 /// added. A client that sees a mismatch refuses with an actionable message
 /// rather than sending a request the daemon will misparse.
-pub const DAEMON_PROTOCOL_VERSION: u32 = 12;
+pub const DAEMON_PROTOCOL_VERSION: u32 = 13;
 
 /// A request from a client to the daemon.
 ///
@@ -355,6 +355,9 @@ pub enum Request {
     /// Only meaningful on a subscribed session, which is the daemon's: a
     /// one-shot `Minimal` session never asks the device to push this.
     CpuLoad,
+    /// Explain the latest CPU push against the current live grid without
+    /// changing the device.
+    AnalyzeCpuFit,
     /// Ask the daemon to shut down, announcing the disconnect first.
     Shutdown,
 }

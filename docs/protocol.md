@@ -175,6 +175,14 @@ The device answers the first and ignores the second, with no error either way. S
 
 The first push arrives roughly **8 seconds** after the request, not immediately - long enough that an early check looks like failure.
 
+### CPU load: two cores, not four rows
+
+The `CPULoad` push reports a total plus per-chain, per-column load entries. Each entry includes `is_on_core2`; this is the device's only observed core assignment. It establishes that the Quad has **two DSP cores**, not one core per grid row.
+
+The four grid rows are signal-chain and routing lanes. A row can contain cells reported on either core, so no fixed row-to-core mapping should be inferred. The current CLI and MCP surface expose each cell's device-reported second-core flag and aggregate those entries by core.
+
+Moving a block across rows can produce a parallel route, but it changes routing rather than simply migrating work to a known core. Only wire rows 0 and 2 can branch, and the device may create or adjust split/rejoin positions. Treat an attempted reroute as an audible experiment: make one change, fresh-read the grid and CPU mapping, then audition it before attempting another placement.
+
 Whether other message types share this convention is not established. If a subscribe of yours is being ignored, this is the first thing to try.
 
 The action cannot be inferred from ordinary CRUD semantics elsewhere either. `pyquadcortex` reports that pinning a model appends with no action field, unpinning uses `DELETE`, and adding a favourite uses `CREATE`. Treat the captured action as part of each message's wire contract, not as boilerplate a generic builder can choose.

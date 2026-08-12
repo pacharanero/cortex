@@ -269,6 +269,7 @@ impl CortexMcp {
             "get_device_version" => Request::Version,
             "get_active_scene" => Request::ActiveScene,
             "get_cpu_load" => Request::CpuLoad,
+            "analyze_cpu_fit" => Request::AnalyzeCpuFit,
             "read_current_preset" | "list_blocks" => Request::CurrentPreset {
                 with_params: bool_arg(args, "with_params", true)?,
                 timeout_seconds: u64_arg(args, "timeout_seconds", 15)?,
@@ -556,6 +557,7 @@ mod tests {
             assert!(!names.iter().any(|name| name == forbidden));
         }
         assert!(names.contains(&"set_block".to_string()));
+        assert!(names.contains(&"analyze_cpu_fit".to_string()));
         for scene_tool in [
             "set_scene_label",
             "unlabel_scene",
