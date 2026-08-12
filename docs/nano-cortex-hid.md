@@ -59,7 +59,7 @@ Nano reports use the same report-level layout and flags as the Quad:
 | `0x80` | last frame |
 | `0xC0` | complete single-frame message |
 
-The Nano carries at most 62 meaningful data bytes per report. The verified current-state response used nine reports: one `FIRST`, seven middles and one `LAST`. The first eight carried 62 meaningful bytes each and the last carried 50, producing a 546-byte reassembled body.
+The Nano carries at most 62 meaningful data bytes per report. The verified current-state response used a flag-driven multi-report sequence: one `FIRST`, zero or more middle frames, and one `LAST`. The original 2026-08-11 probe measured nine reports (one FIRST, seven middles, one LAST) totaling 546 bytes; a 2026-08-12 re-read measured ten reports (one FIRST, eight middles, one LAST) totaling 574 bytes. The state body size varies with device content (presets, captures, assignments), so the report count is not fixed.
 
 Always stop at `len`. Padding beyond the declared body contained readable stale device and user strings during probing. It is not part of the message, must not enter a decoder, and is another reason raw captures must remain private.
 

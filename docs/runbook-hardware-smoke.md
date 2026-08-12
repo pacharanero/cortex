@@ -355,7 +355,9 @@ Run this bounded read-only smoke when the Nano is connected. Disconnect any Neur
 3. Decode only bytes within each report's `len`; never print the body or padding because both can contain private strings.
 4. Disconnect Nano, connect Quad, and run `cortex device version` plus `cortex session start`, `cortex session status`, and `cortex session stop` to prove the shared geometry refactor preserved Quad behavior.
 
-NANO-001.2 remains in progress until these checks run through repository code rather than the private probe.
+NANO-001.2 is hardware-verified. The bounded smoke test `nano_transport_geometry_and_state_read` exercises repository code: it opens the Nano, verifies 65-byte geometry, sends the read-only current-state request, and asserts a correct FIRST/middle/LAST multi-report reassembly. The `nano_rejected_by_quad_paths` test verifies `Transport::request` and `Session::open` reject the Nano before USB I/O.
+
+**Measured 2026-08-12 on a Nano Cortex:** 10 reports (FIRST + 8 middle + LAST), 574 reassembled bytes. The original 2026-08-11 probe measured 9 reports / 546 bytes; the state body varies with device content. Quad regression passed immediately after on the same machine: direct version, correlated session version, and full held session (start/status/grid-show/stop) all healthy on CorOS 4.0.1.
 
 ## Out of scope
 

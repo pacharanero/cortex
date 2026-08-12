@@ -2992,3 +2992,115 @@ fn prot_006_13_io_settings_mutate_poll_restore() -> cortex_rs::Result<()> {
     }
     exercise
 }
+
+/// NANO-001.2 hardware smoke: verify the Nano Cortex transport through
+/// repository code. Read-only, no mutation, no application codec needed.
+///
+/// Requires a Nano Cortex connected by USB with Bluetooth disconnected and
+/// the `70-neural-dsp-cortex.rules` udev rule installed. Does not print any
+/// device body or padding - only structural counts and flag values.
+#[test]
+#[ignore = "requires a Nano Cortex connected by USB with Bluetooth disconnected"]
+fn nano_transport_geometry_and_state_read() -> cortex_rs::Result<()> {
+    use std::time::Duration;
+
+    use cortex_rs::{DeviceKind, FrameReassembler, Transport};
+
+    let geometry = DeviceKind::NanoCortex.report_geometry();
+    assert_eq!(geometry.body_len(), 64, "Nano body length");
+    assert_eq!(geometry.report_len(), 65, "Nano report length");
+    assert_eq!(geometry.data_capacity(), 62, "Nano data capacity");
+
+    let transport = Transport::open(DeviceKind::NanoCortex)?;
+    assert_eq!(
+        transport.device_kind(),
+        DeviceKind::NanoCortex,
+        "transport retained Nano kind"
+    );
+
+    // The hardware-verified read-only current-state request body from
+    // docs/nano-cortex-hid.md. This is a Nano BLE application frame, not a
+    // Quad Cortex protobuf + trailer. encode_reports wraps it in a single
+    // COMPLETE report: [02][0C][C0][body...zero-padded].
+    let state_request: &[u8] = &[
+        0x08, 0x03, 0x18, 0x01, 0x20, 0x01, 0x28, 0x01, 0x01, 0x00, 0x00, 0x00,
+    ];
+    transport.write(state_request)?;
+
+    // Read and reassemble. The original 2026-08-11 probe measured nine
+    // reports / 546 bytes, but the state body varies with device content
+    // (presets, captures, assignments). We assert the structural shape:
+    // a FIRST report, zero or more middle reports, a LAST report, and a
+    // reassembled body that is a positive multiple of the data capacity
+    // plus a final partial frame. We never print the body or padding.
+    let timeout = Duration::from_secs(5);
+    let mut reassembler = FrameReassembler::new();
+    let mut report_count = 0usize;
+    let reassembled_len;
+    let mut saw_first = false;
+    let mut saw_last = false;
+
+    loop {
+        let raw = transport.read(timeout)?;
+        report_count += 1;
+        let frame = cortex_rs::Frame::parse(&raw)?;
+        let flags_byte = frame.flags.0;
+        let frame_data_len = frame.data.len();
+        eprintln!("report {report_count}: flags={flags_byte:#04x} data_len={frame_data_len}");
+        if frame.flags.is_first() {
+            saw_first = true;
+        }
+        if frame.flags.is_last() {
+            saw_last = true;
+        }
+        if let Some(body) = reassembler.feed(&frame)? {
+            reassembled_len = body.len();
+            break;
+        }
+    }
+
+    eprintln!("reassembled: {report_count} reports, {reassembled_len} bytes");
+    assert!(
+        report_count >= 2,
+        "expected multi-report response, got {report_count}"
+    );
+    assert!(saw_first, "expected a FIRST report");
+    assert!(saw_last, "expected a LAST report");
+    assert!(reassembled_len > 0, "expected a non-empty reassembled body");
+
+    Ok(())
+}
+
+/// NANO-001.2 hardware smoke: verify the Quad Cortex request path and
+/// Session reject the Nano before any USB I/O, preventing accidental
+/// Quad-protocol traffic to a Nano device.
+#[test]
+#[ignore = "requires a Nano Cortex connected by USB with Bluetooth disconnected"]
+fn nano_rejected_by_quad_paths() -> cortex_rs::Result<()> {
+    use std::time::Duration;
+
+    use cortex_rs::{DeviceKind, Transport};
+
+    // Transport::request must reject Nano before sending anything.
+    let transport = Transport::open(DeviceKind::NanoCortex)?;
+    let result = transport.request(0x0001, &[], Duration::from_secs(1));
+    assert!(
+        matches!(
+            result,
+            Err(cortex_rs::Error::UnsupportedDeviceOperation { .. })
+        ),
+        "Transport::request must reject Nano with UnsupportedDeviceOperation, got: {result:?}"
+    );
+
+    // Session::open must reject Nano before USB enumeration.
+    let session_result = cortex_rs::Session::open(DeviceKind::NanoCortex);
+    assert!(
+        matches!(
+            session_result,
+            Err(cortex_rs::Error::UnsupportedDeviceOperation { .. })
+        ),
+        "Session::open must reject Nano with UnsupportedDeviceOperation"
+    );
+
+    Ok(())
+}
