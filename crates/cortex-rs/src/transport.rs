@@ -1,11 +1,11 @@
 // SPDX-FileCopyrightText: 2026 Dr Marcus Baw
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-//! The hardware-verified USB HID transport for the Quad Cortex.
+//! The hardware-verified USB HID transport substrate for Cortex devices.
 //!
 //! Nano Cortex shares the HID frame shape but uses 65-byte reports and a
-//! different application envelope. This implementation remains Quad-only until
-//! device-dependent geometry and the Nano codec land together.
+//! different application envelope. Raw framed I/O supports both geometries;
+//! the synchronous Quad-envelope request path remains explicitly Quad-only.
 //!
 //! Encapsulates the two non-obvious behaviours documented in
 //! `quad-cortex-linux-editor-and-protocol.md`:
@@ -26,7 +26,6 @@
 use std::time::Duration;
 
 use crate::device::DeviceKind;
-use crate::framing::{Flags, ReportId};
 pub use crate::framing::{HID_BODY_LEN, HID_REPORT_LEN};
 
 /// Default read timeout. The write STALL means this - not a write error -
@@ -41,6 +40,7 @@ pub const DEFAULT_READ_TIMEOUT: Duration = Duration::from_secs(2);
 /// it.
 pub struct Transport {
     device: hidapi::HidDevice,
+    kind: DeviceKind,
 }
 
 impl Transport {
@@ -69,7 +69,7 @@ impl Transport {
         let device = api
             .open_path(device.path())
             .map_err(|e| crate::Error::Hid(e.to_string()))?;
-        Ok(Self { device })
+        Ok(Self { device, kind })
     }
 
     /// Consume the transport and return the underlying `HidDevice`. Used by
@@ -80,63 +80,38 @@ impl Transport {
         self.device
     }
 
-    /// Send a host-to-device message. The message is split into 128-byte HID
-    /// frames with the FIRST/LAST/COMPLETE/MIDDLE flag bytes set as needed.
+    /// Device profile retained by this connection.
+    #[must_use]
+    pub const fn device_kind(&self) -> DeviceKind {
+        self.kind
+    }
+
+    /// Send an already-formed host-to-device body using this device's report
+    /// geometry and the shared FIRST/LAST/COMPLETE/MIDDLE flags.
     ///
-    /// **The benign write STALL:** the device stalls every `SET_REPORT` at
-    /// the USB status stage, so `hid_write()` returns `-1` on a write that
-    /// worked. We swallow these errors here; callers should detect a dead
-    /// device via a read timeout instead.
+    /// Quad write errors are swallowed because its benign status-stage STALL
+    /// makes failure the expected success result. Nano writes return normally,
+    /// so their errors propagate. Neither path retries a report.
     ///
     /// # Errors
     ///
-    /// Currently always returns `Ok`: write errors are swallowed because the
-    /// USB status-stage stall is benign and expected. The error variant is
-    /// kept on the signature for forward compatibility (e.g. explicit frame
-    /// size validation).
+    /// Returns [`crate::Error::Hid`] for a Nano write failure. Quad write
+    /// failures are swallowed because its status-stage STALL is benign.
     pub fn write(&self, message: &[u8]) -> crate::Result<()> {
-        let mut offset = 0;
-        let total = message.len();
-        let mut is_first = true;
-
-        while offset < total {
-            let chunk_len = usize::min(HID_BODY_LEN - 1, total - offset);
-            let is_last = offset + chunk_len == total;
-
-            let flags = if is_first && is_last {
-                Flags::COMPLETE
-            } else if is_first {
-                Flags::FIRST
-            } else if is_last {
-                Flags::LAST
-            } else {
-                Flags::MIDDLE
-            };
-
-            let mut report = vec![0u8; HID_REPORT_LEN];
-            report[0] = ReportId::Output as u8;
-            // chunk_len is bounded by HID_BODY_LEN - 1 = 127, so the cast to
-            // u8 cannot truncate. The expect is unreachable.
-            #[allow(clippy::cast_possible_truncation)]
-            let len_byte = chunk_len as u8;
-            report[1] = len_byte;
-            report[2] = flags;
-            report[3..3 + chunk_len].copy_from_slice(&message[offset..offset + chunk_len]);
-
-            // The write is acted upon and then stalled at the status stage,
-            // so hid_write returns an error on a write that worked. Swallow
-            // it; a dead device surfaces as a read timeout on the next read.
-            let _ = self.device.write(&report);
-
-            offset += chunk_len;
-            is_first = false;
+        for report in crate::framing::encode_reports(self.kind.report_geometry(), message) {
+            validate_write_result(
+                self.kind,
+                report.len(),
+                self.device
+                    .write(&report)
+                    .map_err(|error| error.to_string()),
+            )?;
         }
-
         Ok(())
     }
 
-    /// Read the next 129-byte input report from the device. Returns the raw
-    /// report (report-ID byte + 128-byte body) so the caller can feed it to
+    /// Read the next device-sized input report. Returns the raw report
+    /// (report ID + body) so the caller can feed it to
     /// [`crate::framing::Frame::parse`].
     ///
     /// A timeout is the reliable signal of a dead or unresponsive device,
@@ -148,7 +123,7 @@ impl Transport {
     /// [`crate::Error::ReadTimeout`] if no report arrives within `timeout`
     /// (the canonical dead-device signal).
     pub fn read(&self, timeout: Duration) -> crate::Result<Vec<u8>> {
-        let mut buf = vec![0u8; HID_REPORT_LEN];
+        let mut buf = vec![0u8; self.kind.report_geometry().report_len()];
         // hidapi takes an `i32` timeout in milliseconds. The duration is
         // bounded by `DEFAULT_READ_TIMEOUT` in practice; clamp to `i32::MAX`
         // to satisfy clippy's cast truncation check.
@@ -187,11 +162,20 @@ impl Transport {
         payload: &[u8],
         timeout: Duration,
     ) -> crate::Result<crate::message::Message> {
+        if self.kind != DeviceKind::QuadCortex {
+            return Err(crate::Error::UnsupportedDeviceOperation {
+                device: self.kind,
+                operation: "Quad Cortex message request",
+            });
+        }
         // Encode and send.
         let reports = crate::framing::encode_message(message_type, payload);
         for report in &reports {
-            // The write STALL: hid_write returns -1 on a write that worked.
-            let _ = self.device.write(report);
+            validate_write_result(
+                self.kind,
+                report.len(),
+                self.device.write(report).map_err(|error| error.to_string()),
+            )?;
         }
 
         // Read and reassemble. A FIRST frame starts a new message; middle
@@ -233,5 +217,43 @@ impl Transport {
                 return Ok(msg);
             }
         }
+    }
+}
+
+fn validate_write_result(
+    kind: DeviceKind,
+    report_len: usize,
+    result: Result<usize, String>,
+) -> crate::Result<()> {
+    match result {
+        Ok(written) if written != report_len => Err(crate::Error::Hid(format!(
+            "short HID write: wrote {written} of {report_len} bytes"
+        ))),
+        Ok(_) => Ok(()),
+        Err(_) if kind.has_benign_write_stall() => Ok(()),
+        Err(error) => Err(crate::Error::Hid(error)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn write_results_follow_device_policy_without_retrying() {
+        assert!(validate_write_result(DeviceKind::QuadCortex, 129, Err("stall".into())).is_ok());
+        assert!(validate_write_result(DeviceKind::NanoCortex, 65, Ok(65)).is_ok());
+        assert!(matches!(
+            validate_write_result(DeviceKind::NanoCortex, 65, Err("failed".into())),
+            Err(crate::Error::Hid(_))
+        ));
+        assert!(matches!(
+            validate_write_result(DeviceKind::NanoCortex, 65, Ok(64)),
+            Err(crate::Error::Hid(_))
+        ));
+        assert!(matches!(
+            validate_write_result(DeviceKind::QuadCortex, 129, Ok(128)),
+            Err(crate::Error::Hid(_))
+        ));
     }
 }

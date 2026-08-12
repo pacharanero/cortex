@@ -8,8 +8,7 @@
 //! Cortex. Hardware probing established that the Nano shares the HID frame
 //! shape but uses 65-byte reports and a Nano-specific four-byte application
 //! footer rather than the Quad's 129-byte reports and eight-byte trailer. Nano
-//! support therefore remains a non-matching placeholder until transport
-//! geometry and the separate message codec land together - see AGENTS.md.
+//! the separate message codec remains future work - see AGENTS.md.
 //!
 //! @see spec/130-domain-model/spec.md
 //! @see spec/100-transport/spec.md [FR-1]
@@ -31,16 +30,43 @@ impl DeviceKind {
     /// Returns the USB vendor/product ID pair this client looks for.
     ///
     /// The Quad Cortex presents as `152a:880a` on HID interface 5. The Nano
-    /// Cortex's hardware-verified VID:PID is `152a:88e7`, but this method
-    /// deliberately returns a non-matching sentinel until its 65-byte framing
-    /// and message codec are implemented together.
+    /// Cortex's hardware-verified VID:PID is `152a:88e7`.
     #[must_use]
     pub const fn vid_pid(self) -> (u16, u16) {
         match self {
             // Quad Cortex: verified against CorOS 4.0.1 / firmware d14e.
             DeviceKind::QuadCortex => (0x152A, 0x880A),
-            // Nano Cortex: fail closed until device-dependent framing is implemented.
-            DeviceKind::NanoCortex => (0x152A, 0xFFFF),
+            DeviceKind::NanoCortex => (0x152A, 0x88E7),
         }
+    }
+
+    /// The fixed HID report dimensions measured for this device.
+    #[must_use]
+    pub const fn report_geometry(self) -> crate::framing::HidReportGeometry {
+        match self {
+            Self::QuadCortex => crate::framing::HidReportGeometry::QUAD_CORTEX,
+            Self::NanoCortex => crate::framing::HidReportGeometry::NANO_CORTEX,
+        }
+    }
+
+    /// Whether write failures are the device's measured benign status-stage STALL.
+    #[must_use]
+    pub const fn has_benign_write_stall(self) -> bool {
+        matches!(self, Self::QuadCortex)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn device_profiles_match_hardware_measurements() {
+        assert_eq!(DeviceKind::QuadCortex.vid_pid(), (0x152A, 0x880A));
+        assert_eq!(DeviceKind::NanoCortex.vid_pid(), (0x152A, 0x88E7));
+        assert_eq!(DeviceKind::QuadCortex.report_geometry().report_len(), 129);
+        assert_eq!(DeviceKind::NanoCortex.report_geometry().report_len(), 65);
+        assert!(DeviceKind::QuadCortex.has_benign_write_stall());
+        assert!(!DeviceKind::NanoCortex.has_benign_write_stall());
     }
 }

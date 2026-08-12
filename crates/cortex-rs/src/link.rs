@@ -27,9 +27,9 @@ pub trait HidLink: Send {
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::Hid`] on a transport failure. Callers
-    /// generally ignore it: every write is stalled at the USB status stage,
-    /// so a failure here is the normal case rather than a fault.
+    /// Returns [`crate::Error::Hid`] on a transport failure. The Quad session
+    /// ignores this because that device deliberately stalls every write;
+    /// device-neutral callers must apply their selected device's write policy.
     fn write(&self, report: &[u8]) -> crate::Result<usize>;
 
     /// Read one report, returning 0 on timeout.

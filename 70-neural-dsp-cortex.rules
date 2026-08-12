@@ -1,0 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Dr Marcus Baw
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+# Quad Cortex
+KERNEL=="hidraw*", ATTRS{idVendor}=="152a", ATTRS{idProduct}=="880a", MODE="0660", TAG+="uaccess"
+# Nano Cortex
+KERNEL=="hidraw*", ATTRS{idVendor}=="152a", ATTRS{idProduct}=="88e7", MODE="0660", TAG+="uaccess"

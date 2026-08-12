@@ -109,7 +109,7 @@ It also has version-sync across four manifests with a check mode wired into CI a
 
 ### What it says about the Nano Cortex, and what hardware settled
 
-- Its **Nano USB product ID `0x88E7`** (vendor `0x152A`) is now independently hardware-verified on Linux. `DeviceKind` still retains `0xFFFF` only until device-dependent framing is implemented, so the current Quad-only transport continues to fail closed rather than opening a 65-byte device through its 129-byte path.
+- Its **Nano USB product ID `0x88E7`** (vendor `0x152A`) is independently hardware-verified on Linux and now used by the low-level transport with 65-byte geometry. The Quad message request and session paths reject Nano before USB I/O until its separate codec exists.
 - Its **65-byte HID report** observation - report ID plus 64-byte body - is now hardware-verified. The Nano report descriptor is otherwise byte-for-byte the Quad descriptor, including input report ID `0x01` and output report ID `0x02`.
 - Its negative passive-HID result remains correct but was incomplete. A labelled active probe showed that the Nano shares the Quad's HID length/flag framing and multi-report reassembly. The known Nano BLE current-state request maps directly onto a complete HID frame and returns the same Nano state protobuf and four-byte footer over USB.
 - The Nano does **not** use the Quad's eight-byte message-type trailer or Quad handshake unchanged. A Quad `Version READ` was ignored, while the Nano current-state request returned nine reports and decoded successfully. Reuse the transport/framing substrate, not the Quad message registry or domain model.

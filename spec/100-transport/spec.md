@@ -41,9 +41,9 @@ This zone owns the `Transport` struct that wraps `hidapi::HidDevice` and encodes
 | VID:PID `152A:880A`, interface 5 | Hardware-verified | Real Quad Cortex on Linux running CorOS 4.0.1 |
 | Input report ID `0x01`, output report ID `0x02`, 128-byte body | Hardware-verified | Matches `pyquadcortex/docs/protocol.md` and re-confirmed by `cortex device version` round-trip on this machine |
 | The benign write STALL (`hid_write` returns `-1` on success) | Hardware-verified | Observed on this machine; documented in `pyquadcortex` |
-| Swallow write errors, detect dead device via read timeout | Hardware-verified | `cortex device version` succeeds despite `-1` writes; a powered-off device surfaces as `Error::ReadTimeout` |
+| Swallow Quad write errors, detect its dead device via read timeout | Hardware-verified | `cortex device version` succeeds despite `-1` writes; a powered-off Quad surfaces as `Error::ReadTimeout` |
 | `Transport::request` gzip-decompresses frame-level payloads starting `1f 8b` | Hardware-verified | Observed on RecallPreset pushes from `pyquadcortex`; the `version` round-trip does not compress |
-| Nano Cortex transport | Partly hardware-verified | Real Nano on Linux confirmed VID:PID `152A:88E7`, interface 5, 65-byte reports, shared length/flag framing, multi-report state transfer, and cross-transport BLE ownership. Runtime support remains fail-closed until device-dependent geometry and the Nano codec land together |
+| Nano Cortex transport | Partly hardware-verified and partly implemented | Real Nano on Linux confirmed VID:PID `152A:88E7`, interface 5, 65-byte reports, shared length/flag framing, multi-report state transfer, and cross-transport BLE ownership. Low-level discovery/geometry are implemented; application requests remain unavailable until the Nano codec/session exists |
 
 The `pyquadcortex` offline test suite is a conformance reference but not a substitute for a hardware smoke run. Agent-generated tests must not be the sole basis for accepting transport behaviour.
 
@@ -78,22 +78,23 @@ CLI users, the MCP server, the future Tauri GUI backend, and downstream crate co
 | ID | Requirement | Priority |
 | --- | --- | --- |
 | FR-1 | `Transport::open(DeviceKind)` opens the first matching device on the bus by VID:PID and retains that handle until dropped. It does not claim or guarantee process exclusivity. | Must Have |
-| FR-2 | `Transport::write(&[u8])` is the raw synchronous write path and swallows the benign status-stage STALL. Logical envelope framing is owned by zone 110 and normal sessions write encoded reports through `HidLink`. | Must Have |
-| FR-3 | `Transport::read(Duration)` reads one 129-byte input report (report-ID + 128-byte body) and returns `Error::ReadTimeout` on timeout - the canonical dead-device signal. | Must Have |
+| FR-2 | `Transport::write(&[u8])` is the raw synchronous write path. It frames with the selected device geometry, rejects short writes, swallows only the Quad's benign status-stage STALL, and propagates Nano write errors. Logical application envelopes remain above it. | Must Have |
+| FR-3 | `Transport::read(Duration)` reads one selected-device input report (129 bytes Quad, 65 Nano) and returns `Error::ReadTimeout` on timeout. | Must Have |
 | FR-4 | `Transport::request(message_type, payload, timeout)` performs synchronous request/response: encode, write (swallowing the STALL), read frames, reassemble, strip the 8-byte trailer, gzip-decompress if the body starts with `1f 8b`, return a `Message`. | Must Have |
 | FR-5 | The transport module is gated behind the `hid` feature flag; `cargo build --no-default-features -p cortex-rs` succeeds with no `hidapi` dependency. | Must Have |
 | FR-6 | `Transport` holds a single `hidapi::HidDevice`; it does not open a new connection per call. Drop releases that handle. Host-level `LocalClaim` enforces effective process ownership. | Must Have |
 | FR-7 | `Transport::open` returns `Error::DeviceNotFound` when no matching device is enumerated; permission/backend failures may surface as HID errors. User-facing diagnostics belong to the host surfaces. | Must Have |
 | FR-8 | `Transport::request` returns the first reassembled message, not one correlated by `request_id` (READ replies carry none). Correlation is a later concern owned by the session layer (140). | Should Have |
 | FR-9 | Framing owns the currently implemented Quad constants `HID_BODY_LEN = 128` and `HID_REPORT_LEN = 129`; transport re-exports them for compatibility. Device-dependent geometry must preserve those values for Quad and use 64/65 for Nano. `DEFAULT_READ_TIMEOUT = 2s` remains transport-owned. | Must Have |
-| FR-10 | `DeviceKind::NanoCortex` is accepted by `Transport::open` but labelled provisional; its product ID remains a placeholder until the hardware-verified Nano geometry and codec are implemented. | Should Have |
+| FR-10 | `Transport::open(DeviceKind::NanoCortex)` uses hardware-verified PID `0x88E7`, retains Nano geometry, and provides only raw framed read/write. Quad-envelope `request` and `Session::open` reject Nano before device I/O until its codec/session exists. | Should Have |
+| FR-11 | Quad write errors remain swallowed because its status-stage STALL is hardware-verified. Nano successful writes return normally and Nano write errors propagate; neither path retries a report. | Must Have |
 
 ### Non-Functional Requirements
 
 | ID | Requirement | Target |
 | --- | --- | --- |
 | NFR-1 | The crate compiles with `cargo build --no-default-features` on a machine with no HID hardware and no `libhidapi` installed. | CI-enforced |
-| NFR-2 | The write STALL is swallowed at the transport boundary; no caller above layer 1 ever sees a write error from a successful write. | Review-enforced |
+| NFR-2 | The Quad write STALL is swallowed at the transport boundary; Nano write errors and short writes are not hidden. No report is retried because an errored Quad write may already have landed. | Review-enforced |
 | NFR-3 | A dead or unresponsive device surfaces as `Error::ReadTimeout` within the requested timeout, not as a spurious write error or a hang. | Hardware smoke runbook |
 | NFR-4 | The transport layer depends only on `hidapi` (behind the feature) and the crate's own framing/domain modules; it pulls in no async runtime and no host application. | Leaf-crate discipline |
 | NFR-5 | `Transport::request` does not block longer than the caller-supplied timeout; a `deadline` is derived from `Instant::now() + timeout` and the per-read timeout shrinks as the deadline approaches. | Review + test |
@@ -126,25 +127,24 @@ CLI users, the MCP server, the future Tauri GUI backend, and downstream crate co
 - **`flate2`** - for frame-level gzip decompression in `Transport::request`. Available unconditionally (not behind the feature) because the decode path may also need it.
 - **Zone `110-framing`** - `encode_message`, `Frame::parse`, `FrameReassembler`, `Flags`, `ReportId`.
 - **Zone `130-domain-model`** - `DeviceKind` (open argument), `Message` (request return type).
-- **System udev rule** on Linux: `/etc/udev/rules.d/70-quadcortex.rules` granting the logged-in user `0660` + `uaccess` on `hidraw*` for `152a:880a`. Without it, enumeration/open fails as either `DeviceNotFound` or a backend permission error.
+- **System udev rule** on Linux: `/etc/udev/rules.d/70-neural-dsp-cortex.rules` granting the logged-in user `0660` + `uaccess` on `hidraw*` for explicit Quad `152a:880a` and Nano `152a:88e7` products. Without the matching entry, enumeration/open fails as either `DeviceNotFound` or a backend permission error.
 
 ## Linux Setup (udev rule)
 
 `/dev/hidraw*` is root-only by default. Install a udev rule granting the locally logged-in user access, or `Transport::open` will return `Error::DeviceNotFound`:
 
 ```sh
-echo 'KERNEL=="hidraw*", ATTRS{idVendor}=="152a", ATTRS{idProduct}=="880a", MODE="0660", TAG+="uaccess"' \
-  | sudo tee /etc/udev/rules.d/70-quadcortex.rules
+sudo install -m 0644 70-neural-dsp-cortex.rules /etc/udev/rules.d/
 sudo udevadm control --reload-rules
 sudo udevadm trigger --action=add --subsystem-match=hidraw
 ```
 
-Re-plug the Quad Cortex. The interface number's `hidraw` path is assigned dynamically; see the installation guide for checks that do not assume a numbered node.
+Re-plug the device. The interface number's `hidraw` path is assigned dynamically; see the installation guide for checks that do not assume a numbered node. The rule prepares Nano permissions but does not claim the current CLI supports Nano operations.
 
 ## Future
 
 - **Protocol compatibility probe.** Device identity is cached, but the wire exposes no explicit protocol version. A CorOS update can still break compatibility silently.
-- **Nano Cortex implementation.** Hardware verification established PID `0x88E7`, 65-byte reports, frame flags, a four-byte Nano footer, and a decoded state read. Generalise transport geometry and add the Nano codec before replacing the fail-closed `0xFFFF` sentinel.
+- **Nano Cortex application implementation.** Low-level discovery and report geometry are implemented. Add the Nano codec/session before exposing it through CLI, MCP or GUI.
 
 ## Glossary
 

@@ -3,11 +3,10 @@
 
 //! The Cortex Control HID report framing.
 //!
-//! From `quad-cortex-linux-editor-and-protocol.md` and
-//! `pyquadcortex/docs/protocol.md`, against `CorOS` 4.0.1:
+//! Hardware-verified against a Quad Cortex on `CorOS` 4.0.1 and a Nano Cortex:
 //!
-//! - Reports are 128-byte body + report-ID byte = 129 bytes at the hidapi
-//!   boundary.
+//! - Quad reports are 128-byte body + report ID = 129 bytes; Nano reports are
+//!   64-byte body + report ID = 65 bytes at the hidapi boundary.
 //! - Input report ID `0x01`, output report ID `0x02`.
 //! - Frame layout: `[report_id][len][flags][data...]`.
 //! - `flags`: `0x40` FIRST, `0x80` LAST, `0xC0` complete, `0x00` middle.
@@ -23,11 +22,42 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Fixed HID report dimensions for one Cortex device.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HidReportGeometry {
+    body_len: usize,
+}
+
+impl HidReportGeometry {
+    /// Quad Cortex: 128-byte body, 129 bytes including the report ID.
+    pub const QUAD_CORTEX: Self = Self { body_len: 128 };
+    /// Nano Cortex: 64-byte body, 65 bytes including the report ID.
+    pub const NANO_CORTEX: Self = Self { body_len: 64 };
+
+    /// Report body length, excluding the report ID.
+    #[must_use]
+    pub const fn body_len(self) -> usize {
+        self.body_len
+    }
+
+    /// Full report length at the hidapi boundary.
+    #[must_use]
+    pub const fn report_len(self) -> usize {
+        self.body_len + 1
+    }
+
+    /// Meaningful frame-data capacity after the `[len][flags]` prefix.
+    #[must_use]
+    pub const fn data_capacity(self) -> usize {
+        self.body_len - 2
+    }
+}
+
 /// Quad Cortex HID body length in bytes, excluding the report-id byte.
-pub const HID_BODY_LEN: usize = 128;
+pub const HID_BODY_LEN: usize = HidReportGeometry::QUAD_CORTEX.body_len();
 
 /// Total Quad Cortex report length at the hidapi boundary.
-pub const HID_REPORT_LEN: usize = HID_BODY_LEN + 1;
+pub const HID_REPORT_LEN: usize = HidReportGeometry::QUAD_CORTEX.report_len();
 
 /// HID report ID. Input is `0x01` (device-to-host), output is `0x02`
 /// (host-to-device, sent via `SET_REPORT` on the control pipe).
@@ -102,7 +132,7 @@ pub struct Frame {
 }
 
 impl Frame {
-    /// Parse a 129-byte hidapi report into a `Frame`.
+    /// Parse a device-sized hidapi report into a `Frame`.
     ///
     /// The first byte is the report ID, the second is `len` (the number of
     /// meaningful bytes that follow, excluding the report ID and length
@@ -223,7 +253,47 @@ impl FrameReassembler {
 
 /// Per-report data capacity: the 128-byte body minus the `[len][flags]`
 /// prefix, i.e. 126 bytes of payload per report.
-pub const CHUNK_SIZE: usize = HID_BODY_LEN - 2;
+pub const CHUNK_SIZE: usize = HidReportGeometry::QUAD_CORTEX.data_capacity();
+
+/// Wrap an already-formed application body in device-sized HID reports.
+///
+/// This function does not add or interpret a Quad or Nano application
+/// envelope. Callers select report geometry and provide the complete logical
+/// body, including any device-specific trailer or footer.
+#[must_use]
+pub fn encode_reports(geometry: HidReportGeometry, body: &[u8]) -> Vec<Vec<u8>> {
+    let chunk_size = geometry.data_capacity();
+    let chunk_count = body.len().div_ceil(chunk_size).max(1);
+    let mut reports = Vec::with_capacity(chunk_count);
+
+    for i in 0..chunk_count {
+        let start = i * chunk_size;
+        let end = (start + chunk_size).min(body.len());
+        let chunk = &body[start..end];
+        let is_first = i == 0;
+        let is_last = i == chunk_count - 1;
+        let flags = if is_first && is_last {
+            Flags::COMPLETE
+        } else if is_first {
+            Flags::FIRST
+        } else if is_last {
+            Flags::LAST
+        } else {
+            Flags::MIDDLE
+        };
+
+        let mut report = vec![0u8; geometry.report_len()];
+        report[0] = ReportId::Output as u8;
+        #[allow(clippy::cast_possible_truncation)]
+        let len = chunk.len() as u8; // Both closed geometries have capacity < 256.
+        report[1] = len;
+        report[2] = flags;
+        report[3..3 + chunk.len()].copy_from_slice(chunk);
+        reports.push(report);
+    }
+
+    reports
+}
 
 /// Encode a logical message (protobuf payload + message-type tag) into one or
 /// more 129-byte HID output reports ready for `hidapi::HidDevice::write`.
@@ -241,33 +311,7 @@ pub fn encode_message(message_type: u16, payload: &[u8]) -> Vec<Vec<u8>> {
     body.extend_from_slice(&message_type.to_le_bytes());
     body.extend_from_slice(&[0u8; crate::message::TRAILER_LEN - 2]);
 
-    let chunk_count = body.len().div_ceil(CHUNK_SIZE);
-    let mut reports = Vec::with_capacity(chunk_count);
-
-    for (i, chunk) in body.chunks(CHUNK_SIZE).enumerate() {
-        let is_first = i == 0;
-        let is_last = i == chunk_count - 1;
-        let flags = if is_first && is_last {
-            Flags::COMPLETE
-        } else if is_first {
-            Flags::FIRST
-        } else if is_last {
-            Flags::LAST
-        } else {
-            Flags::MIDDLE
-        };
-
-        let mut report = vec![0u8; HID_REPORT_LEN];
-        report[0] = ReportId::Output as u8;
-        #[allow(clippy::cast_possible_truncation)]
-        let len = chunk.len() as u8; // chunk.len() <= CHUNK_SIZE = 126 < 256
-        report[1] = len;
-        report[2] = flags;
-        report[3..3 + chunk.len()].copy_from_slice(chunk);
-        reports.push(report);
-    }
-
-    reports
+    encode_reports(HidReportGeometry::QUAD_CORTEX, &body)
 }
 
 #[cfg(test)]
@@ -364,5 +408,86 @@ mod tests {
         assert!(!first.flags.is_last());
         assert!(last.flags.is_last());
         assert!(!last.flags.is_first());
+    }
+
+    #[test]
+    fn legacy_constants_remain_quad_geometry() {
+        assert_eq!(HID_BODY_LEN, 128);
+        assert_eq!(HID_REPORT_LEN, 129);
+        assert_eq!(CHUNK_SIZE, 126);
+        assert!(
+            encode_message(10, b"short")
+                .iter()
+                .all(|report| report.len() == HID_REPORT_LEN)
+        );
+    }
+
+    #[test]
+    fn closed_geometries_have_measured_dimensions() {
+        assert_eq!(HidReportGeometry::QUAD_CORTEX.body_len(), 128);
+        assert_eq!(HidReportGeometry::QUAD_CORTEX.report_len(), 129);
+        assert_eq!(HidReportGeometry::QUAD_CORTEX.data_capacity(), 126);
+        assert_eq!(HidReportGeometry::NANO_CORTEX.body_len(), 64);
+        assert_eq!(HidReportGeometry::NANO_CORTEX.report_len(), 65);
+        assert_eq!(HidReportGeometry::NANO_CORTEX.data_capacity(), 62);
+    }
+
+    #[test]
+    fn raw_report_boundaries_follow_selected_geometry() {
+        let empty = encode_reports(HidReportGeometry::NANO_CORTEX, &[]);
+        assert_eq!(empty.len(), 1);
+        assert_eq!(empty[0].len(), 65);
+        assert_eq!(empty[0][1], 0);
+        assert_eq!(empty[0][2], Flags::COMPLETE);
+        assert_eq!(Frame::parse(&empty[0]).unwrap().data, Vec::<u8>::new());
+        assert_eq!(
+            encode_reports(HidReportGeometry::QUAD_CORTEX, &[0; 126]).len(),
+            1
+        );
+        assert_eq!(
+            encode_reports(HidReportGeometry::QUAD_CORTEX, &[0; 127]).len(),
+            2
+        );
+        assert_eq!(
+            encode_reports(HidReportGeometry::NANO_CORTEX, &[0; 62]).len(),
+            1
+        );
+        assert_eq!(
+            encode_reports(HidReportGeometry::NANO_CORTEX, &[0; 63]).len(),
+            2
+        );
+    }
+
+    #[test]
+    fn nano_state_sized_body_reassembles_from_nine_reports() {
+        let body: Vec<u8> = (0u16..546)
+            .map(|i| u8::try_from(i % 251).unwrap())
+            .collect();
+        let reports = encode_reports(HidReportGeometry::NANO_CORTEX, &body);
+        assert_eq!(reports.len(), 9);
+        assert!(reports.iter().all(|report| report.len() == 65));
+        assert_eq!(reports[0][1], 62);
+        assert_eq!(reports[8][1], 50);
+
+        let frames: Vec<Frame> = reports
+            .iter()
+            .map(|report| Frame::parse(report).unwrap())
+            .collect();
+        assert_eq!(frames[0].flags, Flags(Flags::FIRST));
+        assert!(
+            frames[1..8]
+                .iter()
+                .all(|frame| frame.flags == Flags(Flags::MIDDLE))
+        );
+        assert_eq!(frames[8].flags, Flags(Flags::LAST));
+
+        let mut decoder = FrameReassembler::new();
+        let mut decoded_body = None;
+        for frame in &frames {
+            if let Some(complete) = decoder.feed(frame).unwrap() {
+                decoded_body = Some(complete);
+            }
+        }
+        assert_eq!(decoded_body.as_deref(), Some(body.as_slice()));
     }
 }

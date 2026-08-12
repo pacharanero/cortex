@@ -2,7 +2,7 @@
 
 An unofficial, open-source toolkit for the Neural DSP **Quad Cortex** and **Nano Cortex**, built around an eventual desktop GUI for Linux, Windows and macOS, a `cortex` CLI, a `cortex-mcp` server for agentic patch editing, and the reusable `cortex-rs` Rust crate beneath them. The goal is one shared transport and host foundation with honest device-specific models: the Quad's grid, scenes and presets remain distinct from the Nano's fixed signal chain.
 
-That dual-device, cross-platform editor is the destination, not the current support claim. Today the Quad Cortex CLI and MCP paths are hardware-verified on Linux and the GUI is a Quad-specific read-only first draft. Nano Cortex USB HID framing and a complete state read are hardware-verified, but Nano support has not yet reached the crate, CLI, MCP server or GUI.
+That dual-device, cross-platform editor is the destination, not the current support claim. Today the Quad Cortex CLI and MCP paths are hardware-verified on Linux and the GUI is a Quad-specific read-only first draft. Nano Cortex USB HID framing and a complete state read are hardware-verified; the crate now recognizes its USB identity and report geometry, but the Nano codec, session, CLI, MCP and GUI operations remain pending.
 
 > **Unofficial.** This project is not affiliated with, endorsed by, or
 > sponsored by Neural DSP Technologies. "Neural DSP", "Quad Cortex", "Nano
@@ -49,19 +49,15 @@ The working hardware path is currently Linux. Windows and macOS setup will be do
 
 ### 1. udev rule
 
-The Quad Cortex presents as USB `152a:880a` on HID interface 5. By default
-`/dev/hidraw*` is root-only, so install a udev rule granting the locally
-logged-in user access:
+The Quad Cortex presents as USB `152a:880a` and the Nano Cortex as `152a:88e7`, both on HID interface 5. By default `/dev/hidraw*` is root-only, so install the repository's explicit two-device udev rule:
 
 ```sh
-echo 'KERNEL=="hidraw*", ATTRS{idVendor}=="152a", ATTRS{idProduct}=="880a", MODE="0660", TAG+="uaccess"' \
-  | sudo tee /etc/udev/rules.d/70-quadcortex.rules
+sudo install -m 0644 70-neural-dsp-cortex.rules /etc/udev/rules.d/
 sudo udevadm control --reload-rules
 sudo udevadm trigger --action=add --subsystem-match=hidraw
 ```
 
-Re-plug the Quad Cortex, then `ls -l /dev/hidraw*` should show `crw-rw----+`
-on the interface-5 node.
+Re-plug the device, then `ls -l /dev/hidraw*` should show `crw-rw----+` on the interface-5 node. This prepares access to both products; the installed CLI remains Quad-only until the Nano codec/session work is complete.
 
 ### 2. Build
 

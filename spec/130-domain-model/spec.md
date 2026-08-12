@@ -63,7 +63,7 @@ Maintainers, AI coding agents, and the CLI/MCP/GUI surfaces that consume the cra
 | ID | Requirement | Priority |
 | --- | --- | --- |
 | FR-1 | `crates/cortex-rs/src/device.rs` exposes `DeviceKind::{QuadCortex, NanoCortex}` with a `vid_pid()` method returning `(u16, u16)`. | Must Have |
-| FR-2 | `DeviceKind::QuadCortex` returns `(0x152A, 0x880A)` (verified against CorOS 4.0.1). `DeviceKind::NanoCortex` returns `(0x152A, 0xFFFF)` as a fail-closed placeholder until the hardware-verified `0x88E7` PID can use device-dependent framing. | Must Have |
+| FR-2 | `DeviceKind::QuadCortex` returns `(0x152A, 0x880A)` and `DeviceKind::NanoCortex` returns hardware-verified `(0x152A, 0x88E7)`. | Must Have |
 | FR-3 | `DeviceKind::NanoCortex` is labelled provisional in its doc-comment: framing and a state read are hardware-verified, but runtime integration and other Nano operations are not. | Must Have |
 | FR-4 | `crates/cortex-rs/src/message.rs` exposes `Message { message_type: u16, body: Bytes }` and a `Message::parse(&[u8])` constructor that splits a reassembled buffer into body + 8-byte trailer. | Must Have |
 | FR-5 | `message.rs` exposes `TRAILER_LEN = 8` as a public constant. | Must Have |

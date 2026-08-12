@@ -152,7 +152,7 @@ The release pipeline is partly wired. `s/version++` and auto-tag exist; the rema
 1. **`s/version++`** (zone 500) bumps the canonical Rust workspace version and synchronizes the npm and Tauri manifests in one release commit.
 2. **Auto-tag workflow** detects the version bump on `main` and creates a `vX.Y.Z` tag. Implemented.
 3. **Planned crates.io publish workflow** will run dry-run and publish selected crates only after explicit approval.
-4. **Planned `cargo-dist` workflow** will be invoked directly by `auto-tag.yml` through `workflow_call`. The first supported target is `x86_64-unknown-linux-gnu`, packaging both binaries plus licences/notices, the udev rule and `SHA256SUMS`.
+4. **Planned `cargo-dist` workflow** will be invoked directly by `auto-tag.yml` through `workflow_call`. The first supported target is `x86_64-unknown-linux-gnu`, packaging both binaries plus licences/notices, the canonical two-product `70-neural-dsp-cortex.rules` and `SHA256SUMS`. The rule granting Nano access is not a Nano runtime support claim.
 5. **GitHub Release** is created from the tag with changelog notes (from `cargo-dist` or a `CHANGELOG.md`).
 6. **Public installer** at the docs-site root resolves the latest release, verifies the selected archive against `SHA256SUMS`, installs both binaries and refreshes or prescribes completions.
 

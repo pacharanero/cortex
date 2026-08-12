@@ -22,14 +22,15 @@
 #
 # Any other flags are passed through to `cargo install`.
 #
-# Linux note: the binary installs fine without it, but talking to a Quad
-# Cortex needs a udev rule granting your user access to the device. This
-# script checks and tells you the one-off fix if it is missing.
+# Linux note: the binaries install without it, but Cortex hardware needs a udev
+# rule granting your user access. This script checks the canonical two-device
+# rule and reports the one-off fix if it is absent or stale.
 
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 
-UDEV_RULE=/etc/udev/rules.d/70-quadcortex.rules
+UDEV_RULE=/etc/udev/rules.d/70-neural-dsp-cortex.rules
+SOURCE_UDEV_RULE=70-neural-dsp-cortex.rules
 
 install_mcp=true
 cargo_args=()
@@ -54,21 +55,27 @@ fi
 # Not a failure: you can legitimately install on a machine with no device
 # attached, and cargo has already done its job by this point.
 
-if [[ "$(uname -s)" == "Linux" && ! -f "$UDEV_RULE" ]]; then
+udev_rule_complete=false
+if [[ -f "$UDEV_RULE" ]] && cmp -s "$SOURCE_UDEV_RULE" "$UDEV_RULE"; then
+  udev_rule_complete=true
+fi
+
+if [[ "$(uname -s)" == "Linux" && "$udev_rule_complete" != true ]]; then
   cat >&2 <<EOF
 
-Heads up: $UDEV_RULE is not present.
+Heads up: $UDEV_RULE is missing or does not contain both Cortex products.
 
 Without it /dev/hidraw* is root-only, so cortex will not be able to open the
 device. To fix (one-off):
 
-  echo 'KERNEL=="hidraw*", ATTRS{idVendor}=="152a", ATTRS{idProduct}=="880a", MODE="0660", TAG+="uaccess"' \\
-    | sudo tee $UDEV_RULE
+  sudo install -m 0644 $SOURCE_UDEV_RULE $UDEV_RULE
   sudo udevadm control --reload-rules
   sudo udevadm trigger --action=add --subsystem-match=hidraw
 
 Then replug the unit. TAG+="uaccess" grants access to the logged-in user via
-systemd-logind, which is preferable to adding yourself to a group.
+systemd-logind, which is preferable to adding yourself to a group. The rule
+recognizes both devices; installed commands remain Quad-only while Nano
+application-protocol integration is in development.
 EOF
 fi
 

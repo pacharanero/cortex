@@ -101,7 +101,7 @@ pub use client::{
     build_usb_port_updates, user_setlist_path,
 };
 pub use device::DeviceKind;
-pub use framing::{Flags, Frame, FrameReassembler, ReportId};
+pub use framing::{Flags, Frame, FrameReassembler, HidReportGeometry, ReportId};
 pub use grid::{GridInputPort, GridOutputPort, Row, Value};
 pub use helpers::{
     Block as PresetBlock, GAIN_REDUCTION_PARAM, OptionCount, OptionSelector, RowAvailability,
@@ -138,14 +138,22 @@ pub enum Error {
     #[error("protobuf decode error: {0}")]
     Decode(String),
 
-    /// The 8-byte trailer was missing or did not contain a recognised
+    /// The Quad Cortex 8-byte trailer was missing or did not contain a recognised
     /// `CortexMessageType` tag.
     #[error("trailer error: {0}")]
     Trailer(String),
 
-    /// The device read timed out. Because every write is deliberately
-    /// stalled at the USB status stage, a read timeout is the only
-    /// reliable signal of a dead or unresponsive device.
+    /// The selected device does not support this device-specific protocol path.
+    #[error("operation not supported for {device:?}: {operation}")]
+    UnsupportedDeviceOperation {
+        /// Device selected by the caller.
+        device: DeviceKind,
+        /// Protocol operation that cannot safely run for that device.
+        operation: &'static str,
+    },
+
+    /// The device read timed out. On the Quad, whose writes deliberately
+    /// stall, this is the reliable signal of a dead or unresponsive device.
     #[error("read timeout after {0:?}")]
     ReadTimeout(std::time::Duration),
 

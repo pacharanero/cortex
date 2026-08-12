@@ -12,7 +12,8 @@ cargo fmt --all --check
 cargo clippy --all-targets --all-features -- -D warnings
 # The GUI and other mock-first consumers need the protocol/domain/session
 # surface without linking hidapi. Keep that feature boundary real in CI.
-cargo check --no-default-features -p cortex-rs
+cargo clippy -p cortex-rs --all-targets --no-default-features -- -D warnings
+cargo test --no-default-features -p cortex-rs
 (cd gui && npm run check)
 if command -v reuse >/dev/null 2>&1; then
     reuse lint

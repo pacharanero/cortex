@@ -346,6 +346,17 @@ cargo test -p cortex-rs --test hardware-reads pin_and_favorite_mutations_restore
 
 The capture-dialog decline test remains unverified. It installs its waiter before printing the instruction. Tap New Neural Capture only after `[WAITING]` appears. It sends only `show_dialog: false`, observes NeuralCapture traffic for 10 seconds, fails on capture state/progress/A-B preparation, performs an active-scene read, and disconnects. After disconnect, manually open New Neural Capture again, confirm the on-unit wizard opens, then cancel it; this would prove the fallback was not stranded. Never send `show_dialog: true`: positive acceptance remains blocked until the complete v1/v2 host UI exists. Gig View and Tuner show/hide are visual-only methods and were not exercised by the automated global-settings test. Neither UI behavior is hardware-verified.
 
+## Nano transport smoke
+
+Run this bounded read-only smoke when the Nano is connected. Disconnect any Neural DSP phone/tablet Bluetooth session first; an active remote editor should be tested separately and must surface the device's explicit `Device is busy!` ownership response.
+
+1. Install `70-neural-dsp-cortex.rules`, reload udev, reconnect the Nano, and confirm its interface-5 hidraw node has a user ACL.
+2. Confirm `DeviceKind::NanoCortex` opens PID `152A:88E7`, reports 65-byte geometry, sends one known read-only current-state request, and receives one `FIRST`, seven middle and one `LAST` report totaling 546 declared bytes.
+3. Decode only bytes within each report's `len`; never print the body or padding because both can contain private strings.
+4. Disconnect Nano, connect Quad, and run `cortex device version` plus `cortex session start`, `cortex session status`, and `cortex session stop` to prove the shared geometry refactor preserved Quad behavior.
+
+NANO-001.2 remains in progress until these checks run through repository code rather than the private probe.
+
 ## Out of scope
 
 Not covered by this runbook:
@@ -353,4 +364,4 @@ Not covered by this runbook:
 - MCP protocol/discovery behavior beyond the same daemon/core operations.
 - GUI write interactions and visual-polish coverage beyond the daemon read boundary above.
 - Capture/IR payload transfer, the positive host-owned capture workflow, visual-only Gig View/Tuner visibility, and most physical control paths.
-- Everything on the Nano Cortex.
+- Nano application operations beyond the bounded transport/state smoke above, including typed Bluetooth ownership-conflict decoding under NANO-001.3.

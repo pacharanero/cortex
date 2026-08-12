@@ -33,10 +33,11 @@ The Cortex Control protocol does not send a length-prefixed protobuf body over a
 
 This zone owns the four pieces of pure logic that convert between those two representations:
 
-1. `Frame::parse` - strip the report-ID / len / flags prefix off a 129-byte hidapi report and return the flag byte + the valid data bytes.
+1. `Frame::parse` - strip the report-ID / len / flags prefix off a device-sized hidapi report and return the flag byte + the valid data bytes.
 2. `FrameReassembler` - the flag-driven state machine that appends frame data until a `LAST` or `COMPLETE` frame yields the full reassembled body.
-3. `encode_message` - the inverse: append the 8-byte trailer to a protobuf payload, split into 126-byte chunks, wrap each as a 129-byte output report with the correct flags.
-4. The `ReportId` and `Flags` value types that name the wire constants once, so no other module hard-codes `0x01`, `0x02`, `0x40`, `0x80`, `0xC0`, or `126`.
+3. `encode_reports` - wrap an already-formed application body in device-sized HID reports without interpreting its envelope.
+4. `encode_message` - the Quad-specific inverse: append the 8-byte trailer to a protobuf payload, then encode it with Quad geometry.
+5. The `HidReportGeometry`, `ReportId` and `Flags` value types that name the wire constants and device dimensions once.
 
 The framing layer is deliberately I/O-free. It does not know about `hidapi`, gzip, or the `CortexMessageType` enum. The transport layer (`100`) owns the hidapi read/write and the gzip; the message layer (`130`) owns the trailer strip and the tag decode. This layer is the shared pure-logic seam between them.
 
@@ -52,6 +53,8 @@ The framing layer is deliberately I/O-free. It does not know about `hidapi`, gzi
 | 8-byte trailer = `[message_type u16 LE][6 bytes: zeros from host, device-filled, ignored]` | Hardware-verified | Matches `pyquadcortex` `TRAILER_SIZE = 8`; the 6 trailing bytes are observed device-filled on input but have no documented meaning |
 | A `FIRST` frame arriving mid-partial drops the stale buffer | Decoder recovery rule | The reassembler resynchronises, while the session treats the abandoned partial as a continuity gap and invalidates cached state |
 | `encode_message` output round-trips through `Frame::parse` + `FrameReassembler` + `Message::parse` | Hardware-verified | The `encode_then_decode_round_trips` unit test passes; `cortex device version` exercises the full path on hardware |
+| Nano 64-byte body, 65-byte report and 62-byte data capacity | Hardware-verified | Real Nano report descriptor and nine-report current-state reply on Linux, 2026-08-11 |
+| Nano uses the same report IDs and flag-driven reassembly | Hardware-verified | The current-state reply carried one FIRST, seven middle and one LAST report |
 
 The `pyquadcortex` offline test suite is a conformance reference but not a substitute for a hardware smoke run. Agent-generated tests must not be the sole basis for accepting framing behaviour.
 
@@ -106,12 +109,15 @@ The transport layer (`100`), the message/domain layers (`120`/`130`), the CLI (`
 | FR-15 | `encode_message` zero-pads each report to `HID_REPORT_LEN`; the `len` byte reflects the valid chunk length, not the padded length. | Must Have |
 | FR-16 | The framing module has no dependency on `hidapi`, `flate2`, transport I/O, or any async runtime. | Must Have |
 | FR-17 | The framing module compiles under `default-features = false` (i.e. with the `hid` feature off). It is not behind the `hid` feature gate. | Must Have |
+| FR-18 | `HidReportGeometry` exposes closed `QUAD_CORTEX` (128-byte body, 129-byte report, 126-byte data capacity) and `NANO_CORTEX` (64, 65, 62) values. | Must Have |
+| FR-19 | `encode_reports(geometry, body)` adds no application envelope; it splits an already-formed body at the selected geometry's data capacity and emits fixed-size reports with the same flags as `encode_message`. | Must Have |
+| FR-20 | Existing `HID_BODY_LEN`, `HID_REPORT_LEN`, `CHUNK_SIZE` and `encode_message` remain Quad compatibility APIs. | Must Have |
 
 ### Non-Functional Requirements
 
 | ID | Requirement | Target |
 | --- | --- | --- |
-| NFR-1 | The framing layer is pure logic: no I/O, no globals, no blocking. All functions are total over their input domain and return `Result` or a value. | Code invariant |
+| NFR-1 | The framing layer is pure logic: no I/O, no globals, no blocking. Closed geometry constants prevent invalid dimensions; `encode_reports` emits one empty COMPLETE report for an empty body rather than panicking or silently doing no I/O. | Code invariant |
 | NFR-2 | `Frame::parse` and `FrameReassembler::feed` are `O(n)` in the frame data length and allocate only for the returned `Vec<u8>`. | Review-enforced |
 | NFR-3 | `encode_message` pre-allocates the body `Vec` and the reports `Vec` from computed capacities; no re-allocation mid-loop. | Review-enforced |
 | NFR-4 | `ReportId` and `Flags` are `Copy`, `Debug`, `Clone`, `PartialEq`, `Eq`, `Serialize`, `Deserialize`. `Frame` is `Debug`, `Clone`, `PartialEq`, `Eq`. | Code invariant |

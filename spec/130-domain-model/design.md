@@ -43,7 +43,7 @@ pub enum DeviceKind {
 }
 ```
 
-`NanoCortex` is labelled provisional because runtime support is not implemented. Hardware confirms VID:PID `152A:88E7`, 65-byte HID reports, shared flag framing, and a decoded state exchange, but the current transport assumes Quad geometry and its domain parses the Quad eight-byte trailer. The placeholder product ID `0xFFFF` keeps opens fail-closed until device-dependent framing and the Nano codec land together.
+`NanoCortex` is labelled provisional because application runtime support is not implemented. Hardware confirms VID:PID `152A:88E7`, 65-byte HID reports, shared flag framing, and a decoded state exchange. `DeviceKind` now carries that PID and geometry, while the Quad message request and session paths reject Nano before USB I/O so its four-byte footer can never reach the Quad eight-byte parser.
 
 The `vid_pid()` method is `const fn` so it can be used in `const` contexts (e.g. a static lookup table in the transport layer).
 
@@ -118,7 +118,7 @@ This zone is Layer 4. Protocol layers still use generated types directly where t
 ## [DES-TEST] Testing Strategy
 
 - **Unit tests for `Message::parse`** (implemented): body/trailer split, LE `u16` read, short-buffer rejection.
-- **Unit tests for `DeviceKind::vid_pid`** (implemented): the Quad Cortex pair is asserted; the Nano Cortex placeholder is asserted as `0xFFFF`.
+- **Unit tests for `DeviceKind` profiles** (implemented): both hardware VID:PIDs, report dimensions and device-specific write-STALL policies are asserted.
 - **Unit tests for helpers and views** cover slot round-trips, row validation, scaling, occupancy and serialisable projections.
 - **Catalog parsing tests** build fictional minimal XML/tar/gzip fixtures and exercise malformed/bounded input without committing vendor or device data.
 - **Hardware smoke test** (manual runbook): recall a preset, parse it, edit a block, write it back, recall again and confirm the edit landed on the right row. CI has no hardware.

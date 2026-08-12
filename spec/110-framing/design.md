@@ -165,6 +165,10 @@ The logical message is `protobuf body ++ 8-byte trailer`. The trailer is:
 
 The message-type tag lives in the *trailer*, not a header. This is the `pyquadcortex` design and is confirmed on hardware. The host sends six zero bytes after the `u16` tag; the device fills them on input replies with values whose meaning is not documented in the recovered schema - this client ignores them. `Message::parse` (zone `130`) strips the trailer and reads the tag; `encode_message` (this zone) appends it.
 
+### `encode_reports` and `encode_message`
+
+`encode_reports(geometry, body)` owns only HID framing: it chunks an already-formed application body at `geometry.data_capacity()`, assigns flags, and pads reports to `geometry.report_len()`. `encode_message` remains the Quad compatibility wrapper that forms `protobuf ++ 8-byte trailer` and delegates to `encode_reports(HidReportGeometry::QUAD_CORTEX, body)`. A future Nano codec will form its four-byte-footer body separately and call the same raw encoder.
+
 ### `encode_message` algorithm
 
 ```rust
@@ -234,14 +238,15 @@ The 8-byte trailer is part of the reassembled body, so it is part of what gets c
 | `Flags::LAST` | `0x80` | Last frame of a multi-frame message. |
 | `Flags::COMPLETE` | `0xC0` | Single-frame message (`FIRST \| LAST`). |
 | `Flags::MIDDLE` | `0x00` | Middle frame of a multi-frame message. |
-| `HID_BODY_LEN` / `HID_REPORT_LEN` | `128` / `129` | Framing-owned report geometry, re-exported by transport. |
-| `CHUNK_SIZE` | `126` | Per-report data capacity: `HID_BODY_LEN - 2`. |
+| `HidReportGeometry::QUAD_CORTEX` | `128` / `129` / `126` | Quad body, report and data capacity. |
+| `HidReportGeometry::NANO_CORTEX` | `64` / `65` / `62` | Nano body, report and data capacity. |
+| `HID_BODY_LEN` / `HID_REPORT_LEN` / `CHUNK_SIZE` | `128` / `129` / `126` | Existing Quad compatibility constants. |
 
-These are the single source of truth for report geometry. `message::TRAILER_LEN` (8) remains owned by zone 130.
+The geometry values are the single source of truth for device report dimensions. `message::TRAILER_LEN` (8) remains a Quad application-envelope constant owned by zone 130.
 
 ## [DES-TEST] Testing Strategy
 
-The eight unit tests in `framing.rs` cover the behaviour, not the implementation:
+The framing unit tests cover the behaviour, not the implementation:
 
 | Test | What it asserts |
 | --- | --- |
@@ -253,6 +258,9 @@ The eight unit tests in `framing.rs` cover the behaviour, not the implementation
 | `encode_then_decode_round_trips` | `encode_message` output, fed through `Frame::parse` + `FrameReassembler` + `Message::parse`, recovers the original `message_type` and `payload`. The end-to-end symmetry test. |
 | `encode_single_frame_is_complete` | A short payload encodes to one report whose parsed `Frame` is `COMPLETE`. |
 | `encode_multi_frame_sets_flags` | A payload larger than `CHUNK_SIZE` encodes to multiple reports; the first is `FIRST`-but-not-`LAST`, the last is `LAST`-but-not-`FIRST`. |
+| `closed_geometries_have_measured_dimensions` | Quad and Nano dimensions match their report descriptors. |
+| `raw_report_boundaries_follow_selected_geometry` | 126/127 and 62/63 bytes split at the correct device boundary. |
+| `nano_state_sized_body_reassembles_from_nine_reports` | A fictional 546-byte body reproduces the measured Nano nine-report geometry and reassembles exactly. |
 
 These run in `cargo test -p cortex-rs` with no hardware. They are the CI gate for this zone. Hardware verification is a manual runbook owned by `500-dx-tooling` and is not a substitute for the unit tests - the unit tests guard the pure logic, the runbook guards the wire format.
 
@@ -262,4 +270,4 @@ These run in `cargo test -p cortex-rs` with no hardware. They are the CI gate fo
 - **The pure reassembler is uncapped.** The live session enforces a 1 MiB body cap and invalidates continuity on breach; offline callers must provide their own input bound.
 - **No streaming encode.** `encode_message` returns a `Vec<Vec<u8>>` holding all reports. For the CLI's short commands this is fine; a streaming encoder for very large writes is a future concern for the session layer (`140`).
 - **`Frame::parse` does not validate the report ID.** The caller (transport) is responsible for classifying the report direction. A test feeding a report with an arbitrary report ID byte to `Frame::parse` will succeed; this is deliberate.
-- **Nano Cortex geometry is not implemented.** Hardware established 65-byte reports with the same report IDs and flag-driven frame state machine, including a nine-report state reply. The Nano application body uses a four-byte footer rather than `Message::parse`'s Quad-specific eight-byte trailer, so sharing the reassembler must not conflate the two envelopes.
+- **Nano Cortex application envelope is not implemented.** Geometry and raw framing are shared, but the Nano body uses a four-byte footer rather than `Message::parse`'s Quad-specific eight-byte trailer. Quad request/session entry points reject Nano before USB I/O so the envelopes cannot be conflated.

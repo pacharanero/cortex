@@ -5,7 +5,7 @@
 - **Linux.** The leaf crate is portable, but the installed CLI/MCP host boundary is currently supported only on Linux. Windows named pipes and native Windows/macOS lifecycle and hardware paths remain unimplemented or unverified.
 - **Rust** (stable). Install via [rustup](https://rustup.rs/).
 - **A C build toolchain, `pkg-config`, libudev development files, and `protoc`.** The CLI's hidapi backend needs the native USB/HID prerequisites; the build script needs the Protocol Buffers compiler.
-- A **Quad Cortex**, connected by USB and powered on.
+- A **Quad Cortex** for the currently supported runtime, connected by USB and powered on. The udev rule also recognizes Nano Cortex hardware, whose toolkit integration remains in development.
 
 === "Arch / CachyOS"
 
@@ -29,11 +29,10 @@
 
 This is the step people get stuck on, and the symptom is confusing: the tool builds and installs perfectly, then reports that it cannot find a device that is plainly plugged in.
 
-The Quad Cortex appears as a USB HID device, and `/dev/hidraw*` nodes are root-only by default. One udev rule fixes it:
+Both Cortex devices expose HID interface 5, and `/dev/hidraw*` nodes are root-only by default. Install the repository's rule with explicit entries for Quad `152a:880a` and Nano `152a:88e7`:
 
 ```sh
-echo 'KERNEL=="hidraw*", ATTRS{idVendor}=="152a", ATTRS{idProduct}=="880a", MODE="0660", TAG+="uaccess"' \
-  | sudo tee /etc/udev/rules.d/70-quadcortex.rules
+sudo install -m 0644 70-neural-dsp-cortex.rules /etc/udev/rules.d/
 sudo udevadm control --reload-rules
 sudo udevadm trigger --action=add --subsystem-match=hidraw
 ```
@@ -47,7 +46,8 @@ Then **unplug and replug the unit**.
     Find the node and look for the `+` that indicates an ACL:
 
     ```sh
-    lsusb -d 152a:880a
+    lsusb -d 152a:880a # Quad Cortex
+    lsusb -d 152a:88e7 # Nano Cortex
     ls -l /dev/hidraw*
     ```
 
@@ -69,7 +69,7 @@ s/install
 
 `s/install` currently builds and installs both `cortex` and `cortex-mcp` from the checkout. It exists because the obvious command does not work here: this repo is a Cargo workspace whose root manifest has no `[package]`, so `cargo install --path .` fails. Prebuilt Linux release archives and a checksum-verifying installer are the next distribution milestone.
 
-It also checks for the udev rule and prints the fix if it is missing.
+It also checks that the canonical udev rule contains both products and prints the fix if it is missing or an older Quad-only rule is installed.
 
 ??? note "Options"
 

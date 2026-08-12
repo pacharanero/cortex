@@ -114,8 +114,8 @@ s/             Repo scripts: s/test, s/lint, s/gui-dev, s/version++ ...
   length/flag frame shape as the Quad, and a complete multi-report state read.
   Its BLE application payload maps directly onto HID, but its four-byte footer
   and fixed-chain domain differ from the Quad's eight-byte trailer and grid.
-  `DeviceKind::NanoCortex` remains a non-matching placeholder only until
-  device-dependent framing and the separate Nano codec land together.
+  Low-level discovery and device-dependent framing are implemented; the Quad
+  session rejects Nano before USB I/O until the separate Nano codec lands.
 
 ## Protocol invariants (do not break silently)
 

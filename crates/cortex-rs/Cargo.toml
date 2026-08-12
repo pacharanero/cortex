@@ -16,6 +16,11 @@ description = "Low-level Cortex Control USB HID crate and typed domain model for
 name = "cortex_rs"
 path = "src/lib.rs"
 
+[[test]]
+name = "hardware-reads"
+path = "tests/hardware-reads.rs"
+required-features = ["hid"]
+
 [features]
 default = ["hid"]
 # USB HID transport via hidapi. On by default for CLI/MCP/GUI use; disable

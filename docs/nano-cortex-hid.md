@@ -4,7 +4,7 @@ This page records the first hardware-verified Nano Cortex exchange over USB HID 
 
 !!! warning "Transport verified; toolkit integration pending"
 
-    A real Nano Cortex answered read-only USB HID probes on Linux on 2026-08-11. Report geometry, framing, multi-report reassembly, cross-transport ownership and one complete state read are hardware-verified. The current `cortex-rs`, CLI, MCP server and GUI do not yet open or model the Nano, so this is an implementer reference rather than a support claim.
+    A real Nano Cortex answered read-only USB HID probes on Linux on 2026-08-11. Report geometry, framing, multi-report reassembly, cross-transport ownership and one complete state read are hardware-verified. `cortex-rs` now knows the Nano USB identity and raw report geometry, but its Nano codec/session and every CLI, MCP and GUI operation remain pending, so this is an implementer reference rather than a support claim.
 
 ## USB identity
 
@@ -21,7 +21,7 @@ This page records the first hardware-verified Nano Cortex exchange over USB HID 
 
 The Nano is also a composite device with USB Audio, bidirectional USB MIDI and HID interfaces. HID is interface 5. Neither a five-second passive HID read nor a simultaneous passive USB MIDI observation produced traffic; the device answers active requests.
 
-On Linux, identify the device and interface rather than assuming the observed `/dev/hidrawN` number will remain stable. For protocol development before packaged installation supports the Nano, an equivalent udev rule is:
+On Linux, identify the device and interface rather than assuming the observed `/dev/hidrawN` number will remain stable. The repository's `70-neural-dsp-cortex.rules` grants access to explicit Quad and Nano products without opening every device from the vendor.
 
 ```udev
 KERNEL=="hidraw*", ATTRS{idVendor}=="152a", ATTRS{idProduct}=="88e7", MODE="0660", TAG+="uaccess"

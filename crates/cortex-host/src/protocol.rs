@@ -403,7 +403,8 @@ impl DaemonErrorCode {
         match error {
             cortex_rs::Error::Framing(_)
             | cortex_rs::Error::Decode(_)
-            | cortex_rs::Error::Trailer(_) => Self::Protocol,
+            | cortex_rs::Error::Trailer(_)
+            | cortex_rs::Error::UnsupportedDeviceOperation { .. } => Self::Protocol,
             cortex_rs::Error::ReadTimeout(_) => Self::DeviceTimeout,
             cortex_rs::Error::DeviceSilent(_) | cortex_rs::Error::Session(_) => {
                 Self::DeviceUnavailable

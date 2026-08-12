@@ -192,11 +192,11 @@ Field-level gzip (inside protobuf `bytes` fields) is a separate concern owned by
 
 | Constant | Value | Purpose |
 | --- | --- | --- |
-| `HID_BODY_LEN` | `128` | The currently implemented Quad payload portion, excluding the 1-byte report ID. Nano implementation work will make geometry device-dependent and use 64. |
-| `HID_REPORT_LEN` | `129` | The currently implemented Quad hidapi report length. Nano implementation work will use 65. |
+| `HID_BODY_LEN` | `128` | Public Quad compatibility constant. `DeviceKind::report_geometry` selects 128 for Quad and 64 for Nano. |
+| `HID_REPORT_LEN` | `129` | Public Quad compatibility constant. Device-dependent raw transport selects 129 for Quad and 65 for Nano. |
 | `DEFAULT_READ_TIMEOUT` | `2s` | The default liveness budget. Chosen to exceed the device's observed reply latency for a `version` round-trip while still failing fast on a dead device. |
 
-The HID size constants are defined in `framing.rs` and re-exported by `transport.rs`; the read timeout is transport-owned.
+The Quad compatibility constants and closed `HidReportGeometry` values are defined in `framing.rs`; transport re-exports the constants and retains `DeviceKind` to select live geometry. The read timeout remains transport-owned.
 
 ## [DES-FEATURE] Feature Gating
 
@@ -218,5 +218,5 @@ The dependency arrow points *into* the crate: the CLI, MCP server, and future Ta
 
 - **The `Transport::request` diagnostic is synchronous and uncorrelated.** Concurrent and subscribed operation uses the implemented session layer.
 - **First matching device only.** Multi-device scenarios are deferred; `open` does not filter by interface number or serial.
-- **Nano Cortex runtime support is not implemented.** Hardware established PID `0x88E7`, 65-byte reports, shared length/flag framing, multi-report reassembly, and a decoded Nano state reply. The code retains `0xFFFF` so it fails closed until transport geometry becomes device-dependent and the Nano-specific four-byte-footer codec is available.
+- **Nano Cortex application runtime support is not implemented.** Low-level transport uses hardware-established PID `0x88E7`, 65-byte reports and shared flag framing. Quad-envelope requests and sessions reject Nano before USB I/O until the Nano-specific four-byte-footer codec is available.
 - **No protocol compatibility negotiation.** Session caches identity/version, but a CorOS update can still silently change the wire format.

@@ -351,6 +351,12 @@ impl Session {
     /// As [`Self::open`].
     #[cfg(feature = "hid")]
     pub fn open_with_state(kind: DeviceKind, state: DeviceStateCache) -> crate::Result<Self> {
+        if kind != DeviceKind::QuadCortex {
+            return Err(crate::Error::UnsupportedDeviceOperation {
+                device: kind,
+                operation: "Quad Cortex session",
+            });
+        }
         let transport = crate::Transport::open(kind)?;
         Self::over_with_state(transport.into_device(), state)
     }
@@ -444,8 +450,8 @@ impl Session {
     ///
     /// # Errors
     ///
-    /// Currently always returns `Ok` (write errors are swallowed per the
-    /// benign STALL).
+    /// Currently always returns `Ok` because this Quad session swallows write
+    /// errors per that device's benign STALL.
     pub fn send(&self, message_type: MessageType, payload: &[u8]) -> crate::Result<()> {
         self.send_many([(message_type, payload)])
     }
@@ -1593,6 +1599,21 @@ mod tests {
     fn encode_read_message_produces_action_read() {
         let payload = encode_read_message(MessageType::Version);
         assert_eq!(payload, vec![0x08, 0x03]);
+    }
+
+    #[cfg(feature = "hid")]
+    #[test]
+    fn quad_session_rejects_nano_before_usb_enumeration() {
+        let Err(error) = Session::open(DeviceKind::NanoCortex) else {
+            panic!("Nano must not enter the Quad session");
+        };
+        assert!(matches!(
+            error,
+            crate::Error::UnsupportedDeviceOperation {
+                device: DeviceKind::NanoCortex,
+                operation: "Quad Cortex session"
+            }
+        ));
     }
 }
 
