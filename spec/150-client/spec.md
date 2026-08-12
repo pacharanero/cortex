@@ -30,7 +30,7 @@ The session layer (zone 140) provides correlated request/response and broadcast-
 
 This zone knows NOTHING about hidapi, HID reports, framing, or the session state machine. It holds a `Session` reference and builds protobuf messages, handing them to the session's `send`/`request`/`await_broadcast`/`collect` primitives. That keeps this layer testable with a fake session and keeps all wire concerns below it.
 
-Verification is per method. The implemented non-UI read, navigation, grid-edit, tempo, STOMP/expression/MIDI, file, capture/IR selection, global-setting, I/O and pin/Favorite paths are hardware-verified against CorOS 4.0.1. The safe false-only capture-dialog decline and visual-only Gig View/Tuner visibility methods remain unverified; positive host capture acceptance is structurally unavailable and planned separately.
+Verification is per method. The implemented non-UI read, navigation, grid-edit, tempo, STOMP/expression/MIDI, file, capture/IR selection, global-setting, I/O and pin/Favorite paths are hardware-verified against CorOS 4.0.1. A CorOS 4.0.1 false-only capture-dialog response froze and rebooted the unit, so no response is exposed; visual-only Gig View/Tuner visibility methods remain unverified; positive host capture acceptance is structurally unavailable and planned separately.
 
 ---
 
@@ -164,7 +164,7 @@ Preset File replies have no usable request-id correlation. Exact action and targ
 | ----- | ----------------------------------------------------------------------------------------------------------------- | ----------- |
 | FR-60 | `set_capture(row, column, capture, model, params, timeout)` accepts a validated device-returned entry, optionally verifies placement of default capture model 14000 or requires an existing compatible 14000/14001 block, writes `file_name` param 5 as the exact `<64-char hash><display name>` concatenation, then writes caller parameters in order. Index 5 is reserved and refused in `params`. Loading a capture RESETS the block's other parameters, so no follow-up may precede selection. | Should Have |
 | FR-61 | `set_ir(row, column, ir, slot, model, timeout)` accepts a validated device-returned entry and slot 0/1, optionally verifies placement of loader model 29001-29008 or requires an existing compatible loader, then writes IR PATH (param 2/10) as the exact non-filesystem library key followed by IR NAME (param 22/23) as the display name. Every IR Loader has two slots. Fresh read-back cannot prove loadability because invalid strings are stored unchanged; the on-unit warning icon remains the decisive check. | Should Have |
-| FR-80 | `build_decline_capture_dialog()` can encode only `NeuralCapture{UPDATE, show_dialog: false}`. `decline_capture_dialog(operator_action, timeout, observation_window)` registers a waiter for decoded `try_to_show_dialog: true` before prompting for operator action, sends no unsolicited response, rejects unrelated traffic, installs its observation collector before sending false, and returns subsequent NeuralCapture traffic. Positive acceptance is structurally unavailable from this public API and remains blocked from CLI/MCP/GUI until a complete v1/v2 host capture UI exists. No `show_dialog_fail_reason` semantics are inferred. | Should Have |
+| FR-80 | The public client exposes no Neural Capture dialog response. On CorOS 4.0.1, the exact false-only `NeuralCapture{UPDATE, show_dialog: false}` response following `try_to_show_dialog: true` froze and rebooted the unit. Causation is not established, but no retry is permitted absent new evidence. Positive acceptance remains structurally unavailable from CLI/MCP/GUI until a complete v1/v2 host capture UI exists. No `show_dialog_fail_reason` semantics are inferred. | Must Have |
 
 #### Global settings
 
@@ -245,7 +245,7 @@ Successful write dispatch is not device confirmation. `io_settings_complete` iss
 - [x] `set_ir()` preserved the exact device-returned key/name, and timed on-unit inspection confirmed no warning for the selected user IR.
 - [x] PROT-006.13 complete I/O read, mutation, pairing and exact restoration coverage passed on CorOS 4.0.1 with external outputs disconnected.
 - [x] Pure helpers and typed views pass fictional-fixture tests; PROT-006.15 is complete.
-- [~] Verification remains per operation: the safe capture-dialog decline has exact offline coverage but awaits its ignored hardware test; positive host capture belongs to the separate planned host-workflow scope, and Gig View/Tuner visibility remain visually unverified.
+- [~] Verification remains per operation: the false-only capture-dialog response was removed after it froze and rebooted a CorOS 4.0.1 unit; positive host capture belongs to the separate planned host-workflow scope, and Gig View/Tuner visibility remain visually unverified.
 
 ---
 

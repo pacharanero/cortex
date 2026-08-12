@@ -9,8 +9,8 @@ use std::time::Duration;
 use cortex_rs::client::USER_SETLIST;
 use cortex_rs::proto::{
     BinaryPreset, GeneralSettingsMessage, GlobalEqMessage, MidiMessageInfo, ModeMessage, Model,
-    NeuralCaptureMessage, Param, TunerMessage, general_settings_message, global_eq_message,
-    mode_message, param, param_value, tuner_message,
+    Param, TunerMessage, general_settings_message, global_eq_message, mode_message, param,
+    param_value, tuner_message,
 };
 use cortex_rs::{
     CAPTURE_FILE_NAME_PARAM, Catalog, DEFAULT_CAPTURE_MODEL, DeviceKind, ExpressionBypassMode,
@@ -1623,55 +1623,6 @@ fn capture_selection_reads_back_and_recall_cleanup() -> cortex_rs::Result<()> {
     let cleanup = qc.recall_preset(USER_SETLIST, "6A", false, timeout);
     qc.disconnect();
     cleanup?;
-    exercise
-}
-
-#[test]
-#[ignore = "requires an exclusively available real Quad Cortex and an operator tap on New Neural Capture"]
-fn capture_dialog_decline_is_graceful_and_session_stays_healthy() -> cortex_rs::Result<()> {
-    let qc = QuadCortex::connect(
-        DeviceKind::QuadCortex,
-        Duration::from_secs(10),
-        Duration::from_secs(1),
-    )?;
-
-    let exercise = (|| -> cortex_rs::Result<()> {
-        let traffic = qc.decline_capture_dialog(
-            || {
-                eprintln!(
-                    "[WAITING] Within 90 seconds, tap New Neural Capture on the Quad Cortex. Do not disconnect or open Cortex Control."
-                );
-                Ok(())
-            },
-            Duration::from_secs(90),
-            Duration::from_secs(10),
-        )?;
-
-        let entered_capture = traffic.iter().any(|message: &NeuralCaptureMessage| {
-            message.state == Some(cortex_rs::proto::neural_capture_message::State::State(1))
-                || message.progress.is_some()
-                || message.toggle_ab_model.is_some()
-                || message.model_ab_bypass.is_some()
-                || message.model_ab.is_some()
-        });
-        let scene = qc.active_scene(Duration::from_secs(30))?;
-        if entered_capture {
-            return Err(cortex_rs::Error::Session(format!(
-                "declining the dialog reported capture state/progress/A-B preparation; positive-control active-scene read still returned scene {}",
-                scene + 1
-            )));
-        }
-        eprintln!(
-            "[PASS] declined with show_dialog=false, observed NeuralCapture traffic for 10 seconds, and active-scene read returned scene {}",
-            scene + 1
-        );
-        Ok(())
-    })();
-
-    qc.disconnect();
-    eprintln!(
-        "[MANUAL] Now that the host is disconnected, open New Neural Capture on the unit, confirm the on-unit wizard opens, then cancel it."
-    );
     exercise
 }
 

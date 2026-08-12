@@ -46,10 +46,10 @@ use crate::proto::{
     GeneralSettingsMessage, GlobalBypassRows, GlobalEqMessage, GlobalEqParameter,
     InputPortSettings, IoSettingsMessage, LooperMessage, MasterVolumeAssignmentOptions,
     MasterVolumeMessage, MidiMessageInfo, MidiPortSettings, MidiSettingsMessage, ModeMessage,
-    NeuralCaptureMessage, OutputPortSettings, PinnedModelsMessage, PortSettings,
-    RecallPresetMessage, RecentsFavoritesItem, RecentsFavoritesMessage, SceneColorMessage,
-    SceneCopyMessage, SceneLabelMessage, SceneMessage, SetlistPositionMessage, ShowGigViewMessage,
-    ShowTunerMessage, TunerMessage, UsbPortSettings, VersionMessage,
+    OutputPortSettings, PinnedModelsMessage, PortSettings, RecallPresetMessage,
+    RecentsFavoritesItem, RecentsFavoritesMessage, SceneColorMessage, SceneCopyMessage,
+    SceneLabelMessage, SceneMessage, SetlistPositionMessage, ShowGigViewMessage, ShowTunerMessage,
+    TunerMessage, UsbPortSettings, VersionMessage,
 };
 use crate::session::{InboundMessage, Session};
 
@@ -1818,20 +1818,6 @@ fn build_midi_settings(
         );
     }
     Ok(message)
-}
-
-/// Build the exact response that declines the host-owned Neural Capture dialog.
-///
-/// Positive acceptance is intentionally not representable. Sending
-/// `show_dialog: true` is blocked until a complete v1/v2 host capture UI exists.
-/// No failure-reason semantics are inferred.
-#[must_use]
-pub fn build_decline_capture_dialog() -> NeuralCaptureMessage {
-    NeuralCaptureMessage {
-        action: MessageAction::Update as i32,
-        show_dialog: Some(crate::proto::neural_capture_message::ShowDialog::ShowDialog(false)),
-        ..Default::default()
-    }
 }
 
 /// Resolve a named parameter's typed input into its wire value.
@@ -5079,69 +5065,6 @@ impl QuadCortex {
         Ok(placement)
     }
 
-    /// Wait for and decline a device request to show the host-owned Neural
-    /// Capture dialog.
-    ///
-    /// The waiter is registered before `operator_action` runs, so a fast
-    /// `try_to_show_dialog: true` broadcast cannot be missed after the operator
-    /// is prompted to tap New Neural Capture. Unrelated or malformed messages
-    /// are ignored. The response is always exactly
-    /// `NeuralCapture{UPDATE, show_dialog: false}`; positive acceptance and
-    /// `show_dialog_fail_reason` are intentionally unavailable until a complete
-    /// v1/v2 host capture UI exists.
-    ///
-    /// Every decodable Neural Capture broadcast arriving during
-    /// `observation_window` after the decline is returned in arrival order.
-    /// The observer is installed before the response is sent.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`crate::Error::ReadTimeout`] if no matching request arrives
-    /// within `timeout`, or a session error if the decline cannot be sent.
-    pub fn decline_capture_dialog(
-        &self,
-        operator_action: impl FnOnce() -> crate::Result<()>,
-        timeout: Duration,
-        observation_window: Duration,
-    ) -> crate::Result<Vec<NeuralCaptureMessage>> {
-        self.session.await_broadcast(
-            MessageType::NeuralCapture,
-            operator_action,
-            timeout,
-            |message| {
-                prost::Message::decode(message.body.as_ref())
-                    .ok()
-                    .is_some_and(|message: NeuralCaptureMessage| {
-                        message.try_to_show_dialog
-                            == Some(
-                                crate::proto::neural_capture_message::TryToShowDialog::TryToShowDialog(
-                                    true,
-                                ),
-                            )
-                    })
-            },
-        )?;
-
-        let decline = prost::Message::encode_to_vec(&build_decline_capture_dialog());
-        let messages = self.session.collect(
-            MessageType::NeuralCapture,
-            || self.session.send(MessageType::NeuralCapture, &decline),
-            observation_window,
-            |message| {
-                prost::Message::decode(message.body.as_ref())
-                    .ok()
-                    .is_some_and(|_: NeuralCaptureMessage| true)
-            },
-        )?;
-        messages
-            .into_iter()
-            .map(|message| {
-                prost::Message::decode(message.body.as_ref())
-                    .map_err(|error| crate::Error::Decode(format!("NeuralCaptureMessage: {error}")))
-            })
-            .collect()
-    }
-
     /// Resolve and write a parameter using either its wire index or display name.
     ///
     /// This is the host-facing parameter API. Name lookup, read-only-meter
@@ -7516,138 +7439,6 @@ mod tests {
             first.params.is_empty(),
             "selector was sent after failed placement"
         );
-        session.close();
-    }
-
-    #[test]
-    fn capture_dialog_decline_builder_has_exact_false_only_shape() {
-        let message = build_decline_capture_dialog();
-        assert_eq!(message.action, MessageAction::Update as i32);
-        assert_eq!(
-            message.show_dialog,
-            Some(crate::proto::neural_capture_message::ShowDialog::ShowDialog(false))
-        );
-        assert!(message.try_to_show_dialog.is_none());
-        assert!(message.show_dialog_fail_reason.is_none());
-        assert!(message.request_id.is_none());
-        assert!(message.parameters.is_empty());
-        assert!(message.state.is_none());
-        assert!(message.progress.is_none());
-        assert!(message.toggle_ab_model.is_none());
-        assert!(message.save_info.is_none());
-        assert!(message.error_id.is_none());
-        assert!(message.model_ab_bypass.is_none());
-        assert!(message.model_ab.is_none());
-    }
-
-    #[test]
-    fn capture_dialog_decline_sends_nothing_without_a_request() {
-        let link = FakeLink::new();
-        let session = Arc::new(crate::Session::over(link.clone()).unwrap());
-        let qc = QuadCortex::new(session.clone());
-        let error = qc
-            .decline_capture_dialog(
-                || Ok(()),
-                Duration::from_millis(20),
-                Duration::from_millis(1),
-            )
-            .unwrap_err();
-        assert!(matches!(error, crate::Error::ReadTimeout(_)));
-        assert_eq!(link.write_count(), 0, "an unsolicited decline was sent");
-        session.close();
-    }
-
-    #[test]
-    fn capture_dialog_decline_rejects_unrelated_messages() {
-        let link = FakeLink::new();
-        let session = Arc::new(crate::Session::over(link.clone()).unwrap());
-        let qc = QuadCortex::new(session.clone());
-        let fake = link.clone();
-        let error = qc
-            .decline_capture_dialog(
-                move || {
-                    push_proto(
-                        &fake,
-                        MessageType::NeuralCapture,
-                        &NeuralCaptureMessage {
-                            try_to_show_dialog: Some(
-                                crate::proto::neural_capture_message::TryToShowDialog::TryToShowDialog(
-                                    false,
-                                ),
-                            ),
-                            state: Some(crate::proto::neural_capture_message::State::State(1)),
-                            ..Default::default()
-                        },
-                    );
-                    push_proto(&fake, MessageType::Grid, &crate::proto::GridMessage::default());
-                    Ok(())
-                },
-                Duration::from_millis(20),
-                Duration::from_millis(1),
-            )
-            .unwrap_err();
-        assert!(matches!(error, crate::Error::ReadTimeout(_)));
-        assert_eq!(
-            link.write_count(),
-            0,
-            "an unrelated message triggered a decline"
-        );
-        session.close();
-    }
-
-    #[test]
-    fn capture_dialog_decline_sends_false_then_session_remains_healthy() {
-        let link = FakeLink::new();
-        let session = Arc::new(crate::Session::over(link.clone()).unwrap());
-        let qc = QuadCortex::new(session.clone());
-        let fake = link.clone();
-        let responder = std::thread::spawn(move || {
-            let (_, body) = wait_for_write(&fake, 0, MessageType::NeuralCapture);
-            let decline: NeuralCaptureMessage = prost::Message::decode(body.as_slice()).unwrap();
-            assert_eq!(decline, build_decline_capture_dialog());
-
-            let (_, body) = wait_for_write(&fake, 0, MessageType::Scene);
-            let request: SceneMessage = prost::Message::decode(body.as_slice()).unwrap();
-            push_proto(
-                &fake,
-                MessageType::Scene,
-                &SceneMessage {
-                    request_id: request.request_id,
-                    selected_scene: Some(
-                        crate::proto::scene_message::SelectedScene::SelectedScene(3),
-                    ),
-                    ..Default::default()
-                },
-            );
-        });
-        let trigger = link.clone();
-        let observed = qc
-            .decline_capture_dialog(
-                move || {
-                    push_proto(
-                        &trigger,
-                        MessageType::NeuralCapture,
-                        &NeuralCaptureMessage {
-                            try_to_show_dialog: Some(
-                                crate::proto::neural_capture_message::TryToShowDialog::TryToShowDialog(
-                                    true,
-                                ),
-                            ),
-                            ..Default::default()
-                        },
-                    );
-                    Ok(())
-                },
-                Duration::from_secs(1),
-                Duration::from_millis(10),
-            )
-            .unwrap();
-        assert!(observed.is_empty());
-        assert_eq!(qc.active_scene(Duration::from_secs(1)).unwrap(), 3);
-        responder.join().unwrap();
-        let (_, body) = wait_for_write(&link, 0, MessageType::NeuralCapture);
-        let message: NeuralCaptureMessage = prost::Message::decode(body.as_slice()).unwrap();
-        assert_eq!(message, build_decline_capture_dialog());
         session.close();
     }
 
