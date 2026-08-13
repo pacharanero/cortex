@@ -90,6 +90,10 @@ spec/          Living spec/design per zone; roadmap and completed work ledgers.
 s/             Repo scripts: s/test, s/lint, s/gui-dev, s/version++ ...
 ```
 
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the workflow, [SECURITY.md](SECURITY.md) to report a vulnerability privately, and [AGENTS.md](AGENTS.md) for the protocol invariants and prior-art licensing boundaries that apply before changing anything.
+
 ## Prior art and attribution
 
 This project builds on the protocol work established by the MIT-licensed
