@@ -1,10 +1,9 @@
 # SPDX-FileCopyrightText: 2026 Dr Marcus Baw
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
-# The first cargo-dist-backed preview pipeline is intentionally non-publishing.
-# It verifies the Linux archive shape and retains it as a CI artifact. A future
-# release slice will add auto-tag invocation, GitHub hosting, SHA256SUMS as a
-# release asset, and an installer only after this path has CI evidence.
+# Build the Linux archive on every relevant pull request, retaining it for
+# inspection. When the auto-tag cascade invokes this workflow, publish that
+# same verified archive and its SHA256SUMS file as a GitHub Release.
 name: Release preview
 
 on:
@@ -19,6 +18,8 @@ on:
       - LICENSES/**
       - NOTICE
       - THIRD-PARTY-NOTICES.md
+      - docs/install.sh
+      - s/release-preview
       - .github/workflows/release.yml
   workflow_dispatch:
   workflow_call:
@@ -43,6 +44,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ inputs.tag || github.sha }}
           persist-credentials: false
           fetch-depth: 0
       - name: Select release tag
@@ -57,7 +59,18 @@ jobs:
             echo "Invalid release tag: $tag" >&2
             exit 1
           }
+          expected="v$(awk -F'"' '/^version = / { print $2; exit }' Cargo.toml)"
+          [[ "$tag" = "$expected" ]] || {
+            echo "Release tag $tag does not match Cargo.toml version $expected" >&2
+            exit 1
+          }
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
+      - name: Install Linux build prerequisites
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes build-essential pkg-config libudev-dev protobuf-compiler
       - name: Install cargo-dist
         shell: bash
         run: |
@@ -95,7 +108,10 @@ jobs:
           install -m 0644 LICENSES/* "$stage/LICENSES/"
           archive="target/release-preview/cortex-${RELEASE_TAG#v}-${TARGET}.tar.xz"
           tar -C target/release-preview -cJf "$archive" "${stage##*/}"
-          sha256sum "$archive" > target/release-preview/SHA256SUMS
+          (
+            cd target/release-preview
+            sha256sum "${archive##*/}" > SHA256SUMS
+          )
       - name: Upload preview archive
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -105,3 +121,33 @@ jobs:
             target/release-preview/SHA256SUMS
             dist-plan.json
           if-no-files-found: error
+
+  host:
+    name: Publish GitHub Release
+    needs: preview
+    if: inputs.tag != ''
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    env:
+      RELEASE_TAG: ${{ inputs.tag }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Download verified archive
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: cortex-linux-x86_64-preview
+          path: release
+      - name: Create GitHub Release
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f release/SHA256SUMS
+          mapfile -t archives < <(compgen -G 'release/*.tar.xz')
+          test "${#archives[@]}" -eq 1
+          (
+            cd release
+            sha256sum --check --strict SHA256SUMS
+          )
+          gh release create "$RELEASE_TAG" --target "$RELEASE_TAG" --generate-notes \
+            "${archives[@]}" release/SHA256SUMS

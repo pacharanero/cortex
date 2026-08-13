@@ -82,7 +82,7 @@ Every crate takes `version.workspace = true`, so the single version in the root 
 
 ## `s/release-preview`
 
-Build the non-publishing Linux x86_64 release preview using the cargo-dist version declared in `Cargo.toml`. It validates the release plan, produces one archive with `cortex`, `cortex-mcp`, licences/notices, and the udev rule, writes `SHA256SUMS`, then verifies both archive contents and checksum. It never tags, hosts, or publishes.
+Build the non-publishing Linux x86_64 release preview using the cargo-dist version declared in `Cargo.toml`. It validates the release plan, produces one archive with `cortex`, `cortex-mcp`, licences/notices, and the udev rule, writes a portable `SHA256SUMS`, then verifies both archive contents and checksum. It never tags, hosts, or publishes.
 
 - `s/release-preview`
 

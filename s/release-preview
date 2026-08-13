@@ -39,6 +39,12 @@ install -m 0644 LICENSE NOTICE THIRD-PARTY-NOTICES.md 70-neural-dsp-cortex.rules
 install -m 0644 LICENSES/* "$stage/LICENSES/"
 archive="target/release-preview/cortex-${version}-${target}.tar.xz"
 tar -C target/release-preview -cJf "$archive" "${stage##*/}"
-sha256sum "$archive" > target/release-preview/SHA256SUMS
+(
+  cd target/release-preview
+  sha256sum "${archive##*/}" > SHA256SUMS
+)
 tar -tJf "$archive"
-sha256sum --check target/release-preview/SHA256SUMS
+(
+  cd target/release-preview
+  sha256sum --check --strict SHA256SUMS
+)

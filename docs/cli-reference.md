@@ -24,6 +24,9 @@ Options:
 
           [default: text]
 
+      --schema
+          Print the shared agent-operation JSON Schemas used by cortex-mcp
+
       --zero-based
           Take `--row` as 0-3 rather than the 1-4 shown on the unit.
 
@@ -78,6 +81,9 @@ Options:
 
           [default: text]
 
+      --schema
+          Print the shared agent-operation JSON Schemas used by cortex-mcp
+
       --zero-based
           Take `--row` as 0-3 rather than the 1-4 shown on the unit.
 
@@ -123,6 +129,9 @@ Options:
 
           [default: text]
 
+      --schema
+          Print the shared agent-operation JSON Schemas used by cortex-mcp
+
       --zero-based
           Take `--row` as 0-3 rather than the 1-4 shown on the unit.
 
@@ -163,6 +172,9 @@ Options:
 
           [default: text]
 
+      --schema
+          Print the shared agent-operation JSON Schemas used by cortex-mcp
+
       --zero-based
           Take `--row` as 0-3 rather than the 1-4 shown on the unit.
 
@@ -201,6 +213,9 @@ Options:
           - json: Machine-readable JSON
 
           [default: text]
+
+      --schema
+          Print the shared agent-operation JSON Schemas used by cortex-mcp
 
       --zero-based
           Take `--row` as 0-3 rather than the 1-4 shown on the unit.
@@ -251,6 +266,9 @@ Options:
           - json: Machine-readable JSON
 
           [default: text]
+
+      --schema
+          Print the shared agent-operation JSON Schemas used by cortex-mcp
 
       --zero-based
           Take `--row` as 0-3 rather than the 1-4 shown on the unit.
@@ -314,6 +332,9 @@ Options:
 
           [default: text]
 
+      --schema
+          Print the shared agent-operation JSON Schemas used by cortex-mcp
+
       --zero-based
           Take `--row` as 0-3 rather than the 1-4 shown on the unit.
 
@@ -363,6 +384,9 @@ Options:
           - json: Machine-readable JSON
 
           [default: text]
+
+      --schema
+          Print the shared agent-operation JSON Schemas used by cortex-mcp
 
       --zero-based
           Take `--row` as 0-3 rather than the 1-4 shown on the unit.
@@ -416,6 +440,9 @@ Options:
 
           [default: text]
 
+      --schema
+          Print the shared agent-operation JSON Schemas used by cortex-mcp
+
       --zero-based
           Take `--row` as 0-3 rather than the 1-4 shown on the unit.
 
@@ -464,6 +491,9 @@ Options:
           - json: Machine-readable JSON
 
           [default: text]
+
+      --schema
+          Print the shared agent-operation JSON Schemas used by cortex-mcp
 
       --zero-based
           Take `--row` as 0-3 rather than the 1-4 shown on the unit.
@@ -522,6 +552,9 @@ Options:
 
           [default: text]
 
+      --schema
+          Print the shared agent-operation JSON Schemas used by cortex-mcp
+
       --zero-based
           Take `--row` as 0-3 rather than the 1-4 shown on the unit.
 
@@ -577,6 +610,9 @@ Options:
           - json: Machine-readable JSON
 
           [default: text]
+
+      --schema
+          Print the shared agent-operation JSON Schemas used by cortex-mcp
 
       --zero-based
           Take `--row` as 0-3 rather than the 1-4 shown on the unit.
@@ -634,6 +670,9 @@ Options:
 
           [default: text]
 
+      --schema
+          Print the shared agent-operation JSON Schemas used by cortex-mcp
+
       --zero-based
           Take `--row` as 0-3 rather than the 1-4 shown on the unit.
 
@@ -687,6 +726,9 @@ Options:
 
           [default: text]
 
+      --schema
+          Print the shared agent-operation JSON Schemas used by cortex-mcp
+
       --zero-based
           Take `--row` as 0-3 rather than the 1-4 shown on the unit.
 
@@ -733,6 +775,9 @@ Options:
 
           [default: text]
 
+      --schema
+          Print the shared agent-operation JSON Schemas used by cortex-mcp
+
       --zero-based
           Take `--row` as 0-3 rather than the 1-4 shown on the unit.
 
@@ -772,6 +817,9 @@ Options:
 
           [default: text]
 
+      --schema
+          Print the shared agent-operation JSON Schemas used by cortex-mcp
+
       --zero-based
           Take `--row` as 0-3 rather than the 1-4 shown on the unit.
 
@@ -810,6 +858,9 @@ Options:
           - json: Machine-readable JSON
 
           [default: text]
+
+      --schema
+          Print the shared agent-operation JSON Schemas used by cortex-mcp
 
       --zero-based
           Take `--row` as 0-3 rather than the 1-4 shown on the unit.
@@ -855,6 +906,9 @@ Options:
           - json: Machine-readable JSON
 
           [default: text]
+
+      --schema
+          Print the shared agent-operation JSON Schemas used by cortex-mcp
 
       --zero-based
           Take `--row` as 0-3 rather than the 1-4 shown on the unit.
@@ -906,6 +960,9 @@ Options:
 
           [default: text]
 
+      --schema
+          Print the shared agent-operation JSON Schemas used by cortex-mcp
+
       --zero-based
           Take `--row` as 0-3 rather than the 1-4 shown on the unit.
 
@@ -949,6 +1006,9 @@ Options:
           - json: Machine-readable JSON
 
           [default: text]
+
+      --schema
+          Print the shared agent-operation JSON Schemas used by cortex-mcp
 
       --zero-based
           Take `--row` as 0-3 rather than the 1-4 shown on the unit.
@@ -995,6 +1055,9 @@ Options:
           - json: Machine-readable JSON
 
           [default: text]
+
+      --schema
+          Print the shared agent-operation JSON Schemas used by cortex-mcp
 
       --zero-based
           Take `--row` as 0-3 rather than the 1-4 shown on the unit.
@@ -1043,6 +1106,9 @@ Options:
           - json: Machine-readable JSON
 
           [default: text]
+
+      --schema
+          Print the shared agent-operation JSON Schemas used by cortex-mcp
 
       --zero-based
           Take `--row` as 0-3 rather than the 1-4 shown on the unit.
@@ -1108,6 +1174,9 @@ Options:
 
           [default: text]
 
+      --schema
+          Print the shared agent-operation JSON Schemas used by cortex-mcp
+
       --zero-based
           Take `--row` as 0-3 rather than the 1-4 shown on the unit.
 
@@ -1159,6 +1228,9 @@ Options:
           - json: Machine-readable JSON
 
           [default: text]
+
+      --schema
+          Print the shared agent-operation JSON Schemas used by cortex-mcp
 
       --zero-based
           Take `--row` as 0-3 rather than the 1-4 shown on the unit.
@@ -1221,6 +1293,9 @@ Options:
 
           [default: text]
 
+      --schema
+          Print the shared agent-operation JSON Schemas used by cortex-mcp
+
       --zero-based
           Take `--row` as 0-3 rather than the 1-4 shown on the unit.
 
@@ -1267,6 +1342,9 @@ Options:
           - json: Machine-readable JSON
 
           [default: text]
+
+      --schema
+          Print the shared agent-operation JSON Schemas used by cortex-mcp
 
       --zero-based
           Take `--row` as 0-3 rather than the 1-4 shown on the unit.
@@ -1326,6 +1404,9 @@ Options:
 
           [default: text]
 
+      --schema
+          Print the shared agent-operation JSON Schemas used by cortex-mcp
+
       --zero-based
           Take `--row` as 0-3 rather than the 1-4 shown on the unit.
 
@@ -1371,6 +1452,9 @@ Options:
 
           [default: text]
 
+      --schema
+          Print the shared agent-operation JSON Schemas used by cortex-mcp
+
       --zero-based
           Take `--row` as 0-3 rather than the 1-4 shown on the unit.
 
@@ -1414,6 +1498,9 @@ Options:
           - json: Machine-readable JSON
 
           [default: text]
+
+      --schema
+          Print the shared agent-operation JSON Schemas used by cortex-mcp
 
       --zero-based
           Take `--row` as 0-3 rather than the 1-4 shown on the unit.
@@ -1463,6 +1550,9 @@ Options:
           - json: Machine-readable JSON
 
           [default: text]
+
+      --schema
+          Print the shared agent-operation JSON Schemas used by cortex-mcp
 
       --zero-based
           Take `--row` as 0-3 rather than the 1-4 shown on the unit.
@@ -1518,6 +1608,9 @@ Options:
 
           [default: text]
 
+      --schema
+          Print the shared agent-operation JSON Schemas used by cortex-mcp
+
       --zero-based
           Take `--row` as 0-3 rather than the 1-4 shown on the unit.
 
@@ -1564,6 +1657,9 @@ Options:
 
           [default: text]
 
+      --schema
+          Print the shared agent-operation JSON Schemas used by cortex-mcp
+
       --zero-based
           Take `--row` as 0-3 rather than the 1-4 shown on the unit.
 
@@ -1604,6 +1700,9 @@ Options:
           - json: Machine-readable JSON
 
           [default: text]
+
+      --schema
+          Print the shared agent-operation JSON Schemas used by cortex-mcp
 
       --zero-based
           Take `--row` as 0-3 rather than the 1-4 shown on the unit.
@@ -1646,6 +1745,9 @@ Options:
           - json: Machine-readable JSON
 
           [default: text]
+
+      --schema
+          Print the shared agent-operation JSON Schemas used by cortex-mcp
 
       --zero-based
           Take `--row` as 0-3 rather than the 1-4 shown on the unit.
@@ -1695,6 +1797,9 @@ Options:
 
           [default: text]
 
+      --schema
+          Print the shared agent-operation JSON Schemas used by cortex-mcp
+
       --zero-based
           Take `--row` as 0-3 rather than the 1-4 shown on the unit.
 
@@ -1711,6 +1816,58 @@ Options:
 
 Examples:
   cortex device probe
+```
+
+### `cortex setup`
+
+Diagnose local installation, USB access, daemon health, and MCP setup.
+
+```text
+Diagnose local installation, USB access, daemon health, and MCP setup.
+
+This command never opens the device. By default it only reports what needs attention. The two changes it can make require explicit flags.
+
+Usage: cortex setup [OPTIONS]
+
+Options:
+      --install-udev
+          Install or replace the narrowly-scoped udev rule using sudo, then reload and trigger the rules. Replug the device afterwards
+
+      --claude-code
+          Register the sibling cortex-mcp binary with Claude Code at user scope. This changes Claude Code configuration, not device state
+
+      --format <FORMAT>
+          Output format. `text` is for humans; `json` is for scripts and agents, and is stable enough to parse.
+
+          Only the RESULT changes format. Progress, warnings, and errors always go to stderr as plain text, so `cortex preset list --format json | jq` gets clean JSON regardless.
+
+          Possible values:
+          - text: Human-readable, the default
+          - json: Machine-readable JSON
+
+          [default: text]
+
+      --schema
+          Print the shared agent-operation JSON Schemas used by cortex-mcp
+
+      --zero-based
+          Take `--row` as 0-3 rather than the 1-4 shown on the unit.
+
+          The unit labels its rows 1-4 and the wire numbers them 0-3, so the default matches what a player sees. Scripts and agents generally have a zero-based index already, and converting it back by hand is exactly the sort of arithmetic that silently edits the wrong row.
+
+  -n, --dry-run
+          Print the operation plan without changing device or local state. Read-only commands accept and ignore this flag
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+  -V, --version
+          Print version
+
+Examples:
+  cortex setup
+  cortex setup --install-udev
+  cortex setup --claude-code
 ```
 
 ### `cortex scene`
@@ -1747,6 +1904,9 @@ Options:
           - json: Machine-readable JSON
 
           [default: text]
+
+      --schema
+          Print the shared agent-operation JSON Schemas used by cortex-mcp
 
       --zero-based
           Take `--row` as 0-3 rather than the 1-4 shown on the unit.
@@ -1797,6 +1957,9 @@ Options:
 
           [default: text]
 
+      --schema
+          Print the shared agent-operation JSON Schemas used by cortex-mcp
+
       --zero-based
           Take `--row` as 0-3 rather than the 1-4 shown on the unit.
 
@@ -1839,6 +2002,9 @@ Options:
 
           [default: text]
 
+      --schema
+          Print the shared agent-operation JSON Schemas used by cortex-mcp
+
       --zero-based
           Take `--row` as 0-3 rather than the 1-4 shown on the unit.
 
@@ -1877,6 +2043,9 @@ Options:
           - json: Machine-readable JSON
 
           [default: text]
+
+      --schema
+          Print the shared agent-operation JSON Schemas used by cortex-mcp
 
       --zero-based
           Take `--row` as 0-3 rather than the 1-4 shown on the unit.
@@ -1920,6 +2089,9 @@ Options:
 
           [default: text]
 
+      --schema
+          Print the shared agent-operation JSON Schemas used by cortex-mcp
+
       --zero-based
           Take `--row` as 0-3 rather than the 1-4 shown on the unit.
 
@@ -1962,6 +2134,9 @@ Options:
 
           [default: text]
 
+      --schema
+          Print the shared agent-operation JSON Schemas used by cortex-mcp
+
       --zero-based
           Take `--row` as 0-3 rather than the 1-4 shown on the unit.
 
@@ -2003,6 +2178,9 @@ Options:
           - json: Machine-readable JSON
 
           [default: text]
+
+      --schema
+          Print the shared agent-operation JSON Schemas used by cortex-mcp
 
       --zero-based
           Take `--row` as 0-3 rather than the 1-4 shown on the unit.
@@ -2061,6 +2239,9 @@ Options:
 
           [default: text]
 
+      --schema
+          Print the shared agent-operation JSON Schemas used by cortex-mcp
+
       --zero-based
           Take `--row` as 0-3 rather than the 1-4 shown on the unit.
 
@@ -2113,6 +2294,9 @@ Options:
           - json: Machine-readable JSON
 
           [default: text]
+
+      --schema
+          Print the shared agent-operation JSON Schemas used by cortex-mcp
 
       --zero-based
           Take `--row` as 0-3 rather than the 1-4 shown on the unit.
@@ -2177,6 +2361,9 @@ Options:
           - json: Machine-readable JSON
 
           [default: text]
+
+      --schema
+          Print the shared agent-operation JSON Schemas used by cortex-mcp
 
       --zero-based
           Take `--row` as 0-3 rather than the 1-4 shown on the unit.

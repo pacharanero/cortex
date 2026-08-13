@@ -22,7 +22,7 @@ mod decode;
 // names here to keep the printers below unchanged.
 use cortex_rs::view::{CpuLoad, DeviceVersion, ParamValueKind, Preset as PresetOut, PresetSlot};
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::{CommandFactory, Parser, Subcommand};
 use cortex_rs::proto::VersionMessage;
 use cortex_rs::proto::cortex_message_type::Enum as MessageType;
@@ -170,6 +170,23 @@ enum Command {
     Device {
         #[command(subcommand)]
         command: DeviceCmd,
+    },
+    /// Diagnose local installation, USB access, daemon health, and MCP setup.
+    ///
+    /// This command never opens the device. By default it only reports what
+    /// needs attention. The two changes it can make require explicit flags.
+    #[command(
+        after_help = "Examples:\n  cortex setup\n  cortex setup --install-udev\n  cortex setup --claude-code"
+    )]
+    Setup {
+        /// Install or replace the narrowly-scoped udev rule using sudo, then
+        /// reload and trigger the rules. Replug the device afterwards.
+        #[arg(long)]
+        install_udev: bool,
+        /// Register the sibling cortex-mcp binary with Claude Code at user
+        /// scope. This changes Claude Code configuration, not device state.
+        #[arg(long)]
+        claude_code: bool,
     },
 
     /// Switch, label, recolour, copy, or swap scenes.
@@ -1030,6 +1047,10 @@ fn run(cli: Cli) -> Result<()> {
             DeviceCmd::Cpu => cmd_cpu(fmt),
             DeviceCmd::Probe { listen } => cmd_probe(listen, fmt),
         },
+        Some(Command::Setup {
+            install_udev,
+            claude_code,
+        }) => cmd_setup(install_udev, claude_code, fmt),
         Some(Command::Scene { command, index }) => match (command, index) {
             (Some(SceneCmd::Switch { index }), None) | (None, Some(index)) => {
                 cmd_scene_request(cortex_host::Request::SwitchScene { scene: index }, fmt)
@@ -1617,6 +1638,7 @@ fn dry_run_plan(command: Option<&Command>) -> Result<Option<DryRunPlan>> {
                 None
             }
         }
+        Command::Setup { .. } => None,
     };
     Ok(plan)
 }
@@ -3410,6 +3432,178 @@ fn cmd_connect(status: bool, stop: bool, fmt: Format) -> Result<()> {
     anyhow::bail!("internal error: session action was neither status nor stop")
 }
 
+#[derive(serde::Serialize)]
+struct SetupOut {
+    architecture: String,
+    supported_architecture: bool,
+    quad_cortex_present: bool,
+    nano_cortex_present: bool,
+    udev_rule_current: bool,
+    daemon_running: bool,
+    cortex_mcp: Option<std::path::PathBuf>,
+    actions: Vec<String>,
+}
+
+const UDEV_RULE_PATH: &str = "/etc/udev/rules.d/70-neural-dsp-cortex.rules";
+const UDEV_RULE: &str = include_str!("../../../70-neural-dsp-cortex.rules");
+
+/// Check the USB device tree without opening a HID handle. Opening a second
+/// handle is unsafe while Cortex Control or the held daemon owns the device.
+fn usb_device_present(vendor: &str, product: &str) -> bool {
+    let Ok(entries) = std::fs::read_dir("/sys/bus/usb/devices") else {
+        return false;
+    };
+    entries.flatten().any(|entry| {
+        let path = entry.path();
+        let read = |name| std::fs::read_to_string(path.join(name)).ok();
+        matches!(
+            (read("idVendor"), read("idProduct")),
+            (Some(found_vendor), Some(found_product))
+                if found_vendor.trim().eq_ignore_ascii_case(vendor)
+                    && found_product.trim().eq_ignore_ascii_case(product)
+        )
+    })
+}
+
+fn installed_udev_rule_is_current() -> bool {
+    std::fs::read_to_string(UDEV_RULE_PATH).is_ok_and(|installed| installed == UDEV_RULE)
+}
+
+fn sibling_mcp() -> Option<std::path::PathBuf> {
+    let executable = std::env::current_exe().ok()?;
+    let path = executable.parent()?.join("cortex-mcp");
+    path.is_file().then_some(path)
+}
+
+fn cmd_setup(install_udev: bool, claude_code: bool, fmt: Format) -> Result<()> {
+    if install_udev {
+        let source = std::env::current_exe()
+            .context("locate the cortex executable")?
+            .parent()
+            .context("locate the cortex installation directory")?
+            .join("70-neural-dsp-cortex.rules");
+        if !source.is_file() {
+            anyhow::bail!(
+                "the packaged udev rule is not beside cortex at {}; reinstall from the release archive",
+                source.display()
+            );
+        }
+        let status = std::process::Command::new("sudo")
+            .args(["install", "-m", "0644"])
+            .arg(&source)
+            .arg(UDEV_RULE_PATH)
+            .status()
+            .context("run sudo to install the udev rule")?;
+        if !status.success() {
+            anyhow::bail!("sudo could not install the udev rule");
+        }
+        for args in [
+            ["control", "--reload-rules"].as_slice(),
+            ["trigger", "--action=add", "--subsystem-match=hidraw"].as_slice(),
+        ] {
+            let status = std::process::Command::new("udevadm")
+                .args(args)
+                .status()
+                .context("run udevadm")?;
+            if !status.success() {
+                anyhow::bail!("udevadm failed after installing the udev rule");
+            }
+        }
+    }
+
+    let mcp = sibling_mcp();
+    if claude_code {
+        let mcp = mcp.as_ref().context(
+            "could not find cortex-mcp beside cortex; install both release binaries together",
+        )?;
+        let status = std::process::Command::new("claude")
+            .args([
+                "mcp",
+                "add",
+                "--transport",
+                "stdio",
+                "--scope",
+                "user",
+                "cortex",
+                "--",
+            ])
+            .arg(mcp)
+            .status()
+            .context("run Claude Code MCP registration")?;
+        if !status.success() {
+            anyhow::bail!("Claude Code did not register cortex-mcp");
+        }
+    }
+
+    let architecture = std::env::consts::ARCH.to_string();
+    let udev_rule_current = installed_udev_rule_is_current();
+    let quad_cortex_present = usb_device_present("152a", "880a");
+    let nano_cortex_present = usb_device_present("152a", "88e7");
+    let daemon_running = connect::request(&cortex_host::Request::Status).is_some();
+    let mut actions = Vec::new();
+    if architecture != "x86_64" {
+        actions.push("released host binaries currently support Linux x86_64 only".into());
+    }
+    if !udev_rule_current {
+        actions.push(
+            "install the udev rule with `cortex setup --install-udev`, then replug the device"
+                .into(),
+        );
+    }
+    if !quad_cortex_present && !nano_cortex_present {
+        actions.push(
+            "connect and power on a Cortex device; no supported USB device is present".into(),
+        );
+    }
+    if quad_cortex_present {
+        actions.push(
+            "quit Cortex Control and any VM using USB passthrough before opening a session".into(),
+        );
+    }
+    if mcp.is_none() {
+        actions
+            .push("install cortex and cortex-mcp together so local MCP setup is available".into());
+    } else if !claude_code {
+        actions.push(
+            "register Claude Code explicitly with `cortex setup --claude-code` if wanted".into(),
+        );
+    }
+    if !daemon_running {
+        actions.push("start a held device session with `cortex session start` when ready".into());
+    }
+    let out = SetupOut {
+        architecture,
+        supported_architecture: std::env::consts::OS == "linux"
+            && std::env::consts::ARCH == "x86_64",
+        quad_cortex_present,
+        nano_cortex_present,
+        udev_rule_current,
+        daemon_running,
+        cortex_mcp: mcp,
+        actions,
+    };
+    emit(&out, fmt, |out| {
+        println!("architecture: {}", out.architecture);
+        println!(
+            "released architecture supported: {}",
+            out.supported_architecture
+        );
+        println!("Quad Cortex present: {}", out.quad_cortex_present);
+        println!("Nano Cortex present: {}", out.nano_cortex_present);
+        println!("udev rule current: {}", out.udev_rule_current);
+        println!("daemon running: {}", out.daemon_running);
+        println!(
+            "cortex-mcp: {}",
+            out.cortex_mcp
+                .as_ref()
+                .map_or_else(|| "not found".into(), |path| path.display().to_string())
+        );
+        for action in &out.actions {
+            println!("next: {action}");
+        }
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3420,6 +3614,12 @@ mod tests {
         // Catches conflicting args, bad defaults, and duplicate names at test
         // time rather than on first run.
         Cli::command().debug_assert();
+    }
+
+    #[test]
+    fn setup_is_a_valid_read_only_command() {
+        let cli = Cli::try_parse_from(["cortex", "setup", "--format", "json"]).unwrap();
+        assert!(dry_run_plan(cli.command.as_ref()).unwrap().is_none());
     }
 
     #[test]

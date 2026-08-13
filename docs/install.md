@@ -1,11 +1,21 @@
 # Install
 
-## Current Preview Requirements
+## Released Linux Install
 
-- **Linux.** The leaf crate is portable, but the installed CLI/MCP host boundary is currently supported only on Linux. Windows named pipes and native Windows/macOS lifecycle and hardware paths remain unimplemented or unverified.
-- **Rust** (stable). Install via [rustup](https://rustup.rs/).
-- **A C build toolchain, `pkg-config`, libudev development files, and `protoc`.** The CLI's hidapi backend needs the native USB/HID prerequisites; the build script needs the Protocol Buffers compiler.
+- **Linux x86_64 only.** The leaf crate is portable, but released CLI/MCP host binaries currently support only Linux x86_64. Windows named pipes and native Windows/macOS lifecycle and hardware paths remain unimplemented or unverified.
 - A **Quad Cortex** for the currently supported runtime, connected by USB and powered on. The udev rule also recognizes Nano Cortex hardware, whose toolkit integration remains in development.
+
+```sh
+curl -LsSf https://pacharanero.github.io/cortex/install.sh | sh
+```
+
+The script downloads the latest GitHub Release archive, verifies its entry in the release's `SHA256SUMS`, then installs both `cortex` and `cortex-mcp` to `~/.local/bin` by default. It does not require Rust, a compiler, `protoc`, or development headers.
+
+Set `CORTEX_VERSION=v0.1.0` to install a specific release, or `CORTEX_INSTALL_DIR=/some/bin` to choose a destination. Re-running it replaces both binaries and refreshes shell completions when the shell can be detected.
+
+## Developer Build Requirements
+
+Building from source instead requires Rust (stable), a C build toolchain, `pkg-config`, libudev development files, and `protoc`.
 
 === "Arch / CachyOS"
 
@@ -25,11 +35,19 @@
     sudo dnf install gcc pkgconf-pkg-config systemd-devel protobuf-compiler
     ```
 
-## 1. Grant access to the device
+## 1. Grant Access To The Device
 
 This is the step people get stuck on, and the symptom is confusing: the tool builds and installs perfectly, then reports that it cannot find a device that is plainly plugged in.
 
 Both Cortex devices expose HID interface 5, and `/dev/hidraw*` nodes are root-only by default. Install the repository's rule with explicit entries for Quad `152a:880a` and Nano `152a:88e7`:
+
+After the released installer, run the explicit setup step:
+
+```sh
+cortex setup --install-udev
+```
+
+It asks for `sudo` only to install `/etc/udev/rules.d/70-neural-dsp-cortex.rules`, reloads udev rules, and triggers hidraw. It never opens or changes the device. A source checkout can use the equivalent commands:
 
 ```sh
 sudo install -m 0644 70-neural-dsp-cortex.rules /etc/udev/rules.d/
@@ -59,7 +77,7 @@ The protocol requires one effective HID owner, but the OS/device does not enforc
 
 The same applies in reverse: while `cortex` holds a session, Cortex Control will not connect.
 
-## 3. Install the preview
+## 3. Build From Source
 
 ```sh
 git clone https://github.com/pacharanero/cortex
@@ -67,7 +85,7 @@ cd cortex
 s/install
 ```
 
-`s/install` currently builds and installs both `cortex` and `cortex-mcp` from the checkout. It exists because the obvious command does not work here: this repo is a Cargo workspace whose root manifest has no `[package]`, so `cargo install --path .` fails. The release preview pipeline now builds one Linux x86_64 archive containing both binaries, licence/notices, and the udev rule, but it does not publish or host artifacts yet. A checksum-verifying installer remains the next distribution slice.
+`s/install` builds and installs both `cortex` and `cortex-mcp` from the checkout. It exists because the obvious command does not work here: this repo is a Cargo workspace whose root manifest has no `[package]`, so `cargo install --path .` fails.
 
 Maintainers can reproduce the non-publishing archive check with `s/release-preview`. It requires the exact cargo-dist version declared in the workspace manifest and never creates a tag, GitHub Release, or package publication.
 
@@ -86,7 +104,23 @@ It also checks that the canonical udev rule contains both products and prints th
 
     `--mcp` remains accepted as a compatibility alias, but MCP is installed by default.
 
-## 4. Shell completions
+## 4. Diagnose And Configure
+
+```sh
+cortex setup
+```
+
+This read-only diagnostic reports architecture support, USB presence, whether the canonical udev rule is current, daemon health, and whether the paired MCP binary is installed. It deliberately does not open a HID handle, so it cannot disrupt Cortex Control or the held daemon.
+
+To register the local stdio server with Claude Code, choose the explicit configuration action:
+
+```sh
+cortex setup --claude-code
+```
+
+This uses the absolute path of the sibling `cortex-mcp` binary and changes only Claude Code's user-scoped MCP configuration. Other harnesses should use the configuration in [Agent setup](agent-setup.md).
+
+## 5. Shell Completions
 
 ```sh
 cortex completions install
@@ -111,7 +145,7 @@ autoload -Uz compinit && compinit
 
     The bare-shell form is the stable interface for packagers.
 
-## 5. Check it works
+## 6. Check It Works
 
 ```sh
 cortex device version
