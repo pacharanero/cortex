@@ -92,3 +92,11 @@ jobs:
             -f ref="refs/tags/$TAG" \
             -f sha="$tag_object"
           echo "Created $TAG"
+
+  release-preview:
+    name: Build release preview
+    needs: tag
+    if: needs.tag.outputs.bumped == 'true'
+    uses: ./.github/workflows/release.yml
+    with:
+      tag: ${{ needs.tag.outputs.tag }}

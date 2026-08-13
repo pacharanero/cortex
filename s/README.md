@@ -80,6 +80,12 @@ Runs the full `s/lint` gate before touching the version, so a failure leaves no 
 
 Every crate takes `version.workspace = true`, so the single version in the root `Cargo.toml` is the only one to bump. When the Tauri app lands, its `package.json` and `tauri.conf.json` have to move in the same commit.
 
+## `s/release-preview`
+
+Build the non-publishing Linux x86_64 release preview using the cargo-dist version declared in `Cargo.toml`. It validates the release plan, produces one archive with `cortex`, `cortex-mcp`, licences/notices, and the udev rule, writes `SHA256SUMS`, then verifies both archive contents and checksum. It never tags, hosts, or publishes.
+
+- `s/release-preview`
+
 ## `s/usb-trace`
 
 Record the USB traffic to and from the Quad Cortex, using `usbmon` on the Linux host.

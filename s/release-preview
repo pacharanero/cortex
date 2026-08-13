@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Dr Marcus Baw
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# Build the first Linux release archive locally without tagging, hosting or
+# publishing. Mirrors .github/workflows/release.yml's archive contract.
+
+set -euo pipefail
+cd "$(git rev-parse --show-toplevel)"
+
+version="$(awk -F'"' '/^version = / { print $2; exit }' Cargo.toml)"
+dist_version="$(awk -F'"' '/cargo-dist-version = / { print $2; exit }' Cargo.toml)"
+target="x86_64-unknown-linux-gnu"
+
+command -v dist >/dev/null 2>&1 || {
+    echo "s/release-preview: cargo-dist ${dist_version} is required (see release.yml)." >&2
+    exit 1
+}
+[[ "$(dist --version)" == "cargo-dist ${dist_version}" ]] || {
+    echo "s/release-preview: expected cargo-dist ${dist_version}, found $(dist --version)." >&2
+    exit 1
+}
+
+mkdir -p target/release-preview
+plan="target/release-preview/dist-plan.json"
+dist plan --tag "v${version}" --output-format=json > "$plan"
+jq -e '
+  .ci.github.artifacts_matrix.include | length == 1
+  and .[0].targets == ["x86_64-unknown-linux-gnu"]
+' "$plan" >/dev/null
+
+cargo build --locked --profile dist -p cortex-cli -p cortex-mcp
+stage="target/release-preview/cortex-${version}-${target}"
+rm -rf "$stage"
+mkdir -p "$stage/LICENSES"
+install -m 0755 target/dist/cortex "$stage/cortex"
+install -m 0755 target/dist/cortex-mcp "$stage/cortex-mcp"
+install -m 0644 LICENSE NOTICE THIRD-PARTY-NOTICES.md 70-neural-dsp-cortex.rules "$stage/"
+install -m 0644 LICENSES/* "$stage/LICENSES/"
+archive="target/release-preview/cortex-${version}-${target}.tar.xz"
+tar -C target/release-preview -cJf "$archive" "${stage##*/}"
+sha256sum "$archive" > target/release-preview/SHA256SUMS
+tar -tJf "$archive"
+sha256sum --check target/release-preview/SHA256SUMS

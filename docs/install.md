@@ -67,7 +67,9 @@ cd cortex
 s/install
 ```
 
-`s/install` currently builds and installs both `cortex` and `cortex-mcp` from the checkout. It exists because the obvious command does not work here: this repo is a Cargo workspace whose root manifest has no `[package]`, so `cargo install --path .` fails. Prebuilt Linux release archives and a checksum-verifying installer are the next distribution milestone.
+`s/install` currently builds and installs both `cortex` and `cortex-mcp` from the checkout. It exists because the obvious command does not work here: this repo is a Cargo workspace whose root manifest has no `[package]`, so `cargo install --path .` fails. The release preview pipeline now builds one Linux x86_64 archive containing both binaries, licence/notices, and the udev rule, but it does not publish or host artifacts yet. A checksum-verifying installer remains the next distribution slice.
+
+Maintainers can reproduce the non-publishing archive check with `s/release-preview`. It requires the exact cargo-dist version declared in the workspace manifest and never creates a tag, GitHub Release, or package publication.
 
 It also checks that the canonical udev rule contains both products and prints the fix if it is missing or an older Quad-only rule is installed.
 

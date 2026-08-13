@@ -1,0 +1,107 @@
+# SPDX-FileCopyrightText: 2026 Dr Marcus Baw
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+# The first cargo-dist-backed preview pipeline is intentionally non-publishing.
+# It verifies the Linux archive shape and retains it as a CI artifact. A future
+# release slice will add auto-tag invocation, GitHub hosting, SHA256SUMS as a
+# release asset, and an installer only after this path has CI evidence.
+name: Release preview
+
+on:
+  pull_request:
+    paths:
+      - Cargo.lock
+      - Cargo.toml
+      - crates/**
+      - gui/src-tauri/Cargo.toml
+      - 70-neural-dsp-cortex.rules
+      - LICENSE
+      - LICENSES/**
+      - NOTICE
+      - THIRD-PARTY-NOTICES.md
+      - .github/workflows/release.yml
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      tag:
+        description: Release tag to build without publishing.
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  CARGO_DIST_VERSION: "0.32.0"
+  CARGO_DIST_INSTALLER_SHA256: "b657cf8c04a8b7bc28f39d220f7e6dd11bbd2bdb072c552262bd9ccf597261b5"
+  TARGET: x86_64-unknown-linux-gnu
+
+jobs:
+  preview:
+    name: Build Linux x86_64 preview
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Select release tag
+        id: release
+        shell: bash
+        env:
+          REQUESTED_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          tag="${REQUESTED_TAG:-v$(awk -F'"' '/^version = / { print $2; exit }' Cargo.toml)}"
+          [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]] || {
+            echo "Invalid release tag: $tag" >&2
+            exit 1
+          }
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+      - name: Install cargo-dist
+        shell: bash
+        run: |
+          set -euo pipefail
+          installer="$RUNNER_TEMP/cargo-dist-installer.sh"
+          curl --fail --location --proto '=https' --tlsv1.2 \
+            "https://github.com/axodotdev/cargo-dist/releases/download/v${CARGO_DIST_VERSION}/cargo-dist-installer.sh" \
+            --output "$installer"
+          echo "${CARGO_DIST_INSTALLER_SHA256}  $installer" | sha256sum --check --strict
+          sh "$installer"
+      - name: Verify release plan
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          set -euo pipefail
+          dist plan --tag "$RELEASE_TAG" --output-format=json > dist-plan.json
+          jq -e '
+            .ci.github.artifacts_matrix.include | length == 1
+            and .[0].targets == ["x86_64-unknown-linux-gnu"]
+          ' dist-plan.json >/dev/null
+      - name: Build preview archive
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          set -euo pipefail
+          cargo build --locked --profile dist -p cortex-cli -p cortex-mcp
+          stage="target/release-preview/cortex-${RELEASE_TAG#v}-${TARGET}"
+          rm -rf "$stage"
+          mkdir -p "$stage/LICENSES"
+          install -m 0755 target/dist/cortex "$stage/cortex"
+          install -m 0755 target/dist/cortex-mcp "$stage/cortex-mcp"
+          install -m 0644 LICENSE NOTICE THIRD-PARTY-NOTICES.md 70-neural-dsp-cortex.rules "$stage/"
+          install -m 0644 LICENSES/* "$stage/LICENSES/"
+          archive="target/release-preview/cortex-${RELEASE_TAG#v}-${TARGET}.tar.xz"
+          tar -C target/release-preview -cJf "$archive" "${stage##*/}"
+          sha256sum "$archive" > target/release-preview/SHA256SUMS
+      - name: Upload preview archive
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: cortex-linux-x86_64-preview
+          path: |
+            target/release-preview/*.tar.xz
+            target/release-preview/SHA256SUMS
+            dist-plan.json
+          if-no-files-found: error

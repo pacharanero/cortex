@@ -55,3 +55,19 @@ tokio = { version = "1.53.1", features = ["io-std", "io-util", "macros", "net", 
 [profile.release]
 lto = "thin"
 codegen-units = 1
+
+# cargo-dist is the release builder. The first public preview targets only
+# Linux x86_64, where the USB HID and local IPC paths are hardware-verified.
+# The generated CI is checked in and pinned separately.
+[workspace.metadata.dist]
+cargo-dist-version = "0.32.0"
+ci = "github"
+targets = ["x86_64-unknown-linux-gnu"]
+installers = []
+packages = ["cortex-cli", "cortex-mcp"]
+source-tarball = false
+allow-dirty = ["ci"]
+
+[profile.dist]
+inherits = "release"
+lto = "thin"
