@@ -75,6 +75,9 @@ jobs:
       - name: Tests (leaf engine, no default features)
         run: cargo test --all --no-default-features
 
+      - name: Tauri build boundary (debug, no bundle)
+        run: npm run tauri --prefix gui -- build --debug --no-bundle --ci
+
       - name: Windows host-boundary cross-check
         run: |
           cargo check -p cortex-host --target x86_64-pc-windows-gnu
