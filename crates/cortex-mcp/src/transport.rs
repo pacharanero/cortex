@@ -6,6 +6,9 @@
 //! `rmcp` 3.1.0 still uses an unbounded `read_until` on its stdio read path.
 //! This adapter caps each line and aggregate in-flight work until the response
 //! has actually been written.
+//!
+//! @see spec/300-mcp/spec.md [FR-42]
+//! @see spec/300-mcp/design.md [DES-FRAMEWORK]
 
 use std::collections::HashMap;
 use std::future::Future;

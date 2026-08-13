@@ -2,6 +2,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 //! MCP tool registry and daemon request adapter.
+//!
+//! Enforces the safety surface (explicit confirmation, factory refusal,
+//! pre-edit target preparation), reuses the held daemon as the sole HID
+//! owner, and wraps each `QuadCortex` method as one tiered tool.
+//!
+//! @see spec/300-mcp/spec.md [FR-1] [FR-2] [FR-4] [FR-40] [FR-41]
+//! @see spec/300-mcp/design.md [DES-SAFETY] [DES-OWNER] [DES-TOOLS]
 
 use std::borrow::Cow;
 use std::io::{Read as _, Write as _};
