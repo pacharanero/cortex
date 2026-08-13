@@ -297,7 +297,7 @@ Release workflows live under CLI-004; this section tracks non-release CI gaps on
 
 ### ENG-004: Traceability
 
-- [ ] **ENG-004.1**: Add `@see` traceability headers to all owned source files linking to zone specs. **Night: slice.** Cover one complete zone per PR and leave the parent planned until every owned source file is covered
+- [ ] **ENG-004.1**: Add `@see` traceability headers to all owned source files linking to zone specs. **Night: slice.** Cover one complete zone per PR and leave the parent planned until every owned source file is covered. `300-mcp` is now fully covered (`crates/cortex-mcp/src/{main,server,transport}.rs`); `cortex-rs/src/` and `cortex-cli/src/` were already fully covered. **Remaining:** `crates/cortex-host/src/` (owned by `200-cli`) and `gui/`/`gui/src-tauri/src/` (owned by `400-gui`)
 - [ ] **ENG-004.2**: CI gate for `@see` link resolution (optional, low priority). `deskop-nano-cortex/scripts/check-traceability.mjs` is a working reference: resolve document and node ID, fail broken links, warn missing back-references, and include an explicit config/workflow file list ([prior-art.md](prior-art.md#for-eng-004-and-eng-001))
 
 ### ENG-005: `s/usb-trace` - observe Cortex Control on the wire
