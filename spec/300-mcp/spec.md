@@ -202,6 +202,7 @@ AI coding agents editing patches via MCP, and the maintainers who gate what an a
 | Working-copy write | Edits the recalled preset in device RAM (set_block, set_param, set_routing); persists only on save |
 | Destructive write | Overwrites a slot (save_preset); gated by the safety surface |
 | Provisional | Not yet verified against real hardware by this project; may work but is not confirmed |
+
 ## Future: audio feedback (FUTURE-007)
 
 An agent editing a patch through this server can already establish **structural** ground truth by read-back: `read_current_preset` returns the actual grid, so "did my edit land on the intended block" is answerable today, and the row-numbering trap is detectable rather than silent.

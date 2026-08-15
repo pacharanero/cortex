@@ -11,7 +11,7 @@ tags: ["dx", "tooling", "lint", "format", "test", "scripts", "editorconfig"]
 
 # 500 DX Tooling - Spec
 
-> The repo scripts and lint/format/test configuration. `s/test` and `s/lint` are the canonical local gates, now including no-default workspace clippy/tests; CI additionally runs Windows cross-checks and platform setup that are not duplicated locally.
+> The repo scripts and lint/format/test configuration. `s/test` and `s/lint` are the canonical local gates, including no-default workspace clippy/tests and Markdown lint, and are available as an opt-in pre-commit hook; CI additionally runs Windows cross-checks and platform setup that are not duplicated locally.
 
 ## References
 
@@ -25,7 +25,7 @@ tags: ["dx", "tooling", "lint", "format", "test", "scripts", "editorconfig"]
 
 ## Problem Statement
 
-A maintainer or agent runs `s/test` for Rust formatting, all-feature clippy, default-feature workspace tests and no-default workspace tests, then `s/lint` for formatting, all-feature and no-default workspace clippy, REUSE when installed, and real-device-data lint. CI remains broader only in the Windows host/MCP cross-checks, which stay CI-only because they need a cross toolchain that is not guaranteed to be present locally. Local green no longer skips the no-default workspace clippy/test paths that used to be remote-only.
+A maintainer or agent runs `s/test` for Rust formatting, all-feature clippy, default-feature workspace tests and no-default workspace tests, then `s/lint` for formatting, all-feature and no-default workspace clippy, Markdown lint, REUSE when installed, and real-device-data lint. `s/install-hooks` makes `s/lint` a pre-commit hook for maintainers who want it, without imposing one on every clone. CI remains broader only in the Windows host/MCP cross-checks, which stay CI-only because they need a cross toolchain that is not guaranteed to be present locally. Local green no longer skips the no-default workspace clippy/test paths that used to be remote-only.
 
 This zone owns the scripts, the `.editorconfig`, and the lint/format config. The CI workflow itself is owned by zone 600; this zone mirrors it locally. `s/gui-dev` and `s/version++` exist. The version script synchronizes the Rust workspace, npm lock/package metadata and Tauri configuration in one release commit.
 
@@ -40,7 +40,8 @@ This zone owns the scripts, the `.editorconfig`, and the lint/format config. The
 | `s/gui-dev` | Implemented | Runs the Tauri dev server from the repository-independent entry point |
 | `s/version++` | Implemented | Release script synchronizes Cargo, npm and Tauri versions, runs the Rust and frontend gates, then lands one release commit |
 | No-default workspace clippy/tests run locally, not only in CI | Implemented | `s/lint` runs `cargo clippy --all-targets --no-default-features -- -D warnings`; `s/test` runs `cargo test --all --no-default-features` |
-| Markdown lint | Planned | Not yet wired |
+| Markdown lint | Implemented | `s/markdownlint` runs `markdownlint-cli2@0.23.2` against `.markdownlint.jsonc`, from `s/lint` and a dedicated CI step |
+| Tracked Git hooks | Implemented | `s/install-hooks` sets `core.hooksPath=.githooks`; `.githooks/pre-commit` runs `s/lint` |
 
 ## User Stories
 
@@ -75,20 +76,20 @@ Maintainers and AI coding agents running the local gate before a commit.
 | ID | Requirement | Priority |
 | --- | --- | --- |
 | FR-1 | `s/test` runs `cargo fmt --all --check`, all-feature clippy, `cargo test --all` and `cargo test --all --no-default-features`. | Must Have |
-| FR-2 | `s/lint` runs formatting, all-feature clippy, no-default-features workspace clippy, `reuse lint` when available, and `s/lint-no-device-data`. | Must Have |
+| FR-2 | `s/lint` runs formatting, all-feature clippy, no-default-features workspace clippy, `s/markdownlint`, `reuse lint` when available, and `s/lint-no-device-data`. | Must Have |
 | FR-3 | `.editorconfig` enforces UTF-8 charset, LF line endings, 4-space indent (2 for `*.md`/`*.yaml`/`*.yml`/`*.json`/`*.toml`, 4 for `*.rs`), final newline, and trailing-whitespace trim. | Must Have |
 | FR-4 | The `s/` scripts carry an SPDX header (`SPDX-FileCopyrightText` / `SPDX-License-Identifier`) and a one-line description of what they do. | Must Have |
 | FR-5 | The `s/` scripts `set -euo pipefail` and `cd` to the repo root via `git rev-parse --show-toplevel`, so they run from any working directory. | Must Have |
 | FR-10 | `s/gui-dev` runs the Tauri dev server from any working directory. | Must Have |
+| FR-12 | `s/markdownlint` runs `markdownlint-cli2` (pinned, via `npx`) against `.markdownlint.jsonc` in both `s/lint` and CI. The config is not purely stylistic: `MD056` and `MD040` catch defects that silently degrade the rendered docs. | Should Have |
+| FR-13 | `s/install-hooks` sets `core.hooksPath` to the tracked `.githooks/` directory, and reverses that with `-u`. | Should Have |
+| FR-14 | `.githooks/pre-commit` runs `s/lint` and refuses the commit on failure. | Should Have |
 
 #### Planned
 
 | ID | Requirement | Priority |
 | --- | --- | --- |
 | FR-11 | `s/version++` synchronises the canonical version across Cargo, npm package/lock and Tauri configuration before the release commit. | Must Have |
-| FR-12 | Markdown lint (e.g. `markdownlint` or equivalent) runs in `s/lint` and CI, enforcing prose style (line wrapping, heading style, etc.). | Should Have |
-| FR-13 | `s/install-hooks` installs the `.githooks/` directory as the git hooks path. | Should Have |
-| FR-14 | `.githooks/pre-commit` runs `s/lint` (or a fast subset) and refuses the commit on failure. | Should Have |
 
 ### Non-Functional Requirements
 
@@ -110,8 +111,8 @@ Maintainers and AI coding agents running the local gate before a commit.
 - [x] `s/gui-dev` runs the Tauri dev server.
 - [x] `s/version++` bumps the version across all current surfaces in one commit.
 - [x] `s/test` and `s/lint` run no-default-features workspace clippy and tests locally, matching CI's no-default job.
-- [ ] Markdown lint runs in `s/lint` and CI.
-- [ ] `s/install-hooks` and `.githooks/pre-commit` are wired.
+- [x] Markdown lint runs in `s/lint` and CI.
+- [x] `s/install-hooks` and `.githooks/pre-commit` are wired.
 
 ## Non-Goals
 
@@ -131,8 +132,7 @@ Maintainers and AI coding agents running the local gate before a commit.
 ## Future
 
 - **`s/version++` GUI synchronization.** Implemented for `gui/package.json`, `gui/package-lock.json` and `gui/src-tauri/tauri.conf.json`; a future CI drift check can verify they match outside release runs.
-- **Markdown lint config.** A `.markdownlint.json` or equivalent enforcing the house-style prose rules (no hard-wrap, heading style, etc.). Will run in `s/lint` and CI.
-- **Pre-commit hook scope.** `.githooks/pre-commit` should run a fast subset (fmt + clippy, not the full test suite) so the commit is not blocked on a long test run. `s/test` remains the full pre-push gate.
+- **Markdown lint in the docs build.** `s/markdownlint` covers style and structure, but not whether links resolve or the nav is complete. House style also describes `s/linkcheck`, `s/spellcheck` and a nav-orphan check for docs-heavy repos; this repo has the docs site to justify them and does not have them yet.
 
 ## Glossary
 

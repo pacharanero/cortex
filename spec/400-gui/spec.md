@@ -146,6 +146,7 @@ The first draft establishes the stack, mockable frontend API boundary, a demo Ta
 | Tauri command | A Rust function exposed to the webview; calls `cortex-host`, uses shared `cortex-rs` views, and returns typed serialisable data |
 | `s/gui-dev` | Repo script that runs the Tauri dev server from any working directory |
 | Safety surface reuse | The GUI gates saves through the same prepared-target contract as the MCP server (factory refusal, exact target, pre-edit backup, explicit confirmation) |
+
 ## Related roadmap items
 
 - **[DOCS-002](../roadmap.md)** - the factory preset reference (what each factory preset evokes, and how to set it up) is aimed at agents driving the MCP server, but the GUI wants the same data to annotate the patch browser. Build it as a shared, generated artefact rather than duplicating it per surface.

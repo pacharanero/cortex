@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Dr Marcus Baw
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# Pre-commit hook: run the repository's lint gate.
+#
+# Installed by `s/install-hooks`, which is opt-in per checkout. Takes a few
+# seconds with a warm cargo cache and considerably longer on a cold one.
+#
+# `git commit --no-verify` skips it when you genuinely need to commit
+# work in progress.
+
+set -euo pipefail
+cd "$(git rev-parse --show-toplevel)"
+
+exec s/lint

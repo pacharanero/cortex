@@ -40,31 +40,31 @@ Verification is per method. The implemented non-UI read, navigation, grid-edit, 
 
 #### Lifecycle
 
-| ID    | Requirement                                                                                                       | Priority    |
+| ID | Requirement | Priority |
 | ----- | ----------------------------------------------------------------------------------------------------------------- | ----------- |
-| FR-1  | `QuadCortex::new(session)` constructs the client around a `Session`. | Must Have   |
-| FR-2  | `connect(timeout, settle)` is a convenience that opens the transport, starts the session, runs the handshake, and returns a `QuadCortex`. The Rust equivalent of `pyquadcortex.connect()`. | Must Have   |
-| FR-3  | `disconnect()` sends `Connection{connected: false}` (delegates to `Session::disconnect`). | Must Have   |
-| FR-4  | `close()` delegates to `Session::close()`: announce disconnect, join workers, explicitly release the owned link. Safe to call more than once. | Must Have   |
-| FR-5  | `version(timeout)` reads the device's version info (`VersionMessage`: `app_fw_version`, `device_type`, `device_serial_number`, `comms_version`). Works without the full handshake. | Must Have   |
-| FR-6  | `Session::Drop` calls `close()` as a final fallback. `QuadCortex` itself has no closing `Drop`: short-lived wrappers share the daemon session and dropping one must not disconnect every caller. | Should Have |
+| FR-1 | `QuadCortex::new(session)` constructs the client around a `Session`. | Must Have |
+| FR-2 | `connect(timeout, settle)` is a convenience that opens the transport, starts the session, runs the handshake, and returns a `QuadCortex`. The Rust equivalent of `pyquadcortex.connect()`. | Must Have |
+| FR-3 | `disconnect()` sends `Connection{connected: false}` (delegates to `Session::disconnect`). | Must Have |
+| FR-4 | `close()` delegates to `Session::close()`: announce disconnect, join workers, explicitly release the owned link. Safe to call more than once. | Must Have |
+| FR-5 | `version(timeout)` reads the device's version info (`VersionMessage`: `app_fw_version`, `device_type`, `device_serial_number`, `comms_version`). Works without the full handshake. | Must Have |
+| FR-6 | `Session::Drop` calls `close()` as a final fallback. `QuadCortex` itself has no closing `Drop`: short-lived wrappers share the daemon session and dropping one must not disconnect every caller. | Should Have |
 
 #### Catalog
 
-| ID    | Requirement                                                                                                       | Priority    |
+| ID | Requirement | Priority |
 | ----- | ----------------------------------------------------------------------------------------------------------------- | ----------- |
-| FR-7  | `fetch_model_repo(timeout)` returns the catalog payload captured by the handshake, or performs `ModelRepo` READ + `await_broadcast` when no captured copy exists. `Catalog::parse` turns that device-specific payload into model and parameter metadata. | Must Have   |
+| FR-7 | `fetch_model_repo(timeout)` returns the catalog payload captured by the handshake, or performs `ModelRepo` READ + `await_broadcast` when no captured copy exists. `Catalog::parse` turns that device-specific payload into model and parameter metadata. | Must Have |
 
 #### Read operations
 
-| ID    | Requirement                                                                                                       | Priority    |
+| ID | Requirement | Priority |
 | ----- | ----------------------------------------------------------------------------------------------------------------- | ----------- |
-| FR-8  | `find_preset(name, setlist, timeout)` looks up a preset by display name (exact, case-insensitive). Returns the listing entry whose `index` is the slot position. | Must Have   |
-| FR-9  | `read_preset(setlist_path, position, is_factory, timeout)` recalls a preset and returns its full `BinaryPreset`. NOTE: this RECALLS the slot (side effect - it loads the preset onto the grid). Tags the recall with a fresh `request_id` and accepts only the `RecallPreset` push echoing it (skips the seed push). | Must Have   |
-| FR-10 | `read_current_preset(timeout)` returns the LIVE grid (`RecallPreset{READ}` with a `request_id`, matched on the echo). No side effects - unsaved edits survive; the active scene is untouched. | Must Have   |
-| FR-11 | `list_presets(setlist, timeout, include_empty)` lists presets in slot order. Sends a `File` READ and accepts only a preset-category, non-move `File{UPDATE}` for the normalized target key with exactly one unique entry for every index 0-255. | Must Have   |
+| FR-8 | `find_preset(name, setlist, timeout)` looks up a preset by display name (exact, case-insensitive). Returns the listing entry whose `index` is the slot position. | Must Have |
+| FR-9 | `read_preset(setlist_path, position, is_factory, timeout)` recalls a preset and returns its full `BinaryPreset`. NOTE: this RECALLS the slot (side effect - it loads the preset onto the grid). Tags the recall with a fresh `request_id` and accepts only the `RecallPreset` push echoing it (skips the seed push). | Must Have |
+| FR-10 | `read_current_preset(timeout)` returns the LIVE grid (`RecallPreset{READ}` with a `request_id`, matched on the echo). No side effects - unsaved edits survive; the active scene is untouched. | Must Have |
+| FR-11 | `list_presets(setlist, timeout, include_empty)` lists presets in slot order. Sends a `File` READ and accepts only a preset-category, non-move `File{UPDATE}` for the normalized target key with exactly one unique entry for every index 0-255. | Must Have |
 | FR-12 | `list_folders(seconds)` enumerates every folder the device knows (uses `collect` for the folder flood). | Should Have |
-| FR-13 | `active_scene(timeout)` reads the current scene (`Scene{READ}`, matched on `request_id`). | Must Have   |
+| FR-13 | `active_scene(timeout)` reads the current scene (`Scene{READ}`, matched on `request_id`). | Must Have |
 | FR-14 | `captures(timeout)` reads the Neural Capture library (`File` READ with `type: 2`, matched on `request_id` + folder key). | Should Have |
 | FR-15 | `list_irs(folder, timeout)` lists IRs (`File` READ with `type: 1`, matched on `request_id` + folder key). | Should Have |
 | FR-16 | `recents(timeout)` reads the Recents list (`RecentsFavorites{READ}`, non-empty match). An empty uncorrelated push is not treated as a complete empty Recents list because transient empty pushes are known. | Should Have |
@@ -73,8 +73,8 @@ Verification is per method. The implemented non-UI read, navigation, grid-edit, 
 | FR-19 | `master_volume(timeout)` reads the Master Volume state (read-only; no setter - the knob is the only way to move it). | Should Have |
 | FR-20 | `looper(timeout)` reads the Looper X state (read-only). | Should Have |
 | FR-21 | `tuner(timeout)` reads the tuner state (`input_port_id`, `frequency` as Hz offset from 440, `mute`). | Should Have |
-| FR-22 | `io_settings(timeout)` reads input/output/headphone/USB/MIDI/expression port settings. | Must Have   |
-| FR-23 | `settings(timeout)` reads global device settings (`GeneralSettings`). | Must Have   |
+| FR-22 | `io_settings(timeout)` reads input/output/headphone/USB/MIDI/expression port settings. | Must Have |
+| FR-23 | `settings(timeout)` reads global device settings (`GeneralSettings`). | Must Have |
 | FR-24 | `global_eq(timeout)` reads the Global EQ state (bypassed + 5 bands). | Should Have |
 | FR-25 | `mode(timeout)` reads the footswitch mode state; `mode_cycle(timeout)` reads the configured slots. | Should Have |
 
@@ -84,10 +84,10 @@ Variable-length File replies have no total count, terminal marker, or observed m
 
 #### Navigation
 
-| ID    | Requirement                                                                                                       | Priority    |
+| ID | Requirement | Priority |
 | ----- | ----------------------------------------------------------------------------------------------------------------- | ----------- |
-| FR-26 | `recall_preset(setlist_path, position, is_factory, timeout)` sends `SetlistPosition{UPDATE}` and waits for the correlated `RecallPreset` push before returning. Position is linear index or slot name (e.g. `"28C"`). | Must Have   |
-| FR-27 | `switch_scene(scene)` sends `Scene{UPDATE, selected_scene}`. Scenes are 0-based. | Must Have   |
+| FR-26 | `recall_preset(setlist_path, position, is_factory, timeout)` sends `SetlistPosition{UPDATE}` and waits for the correlated `RecallPreset` push before returning. Position is linear index or slot name (e.g. `"28C"`). | Must Have |
+| FR-27 | `switch_scene(scene)` sends `Scene{UPDATE, selected_scene}`. Scenes are 0-based. | Must Have |
 | FR-28 | `copy_scene(from_index, to_index, swap)` sends `SceneCopy{UPDATE}` (label and color travel with the copy). | Should Have |
 | FR-29 | `set_scene_label(scene_index, label)` sends `SceneLabel{UPDATE}`; `None` sends `SCENE_UNLABELLED` (a single space, not empty string). | Should Have |
 | FR-30 | `set_scene_color(scene_index, color)` sends `SceneColor{UPDATE}` with an ARGB uint32. | Should Have |
@@ -96,21 +96,21 @@ All five navigation operations are implemented and hardware-verified on CorOS 4.
 
 #### Grid write
 
-| ID    | Requirement                                                                                                       | Priority    |
+| ID | Requirement | Priority |
 | ----- | ----------------------------------------------------------------------------------------------------------------- | ----------- |
 | FR-31 | A low-level whole-preset write, if retained for investigation, must document that a recalled preset has no row keys and therefore applies nothing useful. Host surfaces use keyed wrappers instead. | Should Have |
-| FR-32 | `set_chain_input(row, GridInputPort)` emits the row-keyed numeric wire value, then reads the complete live grid and confirms that route. The ONLY shape that actually moves an input. | Must Have   |
-| FR-33 | `set_chain_output(row, GridOutputPort)` does the same for output routing. Arbitrary wire integers are unavailable through the public method because the device silently stores meaningless ids. | Must Have   |
-| FR-34 | `set_param(row, column, param_index, value)` is the low-level wire-index write. `set_parameter(row, column, target, input, scene, promote, timeout)` is the shared host-facing API: it validates rows/columns/scenes and normalised values, reads the cell's model when addressed by name, resolves through the device catalog, refuses meters, converts real units, performs the 3-message scene sequence when requested, and confirms the target scene/value through a complete live-grid read. `set_param_option` resolves an index or catalog name against dynamic options in a supplied current preset and centrally normalizes the named option. | Must Have   |
-| FR-35 | `set_param_scene_mode(row, column, param_index, enabled)` sets the scene-following flag (must travel ALONE). | Must Have   |
-| FR-36 | `set_bypass(row, column, bypassed)` writes the bypass state across the block's stored scene slots and confirms the active-scene or global result through a complete live-grid read. Scene-targeted bypass is not part of the implemented API. | Must Have   |
-| FR-37 | `set_block(row, column, model, verify, timeout)` treats a matching echo as a fast confirmation, then falls back to live-grid read-back. It returns `BlockRefused` only when read-back proves the model is absent; echo timeout alone is never proof of refusal. | Must Have   |
-| FR-38 | `remove_block(row, column)` sends `Grid{action: DELETE, ...}` (NOT UPDATE with hash:0, which is ignored) and succeeds only when a complete live-grid read contains the target cell as empty. A missing row/cell is unconfirmed, not proof of removal. | Must Have   |
+| FR-32 | `set_chain_input(row, GridInputPort)` emits the row-keyed numeric wire value, then reads the complete live grid and confirms that route. The ONLY shape that actually moves an input. | Must Have |
+| FR-33 | `set_chain_output(row, GridOutputPort)` does the same for output routing. Arbitrary wire integers are unavailable through the public method because the device silently stores meaningless ids. | Must Have |
+| FR-34 | `set_param(row, column, param_index, value)` is the low-level wire-index write. `set_parameter(row, column, target, input, scene, promote, timeout)` is the shared host-facing API: it validates rows/columns/scenes and normalised values, reads the cell's model when addressed by name, resolves through the device catalog, refuses meters, converts real units, performs the 3-message scene sequence when requested, and confirms the target scene/value through a complete live-grid read. `set_param_option` resolves an index or catalog name against dynamic options in a supplied current preset and centrally normalizes the named option. | Must Have |
+| FR-35 | `set_param_scene_mode(row, column, param_index, enabled)` sets the scene-following flag (must travel ALONE). | Must Have |
+| FR-36 | `set_bypass(row, column, bypassed)` writes the bypass state across the block's stored scene slots and confirms the active-scene or global result through a complete live-grid read. Scene-targeted bypass is not part of the implemented API. | Must Have |
+| FR-37 | `set_block(row, column, model, verify, timeout)` treats a matching echo as a fast confirmation, then falls back to live-grid read-back. It returns `BlockRefused` only when read-back proves the model is absent; echo timeout alone is never proof of refusal. | Must Have |
+| FR-38 | `remove_block(row, column)` sends `Grid{action: DELETE, ...}` (NOT UPDATE with hash:0, which is ignored) and succeeds only when a complete live-grid read contains the target cell as empty. A missing row/cell is unconfirmed, not proof of removal. | Must Have |
 | FR-39 | `move_block(from_row, from_col, to_row, to_col, drop, timeout)` reads and validates an occupied source and empty destination, sends `GridMove` without its advisory grid snapshot, then reads the live grid back to prove the source cleared and the complete model payload plus bypass state reached the destination. A cross-row move lets the device compute a parallel path. | Should Have |
 
 #### Splitter/mixer/lane/gate
 
-| ID    | Requirement                                                                                                       | Priority    |
+| ID | Requirement | Priority |
 | ----- | ----------------------------------------------------------------------------------------------------------------- | ----------- |
 | FR-40 | `set_splitter_param(row, param_index, value, scene, promote)` writes `chain.combined_splitter` (NOT `chain.splitter`, which is read-only), with no invented model hash. Row must be 0 or 2. | Should Have |
 | FR-41 | `set_mixer_param(row, param_index, value, scene, promote)` writes `chain.mixer[]` with model 11000. Row must be 0 or 2. | Should Have |
@@ -123,7 +123,7 @@ FR-40 through FR-43 intentionally expose the composable raw-index/normalised-val
 
 #### Tempo
 
-| ID    | Requirement                                                                                                       | Priority    |
+| ID | Requirement | Priority |
 | ----- | ----------------------------------------------------------------------------------------------------------------- | ----------- |
 | FR-46 | `set_tempo_param(parameter, input, timeout)` writes a finite normalised or catalog-converted real-unit value to one supported per-preset Tempo-menu parameter in `tempoProgramData`, model 25000. `TempoParameter` preserves the positional indices and the screen names that disagree with the catalog. | Should Have |
 | FR-47 | `set_tempo_option(parameter, option)` sets one of the four established list-valued parameters by zero-based option number, range-checking and converting exactly as `index / (count - 1)`. | Should Have |
@@ -133,7 +133,7 @@ FR-46 through FR-48 use a pure builder for `Grid{UPDATE, preset{tempoProgramData
 
 #### Stomp/expression/MIDI
 
-| ID    | Requirement                                                                                                       | Priority    |
+| ID | Requirement | Priority |
 | ----- | ----------------------------------------------------------------------------------------------------------------- | ----------- |
 | FR-49 | `set_stomp_assignment(row, column, footswitch)` assigns a block to a STOMP footswitch (DELETE existing then UPDATE - two messages). | Should Have |
 | FR-50 | `set_expression(row, column, param, pedal, minimum, maximum, model)` assigns an expression pedal to a parameter. | Should Have |
@@ -145,10 +145,10 @@ MIDI messages use checked constructors for CC, expression CC, CC Toggle, and PC.
 
 #### File ops
 
-| ID    | Requirement                                                                                                       | Priority    |
+| ID | Requirement | Priority |
 | ----- | ----------------------------------------------------------------------------------------------------------------- | ----------- |
-| FR-52 | `save_current_preset(setlist_path, position, name, instrument, timeout)` sends `File{CREATE, type: 0}` and accepts only a `CREATE` acknowledgement naming the exact setlist and slot. `Instrument` is the closed wire enumeration None/Guitar/Bass/Synth/Vocal/Other = 0..5. The device saves the grid it already has and may de-duplicate the name. Host surfaces enforce preparation and confirmation separately. | Must Have   |
-| FR-53 | `delete_preset(setlist_path, name)` sends `File{DELETE}` addressed by file path (`<setlist>/<name>.pb`), NOT slot index, and accepts only a `DELETE` acknowledgement naming that exact setlist and path. | Must Have   |
+| FR-52 | `save_current_preset(setlist_path, position, name, instrument, timeout)` sends `File{CREATE, type: 0}` and accepts only a `CREATE` acknowledgement naming the exact setlist and slot. `Instrument` is the closed wire enumeration None/Guitar/Bass/Synth/Vocal/Other = 0..5. The device saves the grid it already has and may de-duplicate the name. Host surfaces enforce preparation and confirmation separately. | Must Have |
+| FR-53 | `delete_preset(setlist_path, name)` sends `File{DELETE}` addressed by file path (`<setlist>/<name>.pb`), NOT slot index, and accepts only a `DELETE` acknowledgement naming that exact setlist and path. | Must Have |
 | FR-54 | `move_preset(policy, setlist_path, from_position, to_position)` authorises the exact source and destination through the caller's policy, then uses a fresh complete listing to refuse the factory library, empty sources, no-op moves, and observed occupancy. It resolves the source's listed file path, sends `File{MOVE}` with the same-setlist destination by linear index, then polls fresh listings for source-absent/destination-present convergence without requiring an acknowledgement. | Should Have |
 | FR-55 | `create_setlist(name)` accepts one safe component, sends `File{CREATE, type: 0, folder{key: USER_SETLIST_ROOT/<name>}}`, refuses a fresh collision, and returns the one newly appearing direct USER folder from fresh listings so the operation owns its destination. | Should Have |
 | FR-56 | `delete_setlist(name)` refuses factory/root/`My Presets` and unsafe components before I/O, sends `File{DELETE}`, and polls fresh directory listings to absence. | Should Have |
@@ -160,7 +160,7 @@ Preset File replies have no usable request-id correlation. Exact action and targ
 
 #### Captures/IRs
 
-| ID    | Requirement                                                                                                       | Priority    |
+| ID | Requirement | Priority |
 | ----- | ----------------------------------------------------------------------------------------------------------------- | ----------- |
 | FR-60 | `set_capture(row, column, capture, model, params, timeout)` accepts a validated device-returned entry, optionally verifies placement of default capture model 14000 or requires an existing compatible 14000/14001 block, writes `file_name` param 5 as the exact `<64-char hash><display name>` concatenation, then writes caller parameters in order. Index 5 is reserved and refused in `params`. Loading a capture RESETS the block's other parameters, so no follow-up may precede selection. | Should Have |
 | FR-61 | `set_ir(row, column, ir, slot, model, timeout)` accepts a validated device-returned entry and slot 0/1, optionally verifies placement of loader model 29001-29008 or requires an existing compatible loader, then writes IR PATH (param 2/10) as the exact non-filesystem library key followed by IR NAME (param 22/23) as the display name. Every IR Loader has two slots. Fresh read-back cannot prove loadability because invalid strings are stored unchanged; the on-unit warning icon remains the decisive check. | Should Have |
@@ -168,9 +168,9 @@ Preset File replies have no usable request-id correlation. Exact action and targ
 
 #### Global settings
 
-| ID    | Requirement                                                                                                       | Priority    |
+| ID | Requirement | Priority |
 | ----- | ----------------------------------------------------------------------------------------------------------------- | ----------- |
-| FR-62 | `update_settings(GeneralSettingsPatch)` changes only known writable scalar settings. The type cannot represent power/reset/updater/reboot/shutdown fields or unsupported `internal_midi_clock_enabled`. `set_hold_timing` accepts exactly 500-1000 ms in 100 ms steps; `set_scene_bypass_behavior` takes the closed three-value enum. | Must Have   |
+| FR-62 | `update_settings(GeneralSettingsPatch)` changes only known writable scalar settings. The type cannot represent power/reset/updater/reboot/shutdown fields or unsupported `internal_midi_clock_enabled`. `set_hold_timing` accepts exactly 500-1000 ms in 100 ms steps; `set_scene_bypass_behavior` takes the closed three-value enum. | Must Have |
 | FR-63 | `set_master_volume_assignment` and `set_global_bypass` perform explicit settings READ, merge partial intent, and write every sibling in each nested replacement group. Their restore APIs require complete typed nested state. | Must Have |
 | FR-64 | Global EQ exposes whole-EQ bypass; five bands at stride 5 with Gain/Frequency/Q/Type/Enabled offsets 0-4; and OUT level/1-2/3-4 at indices 25-27. Every parameter is a sparse one-index write, normalized 0-1; no dB mapping is claimed for OUT level. | Should Have |
 | FR-65 | `set_mode_cycle(slots)` replaces a non-empty cycle of typed values 0-8, with at most one HYBRID and never a HYBRID alone. Value 9 cannot be represented. `set_mode` accepts the same closed slot type. | Should Have |
@@ -187,10 +187,10 @@ These four methods are hardware-verified on CorOS 4.0.1. Duplicate pinning, unpi
 
 #### I/O ports
 
-| ID    | Requirement                                                                                                       | Priority    |
+| ID | Requirement | Priority |
 | ----- | ----------------------------------------------------------------------------------------------------------------- | ----------- |
-| FR-66 | `set_input_port(input_port_id, level, impedance, input_type, ground_lift)` - each field sent in its OWN message (the device drops fields that share a port entry). `input_port_id` takes the `Input` enum, NOT 1/2/3/4 (Return 1 is 4). | Must Have   |
-| FR-67 | `set_output_port(output_port_id, level, ground_lift, mute)` - one field per message (mute is dropped when paired). | Must Have   |
+| FR-66 | `set_input_port(input_port_id, level, impedance, input_type, ground_lift)` - each field sent in its OWN message (the device drops fields that share a port entry). `input_port_id` takes the `Input` enum, NOT 1/2/3/4 (Return 1 is 4). | Must Have |
+| FR-67 | `set_output_port(output_port_id, level, ground_lift, mute)` - one field per message (mute is dropped when paired). | Must Have |
 | FR-68 | `set_usb_port(level, hp_select, dry_wet)` - one field per message. | Should Have |
 | FR-69 | `set_midi_thru(enabled)` toggles MIDI Thru. | Should Have |
 | FR-70 | `set_output_pairing(xlr1_2, out3_4)` pairs/unpairs output couples. | Should Have |
@@ -201,26 +201,26 @@ Successful write dispatch is not device confirmation. `io_settings_complete` iss
 
 #### Helper functions (module-level)
 
-| ID    | Requirement                                                                                                       | Priority    |
+| ID | Requirement | Priority |
 | ----- | ----------------------------------------------------------------------------------------------------------------- | ----------- |
-| FR-71 | `blocks(p) -> Vec<Block>` returns the OCCUPIED grid cells (every row reports 8 column slots, empty ones have hash absent/zero; `len(chain.models)` is always 8). | Must Have   |
+| FR-71 | `blocks(p) -> Vec<Block>` returns the OCCUPIED grid cells (every row reports 8 column slots, empty ones have hash absent/zero; `len(chain.models)` is always 8). | Must Have |
 | FR-72 | `splits(p) -> Vec<Split>` returns where each row branches (`split_control_points`; `split >= 0` means a branch; `mix == -1` means non-rejoining). | Should Have |
-| FR-73 | `slot_to_position(slot) -> u32` converts a slot name (e.g. `"28C"`) to a linear index (`(28-1)*8 + 2 == 218`). | Must Have   |
+| FR-73 | `slot_to_position(slot) -> u32` converts a slot name (e.g. `"28C"`) to a linear index (`(28-1)*8 + 2 == 218`). | Must Have |
 | FR-74 | `position_to_slot(index) -> String` is the inverse. | Should Have |
 | FR-75 | `input_level_db(level) -> f64` converts a wire `level` (0..1) to dB (`-12 + 72 * level`; input ports span -12..+60 dB). | Should Have |
 | FR-76 | `db_to_input_level(db) -> f64` is the inverse; refuses values outside -12..+60 dB. | Should Have |
-| FR-77 | `field_present(message, field) -> bool` checks proto3 field presence without raising on fields without presence (e.g. `SceneBypass.bypass`). | Must Have   |
+| FR-77 | `field_present(message, field) -> bool` checks proto3 field presence without raising on fields without presence (e.g. `SceneBypass.bypass`). | Must Have |
 
 ### Non-Functional Requirements
 
-| ID    | Requirement                                                                                                                                                                                                                              | Target                  |
+| ID | Requirement | Target |
 | ----- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------- |
 | NFR-1 | The client adds no async runtime dependency; it uses the session's blocking primitives directly. The leaf-crate discipline is preserved. | Architectural invariant |
-| NFR-2 | Host-facing types in `view`, plus `PresetEntry`, `Folder`, parameter inputs and placement results, are pure serialisable value objects with no I/O. | Code invariant          |
-| NFR-3 | The handshake fully receives the load-bearing catalog payload and held hosts cache parsed/static state only for its exact generation/revision. Non-empty `NewModels`, stream gaps, and new generations prevent name or parameter resolution through stale metadata; client methods do not repeat a still-current transfer unnecessarily. | Code invariant          |
-| NFR-4 | Unit tests for the helper functions (`blocks`, `splits`, `slot_to_position`, `input_level_db`, `field_present`) and the message-building logic run in CI without hardware, using fixture presets. | CI-enforced             |
+| NFR-2 | Host-facing types in `view`, plus `PresetEntry`, `Folder`, parameter inputs and placement results, are pure serialisable value objects with no I/O. | Code invariant |
+| NFR-3 | The handshake fully receives the load-bearing catalog payload and held hosts cache parsed/static state only for its exact generation/revision. Non-empty `NewModels`, stream gaps, and new generations prevent name or parameter resolution through stale metadata; client methods do not repeat a still-current transfer unnecessarily. | Code invariant |
+| NFR-4 | Unit tests for the helper functions (`blocks`, `splits`, `slot_to_position`, `input_level_db`, `field_present`) and the message-building logic run in CI without hardware, using fixture presets. | CI-enforced |
 | NFR-5 | The ~60-method API surface mirrors pyquadcortex's method names (snake_case) so a porting caller recognises the surface; deviations are documented. | Architectural invariant |
-| NFR-6 | Every domain trap (see Domain Traps below) is documented in the method's rustdoc and surfaced in the MCP tool descriptions where relevant. | Code invariant          |
+| NFR-6 | Every domain trap (see Domain Traps below) is documented in the method's rustdoc and surfaced in the MCP tool descriptions where relevant. | Code invariant |
 
 ---
 
@@ -317,6 +317,7 @@ Implemented constants such as `UNITY_LEVEL`, `USER_SETLIST_ROOT`, and `SCENE_UNL
 ### Provisional labelling
 
 The implemented non-UI Quad Cortex surface is hardware-verified per operation from this crate on CorOS 4.0.1. The host-owned capture-dialog response and visual-only Gig View/Tuner visibility methods remain unverified, as do all future operations and platforms. Do not apply one blanket label to the entire client.
+
 ### Hardware findings (CorOS 4.0.1)
 
 First verification of the read paths against a real Quad Cortex, via `cortex device probe`, `cortex setlist list`, and `cortex preset list`.

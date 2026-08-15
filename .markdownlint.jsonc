@@ -1,0 +1,45 @@
+// Markdown lint configuration.
+//
+// Adapted from the house-style new-repo template
+// (~/code/house-style/examples/new-repo-template/markdownlint.json). Every
+// divergence from that template is recorded here with its reason, because a
+// silently different config is worse than a documented exception.
+{
+  "default": true,
+
+  // House-style prose is not hard-wrapped: one long line per paragraph, soft
+  // wrapped by the editor. A line-length rule would fight that convention.
+  "MD013": false,
+
+  // The docs site uses inline HTML for layout that Markdown cannot express.
+  "MD033": false,
+
+  // Some partials and generated pages do not open with a top-level heading.
+  "MD041": false,
+
+  "MD024": { "siblings_only": true },
+  "MD029": { "style": "ordered" },
+
+  // DIVERGENCE from the template, which sets "underscore". This repo has used
+  // asterisk emphasis consistently since its first commit; house style says to
+  // match the repo and record the divergence rather than reflow existing prose.
+  "MD049": { "style": "asterisk" },
+  "MD050": { "style": "asterisk" },
+
+  // DIVERGENCE from the template, which sets "fenced". Disabled because it is
+  // a false positive against this docs site, not a real finding: every hit is
+  // a *fenced* block correctly indented inside a Material/Zensical admonition
+  // (`!!! note`) or content tab (`=== "Debian / Ubuntu"`). markdownlint does
+  // not parse those pymdownx extensions, so it misreads the required
+  // indentation as an indented code block. Un-indenting to satisfy the rule
+  // would break the rendered tabs and admonitions.
+  "MD046": false,
+
+  // Not in the template; MD060 is newer than it. The default "any" style lets
+  // each table pick its own convention and reports against whichever is the
+  // closest match, which produced inconsistent findings across the repo.
+  // "compact" is pinned because it is what most tables already use, it is
+  // auto-fixable, and it does not need re-padding every time a cell changes -
+  // these tables have very long cells, where visual alignment is unachievable.
+  "MD060": { "style": "compact" }
+}

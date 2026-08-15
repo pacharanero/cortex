@@ -4,10 +4,10 @@ Finished roadmap items, moved out of [roadmap.md](roadmap.md) so it shows only w
 
 Kept rather than deleted: many carry the measurement that settled a question, and those are the entries most likely to be needed again when something regresses.
 
-
 ## Protocol and Crate (PROT)
 
 ### PROT-001: Transport layer (zone 100)
+
 - [x] `Transport::open(DeviceKind)` - find and open the Quad Cortex on the USB bus
 - [x] `Transport::write(&[u8])` - send a message, split into HID frames, swallow the STALL
 - [x] `Transport::read(Duration)` - read one 129-byte input report
@@ -15,6 +15,7 @@ Kept rather than deleted: many carry the measurement that settled a question, an
 - [x] Hardware-verified: `cortex device version` reads CorOS 4.0.1 / firmware d14e from a real Quad Cortex
 
 ### PROT-002: Framing layer (zone 110)
+
 - [x] `ReportId`, `Flags`, `Frame`, `FrameReassembler` value types
 - [x] `Frame::parse` - strip report ID / len / flags, validate
 - [x] `FrameReassembler::feed` - flag-driven reassembly state machine
@@ -22,6 +23,7 @@ Kept rather than deleted: many carry the measurement that settled a question, an
 - [x] Eight framing unit tests covering round-trip, multi-frame, errors, and encode/decode symmetry
 
 ### PROT-003: Proto schema (zone 120)
+
 - [x] Vendor `Preset.proto` and `ProductionAutomation.proto` (MIT, with SPDX headers)
 - [x] `build.rs` compiling via `prost-build`
 - [x] Add `package cortex_protobuf_v2` to `Preset.proto` so cross-file `Model` references resolve
@@ -29,6 +31,7 @@ Kept rather than deleted: many carry the measurement that settled a question, an
 - [x] **PROT-003.1**: One compile-time macro registry maps all 70 concrete operational tags to generated protobuf structs and generates `DecodedMessage`, opt-in decode, exact names, reverse lookup, and the ordered table. Exhaustive matches force future schema variants to be classified; both sentinels and unknown future numeric tags reject while retaining their number. The session hot path and schema-independent CLI decoder remain raw and forward-compatible
 
 ### PROT-004: Domain model - core (zone 130)
+
 - [x] `DeviceKind` enum (QuadCortex, NanoCortex) with `vid_pid()`
 - [x] `Message` struct with `parse()` (trailer strip, message-type extraction)
 - [x] `TRAILER_LEN = 8` constant
@@ -39,6 +42,7 @@ Kept rather than deleted: many carry the measurement that settled a question, an
 - [x] **PROT-004.7**: Constants: `UNITY_LEVEL`, `USER_SETLIST_ROOT`, `USER_SETLIST`, `SCENE_UNLABELLED`, `BANKS`, `SLOTS_PER_BANK`, `SETLIST_SLOTS`
 
 ### PROT-005: Session layer (zone 140)
+
 - [x] **PROT-005.1**: `Session` owns a removable boxed `HidLink`, background RX/keepalive workers, and pending request/broadcast/collector state; `close()` joins workers and explicitly releases the link
 - [x] **PROT-005.2**: RX thread - read frames, reassemble, decode (gzip if needed), dispatch by type tag to waiters; never dies on a malformed message
 - [x] **PROT-005.3**: `request(message, timeout)` - assign request_id, register waiter, send, block for correlated reply (type-first, request_id consistency check)
@@ -52,6 +56,7 @@ Kept rather than deleted: many carry the measurement that settled a question, an
 - [x] **PROT-005.11**: Hardware smoke test - verified against CorOS 4.0.1. The initial handshake/state/read smoke passed; later runs verified the paced handshake, held cache, clean release and physical reconnect. Run with `cortex device probe` or the scripted smoke
 
 ### PROT-006: Client API (zone 150)
+
 - [x] **PROT-006.1**: `QuadCortex` wraps `Arc<Session>` and exposes connect/disconnect/close. It has no closing `Drop`, so dropping one short-lived wrapper cannot disconnect siblings sharing the session
 - [x] **PROT-006.2**: `version()` - wired through `Session::request` (correlated by type, no request_id echo)
 - [x] **PROT-006.3**: Catalog - `fetch_model_repo` + `Catalog::parse`. HARDWARE-VERIFIED 2026-08-02: parsed the real payload from CorOS 4.0.1 (533 models, 31 categories, 318 with vendor attribution). Container confirmed as `gzip(tar(ModelRepo.xml))` - 46,704 bytes gzipped, 558,592 tar, 556,732 XML. Wired into `cortex preset` so blocks show names, and into `cortex catalog` for search by model name OR by the gear it evokes
@@ -71,6 +76,7 @@ Kept rather than deleted: many carry the measurement that settled a question, an
 - [x] **PROT-006.15**: Pure preset helpers are complete in the public `helpers` module: occupied `blocks`, `splits`, `input_chain_rows`, zero-safe `stomp_assignments`, typed 10x12 `midi_out`, `preset_load_midi_out`, positional `tempo_params`, dynamic `param_options`, branch-aware `free_rows`/`row_status`, normalized `option_value`/`option_at`, and tolerant/list-semantic `params_equal` with explicit gain-reduction-meter exclusion. Explicit row/column/index keys override positional fallback, zero hashes remain empty, and non-rejoining branches retain `mix = -1`. `QuadCortex::set_param_option` resolves an index or catalog parameter name against the supplied current preset and owns `index / (count - 1)` normalization. Fictional fixtures cover all boundaries; no hardware behavior is claimed beyond the upstream evidence
 
 ### PROT-008: Session performance
+
 - [x] **PROT-008.1**: `ConnectMode::Minimal` - skip the 22-type subscription, which is what makes the device dump 600 KB and is not needed for a targeted read
 - [x] **PROT-008.2**: Capture the handshake's `ModelRepo` payload instead of requesting it a second time
 - [x] **PROT-008.3**: Name the folder in a `File` READ rather than enumerating all 399
@@ -89,6 +95,7 @@ Kept rather than deleted: many carry the measurement that settled a question, an
 - [x] **PROT-008.7**: **Deliberate non-feature: no transparent disk catalog cache.** The live handshake `ModelRepo` READ is load-bearing and still has to be fully received/drained, so disk reuse cannot replace its wire cost. The held daemon already serves its in-memory catalog in about 0.02 seconds, and explicit `catalog --dump` / `--from-file` covers offline snapshots. CorOS alone is not a safe demonstrated key because installed entitlements may affect content. Freshness safeguards now invalidate raw and parsed catalog A on non-empty `NewModels`, retain it for empty `NewModels`, accept fresh B as authoritative in the same generation, clear it across stream gaps/generations, ignore late old-generation delivery, and prevent block-name/named-parameter resolution through stale A. Licensed `pyquadcortex` evidence establishes that `ModelRepo` contains Neural Capture block types while individual capture inventory is separate `File` listings; local before/after capture-save exclusion remains unmeasured. Optional comparison of same-CorOS units/accounts with differing entitlements is recorded in `prior-art.md` as research evidence, with no new deliverable ID.
 
 ### PROT-009: Correctness gaps found in review, 2026-08-05
+
 - [x] **PROT-009.2**: **The shipping save path bypassed the prepared-save API entirely.** FIXED 2026-08-05 in `743692a`, then corrected for pre-edit ordering under PROT-009.3. The daemon exposes `PrepareSave`/`CommitSave` with server-held preparations and opaque tokens; the CLI uses separate `preset prepare-save` and `preset save --token` commands, with `-n`/`--dry-run` as the non-mutating path. The raw `SavePreset` request is gone. CONFIRMED by call-site search: `save_current_preset` has zero production callers outside `safety.rs`. Referred to elsewhere as PROT-006.10.1
 - [x] **PROT-009.1**: **Reconnect could open a replacement while the old HID handle was still held. FIXED AND HARDWARE-VERIFIED 2026-08-07 on CorOS 4.0.1.** `Session` now owns a removable boxed link; `close()` announces disconnect, joins workers, then explicitly takes and drops it. The daemon uses one exclusive operation/recovery mutex so replacement waits for an in-flight call and new device requests fail rather than racing the health transition. An exclusivity-aware fake retains an old `Arc<Session>` and proves its lease drops before either replacement attempt. A physical unplug/replug advanced generation 1 to 2, returned the cache to `live`, and the first grid read succeeded - the important next-request check for overlapping HID ownership.
 - [x] **PROT-009.3**: **A save prepared after editing recalled its target and saved the wrong grid. FIXED AND HARDWARE-VERIFIED 2026-08-06.** The CLI now requires `preset prepare-save` on a held daemon before editing and `preset save --token` afterwards; there is no post-edit preparation or direct one-shot save path. `recall_preset` waits for the correlated `RecallPreset` push before acknowledging. The 37-check hardware smoke prepared empty `7A`, placed a block, changed GAIN, committed, recalled, and confirmed both the block and stored edit before deleting the test preset and restoring `1A`. The run also found and fixed two daemon-path blockers: the version check deadlocked by retaining one socket while opening another, and a measured post-recall `input_control.sidechain_source_flag=false` delta invalidated the live-grid cache.
@@ -106,6 +113,7 @@ Kept rather than deleted: many carry the measurement that settled a question, an
 ## Docs (DOCS)
 
 ### DOCS-001: Documentation site
+
 - [x] **DOCS-001.1**: Zensical 0.0.52 scaffold, `s/docs`, artifact-based Pages deploy with path filters. Builds clean
 - [x] **DOCS-001.2**: `docs/install.md` - udev rule with the reasoning, the exclusive-HID gotcha, `s/install`, completions, and a first check
 - [x] **DOCS-001.3**: `docs/walkthrough.md` - output shapes captured from hardware, with owner-specific names and identifiers replaced by fictional values. Plus generated `docs/cli-reference.md` from live clap help
@@ -115,6 +123,7 @@ Kept rather than deleted: many carry the measurement that settled a question, an
 ## CLI (CLI)
 
 ### CLI-001: Scaffold and version
+
 - [x] `cortex device version` - reads device firmware, prints all fields
 - [x] `cortex completions <shell>` - bash, zsh, fish, powershell
 - [x] `cortex --version` / `-V` - standard version flag
@@ -122,6 +131,7 @@ Kept rather than deleted: many carry the measurement that settled a question, an
 - [x] Clap derive, thin main.rs, all behaviour in crate
 
 ### CLI-002: Format and output
+
 - [x] **CLI-002.1**: `--format text|json` global flag, honoured by every command
 - [x] **CLI-002.2**: `cortex device version --format json` - structured JSON through the shared `cortex-rs::view::DeviceVersion` contract rather than prost wire structs. The CLI, daemon, MCP and future GUI share descriptive stable field names
 - [x] **CLI-003.10**: `cortex grid show [--params]` - the LIVE grid, read without side effects. Distinct from `cortex preset show --slot X`, which reads a STORED slot and can only do so by recalling it, discarding unsaved edits
@@ -130,6 +140,7 @@ Kept rather than deleted: many carry the measurement that settled a question, an
 - [x] **CLI-002.5**: Uniform `-n`/`--dry-run`. Every device-state mutation, recall, daemon lifecycle action and local file write is exhaustively classified before dispatch; dry-run performs pure argument validation, emits a structured plan and returns before IPC, HID, process or filesystem access. Read-only commands accept and ignore the global flag. A command-policy test covers every side-effect class, and adding an enum variant requires an explicit classification before the CLI compiles
 
 ### CLI-003: Preset and scene commands
+
 - [x] **CLI-003.1**: `cortex preset recall --slot <slot> [--setlist <path>] [--factory]`
 - [x] **CLI-003.2**: `cortex scene --index <0-7>` - zero-based, where the unit labels scenes A-H
 - [x] **CLI-003.3**: `cortex preset show --slot <slot>` - recalls and prints the preset, with each block NAMED via the catalog and the vendor's attribution shown
@@ -140,15 +151,18 @@ Kept rather than deleted: many carry the measurement that settled a question, an
 - [x] **CLI-003.8**: `CORTEX_TRACE=1` - stderr tracing of inbound traffic and handshake steps
 
 ### CLI-005: Noun-primitive command redesign
-  - [x] **CLI-005.1**: Vocabulary settled on evidence rather than taste: **block**, not module. The vendor-facing material in the vendored prior art uses *block* 310 times against *module* 35, including `pyquadcortex`'s manual-coverage notes, and our own docs already said block 29 times. The wire's own names (`Model`, `ModuleStats`) stay in the protocol docs. Clean break, no legacy aliases - nothing is released. The held session became `cortex session start|status|stop`, keeping `connect` as a visible alias since it is the word the protocol docs use
-  - [x] **CLI-005.2**: Restructured to noun-then-verb: `session`, `preset`, `setlist`, `grid`, `block`, `row`, `device`, plus `scene`, `catalog`, `completions`, `decode-trace`. Single-letter aliases where they do not collide (`s p sl g b r d sc c`). Grouping `version` under `device` also removes a real ambiguity with `--version`, which is the CLI's own. Adds a global `--zero-based` so `--row` takes 0-3 rather than the 1-4 printed on the unit - scripts and agents usually hold a zero-based index already, and converting by hand is the arithmetic that silently edits the wrong row
-  - [x] **CLI-005.3**: Command reference regenerated and every prose reference to the old names swept, in docs, specs and the Rust help text alike
+
+- [x] **CLI-005.1**: Vocabulary settled on evidence rather than taste: **block**, not module. The vendor-facing material in the vendored prior art uses *block* 310 times against *module* 35, including `pyquadcortex`'s manual-coverage notes, and our own docs already said block 29 times. The wire's own names (`Model`, `ModuleStats`) stay in the protocol docs. Clean break, no legacy aliases - nothing is released. The held session became `cortex session start|status|stop`, keeping `connect` as a visible alias since it is the word the protocol docs use
+- [x] **CLI-005.2**: Restructured to noun-then-verb: `session`, `preset`, `setlist`, `grid`, `block`, `row`, `device`, plus `scene`, `catalog`, `completions`, `decode-trace`. Single-letter aliases where they do not collide (`s p sl g b r d sc c`). Grouping `version` under `device` also removes a real ambiguity with `--version`, which is the CLI's own. Adds a global `--zero-based` so `--row` takes 0-3 rather than the 1-4 printed on the unit - scripts and agents usually hold a zero-based index already, and converting by hand is the arithmetic that silently edits the wrong row
+- [x] **CLI-005.3**: Command reference regenerated and every prose reference to the old names swept, in docs, specs and the Rust help text alike
 
 ### CLI-006: Command reference with syntax and examples
-  - [x] **CLI-006.1**: 22 worked examples live in clap's `after_help`, so they appear in `cortex <cmd> --help` as well as the reference, from one source. **A test walks the command tree and checks every example names a real command and real flags** - examples are the part of the help a reader copies verbatim, so a stale one fails in their terminal rather than ours, and unlike syntax they cannot be generated
-  - [x] **CLI-006.2**: The generator recurses one level, so the reference is grouped by noun with a section per verb. It has to: the arguments live on the verb, and stopping at `cortex preset` would document none of them
+
+- [x] **CLI-006.1**: 22 worked examples live in clap's `after_help`, so they appear in `cortex <cmd> --help` as well as the reference, from one source. **A test walks the command tree and checks every example names a real command and real flags** - examples are the part of the help a reader copies verbatim, so a stale one fails in their terminal rather than ours, and unlike syntax they cannot be generated
+- [x] **CLI-006.2**: The generator recurses one level, so the reference is grouped by noun with a section per verb. It has to: the arguments live on the verb, and stopping at `cortex preset` would document none of them
 
 ### CLI-004: Distribution
+
 - [x] **CLI-004.1**: `s/version++` - bump the version, commit, and land it on `main`, choosing a direct push or a release PR by detecting branch protection. Adapted from the house-style example. Runs the full `s/lint` gate before the version moves, so a failed check leaves no half-bumped tree, and refuses on a dirty tree or off `main`. Does NOT tag: the workflow does that once the commit lands (CLI-004.2)
 - [x] **CLI-004.5**: `cortex completions install` - detects the shell, writes to `~/.zfunc` (zsh) or the conventional directory, prints the one-time setup, never edits startup files
 - [x] **CLI-004.6**: `s/install` - installs both `cortex` and `cortex-mcp` from their package paths, with a udev-rule preflight
@@ -159,10 +173,12 @@ Kept rather than deleted: many carry the measurement that settled a question, an
 ## MCP (MCP)
 
 ### MCP-001: Safety surface
+
 - [x] **MCP-001.4**: Surface the row-numbering trap (0-based API, 1-4 on screen) in every row-taking tool description and schema
 - [x] **MCP-001.5**: Single owning process for the USB interface. `cortex-host` has no HID feature; MCP requires and reuses `cortex session`, opening zero transports. Hardware-verified 2026-08-06
 
 ### MCP-002: Tool surface
+
 - [x] **MCP-002.1**: Read tools: status, version, active scene, CPU, current/stored presets, blocks, folders, preset listings and catalog search. Hardware-verified 2026-08-06 through the official `rmcp` client
 - [x] **MCP-002.2**: Transient write tools: `recall_preset`, `switch_scene` (changes what is heard, nothing persistent lost). Hardware-verified 2026-08-06
 - [x] **MCP-002.9**: Working-copy scene tools: `set_scene_label`, `unlabel_scene`, `set_scene_color`, `copy_scene`, `swap_scenes`. Introduced with daemon protocol v5 and hardware-verified on 2026-08-09; copy/swap perform a mandatory live-grid refresh because the device acknowledgement cannot distinguish them
@@ -174,17 +190,20 @@ Kept rather than deleted: many carry the measurement that settled a question, an
 ## GUI (GUI)
 
 ### GUI-001: Scaffold and Tauri MCP
+
 - [x] **GUI-001.1**: `gui/` with Tauri 2 + React + Mantine + Vite, `s/gui-dev` script. Implemented as an interactive read-only first draft with explicit fixture and daemon-backed modes
 - [x] **GUI-001.2**: Tauri owns one managed daemon backend using `cortex-host::DaemonClient`; its typed dashboard command returns status, generation/revision-tagged live grid, active scene, CPU and a storage-revision-cached populated preset directory. Rust resolves scene labels, screen rows and active-scene bypass. TypeScript owns only interaction/presentation and never opens HID or sends arbitrary daemon requests
 - [x] **GUI-001.5**: `spec/400-gui/design.md` records the as-built host boundary, short-lived daemon connections, generation guard, directory epoch, explicit fixture/Tauri modes, frontend state rules and limits
 
 ### GUI-005: Always-visible preset directory and CPU load
+
 - [x] **GUI-005.1**: A permanently visible left sidebar renders the daemon-supplied tree of populated setlists and slots. Missing/unavailable listings are not presented as empty, and Rust caches the directory by generation/storage revision
 - [x] **GUI-005.2**: CPU load is always visible when reported, including total and per-row/per-column second-core markers. Initial absence is rendered as awaiting the first subscribed push rather than failure
 
 ## Engineering (ENG)
 
 ### ENG-001: DX and testing
+
 - [x] **ENG-001.1**: `s/gui-dev`
 - [x] **ENG-001.2**: `s/version++` synchronizes the canonical workspace version into `gui/package.json`, `gui/package-lock.json` and `gui/src-tauri/tauri.conf.json` before creating the release commit
 - [x] **ENG-001.x**: Correlation unit tests - 12 tests over `dispatch` covering type-first matching, the id-less oldest-first fallback, cascade rejection, the stale-seed-push skip, collector semantics, and the liveness stamp. No fake transport needed; `dispatch` is a free function. The HashMap-ordering guard was verified to fail 12/12 with the bug reintroduced and 0/12 with it fixed
@@ -194,10 +213,12 @@ Kept rather than deleted: many carry the measurement that settled a question, an
 - [x] `.editorconfig`
 
 ### ENG-002: CI
+
 - [x] `.github/workflows/ci.yml` - fmt, clippy (all + no-default-features), tests (both), REUSE lint, protoc install
 - [x] `.github/dependabot.yml` - Cargo, npm, pip and GitHub Actions, weekly with cooldown and grouping
 
 ### ENG-003: Governance
+
 - [x] AGPL-3.0-or-later code and CC-BY-SA-4.0 prose licensing, plus MIT for vendored `.proto`, asserted through `LICENSES/` and ordered REUSE annotations
 - [x] SPDX headers on every source file
 - [x] REUSE.toml + `reuse lint` passing
@@ -209,6 +230,7 @@ Kept rather than deleted: many carry the measurement that settled a question, an
 - [x] **ENG-003.6**: With explicit approval, synchronized `NOTICE` and `THIRD-PARTY-NOTICES.md` with the AGENTS/prior-art licensing table: corrected the mixed file-level licensing posture of OpenCortex and qc-extras, corrected toneparse's scope, recorded indirect `nano-cortex-web-editor` BLE provenance, and separated incorporated/adapted work from reference-only study
 
 ### ENG-005: `s/usb-trace` - observe Cortex Control on the wire
+
 - [x] **ENG-005.1**: `s/usb-trace` - preflight `usbmon` (module loaded, `/dev/usbmonN` present and readable) and `dumpcap`, identify the QC's bus and device address from `lsusb`, and start a capture to a gitignored `traces/`. Each preflight failure names its own fix rather than just refusing, because a setup error discovered halfway through a session with the official client wastes the whole session. Writes a sidecar `.txt` recording bus and device address: both are assigned at plug time, so a capture without them cannot be filtered afterwards with any confidence.
   - Uses the **binary** usbmon interface via `dumpcap`, not the text interface at `/sys/kernel/debug/usb/usbmon/<bus>u`. The text interface truncates payload data, which would drop bytes from the middle of a 128-byte body while still looking like a successful capture.
 - [x] **ENG-005.2**: `s/usb-decode` plus `cortex decode-trace` - reads a capture and prints it in the same shape as `CORTEX_TRACE`. Verified against the first real capture: 666 messages, **0 reports skipped**, independently reproducing two known facts (the `GlobalTempo` pair structure - 35 ms within a pair, 786 ms between - and 399 inbound `File` messages for the 399-folder enumeration).
@@ -221,6 +243,7 @@ Kept rather than deleted: many carry the measurement that settled a question, an
   - It earned that on its first use, identifying why `CPULoad` never pushed to us (008.6.12) from a one-line difference invisible at the message level.
 
 ### ENG-006: `s/hardware-smoke` - scripted CLI smoke test with read-back assertions
+
 - [x] **ENG-006.1**: `s/hardware-smoke` - exercises the CLI binary end to end against a real unit: device identity (direct and session paths, cross-checked for agreement), the connect handshake, preset/setlist enumeration, catalog search, a grid-edit cycle (place a block, set a parameter, refuse an unknown one, remove it), and a prepared-save/move/restore/recall/stored-read/delete round trip - each write verified by reading it back through a DIFFERENT command than the one that made it, per the pattern this project's own bug history argues for (spec/roadmap.md PROT-009, spec/completed.md). All writes are confined to one operator-designated scratch bank; the script refuses to run without `--scratch-bank`, `--restore-slot`, and explicit `--discard-working-copy` consent, starts its edits by recalling and preparing the scratch slot, creates its move fixture through that prepared save, and always restores the named slot on exit. This mirrors `safety.rs`'s refusal to supply a default. Asynchronous and file-mutation assertions poll reported state rather than assuming immediate consistency. A failed check is logged and the run continues, so one bad step does not hide the rest.
   - Automates `docs/runbook-hardware-smoke.md` sections 1 and 3-10, the start/status/routed-command/stop portions of section 11, and the move/restore path in section 12. Section 2 is folded into section 1 as a direct/session cross-check. Physical knob input, an on-device save, and physical unplug/replug stay manual: this project has already recorded a USB link dying under repeated large writes (OpenCortex, [prior-art.md](prior-art.md#opencortex---one-high-value-fact-and-a-minefield)), and scripting a physical disconnect is not worth that risk.
   - Writes a result to `smoke-fixtures/<coros_version>.json` (gitignored: it records local firmware details) and, on a successful run, updates `smoke-fixtures/latest.json`. The next run against a DIFFERENT `CorOS` version diffs against it and prints what changed - the concrete answer to "how much of a breaking change did this firmware update cause," in place of an inferred one.
@@ -228,6 +251,7 @@ Kept rather than deleted: many carry the measurement that settled a question, an
 - [x] **ENG-006.4**: Preset-move hardware run, repeated 2026-08-08 against CorOS 4.0.1 after the CLI dry-run inversion. **42/42 checks passed.** The script prepared and created a fictional fixture in disposable `7A`, saved and moved it through daemon protocol v4 with the default-executing explicit-slot interface to `7B`, verified source/destination convergence and `storage_revision` advancement, moved it back to `7A`, verified restoration, deleted it, confirmed both slots empty, restored `1A`, and stopped the daemon. Separate `-n`/`--dry-run` checks completed with no daemon running and no device IPC
 
 ### PROT-008.6: Held session daemon
+
 - [x] **PROT-008.6**: `cortex session start` is a persistent subscribed session that holds and serves one USB connection, routes ordinary commands, reduces subscribed state, reports health and reconnects with backoff. Request-based idle shutdown is implemented for the hidden auto-managed host contract; explicit session starts remain persistent. Held commands avoid a new handshake and typically complete in tens of milliseconds
   - [x] **008.6.1**: `cortex session start` holds a `ConnectMode::Subscribed` session and owns the HID interface. Subscribing is expensive per command and correct per session: it is how the device reports edits made by the player
   - [x] **008.6.2**: A unix socket at `$XDG_RUNTIME_DIR`, line-delimited JSON, reusing the existing `--format json` output types so client and daemon share one contract

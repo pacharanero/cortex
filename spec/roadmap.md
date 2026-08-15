@@ -220,7 +220,6 @@ Stack confirmed as Tauri 2 + React + Mantine, as AGENTS.md says, unless a concre
 
 Improve on the Cortex Control appearance while staying familiar enough to navigate without relearning.
 
-
 ### GUI-006: Screen-reader accessibility
 
 [OpenCortex issue #10](https://github.com/VanIseghemThomas/OpenCortex/issues/10) records the concrete need for complete, independent Quad Cortex editing by a blind musician because the official visual editor does not expose a usable screen-reader surface. Treat accessibility as an architectural constraint from the first GUI scaffold, not a later audit. The hardware-faithful panel is one visual presentation of the domain model, never the only route to a control; keyboard equivalents alone are not acceptance.
@@ -250,8 +249,8 @@ Version synchronization is completed and tracked canonically under ENG-001.2.
 
 ### ENG-001: DX and testing
 
-- [ ] **ENG-001.3**: `s/install-hooks` and `.githooks/pre-commit`. **Night: ready.** Follow the house-style hook installer and keep installation explicit
-- [ ] **ENG-001.4**: Markdown lint. **Night: ready.** Use the house-style maintained tool/config and avoid reflowing existing prose as drive-by cleanup
+- [x] **ENG-001.3**: `s/install-hooks` installs `.githooks/pre-commit`, which runs `s/lint` (about 6 seconds with a warm cargo cache). Installation stays explicit and opt-in per checkout - no other script installs it, so a clone never silently gains a commit-time side effect - and `s/install-hooks -u` reverses it. Sets `core.hooksPath` rather than copying into `.git/hooks`, which Git does not track and which goes stale as soon as the tracked hook changes
+- [x] **ENG-001.4**: Markdown lint via `markdownlint-cli2`, pinned to 0.23.2 and run through `npx` by `s/markdownlint`, wired into both `s/lint` and CI. Config is `.markdownlint.jsonc`, adapted from the house-style template with each divergence carrying its reason inline: `MD049`/`MD050` follow the repo's existing asterisk emphasis rather than the template's underscore, and `MD046` is off because every hit was a false positive - a *fenced* block correctly indented inside a Material/Zensical admonition or content tab, which markdownlint does not parse. `MD060` is pinned to `compact` because the default `any` reports against whichever style is the closest match per table, which gave inconsistent findings. **The lint paid for itself immediately:** `MD056` found three rows in `spec/200-cli/spec.md` where an unescaped `|` inside a code span (`switch|label|unlabel|...`) split the row into 8 cells in a 3-column table, silently truncating the requirement text in the rendered docs. Existing prose was not reflowed; the remaining changes are whitespace only, verified with `git diff -w`
 - [x] **ENG-001.5**: Closed the documented local/CI parity gap where practical: `s/lint` now runs `cargo clippy --all-targets --no-default-features -- -D warnings` (workspace-wide, replacing the narrower `cortex-rs`-only `cargo check`) and `s/test` now runs `cargo test --all --no-default-features`, mirroring the two CI-only no-default jobs exactly. The Windows host/MCP cross-checks remain CI-only since they need a cross toolchain not guaranteed to be present locally
 
 ### ENG-002: CI
@@ -263,7 +262,7 @@ Release workflows live under CLI-004; this section tracks non-release CI gaps on
 ### ENG-003: Governance
 
 - [ ] **ENG-003.3**: If a closed derivative ever needs to exist, add `DUAL-LICENSE.md` and the boilerplate. Requires approval
-- [ ] **ENG-003.4**: SECURITY.md and CONTRIBUTING.md before the repo is public-facing
+- [x] **ENG-003.4**: `SECURITY.md`, `CONTRIBUTING.md` and `CODE_OF_CONDUCT.md` are in place, with GitHub issue and pull-request templates, adapted from the house-style new-repo community-health templates rather than written from scratch. All three carry this project's specifics rather than the template's clinical defaults: private vulnerability reporting through GitHub advisories, the local-USB risk surface (malformed device responses, local socket access to the held session, MCP tools invoked without confirmation), the device-data redaction rule, the expectation that protocol changes are hardware-verified or marked provisional, and a pointer to the prior-art licensing boundaries in `AGENTS.md`
 - [ ] **ENG-003.5**: If we ever target on-device builds, adapt `qc-stomp-tools` (MIT) with attribution and a NOTICE entry
 
 ### ENG-004: Traceability

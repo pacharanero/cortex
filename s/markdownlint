@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Dr Marcus Baw
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# Lint the repository's Markdown against .markdownlint.jsonc. Run it directly
+# while writing docs or specs; `s/lint` also runs it before every commit.
+#
+#   s/markdownlint            lint every tracked Markdown file
+#   s/markdownlint --fix      apply the auto-fixable findings
+#   s/markdownlint docs/*.md  lint a subset (overrides the default globs)
+#
+# Most findings are cosmetic, but two classes are real defects worth knowing
+# about: MD056 catches an unescaped `|` inside a table cell, which silently
+# truncates that row in the rendered docs, and MD040 catches a fenced block
+# with no language, which loses syntax highlighting.
+#
+# The linter runs through npx at a pinned version so a local run and CI check
+# the same rules. The first run downloads it; later runs are cached.
+
+set -euo pipefail
+cd "$(git rev-parse --show-toplevel)"
+
+# Pinned deliberately: an unpinned linter turns an upstream release into a
+# surprise CI failure on an unrelated pull request.
+MARKDOWNLINT_VERSION="0.23.2"
+
+command -v npx >/dev/null 2>&1 ||
+	{ echo "npx is missing; install Node.js to run the Markdown linter." >&2; exit 1; }
+
+# Generated and vendored trees are excluded rather than linted and ignored:
+# site/ and target/ are build output, .venv/ and node_modules/ are dependencies.
+default_globs=(
+	"**/*.md"
+	"#gui/node_modules"
+	"#site"
+	"#target"
+	"#.venv"
+	"#.cache"
+)
+
+# Any argument that is not a flag is treated as the caller's own file list.
+has_paths=false
+for arg in "$@"; do
+	[[ "$arg" == -* ]] || has_paths=true
+done
+
+if [[ "$has_paths" == true ]]; then
+	exec npx --yes "markdownlint-cli2@${MARKDOWNLINT_VERSION}" "$@"
+fi
+
+exec npx --yes "markdownlint-cli2@${MARKDOWNLINT_VERSION}" "${default_globs[@]}" "$@"

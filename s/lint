@@ -15,6 +15,11 @@ cargo clippy --all-targets --all-features -- -D warnings
 # not only in CI.
 cargo clippy --all-targets --no-default-features -- -D warnings
 (cd gui && npm run check)
+
+# Markdown is a first-class output here (docs site, specs, protocol reference),
+# so it gets the same gate as the code.
+s/markdownlint
+
 if command -v reuse >/dev/null 2>&1; then
     reuse lint
 else

@@ -23,7 +23,7 @@ what this repository actually uses and the applicable licensing posture.
 
 ### MIT License (pyquadcortex)
 
-```
+```text
 MIT License
 
 Copyright (c) 2026 Stokes

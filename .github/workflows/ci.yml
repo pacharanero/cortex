@@ -51,6 +51,9 @@ jobs:
       - name: No real device data
         run: s/lint-no-device-data
 
+      - name: Markdown lint
+        run: s/markdownlint
+
       - name: Workspace and GUI manifest versions match
         run: s/check-versions
 

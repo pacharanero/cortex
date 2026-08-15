@@ -65,16 +65,16 @@ crates/cortex-rs/src/
 
 ### Constants
 
-| Constant                | Value      | Description                                                              |
+| Constant | Value | Description |
 | ----------------------- | ---------- | ------------------------------------------------------------------------ |
-| `CC_VERSION`            | `"4.0.1"`  | Cortex Control version announced in the handshake (CorOS 4.0.1 capture) |
-| `DEFAULT_KEEPALIVE_INTERVAL` | 1 s   | Keepalive interval, matching Cortex Control's measured 1.04 s cadence     |
-| `DEFAULT_REQUEST_TIMEOUT` | 5 s      | Default `request()` timeout                                               |
-| `DEFAULT_BROADCAST_TIMEOUT` | 40 s   | Default `await_broadcast()` timeout for asynchronous push paths          |
-| `DEFAULT_SETTLE`        | 2 s        | Minimum wait before the adaptive quiet-period check                       |
-| `DELIVERY_GRACE`        | 0.5 s      | Race-window grace after a `request` timeout                               |
-| `MAX_MESSAGE_BODY`      | 1 MiB      | Reassembly cap; a legitimate message never reaches this                   |
-| `READ_TIMEOUT_MS`       | 200 ms     | RX read poll timeout (how quickly the loop notices `stop()`)             |
+| `CC_VERSION` | `"4.0.1"` | Cortex Control version announced in the handshake (CorOS 4.0.1 capture) |
+| `DEFAULT_KEEPALIVE_INTERVAL` | 1 s | Keepalive interval, matching Cortex Control's measured 1.04 s cadence |
+| `DEFAULT_REQUEST_TIMEOUT` | 5 s | Default `request()` timeout |
+| `DEFAULT_BROADCAST_TIMEOUT` | 40 s | Default `await_broadcast()` timeout for asynchronous push paths |
+| `DEFAULT_SETTLE` | 2 s | Minimum wait before the adaptive quiet-period check |
+| `DELIVERY_GRACE` | 0.5 s | Race-window grace after a `request` timeout |
+| `MAX_MESSAGE_BODY` | 1 MiB | Reassembly cap; a legitimate message never reaches this |
+| `READ_TIMEOUT_MS` | 200 ms | RX read poll timeout (how quickly the loop notices `stop()`) |
 
 ---
 
@@ -101,6 +101,7 @@ Key points ported from `pyquadcortex`:
 **Correlation is by MESSAGE TYPE first, `request_id` as a consistency check.**
 
 This is because:
+
 - READ replies (e.g. `Version`) carry NO `request_id` echo. The device answers a READ with a same-type message that has no id, so the only match signal is type. When multiple READs of the same type are in flight, the lowest-id pending waiter of that type is satisfied (first-in, first-out).
 - State-changing requests (e.g. `recall_preset`) trigger a CASCADE of other-type messages (`UndoRedo`, `Grid`, `Scene`, ...) that all echo the request's `request_id` before the same-type echo (`SetlistPosition`) arrives. The dispatch must not deliver those cascade messages to the waiter - only the same-type echo matches.
 
@@ -144,20 +145,20 @@ The keepalive loop runs a background thread that sends `KeepAlive{UPDATE}` every
 
 ## [DES-SES-DEC] Key Decisions
 
-| Decision                                         | Choice                                                       | Rationale                                                                                                                                                            |
+| Decision | Choice | Rationale |
 | ------------------------------------------------ | ------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| std threads over async runtime                  | `std::thread` + `Mutex`/`Condvar`/`mpsc`                      | Leaf-crate discipline: no tokio dependency so the crate embeds in any host. The pyquadcortex precedent is the same (threading, not asyncio).                        |
-| Handshake owned by session, not client           | `session.rs` in this zone                                    | The handshake is session-layer state machine work (subscription + settle), not ergonomic API surface. The client (zone 150) calls `session.connect()`.            |
-| Type-first correlation                           | Match on `CortexMessageType` before `request_id`             | READ replies carry no id; cascade messages echo a foreign type's id. Type-first is the only rule that covers both. Confirmed on hardware.                            |
-| `request_id` monotonic from 1                    | `AtomicU64`                                                  | Lets `next_request_id()` share the counter with `request()` so a fire-and-forget tag never collides with a request id.                                              |
-| Race-window grace on timeout                     | 0.5 s wait after a timeout if the RX thread already popped    | Avoids dropping a reply that landed in the microsecond window between the wait() timeout and the pending-entry removal.                                              |
-| Write lock separate from state lock               | Two `Mutex<()>`                                              | The state lock guards waiter maps; the write lock serializes I/O. Never hold state across blocking I/O.                                                            |
-| Waiting writers stop the RX loop reacquiring      | `writers_waiting` + RAII `WriteIntent`                       | The device mutex is unfair; merely shortening or yielding after a read still starves writes. A declared writer gets priority until its logical message is sent.    |
-| Reassembly cap at 1 MiB                           | `MAX_MESSAGE_BODY = 1 << 20`                                 | The envelope has no total-length field; a lost LAST flag would wedge the buffer. The cap resets it. Largest observed message (ModelRepo, ~47 KB) is far under.     |
-| Keepalive failures swallowed                      | Thread continues after a send error                           | A dead device shows up through read silence and `DeviceSilent` on a request. The benign write STALL makes a keepalive write error unusable as a health verdict.       |
-| State reducer before waiters                       | Non-consuming synchronous observation                         | A correlated read and the cache must see the same message; putting observation after an early return silently misses replies.                                      |
-| Invalidate instead of generic protobuf merge       | Narrow keyed reducer                                          | Repeated proto fields append under generic merge, while full presets are positional and deltas are keyed. Guessing silently corrupts the grid.                       |
-| Generation + revision                              | Stable cache across replaceable sessions                      | Generation rejects old RX delivery; revision lets GUI consumers fetch latest state without queueing 135 knob messages.                                             |
+| std threads over async runtime | `std::thread` + `Mutex`/`Condvar`/`mpsc` | Leaf-crate discipline: no tokio dependency so the crate embeds in any host. The pyquadcortex precedent is the same (threading, not asyncio). |
+| Handshake owned by session, not client | `session.rs` in this zone | The handshake is session-layer state machine work (subscription + settle), not ergonomic API surface. The client (zone 150) calls `session.connect()`. |
+| Type-first correlation | Match on `CortexMessageType` before `request_id` | READ replies carry no id; cascade messages echo a foreign type's id. Type-first is the only rule that covers both. Confirmed on hardware. |
+| `request_id` monotonic from 1 | `AtomicU64` | Lets `next_request_id()` share the counter with `request()` so a fire-and-forget tag never collides with a request id. |
+| Race-window grace on timeout | 0.5 s wait after a timeout if the RX thread already popped | Avoids dropping a reply that landed in the microsecond window between the wait() timeout and the pending-entry removal. |
+| Write lock separate from state lock | Two `Mutex<()>` | The state lock guards waiter maps; the write lock serializes I/O. Never hold state across blocking I/O. |
+| Waiting writers stop the RX loop reacquiring | `writers_waiting` + RAII `WriteIntent` | The device mutex is unfair; merely shortening or yielding after a read still starves writes. A declared writer gets priority until its logical message is sent. |
+| Reassembly cap at 1 MiB | `MAX_MESSAGE_BODY = 1 << 20` | The envelope has no total-length field; a lost LAST flag would wedge the buffer. The cap resets it. Largest observed message (ModelRepo, ~47 KB) is far under. |
+| Keepalive failures swallowed | Thread continues after a send error | A dead device shows up through read silence and `DeviceSilent` on a request. The benign write STALL makes a keepalive write error unusable as a health verdict. |
+| State reducer before waiters | Non-consuming synchronous observation | A correlated read and the cache must see the same message; putting observation after an early return silently misses replies. |
+| Invalidate instead of generic protobuf merge | Narrow keyed reducer | Repeated proto fields append under generic merge, while full presets are positional and deltas are keyed. Guessing silently corrupts the grid. |
+| Generation + revision | Stable cache across replaceable sessions | Generation rejects old RX delivery; revision lets GUI consumers fetch latest state without queueing 135 knob messages. |
 
 ---
 
@@ -187,6 +188,7 @@ The keepalive loop runs a background thread that sends `KeepAlive{UPDATE}` every
 The session layer is a port of `pyquadcortex/pyquadcortex/transport.py::Transport` (MIT, (c) 2026 Stokes). The handshake sequence (`_hello`) lives in `pyquadcortex/pyquadcortex/client.py` upstream but is relocated to this zone because it is session-layer work. The correlation rules (type-first, id-check, the seed-push skip) and the benign-write-STALL swallowing are all confirmed by `pyquadcortex` capture and live probe. See `THIRD-PARTY-NOTICES.md` for the MIT attribution.
 
 No code is copied from the reference-only repositories without a clear repository-wide licence. Their findings are re-expressed in this project's own words.
+
 ## [DES-SES-DIVERGENCE] Divergences from the original plan
 
 Recorded rather than silently absorbed. Both were deliberate; neither is a migration gap to close without a reason.

@@ -12,9 +12,31 @@ Run the test suite across the workspace.
 
 ## `s/lint`
 
-The full local gate, mirroring CI: `cargo fmt --check`, clippy with `-D warnings` on both feature paths, the tests, and `reuse lint`. A green run here means a green run in CI.
+The full local gate, mirroring CI: `cargo fmt --check`, clippy with `-D warnings` on both feature paths, the tests, Markdown lint, and `reuse lint`. A green run here means a green run in CI.
 
 - `s/lint`
+
+## `s/markdownlint`
+
+Lint the repository's Markdown against `.markdownlint.jsonc`. Run by `s/lint` and by CI; run it directly while writing docs or specs.
+
+Markdown is a first-class output here - the docs site, the zone specs, and the protocol reference are all Markdown - so it gets the same gate as the code. Most findings are cosmetic, but two classes are real defects: `MD056` catches an unescaped `|` inside a table cell, which silently truncates that row in the rendered docs, and `MD040` catches a fenced block with no language.
+
+The linter runs through `npx` at a pinned version, so a local run and CI check the same rules. Config divergences from the house-style template each carry their reason inline in `.markdownlint.jsonc`.
+
+- `s/markdownlint` - lint every tracked Markdown file
+- `s/markdownlint --fix` - apply the auto-fixable findings
+- `s/markdownlint docs/*.md` - lint a subset
+
+## `s/install-hooks`
+
+Install this repository's tracked Git hooks for your checkout. The `pre-commit` hook runs `s/lint`.
+
+Opt-in per checkout, and deliberately not installed by any other script: a clone should never silently gain a commit-time side effect. Sets `core.hooksPath` rather than copying into `.git/hooks`, which Git does not track and which goes stale the moment the tracked hook changes.
+
+- `s/install-hooks` - start using the tracked hooks
+- `s/install-hooks -u` - stop using them
+- `git commit --no-verify` - skip the hook for one commit
 
 ## `s/install`
 

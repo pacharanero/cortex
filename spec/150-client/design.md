@@ -60,7 +60,7 @@ crates/cortex-rs/src/
 
 ### `QuadCortex` struct
 
-| Field            | Type                      | Description                                                              |
+| Field | Type | Description |
 | ---------------- | ------------------------- | ------------------------------------------------------------------------ |
 | `session` | `Arc<Session>` | The session this client drives. Short-lived wrappers share one held session. |
 
@@ -105,6 +105,7 @@ The read methods fall into two correlation patterns:
 The grid-write methods share a single design principle: **sparse, row/column-keyed updates.** A `Grid{UPDATE}` carrying only the changed chain/model/param is the ONLY shape that persists. A full-preset write whose chains lack `row` is dropped (trap #2).
 
 `set_param_in_scene` is the most complex: the flag (`scene_mode`) and a value cannot travel together (trap #4), so it issues 3 messages in order:
+
 1. `set_param_scene_mode(row, column, param_index, true)` - the flag, alone.
 2. `switch_scene(scene)` - switch to the target scene.
 3. The value write - `Grid{UPDATE, preset{chains{row, models{column, params{index, param_values[0]{float_value}}}}}}`.
@@ -144,6 +145,7 @@ MIDI output deliberately does not use the grid builder layer. A pure `MIDISettin
 File operations are eventually consistent. Save and preset delete require exact action/target acknowledgements. Concurrent different-target list/save/delete waiters are safe because action and exact target remain part of every predicate, but an earlier delayed acknowledgement for an identical operation is wire-identical to a current one: preset File broadcasts carry no usable request id. Move polls fresh complete listings for source-absent/destination-present convergence because prior-art hardware evidence shows a file mutation may land without replying. Setlist create/delete similarly use fresh directory listings: create starts from a collision-free baseline and claims only one newly appearing direct USER child; delete requires repeated absence. A materially changed complete listing advances `storage_revision` and stales prepared-save epochs even without an acknowledgement. The final listing-to-write interval remains irreducible because File writes carry no storage revision or compare-and-swap precondition. A missed deadline is an explicitly unconfirmed outcome, never permission to retry blindly.
 
 Implemented addressing rules:
+
 - `save_current_preset`: destination by linear slot `index` in `folder.files[]`.
 - `delete_preset`: source by file PATH (`<setlist>/<name>.pb`) in `folder.files[].key`.
 - `move_preset`: same-setlist source by listed file PATH in `folder.files[].key`, destination by linear slot `index` in `to_folder.files[]`. The host authorises the exact named source and destination slots, then a fresh complete listing resolves the source path and refuses observed occupancy, empty sources, no-op moves, and factory content.
@@ -201,14 +203,14 @@ List option resolution belongs to `QuadCortex::set_param_option`. Its caller sup
 
 ## [DES-CLIENT-DEC] Key Decisions
 
-| Decision                                         | Choice                                                       | Rationale                                                                                                                                                            |
+| Decision | Choice | Rationale |
 | ------------------------------------------------ | ------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `Arc<Session>` not `&mut Session`               | Shared ownership                                             | The MCP server holds one session across many tool calls; the CLI holds one for the process lifetime. `Arc` lets both without a borrowdance.                        |
+| `Arc<Session>` not `&mut Session` | Shared ownership | The MCP server holds one session across many tool calls; the CLI holds one for the process lifetime. `Arc` lets both without a borrowdance. |
 | Keep orchestration together; extract pure boundaries | `client.rs` plus `grid.rs`, `view.rs`, `catalog.rs`, `safety.rs` | Splitting stateful orchestration would expose private session concerns; pure reusable logic earns separate modules. |
-| Value objects are pure                          | Serialisable values with no I/O                 | Client request/result values and zone-130 host views cross CLI, MCP, Tauri and daemon boundaries without carrying session state.                                          |
-| `Session::Drop` calls `close()`                 | Final implicit teardown                                     | The physical owner releases the device; dropping one shared `QuadCortex` wrapper does not disconnect sibling callers.                                                |
-| Domain traps in rustdoc AND MCP descriptions     | Double documentation                                         | The MCP server exposes these methods to agents; the traps must be in the tool description so an agent does not silently edit the wrong row.                         |
-| Name resolution via catalog, not hardcoded indices | `param="THRESHOLD"` -> catalog -> wire index              | Indices are positional and not every one is a visible knob; naming is the safer route. Resolution uses only the current generation/revision's installed block catalog. |
+| Value objects are pure | Serialisable values with no I/O | Client request/result values and zone-130 host views cross CLI, MCP, Tauri and daemon boundaries without carrying session state. |
+| `Session::Drop` calls `close()` | Final implicit teardown | The physical owner releases the device; dropping one shared `QuadCortex` wrapper does not disconnect sibling callers. |
+| Domain traps in rustdoc AND MCP descriptions | Double documentation | The MCP server exposes these methods to agents; the traps must be in the tool description so an agent does not silently edit the wrong row. |
+| Name resolution via catalog, not hardcoded indices | `param="THRESHOLD"` -> catalog -> wire index | Indices are positional and not every one is a visible knob; naming is the safer route. Resolution uses only the current generation/revision's installed block catalog. |
 
 ---
 
@@ -225,6 +227,7 @@ The manual hardware runbook covers the implemented read, recall, scene, grid-wri
 The implemented `QuadCortex` operations are derived from the corresponding parts of `pyquadcortex/pyquadcortex/client.py` (MIT, (c) 2026 Stokes), then adapted and verified per operation. The `ModelCatalog` parser is ported from `pyquadcortex/pyquadcortex/catalog.py`. See `THIRD-PARTY-NOTICES.md` for the MIT attribution.
 
 No code is copied from the reference-only repositories without a clear repository-wide licence. Their findings are re-expressed in this project's own words.
+
 ## [DES-CLIENT-DIVERGENCE] Divergences from the original plan
 
 ### One `client.rs`, not a `client/` module tree

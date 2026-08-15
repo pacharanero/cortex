@@ -23,6 +23,7 @@ path = [
     "requirements.txt",
     "**/*.txt",
     "**/*.json",
+    "**/*.jsonc",
     "**/*.html",
     "**/*.css",
     "**/*.js",

@@ -164,6 +164,7 @@ The catalog comes from the device as a `ModelRepo` message containing a gzip-com
 | Row-numbering trap | Rows are 0-based in the API, 1-4 on screen; a wrong-row edit succeeds silently. |
 | `UNITY_LEVEL` | 10/13, the parameter value representing 0 dB on the -100..+30 dB span. |
 | Provisional | Not yet verified against real hardware by this project. |
+
 ### Catalog: hardware-verified shape (CorOS 4.0.1)
 
 The `ModelRepo` container is confirmed as **`gzip(tar(ModelRepo.xml))`**, matching the research note. On the measured unit: 46,704 bytes gzipped, 558,592 bytes of tar holding a single `ModelRepo.xml`, 556,732 bytes of XML.
