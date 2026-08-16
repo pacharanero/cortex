@@ -212,11 +212,28 @@ impl DashboardSource for DaemonDashboardSource {
     }
 
     fn switch_scene(&self, scene: u32) -> Result<(), CommandError> {
-        self.client
-            .request::<bool>(&Request::SwitchScene { scene })
-            .map(|_| ())
-            .map_err(|error| CommandError::daemon(error.to_string()))
+        // The daemon answers a scene switch with the scene it acted on, not a
+        // bare acknowledgement. Decoding that echo rather than discarding it
+        // means a daemon that switched to a *different* scene is an error here
+        // instead of a GUI that quietly displays the wrong thing.
+        let acknowledged: SceneAck = self
+            .client
+            .request(&Request::SwitchScene { scene })
+            .map_err(|error| CommandError::daemon(error.to_string()))?;
+        if acknowledged.scene != scene {
+            return Err(CommandError::daemon(format!(
+                "asked for scene {scene} but the session acknowledged {}",
+                acknowledged.scene
+            )));
+        }
+        Ok(())
     }
+}
+
+/// The daemon's reply to a scene request: the scene it acted on.
+#[derive(Debug, Clone, serde::Deserialize)]
+struct SceneAck {
+    scene: u32,
 }
 
 impl DaemonDashboardSource {
@@ -492,6 +509,108 @@ mod tests {
         request_switch_scene(&source, 7).unwrap();
         // Sent zero-based, exactly as received: no letter conversion on the way out.
         assert_eq!(*source.switched.lock().unwrap(), vec![0, 7]);
+    }
+
+    /// Drives the real `switch_scene` command path against the device and
+    /// proves the unit *reports back* the scene that was asked for, rather
+    /// than trusting that the write was accepted.
+    ///
+    /// Restores the scene it found. Needs no blocks, so it runs against an
+    /// empty working grid.
+    #[test]
+    #[ignore = "requires a running held session and a real Quad Cortex; audibly changes the active scene"]
+    fn switching_scenes_is_reflected_by_the_device() {
+        let source = DaemonDashboardSource::default();
+        let before = load_dashboard(&source)
+            .unwrap()
+            .live
+            .expect("held session should expose live state");
+        let original = before.active_scene;
+        assert_eq!(before.scenes.len(), 8, "the unit has eight scenes");
+
+        // Move somewhere that is definitely not where we started.
+        let target = if original == 0 { 1 } else { 0 };
+        request_switch_scene(&source, target).unwrap();
+
+        // Poll: the switch is answered by a push, which takes a moment to
+        // land in the cache.
+        let mut observed = None;
+        for _ in 0..20 {
+            std::thread::sleep(std::time::Duration::from_millis(250));
+            if let Some(live) = load_dashboard(&source).unwrap().live {
+                if live.active_scene == target {
+                    observed = Some(live);
+                    break;
+                }
+            }
+        }
+        let live = observed.expect("device should report the scene that was requested");
+        assert_eq!(live.active_scene, target);
+        assert_eq!(
+            live.scenes[target as usize].letter,
+            scene_letter(target),
+            "the displayed letter must track the zero-based index"
+        );
+
+        request_switch_scene(&source, original).unwrap();
+        for _ in 0..20 {
+            std::thread::sleep(std::time::Duration::from_millis(250));
+            if let Some(live) = load_dashboard(&source).unwrap().live {
+                if live.active_scene == original {
+                    return;
+                }
+            }
+        }
+        panic!("failed to restore the scene the unit started on ({original})");
+    }
+
+    /// A scene change the GUI did not cause must still appear in it. Here the
+    /// change is made through a second daemon client, standing in for the
+    /// footswitch: the point is that the GUI learns the state by reading, not
+    /// by remembering what it sent.
+    ///
+    /// Restores the scene it found.
+    #[test]
+    #[ignore = "requires a running held session and a real Quad Cortex; audibly changes the active scene"]
+    fn externally_originated_scene_changes_reach_the_gui() {
+        let gui = DaemonDashboardSource::default();
+        let elsewhere = DaemonDashboardSource::default();
+
+        let original = load_dashboard(&gui)
+            .unwrap()
+            .live
+            .expect("held session should expose live state")
+            .active_scene;
+        let target = if original == 0 { 1 } else { 0 };
+
+        // Not through `gui`: this is someone else moving the unit.
+        elsewhere.switch_scene(target).unwrap();
+
+        let mut seen = false;
+        for _ in 0..20 {
+            std::thread::sleep(std::time::Duration::from_millis(250));
+            if let Some(live) = load_dashboard(&gui).unwrap().live {
+                if live.active_scene == target {
+                    seen = true;
+                    break;
+                }
+            }
+        }
+        assert!(
+            seen,
+            "the GUI never observed a scene change it did not make"
+        );
+
+        elsewhere.switch_scene(original).unwrap();
+        for _ in 0..20 {
+            std::thread::sleep(std::time::Duration::from_millis(250));
+            if let Some(live) = load_dashboard(&gui).unwrap().live {
+                if live.active_scene == original {
+                    return;
+                }
+            }
+        }
+        panic!("failed to restore the scene the unit started on ({original})");
     }
 
     #[test]
