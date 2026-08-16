@@ -57,6 +57,18 @@ export interface CpuLoad { total: number | null; chains: CpuColumn[][] }
 export interface PresetSlot { index: number; slot: string; name: string }
 export interface SetlistSnapshot { key: string; name: string; is_factory: boolean; slots: PresetSlot[] }
 
+/**
+ * One scene. `index` is the zero-based protocol value; `letter` is the A-H the
+ * unit shows. Both come from Rust so the mapping has one implementation - send
+ * `index`, display `letter`, never the other way round.
+ */
+export interface SceneSnapshot {
+  index: number;
+  letter: string;
+  label: string | null;
+  color: number | null;
+}
+
 export interface LiveSnapshot {
   generation: number;
   revision: number;
@@ -67,6 +79,7 @@ export interface LiveSnapshot {
   preset_dirty: boolean | null;
   cpu_load: CpuLoad | null;
   blocks: LiveBlock[];
+  scenes: SceneSnapshot[];
 }
 
 export interface DashboardSnapshot {
@@ -79,4 +92,11 @@ export interface DashboardSnapshot {
 export interface CortexApi {
   dashboard(): Promise<DashboardSnapshot>;
   reconnectNow(): Promise<void>;
+  /**
+   * Switch the active scene. Takes the zero-based index, never the letter.
+   *
+   * Non-persistent: this changes what the unit is playing and saves nothing,
+   * and is reversible by switching back.
+   */
+  switchScene(scene: number): Promise<void>;
 }

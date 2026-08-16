@@ -26,6 +26,22 @@ pub struct LiveSnapshot {
     pub preset_dirty: Option<bool>,
     pub cpu_load: Option<CpuLoad>,
     pub blocks: Vec<LiveBlock>,
+    pub scenes: Vec<SceneSnapshot>,
+}
+
+/// One scene as the GUI presents it.
+///
+/// `index` is the zero-based value the protocol uses; `letter` is the A-H the
+/// unit puts on screen. Both are carried deliberately: a control that sends
+/// the displayed letter, or displays the wire index, is the row-numbering trap
+/// in a different costume. The letter is rendered here rather than in the
+/// webview so there is one implementation of that mapping.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SceneSnapshot {
+    pub index: u32,
+    pub letter: String,
+    pub label: Option<String>,
+    pub color: Option<u32>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -62,11 +78,24 @@ impl CommandError {
             message: message.into(),
         }
     }
+
+    fn invalid_scene(scene: u32) -> Self {
+        Self {
+            code: "invalid_scene",
+            message: format!(
+                "scene {scene} is out of range; scenes are zero-based 0-7 and display as A-H"
+            ),
+        }
+    }
 }
+
+/// Scenes the unit supports, as zero-based indices displayed A-H.
+const SCENE_COUNT: u32 = 8;
 
 trait DashboardSource: Send + Sync {
     fn dashboard(&self) -> Result<DashboardSnapshot, CommandError>;
     fn reconnect_now(&self) -> Result<(), CommandError>;
+    fn switch_scene(&self, scene: u32) -> Result<(), CommandError>;
 }
 
 struct DaemonDashboardSource {
@@ -130,6 +159,7 @@ impl DashboardSource for DaemonDashboardSource {
             .get(active_scene as usize)
             .and_then(|scene| scene.label.clone())
             .unwrap_or_else(|| scene_letter(active_scene));
+        let scenes = scene_snapshots(&preset.scenes);
         let blocks = preset
             .blocks
             .into_iter()
@@ -167,6 +197,7 @@ impl DashboardSource for DaemonDashboardSource {
                 preset_dirty: None,
                 cpu_load,
                 blocks,
+                scenes,
             }),
             status: after,
             directory,
@@ -176,6 +207,13 @@ impl DashboardSource for DaemonDashboardSource {
     fn reconnect_now(&self) -> Result<(), CommandError> {
         self.client
             .request::<bool>(&Request::ReconnectNow)
+            .map(|_| ())
+            .map_err(|error| CommandError::daemon(error.to_string()))
+    }
+
+    fn switch_scene(&self, scene: u32) -> Result<(), CommandError> {
+        self.client
+            .request::<bool>(&Request::SwitchScene { scene })
             .map(|_| ())
             .map_err(|error| CommandError::daemon(error.to_string()))
     }
@@ -240,6 +278,23 @@ fn scene_letter(scene: u32) -> String {
         .to_string()
 }
 
+/// Present all eight scenes, whether or not the preset carries an entry for
+/// each. A preset that has never labelled scene H still has scene H, and a
+/// selector that hid it would make a reachable scene unreachable.
+fn scene_snapshots(scenes: &[cortex_rs::view::Scene]) -> Vec<SceneSnapshot> {
+    (0..SCENE_COUNT)
+        .map(|index| {
+            let stored = scenes.iter().find(|scene| scene.index == index);
+            SceneSnapshot {
+                index,
+                letter: scene_letter(index),
+                label: stored.and_then(|scene| scene.label.clone()),
+                color: stored.and_then(|scene| scene.color),
+            }
+        })
+        .collect()
+}
+
 struct AppState {
     source: Arc<dyn DashboardSource>,
 }
@@ -250,6 +305,21 @@ fn load_dashboard(source: &dyn DashboardSource) -> Result<DashboardSnapshot, Com
 
 fn request_reconnect(source: &dyn DashboardSource) -> Result<(), CommandError> {
     source.reconnect_now()
+}
+
+/// Switch the active scene.
+///
+/// Non-persistent: this changes the working copy's active scene and what the
+/// unit is playing, and saves nothing. It is reversible by switching back.
+///
+/// The range check happens here rather than at the daemon so an out-of-range
+/// index never reaches the device, and the caller gets a typed refusal instead
+/// of a transport error.
+fn request_switch_scene(source: &dyn DashboardSource, scene: u32) -> Result<(), CommandError> {
+    if scene >= SCENE_COUNT {
+        return Err(CommandError::invalid_scene(scene));
+    }
+    source.switch_scene(scene)
 }
 
 #[tauri::command]
@@ -268,12 +338,24 @@ async fn reconnect_now(state: tauri::State<'_, AppState>) -> Result<(), CommandE
         .map_err(|error| CommandError::daemon(format!("reconnect task failed: {error}")))?
 }
 
+#[tauri::command]
+async fn switch_scene(state: tauri::State<'_, AppState>, scene: u32) -> Result<(), CommandError> {
+    let source = Arc::clone(&state.source);
+    tauri::async_runtime::spawn_blocking(move || request_switch_scene(source.as_ref(), scene))
+        .await
+        .map_err(|error| CommandError::daemon(format!("switch scene task failed: {error}")))?
+}
+
 pub fn run() {
     tauri::Builder::default()
         .manage(AppState {
             source: Arc::new(DaemonDashboardSource::default()),
         })
-        .invoke_handler(tauri::generate_handler![dashboard, reconnect_now])
+        .invoke_handler(tauri::generate_handler![
+            dashboard,
+            reconnect_now,
+            switch_scene
+        ])
         .run(tauri::generate_context!())
         .expect("Tauri application failed");
 }
@@ -317,6 +399,39 @@ mod tests {
         fn reconnect_now(&self) -> Result<(), CommandError> {
             Err(CommandError::daemon("fixture must not reconnect"))
         }
+
+        fn switch_scene(&self, _scene: u32) -> Result<(), CommandError> {
+            Err(CommandError::daemon("fixture must not switch scenes"))
+        }
+    }
+
+    /// Records what reached the source, so a test can prove something did
+    /// *not* reach the device.
+    struct RecordingSource {
+        switched: std::sync::Mutex<Vec<u32>>,
+    }
+
+    impl RecordingSource {
+        fn new() -> Self {
+            Self {
+                switched: std::sync::Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    impl DashboardSource for RecordingSource {
+        fn dashboard(&self) -> Result<DashboardSnapshot, CommandError> {
+            Err(CommandError::daemon("not used by these tests"))
+        }
+
+        fn reconnect_now(&self) -> Result<(), CommandError> {
+            Err(CommandError::daemon("not used by these tests"))
+        }
+
+        fn switch_scene(&self, scene: u32) -> Result<(), CommandError> {
+            self.switched.lock().unwrap().push(scene);
+            Ok(())
+        }
     }
 
     #[test]
@@ -324,6 +439,59 @@ mod tests {
         let error = load_dashboard(&FailingSource).unwrap_err();
         assert_eq!(error.code, "daemon_request_failed");
         assert!(error.message.contains("must not replace"));
+    }
+
+    #[test]
+    fn every_scene_is_selectable_even_when_the_preset_labels_none_of_them() {
+        let snapshots = scene_snapshots(&[]);
+        assert_eq!(snapshots.len(), 8);
+        assert_eq!(snapshots[0].letter, "A");
+        assert_eq!(snapshots[7].letter, "H");
+        assert_eq!(snapshots[7].index, 7);
+        assert!(snapshots.iter().all(|scene| scene.label.is_none()));
+    }
+
+    #[test]
+    fn scene_snapshots_keep_the_zero_based_index_beside_the_displayed_letter() {
+        let stored = vec![
+            cortex_rs::view::Scene {
+                index: 0,
+                label: Some("Clean".into()),
+                color: Some(0xFF00_FF00),
+            },
+            cortex_rs::view::Scene {
+                index: 3,
+                label: Some("Lead".into()),
+                color: None,
+            },
+        ];
+        let snapshots = scene_snapshots(&stored);
+
+        // Scene 3 is the fourth scene and displays as D. An off-by-one here is
+        // the same class of bug as the grid's row-numbering trap.
+        assert_eq!(snapshots[3].index, 3);
+        assert_eq!(snapshots[3].letter, "D");
+        assert_eq!(snapshots[3].label.as_deref(), Some("Lead"));
+        assert_eq!(snapshots[0].color, Some(0xFF00_FF00));
+        // An unlabelled scene stays unlabelled rather than borrowing a neighbour's.
+        assert_eq!(snapshots[1].label, None);
+    }
+
+    #[test]
+    fn an_out_of_range_scene_is_refused_before_it_reaches_the_device() {
+        let source = RecordingSource::new();
+        let error = request_switch_scene(&source, 8).unwrap_err();
+        assert_eq!(error.code, "invalid_scene");
+        assert!(source.switched.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn in_range_scenes_reach_the_device_unchanged() {
+        let source = RecordingSource::new();
+        request_switch_scene(&source, 0).unwrap();
+        request_switch_scene(&source, 7).unwrap();
+        // Sent zero-based, exactly as received: no letter conversion on the way out.
+        assert_eq!(*source.switched.lock().unwrap(), vec![0, 7]);
     }
 
     #[test]

@@ -293,6 +293,21 @@ s/gui-dev
 - [ ] After reconnect, the generation advances and the first rendered live snapshot agrees with `cortex grid show`
 - [ ] A daemon failure remains visible and never switches to fixture data
 
+### GUI scene switching (GUI-003.4)
+
+Still in `s/gui-dev` against the held session. Scene switching is non-persistent - it changes what the unit plays and saves nothing - so no preset is at risk, but it *is* audible. Mute or disconnect outputs if that matters.
+
+Note the working scene before you start so you can return to it.
+
+- [ ] The scene control offers all eight scenes as A-H, including ones this preset has never labelled
+- [ ] A labelled scene shows its label beside the letter; an unlabelled one reads "unlabelled" rather than blank
+- [ ] Selecting a different scene changes the scene shown on the unit's own display
+- [ ] The GUI's scene reflects what the unit reports, and matches `cortex device state` for the same generation
+- [ ] Changing the scene **on the unit** is reflected in the GUI within about a second, without touching the GUI control
+- [ ] Arrow keys move through the scenes and each move switches the unit, matching mouse behaviour
+- [ ] With a screen reader running (Orca on Linux), the control announces the group, the scene count, the position, and the newly active scene after each switch
+- [ ] Return to the scene noted at the start; no preset was saved and the working copy is not left dirty by the switching itself
+
 ```sh
 cortex session stop
 ```

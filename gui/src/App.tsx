@@ -4,6 +4,7 @@
 import { Alert, AppShell, Badge, Button, Group, NavLink, Paper, ScrollArea, SimpleGrid, Stack, Text, Title } from "@mantine/core";
 import { useEffect, useRef, useState } from "react";
 import { Grid } from "./features/quad/Grid";
+import { SceneSelector } from "./features/quad/SceneSelector";
 import { cortexApi } from "./shared/ipc/api";
 import type { DashboardSnapshot, LiveBlock } from "./shared/ipc/types";
 
@@ -52,6 +53,21 @@ export function App() {
   const health = healthLabel(snapshot);
   const connected = live !== null;
   const reconnectState = snapshot.source === "daemon" && snapshot.status.device.state === "reconnecting" ? snapshot.status.device : null;
+  // Switch, then re-read. The device is the authority on which scene is
+  // active, so nothing is updated optimistically: if the unit refuses or
+  // lands somewhere else, that is what appears. A failed re-read is left to
+  // the poll rather than reported as a failed switch.
+  const switchScene = async (scene: number) => {
+    await cortexApi.switchScene(scene);
+    try {
+      const next = await cortexApi.dashboard();
+      generation.current = next.status.cache.generation;
+      setSnapshot(next);
+    } catch {
+      /* the one-second poll re-reads and surfaces any error */
+    }
+  };
+
   const reconnectNow = async () => {
     setRetrying(true);
     try {
@@ -98,6 +114,14 @@ export function App() {
           </Alert>}
           {live && <>
             <Group justify="space-between"><div><Text c="dimmed" size="sm">Working grid</Text><Title order={3}>{live.preset_name}{live.preset_dirty ? " *" : ""}</Title></div><Text>Scene {live.active_scene_label}</Text></Group>
+            <Paper p="md" withBorder>
+              <SceneSelector
+                activeScene={live.active_scene}
+                disabled={!connected}
+                onSwitch={switchScene}
+                scenes={live.scenes}
+              />
+            </Paper>
             <SimpleGrid cols={{ base: 1, lg: 2 }} spacing="md">
               <Paper p="md" withBorder><Grid blocks={live.blocks} selected={selected} onSelect={(block) => setSelectedCell({ row: block.row, column: block.column })} /></Paper>
               <Paper p="md" withBorder><Text c="dimmed" size="sm">Inspector</Text><Title order={4}>{selected?.name ?? "Select a block"}</Title><Text mt="sm">{selected ? `${selected.category} at row ${selected.screen_row}, column ${selected.column}.` : "Block details will appear here."}</Text><Text mt="md">CPU: {live.cpu_load?.total == null ? "awaiting device push" : `${live.cpu_load.total.toFixed(1)}%`}</Text>{live.cpu_load?.chains.map((chain, row) => <Text key={row} size="sm">Row {row + 1}: {chain.map((column) => `${column.load.toFixed(1)}${column.on_core2 ? "*" : ""}`).join("  ")}</Text>)}</Paper>

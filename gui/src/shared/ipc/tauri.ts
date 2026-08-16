@@ -7,4 +7,5 @@ import type { CortexApi, DashboardSnapshot } from "./types";
 export const tauriApi: CortexApi = {
   dashboard() { return invoke<DashboardSnapshot>("dashboard"); },
   reconnectNow() { return invoke<void>("reconnect_now"); },
+  switchScene(scene: number) { return invoke<void>("switch_scene", { scene }); },
 };
