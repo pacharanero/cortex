@@ -1,7 +1,32 @@
 // SPDX-FileCopyrightText: 2026 Dr Marcus Baw
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-import type { CortexApi, DashboardSnapshot, LiveBlock, SceneSnapshot } from "./types";
+import type { CortexApi, DashboardSnapshot, LiveBlock, ParameterInput, ParameterView, SceneSnapshot } from "./types";
+
+/**
+ * Parameters per block cell, keyed "row,column".
+ *
+ * Shaped like the real join: values are stored NORMALISED 0..1 as the device
+ * holds them, with `real` the catalog conversion - so browser mode exercises
+ * the same conversion the hardware path does rather than a tidier fiction. One
+ * meter and one switch are included because those are the cases most easily got
+ * wrong.
+ */
+const blockParameters: Record<string, ParameterView[]> = {
+  "0,1": [
+    { index: 0, name: "GAIN", kind: "float", units: "", min: 0, max: 10, normalised: 0.62, real: 6.2, text: null, step_names: [], read_only: false, per_scene: true },
+    { index: 1, name: "BASS", kind: "float", units: "", min: 0, max: 10, normalised: 0.5, real: 5, text: null, step_names: [], read_only: false, per_scene: false },
+    { index: 2, name: "MID", kind: "float", units: "", min: 0, max: 10, normalised: 0.44, real: 4.4, text: null, step_names: [], read_only: false, per_scene: false },
+    { index: 3, name: "TREBLE", kind: "float", units: "", min: 0, max: 10, normalised: 0.7, real: 7, text: null, step_names: [], read_only: false, per_scene: false },
+    { index: 4, name: "MASTER", kind: "fader", units: "dB", min: -60, max: 0, normalised: 0.8, real: -12, text: null, step_names: [], read_only: false, per_scene: false },
+    { index: 5, name: "BRIGHT", kind: "switch", units: "", min: 0, max: 1, normalised: 0, real: 0, text: null, step_names: ["Off", "On"], read_only: false, per_scene: false },
+    { index: 6, name: "OUTPUT LEVEL", kind: "meter", units: "dB", min: -60, max: 0, normalised: 0.55, real: -27, text: null, step_names: [], read_only: true, per_scene: false },
+  ],
+  "0,3": [
+    { index: 0, name: "MIC", kind: "str", units: "", min: 0, max: 0, normalised: null, real: null, text: "SM57", step_names: [], read_only: false, per_scene: false },
+    { index: 1, name: "DISTANCE", kind: "float", units: "cm", min: 0, max: 30, normalised: 0.2, real: 6, text: null, step_names: [], read_only: false, per_scene: false },
+  ],
+};
 
 /** The one USER setlist browser mode pretends the unit has. */
 const FIXTURE_SETLIST = "/media/p4/Presets/My Presets";
@@ -134,5 +159,34 @@ export const fixtureApi: CortexApi = {
     dashboard.live.preset_dirty = false;
     dashboard.live.revision += 1;
     dashboard.status.cache.revision = dashboard.live.revision;
+  },
+  async blockParameters(row: number, column: number) {
+    if (row < 0 || row > 3 || column < 0 || column > 7) throw new Error(`row ${row}, column ${column} is outside the grid`);
+    const found = blockParameters[`${row},${column}`];
+    if (!found) throw new Error(`no block at row ${row}, column ${column}`);
+    return structuredClone(found);
+  },
+  async setParameter(row: number, column: number, index: number, input: ParameterInput) {
+    if (row < 0 || row > 3 || column < 0 || column > 7) throw new Error(`row ${row}, column ${column} is outside the grid`);
+    const params = blockParameters[`${row},${column}`];
+    const target = params?.find((candidate) => candidate.index === index);
+    if (!target) throw new Error(`no parameter ${index} on the block at row ${row}, column ${column}`);
+    if (target.read_only) throw new Error(`${target.name} is a meter, not a setting`);
+    // Apply in the same terms the device stores: normalised is authoritative,
+    // and `real` is derived from it, never the other way round.
+    if (input.kind === "text") {
+      target.text = input.value;
+    } else {
+      const normalised = input.kind === "normalised"
+        ? input.value
+        : (input.value - target.min) / (target.max - target.min);
+      target.normalised = Math.min(1, Math.max(0, normalised));
+      target.real = target.max === target.min ? null : target.min + target.normalised * (target.max - target.min);
+    }
+    if (dashboard.live) {
+      dashboard.live.preset_dirty = true;
+      dashboard.live.revision += 1;
+      dashboard.status.cache.revision = dashboard.live.revision;
+    }
   },
 };

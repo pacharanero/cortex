@@ -1,12 +1,13 @@
 // SPDX-FileCopyrightText: 2026 Dr Marcus Baw
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-import { Alert, AppShell, Badge, Button, Group, NavLink, Paper, ScrollArea, Stack, Text, Title } from "@mantine/core";
+import { Alert, AppShell, Badge, Button, Divider, Group, NavLink, Paper, ScrollArea, Stack, Text, Title } from "@mantine/core";
 import { useEffect, useRef, useState } from "react";
 import { Grid } from "./features/quad/Grid";
+import { ParameterEditor } from "./features/quad/ParameterEditor";
 import { SceneSelector } from "./features/quad/SceneSelector";
 import { cortexApi } from "./shared/ipc/api";
-import type { DashboardSnapshot, LiveBlock } from "./shared/ipc/types";
+import type { DashboardSnapshot, LiveBlock, ParameterInput, ParameterView } from "./shared/ipc/types";
 
 interface Cell { row: number; column: number }
 
@@ -35,6 +36,8 @@ export function App() {
   // Which slot is mid-recall, as "<setlist> <slot>", so only the clicked entry
   // shows as pending rather than the whole directory.
   const [recalling, setRecalling] = useState<string | null>(null);
+  const [parameters, setParameters] = useState<ParameterView[] | null>(null);
+  const [parameterError, setParameterError] = useState<string | null>(null);
   const generation = useRef<number | null>(null);
 
   useEffect(() => {
@@ -57,6 +60,35 @@ export function App() {
     void refresh();
     return () => { cancelled = true; if (timer !== undefined) window.clearTimeout(timer); };
   }, []);
+
+  // Parameters are fetched for the selected cell only, not carried in the
+  // one-second dashboard poll: they need the model catalog joined in, and
+  // sending every block's full parameter set every second would be wasteful.
+  //
+  // This sits above the early returns below, with the other hooks. Placing it
+  // after them changes the number of hooks between the loading render and the
+  // loaded one, which React rejects outright - and which crashes the component
+  // rather than degrading, so it presents as a panel that silently stops
+  // working.
+  const selectedCellKey = selectedCell ? `${selectedCell.row},${selectedCell.column}` : null;
+  const liveRevision = snapshot?.live?.revision ?? null;
+  useEffect(() => {
+    if (!selectedCell) { setParameters(null); setParameterError(null); return; }
+    let cancelled = false;
+    // The zero-based WIRE row the block reported, never the 1-4 screen row: a
+    // read or write addressed to the wrong row succeeds silently.
+    cortexApi.blockParameters(selectedCell.row, selectedCell.column)
+      .then((next) => { if (!cancelled) { setParameters(next); setParameterError(null); } })
+      .catch((reason) => {
+        if (cancelled) return;
+        setParameters(null);
+        setParameterError(reason instanceof Error ? reason.message : String(reason));
+      });
+    return () => { cancelled = true; };
+    // Keyed by the cell and the device revision, so an edit or an externally
+    // originated change refreshes the values on show.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedCellKey, liveRevision]);
 
   if (!snapshot && !error) return <Text p="xl">Loading Cortex state...</Text>;
   if (!snapshot) return <Alert color="red" m="xl" title="Cortex session unavailable">{error}</Alert>;
@@ -81,6 +113,15 @@ export function App() {
     } catch {
       /* the one-second poll re-reads and surfaces any error */
     }
+  };
+
+  const writeParameter = async (index: number, input: ParameterInput) => {
+    if (!selectedCell) return;
+    await cortexApi.setParameter(selectedCell.row, selectedCell.column, index, input);
+    // Re-read rather than assume: the device may clamp or refuse, and the
+    // control should show what it actually holds.
+    const next = await cortexApi.blockParameters(selectedCell.row, selectedCell.column);
+    setParameters(next);
   };
 
   // Recalling replaces the working copy and changes what the unit plays, so it
@@ -198,6 +239,21 @@ export function App() {
                   ))}
                 </div>
               </Group>
+
+              {selected && (
+                <>
+                  <Divider label="Parameters" labelPosition="left" my="md" />
+                  {parameterError && <Alert color="orange" title="Parameters unavailable">{parameterError}</Alert>}
+                  {!parameterError && parameters === null && <Text c="dimmed" size="sm">Reading parameters...</Text>}
+                  {!parameterError && parameters !== null && (
+                    <ParameterEditor
+                      disabled={!connected}
+                      onWrite={writeParameter}
+                      parameters={parameters}
+                    />
+                  )}
+                </>
+              )}
             </Paper>
           </>}
         </Stack>

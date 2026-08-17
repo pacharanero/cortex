@@ -127,6 +127,16 @@ impl CommandError {
         }
     }
 
+    fn invalid_cell(row: u32, column: u32) -> Self {
+        Self {
+            code: "invalid_cell",
+            message: format!(
+                "row {row}, column {column} is outside the grid; rows are zero-based 0-3 \
+                 and display as 1-4, columns are 0-7"
+            ),
+        }
+    }
+
     fn invalid_scene(scene: u32) -> Self {
         Self {
             code: "invalid_scene",
@@ -140,16 +150,32 @@ impl CommandError {
 /// Scenes the unit supports, as zero-based indices displayed A-H.
 const SCENE_COUNT: u32 = 8;
 
+/// Grid dimensions. Rows are zero-based on the wire and shown as 1-4.
+const GRID_ROWS: u32 = 4;
+const GRID_COLUMNS: u32 = 8;
+
 trait DashboardSource: Send + Sync {
     fn dashboard(&self) -> Result<DashboardSnapshot, CommandError>;
     fn reconnect_now(&self) -> Result<(), CommandError>;
     fn switch_scene(&self, scene: u32) -> Result<(), CommandError>;
     fn recall_preset(&self, setlist: &str, slot: &str) -> Result<(), CommandError>;
+    fn block_parameters(&self, row: u32, column: u32) -> Result<Vec<ParameterView>, CommandError>;
+    fn set_parameter(
+        &self,
+        row: u32,
+        column: u32,
+        index: u32,
+        input: cortex_rs::client::ParameterInput,
+    ) -> Result<(), CommandError>;
 }
 
 struct DaemonDashboardSource {
     client: DaemonClient,
     directory_cache: std::sync::Mutex<Option<(u64, u64, Vec<SetlistSnapshot>)>>,
+    /// The parsed model catalog. Fetched once and kept: it is a 46 KB transfer
+    /// describing 533 models, and the models a unit knows do not change while
+    /// it is running.
+    catalog_cache: std::sync::Mutex<Option<Arc<cortex_rs::Catalog>>>,
 }
 
 impl Default for DaemonDashboardSource {
@@ -157,6 +183,7 @@ impl Default for DaemonDashboardSource {
         Self {
             client: DaemonClient::default(),
             directory_cache: std::sync::Mutex::new(None),
+            catalog_cache: std::sync::Mutex::new(None),
         }
     }
 }
@@ -300,6 +327,72 @@ impl DashboardSource for DaemonDashboardSource {
         }
         Ok(())
     }
+
+    fn block_parameters(&self, row: u32, column: u32) -> Result<Vec<ParameterView>, CommandError> {
+        let catalog = self.catalog()?;
+        let preset: Preset = self
+            .client
+            .request(&Request::CurrentPreset {
+                with_params: true,
+                timeout_seconds: 15,
+            })
+            .map_err(|error| CommandError::daemon(error.to_string()))?;
+        let block = preset
+            .blocks
+            .iter()
+            .find(|candidate| {
+                u32::try_from(candidate.row) == Ok(row)
+                    && u32::try_from(candidate.column) == Ok(column)
+            })
+            .ok_or_else(|| CommandError {
+                code: "empty_cell",
+                message: format!("no block at row {row}, column {column}"),
+            })?;
+        let model = catalog.get(block.model_id).ok_or_else(|| CommandError {
+            code: "unknown_model",
+            message: format!(
+                "the catalog has no model {} for the block in row {row}, column {column}",
+                block.model_id
+            ),
+        })?;
+        Ok(parameter_views(model, &block.params))
+    }
+
+    fn set_parameter(
+        &self,
+        row: u32,
+        column: u32,
+        index: u32,
+        input: cortex_rs::client::ParameterInput,
+    ) -> Result<(), CommandError> {
+        // The daemon answers with the concrete write it performed, after name
+        // and unit resolution. Comparing the echoed index with the one asked
+        // for turns "wrote a different parameter" into an error rather than a
+        // control that appears to work while moving something else.
+        let applied: cortex_rs::client::ParameterWrite = self
+            .client
+            .request(&Request::SetParam {
+                row,
+                column,
+                target: cortex_rs::client::ParameterTarget::Index(index),
+                input,
+                // The active scene, and no promotion: changing which scenes a
+                // parameter follows is a different decision from changing its
+                // value, and doing it as a side effect of moving a control
+                // would alter the preset in a way the user did not ask for.
+                scene: None,
+                promote: false,
+                timeout_seconds: 15,
+            })
+            .map_err(|error| CommandError::daemon(error.to_string()))?;
+        if applied.index != index {
+            return Err(CommandError::daemon(format!(
+                "asked to write parameter {index} but the session wrote {}",
+                applied.index
+            )));
+        }
+        Ok(())
+    }
 }
 
 /// The daemon's reply to a scene request: the scene it acted on.
@@ -308,13 +401,79 @@ struct SceneAck {
     scene: u32,
 }
 
+/// The daemon's catalog reply: the raw `ModelRepo` payload, which the crate
+/// parses.
+#[derive(Debug, Clone, serde::Deserialize)]
+struct CatalogPayload {
+    payload: Vec<u8>,
+}
+
 /// The daemon's reply to a recall: the slot it acted on.
 #[derive(Debug, Clone, serde::Deserialize)]
 struct RecallAck {
     slot: String,
 }
 
+/// One editable parameter on a block, ready to render.
+///
+/// The join between the catalog's description of a parameter and the value the
+/// preset stores happens in Rust, so the webview never has to know that the
+/// wire carries a normalised 0..1 float while the unit displays real units.
+/// **Measured on CorOS 4.0.1:** stored float values are normalised - a
+/// compressor's `THRESHOLD` reads `0.1458`, not a dB figure - so `real` is the
+/// converted value and `normalised` is what the device actually holds.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ParameterView {
+    /// Positional wire index, which is what a write addresses.
+    pub index: u32,
+    /// Display name as the unit shows it, e.g. `GAIN`.
+    pub name: String,
+    /// Control kind: `float`, `int`, `switch`, `str`, `fader`, `meter`, or
+    /// `unknown`. `empty` slots are not returned at all.
+    pub kind: String,
+    /// Units string from the catalog, often empty.
+    pub units: String,
+    /// Range in the parameter's own units.
+    pub min: f64,
+    pub max: f64,
+    /// Stored normalised value, when the parameter holds a number.
+    pub normalised: Option<f64>,
+    /// Stored value converted into the parameter's own units, when the catalog
+    /// declares a usable range. `None` for a degenerate range, which some
+    /// catalog entries genuinely have.
+    pub real: Option<f64>,
+    /// Stored value when the parameter holds a string instead of a number.
+    pub text: Option<String>,
+    /// Option labels, in order, for a switch.
+    pub step_names: Vec<String>,
+    /// True for a live meter, which is a reading and not a setting. Writing to
+    /// one is meaningless, so it is shown but never offered as editable.
+    pub read_only: bool,
+    /// True when the device stores one value per scene for this parameter, so
+    /// an edit only affects the active scene.
+    pub per_scene: bool,
+}
+
 impl DaemonDashboardSource {
+    /// The parsed catalog, fetched on first use.
+    fn catalog(&self) -> Result<Arc<cortex_rs::Catalog>, CommandError> {
+        if let Some(catalog) = self.catalog_cache.lock().unwrap().as_ref() {
+            return Ok(Arc::clone(catalog));
+        }
+        let payload: CatalogPayload = self
+            .client
+            .request(&Request::Catalog {
+                timeout_seconds: 30,
+            })
+            .map_err(|error| CommandError::daemon(error.to_string()))?;
+        let catalog = cortex_rs::Catalog::parse(&payload.payload).map_err(|error| {
+            CommandError::daemon(format!("could not parse the device catalog: {error}"))
+        })?;
+        let catalog = Arc::new(catalog);
+        *self.catalog_cache.lock().unwrap() = Some(Arc::clone(&catalog));
+        Ok(catalog)
+    }
+
     fn directory(&self, status: &Status) -> Vec<SetlistSnapshot> {
         let cache_key = (status.cache.generation, status.cache.storage_revision);
         if let Some((generation, revision, directory)) =
@@ -365,6 +524,65 @@ impl DaemonDashboardSource {
 fn status_is_live(status: &Status) -> bool {
     matches!(status.device, DeviceHealth::Connected { .. })
         && status.cache.phase == cortex_rs::CachePhase::Live
+}
+
+/// Join a model's catalog parameters with the values a block stores.
+///
+/// Driven by the CATALOG's parameter list, not the stored values: the catalog
+/// is the description of what the model has, and a stored list can be shorter
+/// or carry entries the catalog calls `Empty`. Walking the catalog keeps the
+/// positional index meaning what a write will address.
+///
+/// `Empty` slots are dropped from the result but still consume their index, so
+/// what remains addresses correctly. `Meter` entries are kept and marked
+/// read-only, because they are worth showing and meaningless to write.
+fn parameter_views(model: &cortex_rs::catalog::Model, stored: &[ParamValue]) -> Vec<ParameterView> {
+    use cortex_rs::catalog::ParameterKind;
+
+    model
+        .parameters
+        .iter()
+        .filter(|parameter| parameter.kind != ParameterKind::Empty)
+        .map(|parameter| {
+            let index = u32::try_from(parameter.index).unwrap_or(u32::MAX);
+            let held = stored.iter().find(|value| value.index == index);
+            let (normalised, text) = match held.map(|value| &value.value) {
+                Some(cortex_rs::view::ParamValueKind::Number(number)) => (Some(*number), None),
+                Some(cortex_rs::view::ParamValueKind::Text(string)) => (None, Some(string.clone())),
+                None => (None, None),
+            };
+            ParameterView {
+                index,
+                name: parameter.name.clone(),
+                kind: parameter_kind_name(parameter.kind).into(),
+                units: parameter.units.clone(),
+                min: parameter.min,
+                max: parameter.max,
+                normalised,
+                real: normalised.and_then(|value| parameter.from_normalised(value)),
+                text,
+                step_names: parameter.step_names.clone(),
+                read_only: parameter.kind == ParameterKind::Meter,
+                // The device stores one value per scene for a scene-following
+                // parameter, so an edit reaches only the active scene.
+                per_scene: held.is_some_and(|value| !value.per_scene.is_empty()),
+            }
+        })
+        .collect()
+}
+
+fn parameter_kind_name(kind: cortex_rs::catalog::ParameterKind) -> &'static str {
+    use cortex_rs::catalog::ParameterKind;
+    match kind {
+        ParameterKind::Float => "float",
+        ParameterKind::Int => "int",
+        ParameterKind::Switch => "switch",
+        ParameterKind::Str => "str",
+        ParameterKind::Fader => "fader",
+        ParameterKind::Meter => "meter",
+        ParameterKind::Empty => "empty",
+        ParameterKind::Unknown => "unknown",
+    }
 }
 
 fn scene_letter(scene: u32) -> String {
@@ -465,6 +683,70 @@ async fn switch_scene(state: tauri::State<'_, AppState>, scene: u32) -> Result<(
         .map_err(|error| CommandError::daemon(format!("switch scene task failed: {error}")))?
 }
 
+/// Read the editable parameters of one block.
+///
+/// `row` is the ZERO-BASED WIRE row, which is what the protocol addresses.
+/// The unit shows rows as 1-4, and a write to the wrong row succeeds silently,
+/// so the two are never interchanged: the frontend passes the `row` it was
+/// given in the block, never the `screen_row` it displays.
+fn request_block_parameters(
+    source: &dyn DashboardSource,
+    row: u32,
+    column: u32,
+) -> Result<Vec<ParameterView>, CommandError> {
+    if row >= GRID_ROWS || column >= GRID_COLUMNS {
+        return Err(CommandError::invalid_cell(row, column));
+    }
+    source.block_parameters(row, column)
+}
+
+/// Write one parameter on one block.
+///
+/// Non-persistent: this edits the working copy and changes what is heard, and
+/// saves nothing.
+fn request_set_parameter(
+    source: &dyn DashboardSource,
+    row: u32,
+    column: u32,
+    index: u32,
+    input: cortex_rs::client::ParameterInput,
+) -> Result<(), CommandError> {
+    if row >= GRID_ROWS || column >= GRID_COLUMNS {
+        return Err(CommandError::invalid_cell(row, column));
+    }
+    source.set_parameter(row, column, index, input)
+}
+
+#[tauri::command]
+async fn block_parameters(
+    state: tauri::State<'_, AppState>,
+    row: u32,
+    column: u32,
+) -> Result<Vec<ParameterView>, CommandError> {
+    let source = Arc::clone(&state.source);
+    tauri::async_runtime::spawn_blocking(move || {
+        request_block_parameters(source.as_ref(), row, column)
+    })
+    .await
+    .map_err(|error| CommandError::daemon(format!("parameter read task failed: {error}")))?
+}
+
+#[tauri::command]
+async fn set_parameter(
+    state: tauri::State<'_, AppState>,
+    row: u32,
+    column: u32,
+    index: u32,
+    input: cortex_rs::client::ParameterInput,
+) -> Result<(), CommandError> {
+    let source = Arc::clone(&state.source);
+    tauri::async_runtime::spawn_blocking(move || {
+        request_set_parameter(source.as_ref(), row, column, index, input)
+    })
+    .await
+    .map_err(|error| CommandError::daemon(format!("parameter write task failed: {error}")))?
+}
+
 #[tauri::command]
 async fn recall_preset(
     state: tauri::State<'_, AppState>,
@@ -488,7 +770,9 @@ pub fn run() {
             dashboard,
             reconnect_now,
             switch_scene,
-            recall_preset
+            recall_preset,
+            block_parameters,
+            set_parameter
         ])
         .run(tauri::generate_context!())
         .expect("Tauri application failed");
@@ -541,6 +825,24 @@ mod tests {
         fn recall_preset(&self, _setlist: &str, _slot: &str) -> Result<(), CommandError> {
             Err(CommandError::daemon("fixture must not recall"))
         }
+
+        fn block_parameters(
+            &self,
+            _row: u32,
+            _column: u32,
+        ) -> Result<Vec<ParameterView>, CommandError> {
+            Err(CommandError::daemon("fixture must not read parameters"))
+        }
+
+        fn set_parameter(
+            &self,
+            _row: u32,
+            _column: u32,
+            _index: u32,
+            _input: cortex_rs::client::ParameterInput,
+        ) -> Result<(), CommandError> {
+            Err(CommandError::daemon("fixture must not write parameters"))
+        }
     }
 
     /// Records what reached the source, so a test can prove something did
@@ -548,6 +850,7 @@ mod tests {
     struct RecordingSource {
         switched: std::sync::Mutex<Vec<u32>>,
         recalled: std::sync::Mutex<Vec<(String, String)>>,
+        written: std::sync::Mutex<Vec<(u32, u32, u32, cortex_rs::client::ParameterInput)>>,
     }
 
     impl RecordingSource {
@@ -555,6 +858,7 @@ mod tests {
             Self {
                 switched: std::sync::Mutex::new(Vec::new()),
                 recalled: std::sync::Mutex::new(Vec::new()),
+                written: std::sync::Mutex::new(Vec::new()),
             }
         }
     }
@@ -578,6 +882,28 @@ mod tests {
                 .lock()
                 .unwrap()
                 .push((setlist.to_string(), slot.to_string()));
+            Ok(())
+        }
+
+        fn block_parameters(
+            &self,
+            _row: u32,
+            _column: u32,
+        ) -> Result<Vec<ParameterView>, CommandError> {
+            Ok(Vec::new())
+        }
+
+        fn set_parameter(
+            &self,
+            row: u32,
+            column: u32,
+            index: u32,
+            input: cortex_rs::client::ParameterInput,
+        ) -> Result<(), CommandError> {
+            self.written
+                .lock()
+                .unwrap()
+                .push((row, column, index, input));
             Ok(())
         }
     }
@@ -712,6 +1038,181 @@ mod tests {
     fn an_unknown_future_category_is_drawn_neutrally_rather_than_guessed() {
         assert_eq!(block_family("Quantum Flux Capacitor"), "other");
         assert_eq!(block_family(""), "other");
+    }
+
+    fn parameter(
+        index: usize,
+        name: &str,
+        kind: cortex_rs::catalog::ParameterKind,
+        min: f64,
+        max: f64,
+    ) -> cortex_rs::catalog::Parameter {
+        cortex_rs::catalog::Parameter {
+            index,
+            name: name.into(),
+            kind,
+            min,
+            max,
+            default: min,
+            units: String::new(),
+            step_names: Vec::new(),
+        }
+    }
+
+    fn model_with(parameters: Vec<cortex_rs::catalog::Parameter>) -> cortex_rs::catalog::Model {
+        cortex_rs::catalog::Model {
+            id: 5007,
+            name: "Test Model".into(),
+            category_id: 1,
+            category: "Compressor".into(),
+            based_on: None,
+            parameters,
+        }
+    }
+
+    fn stored_number(index: u32, value: f64) -> ParamValue {
+        ParamValue {
+            index,
+            name: None,
+            value: cortex_rs::view::ParamValueKind::Number(value),
+            per_scene: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn a_stored_normalised_value_is_converted_into_the_parameters_own_units() {
+        use cortex_rs::catalog::ParameterKind;
+        // Measured on CorOS 4.0.1: the wire holds 0..1, not the displayed
+        // figure. A GAIN of 0.5 over a 0..10 range is 5, not 0.5.
+        let model = model_with(vec![parameter(0, "GAIN", ParameterKind::Float, 0.0, 10.0)]);
+        let views = parameter_views(&model, &[stored_number(0, 0.5)]);
+
+        assert_eq!(views.len(), 1);
+        assert_eq!(views[0].normalised, Some(0.5));
+        assert_eq!(views[0].real, Some(5.0));
+        assert!(!views[0].read_only);
+    }
+
+    #[test]
+    fn a_degenerate_range_yields_no_real_value_rather_than_a_wrong_one() {
+        use cortex_rs::catalog::ParameterKind;
+        // Some catalog entries declare min == max. There is no conversion to
+        // be had, and inventing one would put a confident wrong number on screen.
+        let model = model_with(vec![parameter(0, "FIXED", ParameterKind::Float, 1.0, 1.0)]);
+        let views = parameter_views(&model, &[stored_number(0, 0.5)]);
+
+        assert_eq!(views[0].normalised, Some(0.5));
+        assert_eq!(views[0].real, None);
+    }
+
+    #[test]
+    fn empty_slots_are_dropped_but_do_not_shift_the_indices_that_remain() {
+        use cortex_rs::catalog::ParameterKind;
+        // `Empty` occupies a wire index. Renumbering what follows would make
+        // every later write address the wrong parameter.
+        let model = model_with(vec![
+            parameter(0, "GAIN", ParameterKind::Float, 0.0, 10.0),
+            parameter(1, "", ParameterKind::Empty, 0.0, 0.0),
+            parameter(2, "TONE", ParameterKind::Float, 0.0, 10.0),
+        ]);
+        let views = parameter_views(&model, &[stored_number(0, 0.1), stored_number(2, 0.9)]);
+
+        assert_eq!(views.len(), 2);
+        assert_eq!(views[0].index, 0);
+        assert_eq!(
+            views[1].index, 2,
+            "TONE keeps index 2, it does not become 1"
+        );
+        assert_eq!(views[1].real, Some(9.0));
+    }
+
+    #[test]
+    fn a_meter_is_shown_but_never_offered_as_editable() {
+        use cortex_rs::catalog::ParameterKind;
+        let model = model_with(vec![parameter(
+            0,
+            "GAIN REDUCTION",
+            ParameterKind::Meter,
+            0.0,
+            1.0,
+        )]);
+        let views = parameter_views(&model, &[stored_number(0, 1.0)]);
+
+        assert_eq!(views.len(), 1, "a meter is worth showing");
+        assert!(
+            views[0].read_only,
+            "but writing to a reading is meaningless"
+        );
+    }
+
+    #[test]
+    fn a_parameter_the_preset_does_not_store_is_still_described() {
+        use cortex_rs::catalog::ParameterKind;
+        // The catalog is the description of the model; a stored list can be
+        // shorter. The control still has to appear, without a value.
+        let model = model_with(vec![parameter(0, "GAIN", ParameterKind::Float, 0.0, 10.0)]);
+        let views = parameter_views(&model, &[]);
+
+        assert_eq!(views.len(), 1);
+        assert_eq!(views[0].normalised, None);
+        assert_eq!(views[0].real, None);
+    }
+
+    #[test]
+    fn a_string_parameter_survives_as_text_rather_than_a_number() {
+        use cortex_rs::catalog::ParameterKind;
+        let model = model_with(vec![parameter(0, "MIC", ParameterKind::Str, 0.0, 0.0)]);
+        let views = parameter_views(
+            &model,
+            &[ParamValue {
+                index: 0,
+                name: None,
+                value: cortex_rs::view::ParamValueKind::Text("SM57".into()),
+                per_scene: Vec::new(),
+            }],
+        );
+
+        assert_eq!(views[0].text.as_deref(), Some("SM57"));
+        assert_eq!(views[0].normalised, None);
+    }
+
+    #[test]
+    fn a_cell_outside_the_grid_is_refused_before_it_reaches_the_device() {
+        let source = RecordingSource::new();
+        for (row, column) in [(4, 0), (0, 8), (99, 99)] {
+            let read = request_block_parameters(&source, row, column).unwrap_err();
+            assert_eq!(read.code, "invalid_cell");
+            let write = request_set_parameter(
+                &source,
+                row,
+                column,
+                0,
+                cortex_rs::client::ParameterInput::Normalised(0.5),
+            )
+            .unwrap_err();
+            assert_eq!(write.code, "invalid_cell");
+        }
+        assert!(source.written.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_parameter_write_reaches_the_device_on_the_wire_row_it_was_given() {
+        let source = RecordingSource::new();
+        // Row 3 is the fourth row, shown as 4 on the unit. A write that
+        // "helpfully" converted between the two would edit the wrong row and
+        // report success.
+        request_set_parameter(
+            &source,
+            3,
+            7,
+            12,
+            cortex_rs::client::ParameterInput::Real(6.0),
+        )
+        .unwrap();
+        assert_eq!(
+            *source.written.lock().unwrap(),
+            vec![(3, 7, 12, cortex_rs::client::ParameterInput::Real(6.0))]
+        );
     }
 
     #[test]
@@ -901,6 +1402,106 @@ mod tests {
             }
         }
         panic!("device never reported {expected_name} as the live preset after recall");
+    }
+
+    /// Reads a real block's parameters, writes one, and proves the device
+    /// reports the new value back - then restores what it found.
+    ///
+    /// Needs a preset with blocks loaded; the operator names the cell, since
+    /// this edits the working copy and changes what is heard.
+    ///
+    /// ```sh
+    /// CORTEX_GUI_PARAM_ROW=0 CORTEX_GUI_PARAM_COLUMN=1 \
+    ///   cargo test -p cortex-gui editing_a_parameter -- --ignored --exact --nocapture
+    /// ```
+    #[test]
+    #[ignore = "requires a real Quad Cortex, a held session, and an operator-named cell; EDITS the working copy"]
+    fn editing_a_parameter_is_reflected_by_the_device() {
+        let row: u32 = std::env::var("CORTEX_GUI_PARAM_ROW")
+            .expect("set CORTEX_GUI_PARAM_ROW to the zero-based WIRE row of a block")
+            .parse()
+            .expect("row must be 0-3");
+        let column: u32 = std::env::var("CORTEX_GUI_PARAM_COLUMN")
+            .expect("set CORTEX_GUI_PARAM_COLUMN to the column of a block")
+            .parse()
+            .expect("column must be 0-7");
+
+        let source = DaemonDashboardSource::default();
+        let before = request_block_parameters(&source, row, column).unwrap();
+        assert!(
+            !before.is_empty(),
+            "the named cell should hold a block with parameters"
+        );
+
+        // Pick a writable numeric parameter with a usable range.
+        let target = before
+            .iter()
+            .find(|parameter| {
+                !parameter.read_only
+                    && parameter.normalised.is_some()
+                    && parameter.max != parameter.min
+                    && matches!(parameter.kind.as_str(), "float" | "int" | "fader")
+            })
+            .expect("the block should have at least one writable numeric parameter")
+            .clone();
+
+        let original = target.normalised.unwrap();
+        // Move somewhere clearly different, staying inside 0..1.
+        let moved = if original > 0.5 { 0.25 } else { 0.75 };
+
+        request_set_parameter(
+            &source,
+            row,
+            column,
+            target.index,
+            cortex_rs::client::ParameterInput::Normalised(
+                #[allow(clippy::cast_possible_truncation)]
+                {
+                    moved as f32
+                },
+            ),
+        )
+        .unwrap();
+
+        let after = request_block_parameters(&source, row, column).unwrap();
+        let observed = after
+            .iter()
+            .find(|parameter| parameter.index == target.index)
+            .expect("the parameter should still be there")
+            .normalised
+            .expect("it should still hold a number");
+        assert!(
+            (observed - moved).abs() < 0.02,
+            "device reported {observed} after writing {moved} to {} (index {})",
+            target.name,
+            target.index
+        );
+
+        // Put it back.
+        request_set_parameter(
+            &source,
+            row,
+            column,
+            target.index,
+            cortex_rs::client::ParameterInput::Normalised(
+                #[allow(clippy::cast_possible_truncation)]
+                {
+                    original as f32
+                },
+            ),
+        )
+        .unwrap();
+        let restored = request_block_parameters(&source, row, column)
+            .unwrap()
+            .iter()
+            .find(|parameter| parameter.index == target.index)
+            .and_then(|parameter| parameter.normalised)
+            .expect("the parameter should read back after restoring");
+        assert!(
+            (restored - original).abs() < 0.02,
+            "failed to restore {} to {original}, it reads {restored}",
+            target.name
+        );
     }
 
     #[test]

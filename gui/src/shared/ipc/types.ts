@@ -98,6 +98,39 @@ export interface DashboardSnapshot {
   directory: SetlistSnapshot[];
 }
 
+/** How a parameter value is supplied to a write. Mirrors Rust's `ParameterInput`. */
+export type ParameterInput =
+  | { kind: "normalised"; value: number }
+  | { kind: "real"; value: number }
+  | { kind: "text"; value: string };
+
+/**
+ * One editable parameter on a block, already joined against the device catalog
+ * in Rust.
+ *
+ * The wire carries a normalised 0..1 float while the unit displays real units,
+ * so both are present: `normalised` is what the device holds and `real` is that
+ * value in `units`. `real` is null when the catalog declares a degenerate
+ * range, which some entries genuinely do - better nothing than a confident
+ * wrong number.
+ */
+export interface ParameterView {
+  index: number;
+  name: string;
+  kind: "float" | "int" | "switch" | "str" | "fader" | "meter" | "unknown";
+  units: string;
+  min: number;
+  max: number;
+  normalised: number | null;
+  real: number | null;
+  text: string | null;
+  step_names: string[];
+  /** A live reading, not a setting. Shown, never editable. */
+  read_only: boolean;
+  /** The device stores one value per scene, so an edit reaches only the active one. */
+  per_scene: boolean;
+}
+
 export interface CortexApi {
   dashboard(): Promise<DashboardSnapshot>;
   reconnectNow(): Promise<void>;
@@ -120,4 +153,16 @@ export interface CortexApi {
    * from the path, so it is deliberately not a parameter here.
    */
   recallPreset(setlist: string, slot: string): Promise<void>;
+  /**
+   * Read the editable parameters of one block.
+   *
+   * `row` is the ZERO-BASED WIRE row the block reports, never the 1-4
+   * `screen_row` shown to the user. A write to the wrong row succeeds silently.
+   */
+  blockParameters(row: number, column: number): Promise<ParameterView[]>;
+  /**
+   * Write one parameter. Non-persistent: it edits the working copy and changes
+   * what is heard, and saves nothing.
+   */
+  setParameter(row: number, column: number, index: number, input: ParameterInput): Promise<void>;
 }
