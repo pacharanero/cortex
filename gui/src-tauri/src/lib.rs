@@ -7,6 +7,8 @@ use cortex_host::{DaemonClient, DeviceHealth, Request, Status};
 use cortex_rs::client::{USER_SETLIST, is_factory_setlist};
 use cortex_rs::view::{CpuLoad, ParamValue, Preset, PresetSlot};
 
+pub mod capability;
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct DashboardSnapshot {
     pub source: &'static str,
