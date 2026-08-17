@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Dr Marcus Baw
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-import { Alert, Group, Radio, Stack, Text } from "@mantine/core";
+import { Alert, ColorInput, Group, Radio, Stack, Text, TextInput } from "@mantine/core";
 import { useEffect, useRef, useState } from "react";
 import type { SceneSnapshot } from "../../shared/ipc/types";
 
@@ -10,6 +10,14 @@ interface SceneSelectorProps {
   activeScene: number;
   disabled: boolean;
   onSwitch: (scene: number) => Promise<void>;
+  onRename: (scene: number, label: string | null) => Promise<void>;
+  onRecolour: (scene: number, color: number) => Promise<void>;
+}
+
+/** `0xAARRGGBB` from the device to the `#rrggbb` an input wants. */
+function toHex(color: number | null): string {
+  if (color === null) return "#ffffff";
+  return `#${(color & 0x00ffffff).toString(16).padStart(6, "0")}`;
 }
 
 /**
@@ -25,7 +33,7 @@ interface SceneSelectorProps {
  * saves nothing - so it needs no confirmation, but it is a real audible change
  * and is announced.
  */
-export function SceneSelector({ scenes, activeScene, disabled, onSwitch }: SceneSelectorProps) {
+export function SceneSelector({ scenes, activeScene, disabled, onSwitch, onRename, onRecolour }: SceneSelectorProps) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [announcement, setAnnouncement] = useState("");
@@ -174,11 +182,94 @@ export function SceneSelector({ scenes, activeScene, disabled, onSwitch }: Scene
 
       {error && <Alert color="red" title="Scene switch failed">{error}</Alert>}
 
+      <SceneDetails
+        disabled={disabled}
+        onRecolour={onRecolour}
+        onRename={onRename}
+        scene={scenes.find((candidate) => candidate.index === activeScene) ?? null}
+      />
+
       {/* Device-originated and command-completion changes are announced here so
           the switch is perceivable without watching the radio group. */}
       <Text aria-live="polite" className="visually-hidden" role="status">
         {announcement}
       </Text>
+    </Stack>
+  );
+}
+
+interface SceneDetailsProps {
+  scene: SceneSnapshot | null;
+  disabled: boolean;
+  onRename: (scene: number, label: string | null) => Promise<void>;
+  onRecolour: (scene: number, color: number) => Promise<void>;
+}
+
+/**
+ * Rename and recolour the active scene.
+ *
+ * A full colour picker rather than the unit's own eight-colour palette,
+ * because the hardware genuinely accepts arbitrary RGB: CorOS 4.0.1 stored and
+ * read back off-palette `0xFF808080` exactly, and stepping through the scenes
+ * on a real unit showed the reported colours on the physical LEDs
+ * (2026-08-16). Reproducing a fixed palette would be a self-imposed limit.
+ *
+ * Both edits are non-persistent: they change the working copy and save
+ * nothing.
+ */
+function SceneDetails({ scene, disabled, onRename, onRecolour }: SceneDetailsProps) {
+  const [busy, setBusy] = useState(false);
+  const [failure, setFailure] = useState<string | null>(null);
+
+  if (!scene) return null;
+
+  const run = async (work: () => Promise<void>) => {
+    setBusy(true);
+    setFailure(null);
+    try {
+      await work();
+    } catch (reason) {
+      setFailure(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Stack gap="xs">
+      <Group align="flex-end" gap="sm" wrap="wrap">
+        <TextInput
+          // Keyed by scene so switching scenes reloads the field rather than
+          // carrying the previous scene's text into it.
+          key={`label-${scene.index}`}
+          defaultValue={scene.label ?? ""}
+          description="Blank clears the label"
+          // NOT disabled while busy: a disabled input cannot hold focus, and
+          // dropping focus mid-edit is the fault this file already records.
+          disabled={disabled}
+          label={`Scene ${scene.letter} name`}
+          onBlur={(event) => {
+            const value = event.currentTarget.value;
+            if (value !== (scene.label ?? "")) void run(() => onRename(scene.index, value || null));
+          }}
+          style={{ flex: 1, minWidth: 180 }}
+        />
+        <ColorInput
+          key={`colour-${scene.index}`}
+          disabled={disabled}
+          format="hex"
+          label={`Scene ${scene.letter} colour`}
+          onChangeEnd={(value) => {
+            const parsed = Number.parseInt(value.replace("#", ""), 16);
+            if (Number.isFinite(parsed)) void run(() => onRecolour(scene.index, parsed));
+          }}
+          style={{ width: 200 }}
+          value={toHex(scene.color)}
+          withEyeDropper={false}
+        />
+        {busy && <Text c="dimmed" size="xs">writing</Text>}
+      </Group>
+      {failure && <Alert color="red" title="Scene edit failed">{failure}</Alert>}
     </Stack>
   );
 }

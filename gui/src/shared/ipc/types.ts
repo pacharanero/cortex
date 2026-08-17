@@ -165,4 +165,15 @@ export interface CortexApi {
    * what is heard, and saves nothing.
    */
   setParameter(row: number, column: number, index: number, input: ParameterInput): Promise<void>;
+  /**
+   * Rename a scene on the working copy, or clear its label by passing null.
+   * Non-persistent, like every edit here.
+   */
+  setSceneLabel(scene: number, label: string | null): Promise<void>;
+  /**
+   * Recolour a scene. Takes 0xRRGGBB; Rust forces the alpha opaque, since an
+   * LED cannot be transparent. The unit accepts arbitrary RGB rather than a
+   * fixed palette - confirmed on hardware 2026-08-16.
+   */
+  setSceneColor(scene: number, color: number): Promise<void>;
 }

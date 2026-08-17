@@ -127,6 +127,13 @@ const dashboard: DashboardSnapshot = {
   }],
 };
 
+/** The device answers an edit with a new revision; the header shows it. */
+function bumpRevision() {
+  if (!dashboard.live) return;
+  dashboard.live.revision += 1;
+  dashboard.status.cache.revision = dashboard.live.revision;
+}
+
 export const fixtureApi: CortexApi = {
   async dashboard() { return structuredClone(dashboard); },
   async reconnectNow() {},
@@ -159,6 +166,22 @@ export const fixtureApi: CortexApi = {
     dashboard.live.preset_dirty = false;
     dashboard.live.revision += 1;
     dashboard.status.cache.revision = dashboard.live.revision;
+  },
+  async setSceneLabel(scene: number, label: string | null) {
+    const target = scenes.find((candidate) => candidate.index === scene);
+    if (!target) throw new Error(`scene ${scene} is out of range`);
+    // Blank means unlabelled, as Rust does: the unit has no empty-string state.
+    target.label = label && label.trim() ? label : null;
+    if (dashboard.live && dashboard.live.active_scene === scene) {
+      dashboard.live.active_scene_label = target.label ?? target.letter;
+    }
+    bumpRevision();
+  },
+  async setSceneColor(scene: number, color: number) {
+    const target = scenes.find((candidate) => candidate.index === scene);
+    if (!target) throw new Error(`scene ${scene} is out of range`);
+    target.color = 0xff000000 | (color & 0x00ffffff);
+    bumpRevision();
   },
   async blockParameters(row: number, column: number) {
     if (row < 0 || row > 3 || column < 0 || column > 7) throw new Error(`row ${row}, column ${column} is outside the grid`);

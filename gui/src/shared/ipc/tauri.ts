@@ -13,4 +13,6 @@ export const tauriApi: CortexApi = {
   setParameter(row: number, column: number, index: number, input: ParameterInput) {
     return invoke<void>("set_parameter", { row, column, index, input });
   },
+  setSceneLabel(scene: number, label: string | null) { return invoke<void>("set_scene_label", { scene, label }); },
+  setSceneColor(scene: number, color: number) { return invoke<void>("set_scene_color", { scene, color }); },
 };

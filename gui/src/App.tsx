@@ -124,6 +124,22 @@ export function App() {
     setParameters(next);
   };
 
+  // Scene metadata edits follow the same shape as every other write here:
+  // act, then re-read, so the panel shows what the device holds.
+  const afterDeviceEdit = async () => {
+    const next = await cortexApi.dashboard();
+    generation.current = next.status.cache.generation;
+    setSnapshot(next);
+  };
+  const renameScene = async (scene: number, label: string | null) => {
+    await cortexApi.setSceneLabel(scene, label);
+    await afterDeviceEdit();
+  };
+  const recolourScene = async (scene: number, color: number) => {
+    await cortexApi.setSceneColor(scene, color);
+    await afterDeviceEdit();
+  };
+
   // Recalling replaces the working copy and changes what the unit plays, so it
   // is followed by a re-read rather than an optimistic update: the grid shown
   // is the one the device reports, not the one that was asked for.
@@ -206,6 +222,8 @@ export function App() {
               <SceneSelector
                 activeScene={live.active_scene}
                 disabled={!connected}
+                onRecolour={recolourScene}
+                onRename={renameScene}
                 onSwitch={switchScene}
                 scenes={live.scenes}
               />

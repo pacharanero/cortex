@@ -159,6 +159,8 @@ trait DashboardSource: Send + Sync {
     fn reconnect_now(&self) -> Result<(), CommandError>;
     fn switch_scene(&self, scene: u32) -> Result<(), CommandError>;
     fn recall_preset(&self, setlist: &str, slot: &str) -> Result<(), CommandError>;
+    fn set_scene_label(&self, scene: u32, label: Option<String>) -> Result<(), CommandError>;
+    fn set_scene_color(&self, scene: u32, color: u32) -> Result<(), CommandError>;
     fn block_parameters(&self, row: u32, column: u32) -> Result<Vec<ParameterView>, CommandError>;
     fn set_parameter(
         &self,
@@ -323,6 +325,34 @@ impl DashboardSource for DaemonDashboardSource {
             return Err(CommandError::daemon(format!(
                 "asked for slot {slot} but the session acknowledged {}",
                 acknowledged.slot
+            )));
+        }
+        Ok(())
+    }
+
+    fn set_scene_label(&self, scene: u32, label: Option<String>) -> Result<(), CommandError> {
+        let acknowledged: SceneAck = self
+            .client
+            .request(&Request::SetSceneLabel { scene, label })
+            .map_err(|error| CommandError::daemon(error.to_string()))?;
+        if acknowledged.scene != scene {
+            return Err(CommandError::daemon(format!(
+                "asked to label scene {scene} but the session labelled {}",
+                acknowledged.scene
+            )));
+        }
+        Ok(())
+    }
+
+    fn set_scene_color(&self, scene: u32, color: u32) -> Result<(), CommandError> {
+        let acknowledged: SceneAck = self
+            .client
+            .request(&Request::SetSceneColor { scene, color })
+            .map_err(|error| CommandError::daemon(error.to_string()))?;
+        if acknowledged.scene != scene {
+            return Err(CommandError::daemon(format!(
+                "asked to recolour scene {scene} but the session recoloured {}",
+                acknowledged.scene
             )));
         }
         Ok(())
@@ -683,6 +713,43 @@ async fn switch_scene(state: tauri::State<'_, AppState>, scene: u32) -> Result<(
         .map_err(|error| CommandError::daemon(format!("switch scene task failed: {error}")))?
 }
 
+/// Rename a scene on the working copy, or clear its label.
+///
+/// Non-persistent, like every other edit here: it changes the working copy and
+/// saves nothing. An empty or whitespace-only label is sent as "no label"
+/// rather than as a blank string, because the unit stores a one-space value for
+/// unlabelled and a GUI that wrote `""` would be inventing a third state.
+fn request_set_scene_label(
+    source: &dyn DashboardSource,
+    scene: u32,
+    label: Option<String>,
+) -> Result<(), CommandError> {
+    if scene >= SCENE_COUNT {
+        return Err(CommandError::invalid_scene(scene));
+    }
+    let label = label.filter(|text| !text.trim().is_empty());
+    source.set_scene_label(scene, label)
+}
+
+/// Recolour a scene on the working copy.
+///
+/// The unit accepts arbitrary ARGB, not just its own palette: CorOS 4.0.1
+/// stored and read back off-palette `0xFF808080` exactly, and stepping through
+/// eight scenes on real hardware showed the reported colours on the physical
+/// LEDs (2026-08-16). So this offers full RGB rather than reproducing a fixed
+/// set. Alpha is forced opaque, since a transparent scene LED is not a thing
+/// the hardware can show and a zero alpha would silently read as black.
+fn request_set_scene_color(
+    source: &dyn DashboardSource,
+    scene: u32,
+    color: u32,
+) -> Result<(), CommandError> {
+    if scene >= SCENE_COUNT {
+        return Err(CommandError::invalid_scene(scene));
+    }
+    source.set_scene_color(scene, 0xFF00_0000 | (color & 0x00FF_FFFF))
+}
+
 /// Read the editable parameters of one block.
 ///
 /// `row` is the ZERO-BASED WIRE row, which is what the protocol addresses.
@@ -715,6 +782,34 @@ fn request_set_parameter(
         return Err(CommandError::invalid_cell(row, column));
     }
     source.set_parameter(row, column, index, input)
+}
+
+#[tauri::command]
+async fn set_scene_label(
+    state: tauri::State<'_, AppState>,
+    scene: u32,
+    label: Option<String>,
+) -> Result<(), CommandError> {
+    let source = Arc::clone(&state.source);
+    tauri::async_runtime::spawn_blocking(move || {
+        request_set_scene_label(source.as_ref(), scene, label)
+    })
+    .await
+    .map_err(|error| CommandError::daemon(format!("scene label task failed: {error}")))?
+}
+
+#[tauri::command]
+async fn set_scene_color(
+    state: tauri::State<'_, AppState>,
+    scene: u32,
+    color: u32,
+) -> Result<(), CommandError> {
+    let source = Arc::clone(&state.source);
+    tauri::async_runtime::spawn_blocking(move || {
+        request_set_scene_color(source.as_ref(), scene, color)
+    })
+    .await
+    .map_err(|error| CommandError::daemon(format!("scene colour task failed: {error}")))?
 }
 
 #[tauri::command]
@@ -772,7 +867,9 @@ pub fn run() {
             switch_scene,
             recall_preset,
             block_parameters,
-            set_parameter
+            set_parameter,
+            set_scene_label,
+            set_scene_color
         ])
         .run(tauri::generate_context!())
         .expect("Tauri application failed");
@@ -826,6 +923,14 @@ mod tests {
             Err(CommandError::daemon("fixture must not recall"))
         }
 
+        fn set_scene_label(&self, _scene: u32, _label: Option<String>) -> Result<(), CommandError> {
+            Err(CommandError::daemon("fixture must not label scenes"))
+        }
+
+        fn set_scene_color(&self, _scene: u32, _color: u32) -> Result<(), CommandError> {
+            Err(CommandError::daemon("fixture must not recolour scenes"))
+        }
+
         fn block_parameters(
             &self,
             _row: u32,
@@ -851,6 +956,8 @@ mod tests {
         switched: std::sync::Mutex<Vec<u32>>,
         recalled: std::sync::Mutex<Vec<(String, String)>>,
         written: std::sync::Mutex<Vec<(u32, u32, u32, cortex_rs::client::ParameterInput)>>,
+        labelled: std::sync::Mutex<Vec<(u32, Option<String>)>>,
+        coloured: std::sync::Mutex<Vec<(u32, u32)>>,
     }
 
     impl RecordingSource {
@@ -859,6 +966,8 @@ mod tests {
                 switched: std::sync::Mutex::new(Vec::new()),
                 recalled: std::sync::Mutex::new(Vec::new()),
                 written: std::sync::Mutex::new(Vec::new()),
+                labelled: std::sync::Mutex::new(Vec::new()),
+                coloured: std::sync::Mutex::new(Vec::new()),
             }
         }
     }
@@ -882,6 +991,16 @@ mod tests {
                 .lock()
                 .unwrap()
                 .push((setlist.to_string(), slot.to_string()));
+            Ok(())
+        }
+
+        fn set_scene_label(&self, scene: u32, label: Option<String>) -> Result<(), CommandError> {
+            self.labelled.lock().unwrap().push((scene, label));
+            Ok(())
+        }
+
+        fn set_scene_color(&self, scene: u32, color: u32) -> Result<(), CommandError> {
+            self.coloured.lock().unwrap().push((scene, color));
             Ok(())
         }
 
@@ -1213,6 +1332,59 @@ mod tests {
             *source.written.lock().unwrap(),
             vec![(3, 7, 12, cortex_rs::client::ParameterInput::Real(6.0))]
         );
+    }
+
+    #[test]
+    fn a_blank_label_clears_the_scene_rather_than_writing_an_empty_string() {
+        let source = RecordingSource::new();
+        request_set_scene_label(&source, 0, Some("Lead".into())).unwrap();
+        request_set_scene_label(&source, 1, Some("   ".into())).unwrap();
+        request_set_scene_label(&source, 2, Some(String::new())).unwrap();
+        request_set_scene_label(&source, 3, None).unwrap();
+
+        // The unit stores a one-space value for "unlabelled". Sending "" would
+        // invent a third state that neither the device nor the reader has.
+        assert_eq!(
+            *source.labelled.lock().unwrap(),
+            vec![
+                (0, Some("Lead".to_string())),
+                (1, None),
+                (2, None),
+                (3, None),
+            ]
+        );
+    }
+
+    #[test]
+    fn scene_colours_are_forced_opaque_so_a_zero_alpha_cannot_read_as_black() {
+        let source = RecordingSource::new();
+        request_set_scene_color(&source, 0, 0x0080_8080).unwrap();
+        request_set_scene_color(&source, 1, 0x00FF_2727).unwrap();
+
+        assert_eq!(
+            *source.coloured.lock().unwrap(),
+            vec![(0, 0xFF80_8080), (1, 0xFFFF_2727)],
+            "an LED cannot be transparent; a zero alpha would silently render black"
+        );
+    }
+
+    #[test]
+    fn an_out_of_range_scene_is_refused_for_label_and_colour_too() {
+        let source = RecordingSource::new();
+        assert_eq!(
+            request_set_scene_label(&source, 8, Some("x".into()))
+                .unwrap_err()
+                .code,
+            "invalid_scene"
+        );
+        assert_eq!(
+            request_set_scene_color(&source, 8, 0x00FF_FFFF)
+                .unwrap_err()
+                .code,
+            "invalid_scene"
+        );
+        assert!(source.labelled.lock().unwrap().is_empty());
+        assert!(source.coloured.lock().unwrap().is_empty());
     }
 
     #[test]
