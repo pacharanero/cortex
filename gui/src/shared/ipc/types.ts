@@ -50,6 +50,15 @@ export interface LiveBlock {
   based_on: string | null;
   bypassed: boolean;
   params: ParamValue[];
+  /**
+   * Visual family, classified in Rust from the block's catalog category.
+   *
+   * The device does not tell us what colour a block is - the grid palette is a
+   * Cortex Control UI convention - so this is the vendor's own grouping read
+   * off its block picker, not an invented one. An unrecognised category
+   * arrives as `other` and is drawn neutrally.
+   */
+  family: string;
 }
 
 export interface CpuColumn { load: number; on_core2: boolean }
@@ -99,4 +108,16 @@ export interface CortexApi {
    * and is reversible by switching back.
    */
   switchScene(scene: number): Promise<void>;
+  /**
+   * Recall a stored preset into the working copy.
+   *
+   * Recall is free in this project's safety model: it writes nothing to
+   * storage. It is not without consequence - it changes what the unit is
+   * playing and replaces the working copy, discarding unsaved edits, exactly
+   * as pressing the preset on the unit does.
+   *
+   * Whether the setlist is the read-only factory library is derived in Rust
+   * from the path, so it is deliberately not a parameter here.
+   */
+  recallPreset(setlist: string, slot: string): Promise<void>;
 }

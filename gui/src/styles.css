@@ -2,8 +2,40 @@
 /* SPDX-License-Identifier: AGPL-3.0-or-later */
 
 body { margin: 0; background: #101113; }
+/* The grid is full width, so cells get the room the hardware gives them: eight
+   columns across four rows, taller than wide as on the unit's own display. */
 .grid { display: grid; gap: 8px; grid-template-columns: repeat(8, minmax(48px, 1fr)); }
-.grid-cell { height: 72px; min-width: 0; padding: 4px; }
+.grid-cell { height: 88px; min-width: 0; padding: 6px; }
+
+/* Block colours, matched to Cortex Control's own block picker.
+ *
+ * These are NOT from the device: the protocol carries scene colours but says
+ * nothing about block colour, so the palette is a UI convention. The families
+ * are the vendor's grouping (see block_family in src-tauri/src/lib.rs); these
+ * hex values are matched by eye from Cortex Control screenshots, so they are
+ * close rather than exact.
+ *
+ * Colour is never the only signal: every cell also carries the block name and
+ * its category as text, per the accessibility constraint in GUI-006.1.
+ */
+.grid-cell[data-family] { border-width: 2px; border-style: solid; }
+.grid-cell[data-family="amp"] { border-color: #ff4d4d; }
+.grid-cell[data-family="cab"] { border-color: #6c5cff; }
+.grid-cell[data-family="drive"] { border-color: #ff8a1f; }
+.grid-cell[data-family="dynamics"] { border-color: #3ddc84; }
+.grid-cell[data-family="eq"] { border-color: #3b82f6; }
+.grid-cell[data-family="filter"] { border-color: #56b6f7; }
+.grid-cell[data-family="modulation"] { border-color: #8b5cf6; }
+.grid-cell[data-family="delay"] { border-color: #17d1c6; }
+.grid-cell[data-family="reverb"] { border-color: #22d3ee; }
+.grid-cell[data-family="pitch"] { border-color: #ffc93c; }
+.grid-cell[data-family="capture"] { border-color: #e8eaed; }
+.grid-cell[data-family="utility"] { border-color: #9aa0a6; }
+.grid-cell[data-family="other"] { border-color: #5f6368; }
+
+/* A bypassed block keeps its family colour but is visibly muted, so bypass is
+   legible without having to compare two cells. */
+.grid-cell[data-bypassed="true"] { opacity: 0.45; border-style: dashed; }
 @media (max-width: 700px) { .grid { grid-template-columns: repeat(4, minmax(64px, 1fr)); } }
 
 /* Available to screen readers, absent from the visual layout. Used for live

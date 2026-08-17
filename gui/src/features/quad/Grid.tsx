@@ -21,13 +21,23 @@ export function Grid({ blocks, selected, onSelect }: GridProps) {
           <Button
             aria-pressed={selected?.row === row && selected?.column === column}
             className="grid-cell"
-            color={block?.bypassed ? "gray" : block ? "orange" : "dark"}
+            color="dark"
+            // The family drives the border colour in CSS; the name and category
+            // stay as text so the colour is never the only thing carrying it.
+            data-bypassed={block?.bypassed ? "true" : undefined}
+            data-family={block?.family}
             disabled={!block}
             key={`${row}-${column}`}
             onClick={() => block && onSelect(block)}
             variant={block ? "filled" : "subtle"}
           >
-            {block ? <Stack gap={2}><Text size="xs">{block.name}</Text><Badge color="dark" size="xs">{block.category}</Badge></Stack> : ""}
+            {block ? (
+              <Stack gap={2}>
+                <Text size="xs">{block.name}</Text>
+                <Badge color="dark" size="xs">{block.category}</Badge>
+                {block.bypassed && <Text c="dimmed" size="xs">bypassed</Text>}
+              </Stack>
+            ) : ""}
           </Button>
         );
       })}

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Dr Marcus Baw
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-import { Alert, AppShell, Badge, Button, Group, NavLink, Paper, ScrollArea, SimpleGrid, Stack, Text, Title } from "@mantine/core";
+import { Alert, AppShell, Badge, Button, Group, NavLink, Paper, ScrollArea, Stack, Text, Title } from "@mantine/core";
 import { useEffect, useRef, useState } from "react";
 import { Grid } from "./features/quad/Grid";
 import { SceneSelector } from "./features/quad/SceneSelector";
@@ -9,6 +9,18 @@ import { cortexApi } from "./shared/ipc/api";
 import type { DashboardSnapshot, LiveBlock } from "./shared/ipc/types";
 
 interface Cell { row: number; column: number }
+
+/**
+ * Name the active scene as the unit does, by its letter, adding the label when
+ * the preset carries one. `active_scene_label` alone returns the label in place
+ * of the letter, which hides *which* of A-H is live - the one thing the
+ * hardware always shows.
+ */
+function activeSceneName(live: NonNullable<DashboardSnapshot["live"]>): string {
+  const scene = live.scenes.find((candidate) => candidate.index === live.active_scene);
+  if (!scene) return `${live.active_scene}`;
+  return scene.label ? `${scene.letter} - ${scene.label}` : scene.letter;
+}
 
 function healthLabel(snapshot: DashboardSnapshot): string {
   if (snapshot.source === "fixture") return "fixture";
@@ -20,6 +32,9 @@ export function App() {
   const [selectedCell, setSelectedCell] = useState<Cell | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [retrying, setRetrying] = useState(false);
+  // Which slot is mid-recall, as "<setlist> <slot>", so only the clicked entry
+  // shows as pending rather than the whole directory.
+  const [recalling, setRecalling] = useState<string | null>(null);
   const generation = useRef<number | null>(null);
 
   useEffect(() => {
@@ -68,6 +83,25 @@ export function App() {
     }
   };
 
+  // Recalling replaces the working copy and changes what the unit plays, so it
+  // is followed by a re-read rather than an optimistic update: the grid shown
+  // is the one the device reports, not the one that was asked for.
+  const recall = async (setlist: string, slot: string) => {
+    setRecalling(`${setlist}\u0000${slot}`);
+    try {
+      await cortexApi.recallPreset(setlist, slot);
+      setSelectedCell(null);
+      const next = await cortexApi.dashboard();
+      generation.current = next.status.cache.generation;
+      setSnapshot(next);
+      setError(null);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setRecalling(null);
+    }
+  };
+
   const reconnectNow = async () => {
     setRetrying(true);
     try {
@@ -93,7 +127,20 @@ export function App() {
         <ScrollArea>
           {snapshot.directory.map((setlist) => (
             <NavLink defaultOpened key={setlist.key} label={setlist.name}>
-              {setlist.slots.map((slot) => <NavLink key={`${setlist.key}-${slot.index}`} label={`${slot.slot}  ${slot.name}`} />)}
+              {setlist.slots.map((slot) => (
+                <NavLink
+                  active={live?.preset_name === slot.name}
+                  // A recall replaces the working copy and changes what is
+                  // heard, exactly as pressing the preset on the unit does.
+                  // Recall is free here because it writes nothing to storage;
+                  // saving is the operation that asks first.
+                  description={recalling === `${setlist.key} ${slot.slot}` ? "Recalling..." : undefined}
+                  disabled={recalling !== null || !connected}
+                  key={`${setlist.key}-${slot.index}`}
+                  label={`${slot.slot}  ${slot.name}`}
+                  onClick={() => void recall(setlist.key, slot.slot)}
+                />
+              ))}
             </NavLink>
           ))}
           {snapshot.directory.length === 0 && <Text c="dimmed" size="sm">Unavailable for this session generation.</Text>}
@@ -113,7 +160,7 @@ export function App() {
             </Stack>
           </Alert>}
           {live && <>
-            <Group justify="space-between"><div><Text c="dimmed" size="sm">Working grid</Text><Title order={3}>{live.preset_name}{live.preset_dirty ? " *" : ""}</Title></div><Text>Scene {live.active_scene_label}</Text></Group>
+            <Group justify="space-between"><div><Text c="dimmed" size="sm">Working grid</Text><Title order={3}>{live.preset_name}{live.preset_dirty ? " *" : ""}</Title></div><Text>Scene {activeSceneName(live)}</Text></Group>
             <Paper p="md" withBorder>
               <SceneSelector
                 activeScene={live.active_scene}
@@ -122,10 +169,36 @@ export function App() {
                 scenes={live.scenes}
               />
             </Paper>
-            <SimpleGrid cols={{ base: 1, lg: 2 }} spacing="md">
-              <Paper p="md" withBorder><Grid blocks={live.blocks} selected={selected} onSelect={(block) => setSelectedCell({ row: block.row, column: block.column })} /></Paper>
-              <Paper p="md" withBorder><Text c="dimmed" size="sm">Inspector</Text><Title order={4}>{selected?.name ?? "Select a block"}</Title><Text mt="sm">{selected ? `${selected.category} at row ${selected.screen_row}, column ${selected.column}.` : "Block details will appear here."}</Text><Text mt="md">CPU: {live.cpu_load?.total == null ? "awaiting device push" : `${live.cpu_load.total.toFixed(1)}%`}</Text>{live.cpu_load?.chains.map((chain, row) => <Text key={row} size="sm">Row {row + 1}: {chain.map((column) => `${column.load.toFixed(1)}${column.on_core2 ? "*" : ""}`).join("  ")}</Text>)}</Paper>
-            </SimpleGrid>
+            {/* Grid first and full width, inspector beneath it. The grid is
+                the thing being read at a glance and benefits from the width;
+                the inspector will grow parameter controls, which need room to
+                lay out horizontally rather than in a narrow column. */}
+            <Paper p="md" withBorder>
+              <Grid blocks={live.blocks} selected={selected} onSelect={(block) => setSelectedCell({ row: block.row, column: block.column })} />
+            </Paper>
+            <Paper p="md" withBorder>
+              <Group align="flex-start" justify="space-between" wrap="wrap">
+                <div>
+                  <Text c="dimmed" size="sm">Inspector</Text>
+                  <Title order={4}>{selected?.name ?? "Select a block"}</Title>
+                  <Text mt="sm">
+                    {selected
+                      ? `${selected.category} at row ${selected.screen_row}, column ${selected.column}.`
+                      : "Block details will appear here."}
+                  </Text>
+                  {selected?.based_on && <Text c="dimmed" mt="xs" size="sm">{selected.based_on}</Text>}
+                </div>
+                <div>
+                  <Text c="dimmed" size="sm">DSP load</Text>
+                  <Text>{live.cpu_load?.total == null ? "awaiting device push" : `${live.cpu_load.total.toFixed(1)}%`}</Text>
+                  {live.cpu_load?.chains.map((chain, row) => (
+                    <Text key={row} size="sm">
+                      Row {row + 1}: {chain.map((column) => `${column.load.toFixed(1)}${column.on_core2 ? "*" : ""}`).join("  ")}
+                    </Text>
+                  ))}
+                </div>
+              </Group>
+            </Paper>
           </>}
         </Stack>
       </AppShell.Main>

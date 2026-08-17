@@ -55,6 +55,54 @@ pub struct LiveBlock {
     pub based_on: Option<String>,
     pub bypassed: bool,
     pub params: Vec<ParamValue>,
+    /// Visual family this block belongs to, for colouring the grid the way the
+    /// unit and Cortex Control do. See [`block_family`].
+    pub family: String,
+}
+
+/// Classify a catalog category into the visual family the Quad Cortex colours
+/// it as on screen.
+///
+/// **This mapping is not in the protocol.** The device exposes scene colours
+/// but nothing that says what colour a *block* is; the grid palette is a UI
+/// convention. The families here were read off Cortex Control's own block
+/// picker, so they follow the vendor's grouping rather than an invented one -
+/// which is why `Wah` is `utility` and not `filter`, and why `Loopers` is
+/// `amp`-red rather than a utility grey. Reasoning about it would have got
+/// both wrong.
+///
+/// Categories are matched exactly against the vocabulary a real unit reports.
+/// Anything unrecognised - a category added by a later CorOS - falls back to
+/// `other` and is drawn neutrally, rather than being guessed at or dropped.
+fn block_family(category: &str) -> &'static str {
+    match category {
+        "Guitar Amplifier" | "Bass Amplifier" | "Synth" | "Loopers" => "amp",
+        "Cabsim Guitar (M)" | "Cabsim Guitar (ST)" | "Cabsim Bass (M)" | "Cabsim Bass (ST)"
+        | "IRLoaders" => "cab",
+        "Guitar Overdrive" | "Bass Overdrive" => "drive",
+        "Compressor" => "dynamics",
+        "Equalizer" => "eq",
+        "Filter" => "filter",
+        "Modulation" => "modulation",
+        "Delay" => "delay",
+        "Reverb" => "reverb",
+        "Pitch" => "pitch",
+        "Neural Capture" | "Neural Capture Internal" => "capture",
+        // Everything the picker draws in white or grey: morph, wah, the loop
+        // and routing plumbing, and the input gate.
+        "Morph"
+        | "Wah"
+        | "FX Loop"
+        | "Utility"
+        | "Utility_Deprecated"
+        | "Splitter"
+        | "Mixer"
+        | "Internal Routing"
+        | "Lane output control"
+        | "Tempo control"
+        | "InputGateControl" => "utility",
+        _ => "other",
+    }
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -96,6 +144,7 @@ trait DashboardSource: Send + Sync {
     fn dashboard(&self) -> Result<DashboardSnapshot, CommandError>;
     fn reconnect_now(&self) -> Result<(), CommandError>;
     fn switch_scene(&self, scene: u32) -> Result<(), CommandError>;
+    fn recall_preset(&self, setlist: &str, slot: &str) -> Result<(), CommandError>;
 }
 
 struct DaemonDashboardSource {
@@ -170,6 +219,7 @@ impl DashboardSource for DaemonDashboardSource {
                     .and_then(|bypass| bypass.scenes.get(active_scene as usize))
                     .copied()
                     .unwrap_or(false);
+                let category = block.category.unwrap_or_else(|| "Unknown".into());
                 LiveBlock {
                     row: block.row,
                     screen_row: block.screen_row,
@@ -178,7 +228,8 @@ impl DashboardSource for DaemonDashboardSource {
                     name: block
                         .name
                         .unwrap_or_else(|| format!("Model {}", block.model_id)),
-                    category: block.category.unwrap_or_else(|| "Unknown".into()),
+                    family: block_family(&category).to_string(),
+                    category,
                     based_on: block.based_on,
                     bypassed,
                     params: block.params,
@@ -228,12 +279,39 @@ impl DashboardSource for DaemonDashboardSource {
         }
         Ok(())
     }
+
+    fn recall_preset(&self, setlist: &str, slot: &str) -> Result<(), CommandError> {
+        // Whether the target is the read-only factory library is derived here
+        // from the path, not taken from the caller: the frontend must not be
+        // able to describe a factory setlist as a user one.
+        let acknowledged: RecallAck = self
+            .client
+            .request(&Request::RecallPreset {
+                setlist: setlist.to_string(),
+                slot: slot.to_string(),
+                factory: is_factory_setlist(setlist),
+            })
+            .map_err(|error| CommandError::daemon(error.to_string()))?;
+        if acknowledged.slot != slot {
+            return Err(CommandError::daemon(format!(
+                "asked for slot {slot} but the session acknowledged {}",
+                acknowledged.slot
+            )));
+        }
+        Ok(())
+    }
 }
 
 /// The daemon's reply to a scene request: the scene it acted on.
 #[derive(Debug, Clone, serde::Deserialize)]
 struct SceneAck {
     scene: u32,
+}
+
+/// The daemon's reply to a recall: the slot it acted on.
+#[derive(Debug, Clone, serde::Deserialize)]
+struct RecallAck {
+    slot: String,
 }
 
 impl DaemonDashboardSource {
@@ -339,6 +417,30 @@ fn request_switch_scene(source: &dyn DashboardSource, scene: u32) -> Result<(), 
     source.switch_scene(scene)
 }
 
+/// Recall a stored preset into the working copy.
+///
+/// Recall is free in this project's safety model - MCP-001.1, and what the CLI
+/// and MCP already do - because it writes nothing to storage. It is not without
+/// consequence: it changes what the unit is playing and replaces the working
+/// copy, discarding unsaved edits, exactly as pressing the preset on the unit
+/// does. Saving is the operation that requires confirmation.
+///
+/// Empty setlist or slot is refused here rather than sent, so a frontend bug
+/// cannot turn into a device request.
+fn request_recall_preset(
+    source: &dyn DashboardSource,
+    setlist: &str,
+    slot: &str,
+) -> Result<(), CommandError> {
+    if setlist.trim().is_empty() || slot.trim().is_empty() {
+        return Err(CommandError {
+            code: "invalid_preset_target",
+            message: "a recall needs both a setlist path and a slot".into(),
+        });
+    }
+    source.recall_preset(setlist, slot)
+}
+
 #[tauri::command]
 async fn dashboard(state: tauri::State<'_, AppState>) -> Result<DashboardSnapshot, CommandError> {
     let source = Arc::clone(&state.source);
@@ -363,6 +465,20 @@ async fn switch_scene(state: tauri::State<'_, AppState>, scene: u32) -> Result<(
         .map_err(|error| CommandError::daemon(format!("switch scene task failed: {error}")))?
 }
 
+#[tauri::command]
+async fn recall_preset(
+    state: tauri::State<'_, AppState>,
+    setlist: String,
+    slot: String,
+) -> Result<(), CommandError> {
+    let source = Arc::clone(&state.source);
+    tauri::async_runtime::spawn_blocking(move || {
+        request_recall_preset(source.as_ref(), &setlist, &slot)
+    })
+    .await
+    .map_err(|error| CommandError::daemon(format!("recall task failed: {error}")))?
+}
+
 pub fn run() {
     tauri::Builder::default()
         .manage(AppState {
@@ -371,7 +487,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             dashboard,
             reconnect_now,
-            switch_scene
+            switch_scene,
+            recall_preset
         ])
         .run(tauri::generate_context!())
         .expect("Tauri application failed");
@@ -420,18 +537,24 @@ mod tests {
         fn switch_scene(&self, _scene: u32) -> Result<(), CommandError> {
             Err(CommandError::daemon("fixture must not switch scenes"))
         }
+
+        fn recall_preset(&self, _setlist: &str, _slot: &str) -> Result<(), CommandError> {
+            Err(CommandError::daemon("fixture must not recall"))
+        }
     }
 
     /// Records what reached the source, so a test can prove something did
     /// *not* reach the device.
     struct RecordingSource {
         switched: std::sync::Mutex<Vec<u32>>,
+        recalled: std::sync::Mutex<Vec<(String, String)>>,
     }
 
     impl RecordingSource {
         fn new() -> Self {
             Self {
                 switched: std::sync::Mutex::new(Vec::new()),
+                recalled: std::sync::Mutex::new(Vec::new()),
             }
         }
     }
@@ -447,6 +570,14 @@ mod tests {
 
         fn switch_scene(&self, scene: u32) -> Result<(), CommandError> {
             self.switched.lock().unwrap().push(scene);
+            Ok(())
+        }
+
+        fn recall_preset(&self, setlist: &str, slot: &str) -> Result<(), CommandError> {
+            self.recalled
+                .lock()
+                .unwrap()
+                .push((setlist.to_string(), slot.to_string()));
             Ok(())
         }
     }
@@ -500,6 +631,111 @@ mod tests {
         let error = request_switch_scene(&source, 8).unwrap_err();
         assert_eq!(error.code, "invalid_scene");
         assert!(source.switched.lock().unwrap().is_empty());
+    }
+
+    /// The exact category vocabulary a real Quad Cortex reported on CorOS
+    /// 4.0.1 (533 models across 31 categories). Kept verbatim so a CorOS
+    /// update that renames a category fails this test rather than silently
+    /// greying out a block.
+    const MEASURED_CATEGORIES: [&str; 31] = [
+        "Bass Amplifier",
+        "Bass Overdrive",
+        "Cabsim Bass (M)",
+        "Cabsim Bass (ST)",
+        "Cabsim Guitar (M)",
+        "Cabsim Guitar (ST)",
+        "Compressor",
+        "Delay",
+        "Equalizer",
+        "FX Loop",
+        "Filter",
+        "Guitar Amplifier",
+        "Guitar Overdrive",
+        "IRLoaders",
+        "InputGateControl",
+        "Internal Routing",
+        "Lane output control",
+        "Loopers",
+        "Mixer",
+        "Modulation",
+        "Morph",
+        "Neural Capture",
+        "Neural Capture Internal",
+        "Pitch",
+        "Reverb",
+        "Splitter",
+        "Synth",
+        "Tempo control",
+        "Utility",
+        "Utility_Deprecated",
+        "Wah",
+    ];
+
+    #[test]
+    fn every_category_a_real_unit_reports_has_a_family() {
+        let unclassified: Vec<&str> = MEASURED_CATEGORIES
+            .into_iter()
+            .filter(|category| block_family(category) == "other")
+            .collect();
+        assert!(
+            unclassified.is_empty(),
+            "these categories would be drawn as unknown: {unclassified:?}"
+        );
+    }
+
+    #[test]
+    fn families_follow_cortex_controls_own_grouping_not_intuition() {
+        // Read off Cortex Control's block picker. Each of these is somewhere
+        // a reasonable guess would have gone wrong.
+        assert_eq!(
+            block_family("Wah"),
+            "utility",
+            "the picker draws Wah grey, not as a filter"
+        );
+        assert_eq!(
+            block_family("Loopers"),
+            "amp",
+            "the picker draws Looper red"
+        );
+        assert_eq!(block_family("Synth"), "amp", "the picker draws Synth red");
+        assert_eq!(
+            block_family("IRLoaders"),
+            "cab",
+            "IR loader shares the cab colour"
+        );
+        assert_eq!(block_family("Morph"), "utility");
+        assert_eq!(block_family("Equalizer"), "eq");
+        assert_eq!(block_family("Filter"), "filter");
+    }
+
+    #[test]
+    fn an_unknown_future_category_is_drawn_neutrally_rather_than_guessed() {
+        assert_eq!(block_family("Quantum Flux Capacitor"), "other");
+        assert_eq!(block_family(""), "other");
+    }
+
+    #[test]
+    fn an_incomplete_recall_target_is_refused_before_it_reaches_the_device() {
+        let source = RecordingSource::new();
+        for (setlist, slot) in [("", "1A"), ("/x", ""), ("   ", "1A"), ("/x", "  ")] {
+            let error = request_recall_preset(&source, setlist, slot).unwrap_err();
+            assert_eq!(error.code, "invalid_preset_target");
+        }
+        assert!(source.recalled.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_recall_passes_the_exact_setlist_and_slot_through() {
+        let source = RecordingSource::new();
+        request_recall_preset(&source, "/media/p4/Presets/My Presets", "12C").unwrap();
+        assert_eq!(
+            *source.recalled.lock().unwrap(),
+            vec![(
+                "/media/p4/Presets/My Presets".to_string(),
+                "12C".to_string()
+            )],
+            "the slot must not be normalised, reformatted, or renumbered on the way out"
+        );
     }
 
     #[test]
@@ -611,6 +847,60 @@ mod tests {
             }
         }
         panic!("failed to restore the scene the unit started on ({original})");
+    }
+
+    /// Drives the real `recall_preset` command path and proves the device
+    /// reports the recalled preset back, rather than trusting the write.
+    ///
+    /// The slot is named by the operator, not chosen here: a recall replaces
+    /// the working copy, and only the operator knows whether the current one
+    /// is disposable.
+    ///
+    /// ```sh
+    /// CORTEX_GUI_RECALL_SETLIST="/media/p4/Presets/My Presets" \
+    /// CORTEX_GUI_RECALL_SLOT=1A \
+    ///   cargo test -p cortex-gui recalling_a_preset -- --ignored --exact --nocapture
+    /// ```
+    #[test]
+    #[ignore = "requires a real Quad Cortex, a held session, and an operator-named slot; REPLACES the working copy"]
+    fn recalling_a_preset_is_reflected_by_the_device() {
+        let setlist = std::env::var("CORTEX_GUI_RECALL_SETLIST")
+            .expect("set CORTEX_GUI_RECALL_SETLIST to the setlist path to recall from");
+        let slot = std::env::var("CORTEX_GUI_RECALL_SLOT")
+            .expect("set CORTEX_GUI_RECALL_SLOT to a slot you are willing to recall");
+
+        let source = DaemonDashboardSource::default();
+        let expected_name = load_dashboard(&source)
+            .unwrap()
+            .directory
+            .iter()
+            .find(|entry| entry.key == setlist)
+            .and_then(|entry| {
+                entry
+                    .slots
+                    .iter()
+                    .find(|candidate| candidate.slot == slot)
+                    .map(|candidate| candidate.name.clone())
+            })
+            .expect("the named slot should appear in the directory listing");
+
+        request_recall_preset(&source, &setlist, &slot).unwrap();
+
+        for _ in 0..40 {
+            std::thread::sleep(std::time::Duration::from_millis(250));
+            if let Some(live) = load_dashboard(&source).unwrap().live {
+                if live.preset_name == expected_name {
+                    // The recalled preset is live, and it brought a grid with it.
+                    assert!(
+                        !live.blocks.is_empty(),
+                        "a recalled preset should report its blocks"
+                    );
+                    assert_eq!(live.scenes.len(), 8);
+                    return;
+                }
+            }
+        }
+        panic!("device never reported {expected_name} as the live preset after recall");
     }
 
     #[test]

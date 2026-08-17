@@ -8,4 +8,5 @@ export const tauriApi: CortexApi = {
   dashboard() { return invoke<DashboardSnapshot>("dashboard"); },
   reconnectNow() { return invoke<void>("reconnect_now"); },
   switchScene(scene: number) { return invoke<void>("switch_scene", { scene }); },
+  recallPreset(setlist: string, slot: string) { return invoke<void>("recall_preset", { setlist, slot }); },
 };
