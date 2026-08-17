@@ -304,8 +304,17 @@ Note the working scene before you start so you can return to it.
 - [ ] Selecting a different scene changes the scene shown on the unit's own display
 - [ ] The GUI's scene reflects what the unit reports, and matches `cortex device state` for the same generation
 - [ ] Changing the scene **on the unit** is reflected in the GUI within about a second, without touching the GUI control
-- [ ] Arrow keys move through the scenes and each move switches the unit, matching mouse behaviour
+
+To keep the last check honest, record the scene independently while you press footswitches, so the observation does not rest on the GUI agreeing with itself:
+
+```sh
+while :; do cortex device probe --format json | python3 -c 'import json,sys; print(json.load(sys.stdin).get("active_scene"))'; sleep 0.4; done
+```
+
+- [ ] The independent reader shows the same scene sequence you pressed
+- [ ] Click a scene radio directly, then press Right arrow: the selection moves on and the unit follows (keyboard parity; confirm focus is on the radio before blaming the control)
 - [ ] With a screen reader running (Orca on Linux), the control announces the group, the scene count, the position, and the newly active scene after each switch
+- [ ] Step through all eight scenes and confirm the physical scene LED colour matches the colour the GUI reports for that scene
 - [ ] Return to the scene noted at the start; no preset was saved and the working copy is not left dirty by the switching itself
 
 ```sh
