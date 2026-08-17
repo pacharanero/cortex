@@ -183,6 +183,13 @@ export const fixtureApi: CortexApi = {
     target.color = 0xff000000 | (color & 0x00ffffff);
     bumpRevision();
   },
+  async setBypass(row: number, column: number, bypass: boolean) {
+    const block = dashboard.live?.blocks.find((b) => b.row === row && b.column === column);
+    if (!block) throw new Error(`no block at row ${row}, column ${column}`);
+    block.bypassed = bypass;
+    if (dashboard.live) dashboard.live.preset_dirty = true;
+    bumpRevision();
+  },
   async blockParameters(row: number, column: number) {
     if (row < 0 || row > 3 || column < 0 || column > 7) throw new Error(`row ${row}, column ${column} is outside the grid`);
     const found = blockParameters[`${row},${column}`];

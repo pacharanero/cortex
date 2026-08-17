@@ -244,6 +244,8 @@ Improve on the Cortex Control appearance while staying familiar enough to naviga
 
     A React Rules-of-Hooks violation was also caught in browser mode before reaching hardware - a `useEffect` placed after an early return changes the hook count between renders and throws, which presents as a panel that silently stops working rather than an obvious failure. There is still no error boundary around the panel.
 
+    **Block bypass is in the same panel, offline-verified only.** A switch bypasses or engages the selected block through `Request::SetBypass`, which the daemon answers with both `applied` and `verified` - it reads the cell back - and anything short of both is treated as failure rather than a silent no-op. Like every other edit here it reaches the ACTIVE scene only, because that is how the device stores bypass, and the control says so. Browser-fixture verified: toggling flips the switch, and the grid cell picks up its dashed/dimmed styling and `bypassed` text from the re-read rather than optimistically. **Hardware follow-up needed:** confirm a GUI bypass is audible and matches the unit's own display.
+
     Outstanding: parameter search/grouping for models with many parameters, and per-scene editing (a write currently reaches the active scene only, which is what the badge says).
 - [~] **GUI-003.4**: Scene manager - copy/swap/relabel/recolor scenes without the footswitch mode dance. Expose a full RGB picker rather than reproducing the unit's fixed palette: CorOS 4.0.1 stored and freshly read back off-palette `0xFF808080` exactly, although physical LED rendering still needs visual confirmation.
 

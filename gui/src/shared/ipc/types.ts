@@ -176,4 +176,11 @@ export interface CortexApi {
    * fixed palette - confirmed on hardware 2026-08-16.
    */
   setSceneColor(scene: number, color: number): Promise<void>;
+  /**
+   * Bypass or engage a block.
+   *
+   * Per-scene: the device stores bypass per scene, so this reaches the ACTIVE
+   * scene only. `row` is the zero-based WIRE row, never the 1-4 screen row.
+   */
+  setBypass(row: number, column: number, bypass: boolean): Promise<void>;
 }

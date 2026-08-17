@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Dr Marcus Baw
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-import { Alert, AppShell, Badge, Button, Divider, Group, NavLink, Paper, ScrollArea, Stack, Text, Title } from "@mantine/core";
+import { Alert, AppShell, Badge, Button, Divider, Group, NavLink, Paper, ScrollArea, Stack, Switch, Text, Title } from "@mantine/core";
 import { useEffect, useRef, useState } from "react";
 import { Grid } from "./features/quad/Grid";
 import { ParameterEditor } from "./features/quad/ParameterEditor";
@@ -131,6 +131,13 @@ export function App() {
     generation.current = next.status.cache.generation;
     setSnapshot(next);
   };
+  // Bypass reaches the active scene only, because that is how the device
+  // stores it. Act, then re-read: the grid shows what the unit reports.
+  const toggleBypass = async (bypass: boolean) => {
+    if (!selectedCell) return;
+    await cortexApi.setBypass(selectedCell.row, selectedCell.column, bypass);
+    await afterDeviceEdit();
+  };
   const renameScene = async (scene: number, label: string | null) => {
     await cortexApi.setSceneLabel(scene, label);
     await afterDeviceEdit();
@@ -246,6 +253,19 @@ export function App() {
                       : "Block details will appear here."}
                   </Text>
                   {selected?.based_on && <Text c="dimmed" mt="xs" size="sm">{selected.based_on}</Text>}
+                  {selected && (
+                    <Switch
+                      // Not disabled while writing: a disabled control cannot
+                      // hold focus, which is the fault recorded in
+                      // SceneSelector and ParameterEditor.
+                      checked={selected.bypassed}
+                      description="Applies to the active scene only, as the device stores it"
+                      disabled={!connected}
+                      label={selected.bypassed ? "Bypassed" : "Engaged"}
+                      mt="md"
+                      onChange={(event) => void toggleBypass(event.currentTarget.checked)}
+                    />
+                  )}
                 </div>
                 <div>
                   <Text c="dimmed" size="sm">DSP load</Text>

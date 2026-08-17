@@ -160,6 +160,7 @@ trait DashboardSource: Send + Sync {
     fn switch_scene(&self, scene: u32) -> Result<(), CommandError>;
     fn recall_preset(&self, setlist: &str, slot: &str) -> Result<(), CommandError>;
     fn set_scene_label(&self, scene: u32, label: Option<String>) -> Result<(), CommandError>;
+    fn set_bypass(&self, row: u32, column: u32, bypass: bool) -> Result<(), CommandError>;
     fn set_scene_color(&self, scene: u32, color: u32) -> Result<(), CommandError>;
     fn block_parameters(&self, row: u32, column: u32) -> Result<Vec<ParameterView>, CommandError>;
     fn set_parameter(
@@ -330,6 +331,29 @@ impl DashboardSource for DaemonDashboardSource {
         Ok(())
     }
 
+    fn set_bypass(&self, row: u32, column: u32, bypass: bool) -> Result<(), CommandError> {
+        // The daemon reports whether it applied AND verified the change by
+        // reading the cell back. Anything short of both is a failure, not a
+        // silent no-op: a bypass that reports success while the block still
+        // sounds is exactly the fault this project keeps finding.
+        let acknowledged: BypassAck = self
+            .client
+            .request(&Request::SetBypass {
+                row,
+                column,
+                bypass,
+            })
+            .map_err(|error| CommandError::daemon(error.to_string()))?;
+        if !acknowledged.applied || !acknowledged.verified {
+            return Err(CommandError::daemon(format!(
+                "the session did not confirm the bypass change at row {row}, column {column} \
+                 (applied={}, verified={})",
+                acknowledged.applied, acknowledged.verified
+            )));
+        }
+        Ok(())
+    }
+
     fn set_scene_label(&self, scene: u32, label: Option<String>) -> Result<(), CommandError> {
         let acknowledged: SceneAck = self
             .client
@@ -436,6 +460,14 @@ struct SceneAck {
 #[derive(Debug, Clone, serde::Deserialize)]
 struct CatalogPayload {
     payload: Vec<u8>,
+}
+
+/// The daemon's reply to a bypass change: whether it applied it and confirmed
+/// it by reading the cell back.
+#[derive(Debug, Clone, serde::Deserialize)]
+struct BypassAck {
+    applied: bool,
+    verified: bool,
 }
 
 /// The daemon's reply to a recall: the slot it acted on.
@@ -713,6 +745,23 @@ async fn switch_scene(state: tauri::State<'_, AppState>, scene: u32) -> Result<(
         .map_err(|error| CommandError::daemon(format!("switch scene task failed: {error}")))?
 }
 
+/// Bypass or engage a block.
+///
+/// Non-persistent, and per-scene: the device stores bypass per scene, so this
+/// reaches the ACTIVE scene only - the same rule the parameter editor's badge
+/// states. `row` is the zero-based WIRE row, never the 1-4 screen row.
+fn request_set_bypass(
+    source: &dyn DashboardSource,
+    row: u32,
+    column: u32,
+    bypass: bool,
+) -> Result<(), CommandError> {
+    if row >= GRID_ROWS || column >= GRID_COLUMNS {
+        return Err(CommandError::invalid_cell(row, column));
+    }
+    source.set_bypass(row, column, bypass)
+}
+
 /// Rename a scene on the working copy, or clear its label.
 ///
 /// Non-persistent, like every other edit here: it changes the working copy and
@@ -782,6 +831,21 @@ fn request_set_parameter(
         return Err(CommandError::invalid_cell(row, column));
     }
     source.set_parameter(row, column, index, input)
+}
+
+#[tauri::command]
+async fn set_bypass(
+    state: tauri::State<'_, AppState>,
+    row: u32,
+    column: u32,
+    bypass: bool,
+) -> Result<(), CommandError> {
+    let source = Arc::clone(&state.source);
+    tauri::async_runtime::spawn_blocking(move || {
+        request_set_bypass(source.as_ref(), row, column, bypass)
+    })
+    .await
+    .map_err(|error| CommandError::daemon(format!("bypass task failed: {error}")))?
 }
 
 #[tauri::command]
@@ -869,7 +933,8 @@ pub fn run() {
             block_parameters,
             set_parameter,
             set_scene_label,
-            set_scene_color
+            set_scene_color,
+            set_bypass
         ])
         .run(tauri::generate_context!())
         .expect("Tauri application failed");
@@ -927,6 +992,10 @@ mod tests {
             Err(CommandError::daemon("fixture must not label scenes"))
         }
 
+        fn set_bypass(&self, _row: u32, _column: u32, _bypass: bool) -> Result<(), CommandError> {
+            Err(CommandError::daemon("fixture must not bypass blocks"))
+        }
+
         fn set_scene_color(&self, _scene: u32, _color: u32) -> Result<(), CommandError> {
             Err(CommandError::daemon("fixture must not recolour scenes"))
         }
@@ -958,6 +1027,7 @@ mod tests {
         written: std::sync::Mutex<Vec<(u32, u32, u32, cortex_rs::client::ParameterInput)>>,
         labelled: std::sync::Mutex<Vec<(u32, Option<String>)>>,
         coloured: std::sync::Mutex<Vec<(u32, u32)>>,
+        bypassed: std::sync::Mutex<Vec<(u32, u32, bool)>>,
     }
 
     impl RecordingSource {
@@ -968,6 +1038,7 @@ mod tests {
                 written: std::sync::Mutex::new(Vec::new()),
                 labelled: std::sync::Mutex::new(Vec::new()),
                 coloured: std::sync::Mutex::new(Vec::new()),
+                bypassed: std::sync::Mutex::new(Vec::new()),
             }
         }
     }
@@ -996,6 +1067,11 @@ mod tests {
 
         fn set_scene_label(&self, scene: u32, label: Option<String>) -> Result<(), CommandError> {
             self.labelled.lock().unwrap().push((scene, label));
+            Ok(())
+        }
+
+        fn set_bypass(&self, row: u32, column: u32, bypass: bool) -> Result<(), CommandError> {
+            self.bypassed.lock().unwrap().push((row, column, bypass));
             Ok(())
         }
 
@@ -1385,6 +1461,23 @@ mod tests {
         );
         assert!(source.labelled.lock().unwrap().is_empty());
         assert!(source.coloured.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn bypass_carries_the_wire_row_and_refuses_a_cell_outside_the_grid() {
+        let source = RecordingSource::new();
+        request_set_bypass(&source, 3, 7, true).unwrap();
+        request_set_bypass(&source, 0, 0, false).unwrap();
+        assert_eq!(
+            *source.bypassed.lock().unwrap(),
+            vec![(3, 7, true), (0, 0, false)]
+        );
+
+        assert_eq!(
+            request_set_bypass(&source, 4, 0, true).unwrap_err().code,
+            "invalid_cell"
+        );
+        assert_eq!(source.bypassed.lock().unwrap().len(), 2);
     }
 
     #[test]

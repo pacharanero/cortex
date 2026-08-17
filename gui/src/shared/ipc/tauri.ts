@@ -15,4 +15,5 @@ export const tauriApi: CortexApi = {
   },
   setSceneLabel(scene: number, label: string | null) { return invoke<void>("set_scene_label", { scene, label }); },
   setSceneColor(scene: number, color: number) { return invoke<void>("set_scene_color", { scene, color }); },
+  setBypass(row: number, column: number, bypass: boolean) { return invoke<void>("set_bypass", { row, column, bypass }); },
 };
