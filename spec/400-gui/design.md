@@ -55,6 +55,14 @@ The first daemon-backed milestone is read-only. The GUI shows health, cache gene
 
 Rust tests exercise scene-label conversion, connected/cache readiness, retry signalling, and failure propagation without fixture fallback. Frontend checks compile both adapters against one strict TypeScript contract. The repository Rust and frontend gates run together locally and in CI. Hardware verification on 2026-08-09 unplugged the USB data cable while the native GUI was live: within one second the grid and directory disappeared, generation 1 remained visibly invalid, automatic recovery returned the same eight-block preset after about 10 seconds, and the rendered cache advanced to generation 2. A second run displayed the real failed-attempt progression, accepted **Reconnect now** at attempt 4 without a UI error, completed the replacement handshake in about three seconds and again restored the preset under generation 2; the focused offline timing test separately proves the signal interrupts a 10-second wait in under one second.
 
+## [DES-CAPABILITY] Capability Matrix Defaults To Unverified
+
+`gui/src-tauri/src/capability.rs` carries the honest verified-vs-provisional labelling AGENTS.md calls for, following the `deskop-nano-cortex` precedent recorded in [prior-art.md](../prior-art.md#the-idea-most-worth-stealing). `CapabilityStatus` is `confirmed-readable`, `confirmed-writable`, `inferred`, `unsupported`, or `unverified`, and `unverified` is the `Default` - both for the enum and for `CapabilityMatrix::status` on any operation key the matrix does not contain. An unlabelled surface is exactly the one likely to be wrong, so the type makes silence read as unverified rather than as confirmed by omission.
+
+`default_matrix()` is seeded only from operations with a recorded hardware pass elsewhere in this repository (`spec/roadmap.md`), never from "it is implemented" or "it passed offline/fixture verification". `set_bypass`, `set_scene_label` and `set_scene_color` are the worked example: all three exist, are exercised by Rust unit tests, and are offline/fixture-verified - and all three stay `unverified` here, because GUI-003.3 and GUI-003.4 record their hardware follow-up as still needed. Promoting an operation requires editing this seed alongside the roadmap entry that supplies the hardware evidence, not on the strength of the code appearing to work.
+
+The matrix is not yet consulted by any Tauri command or rendered in the webview - GUI-004.2 scoped defining the type and proving its default, not wiring a display. The natural consumer is the hardware-faithful panel (GUI-002) and the screen-reader surface (GUI-006), which is why this lives beside the other Tauri backend types rather than as a one-off.
+
 ## Known Limits
 
 - The directory currently contains complete setlist listings already known to the daemon; empty and unavailable folders are not represented as empty.

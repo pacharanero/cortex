@@ -19,3 +19,6 @@ serde = { workspace = true, features = ["derive"] }
 tauri = { version = "2.11.5", features = [] }
 cortex-rs = { path = "../../crates/cortex-rs", default-features = false }
 cortex-host = { path = "../../crates/cortex-host" }
+
+[dev-dependencies]
+serde_json = { workspace = true }

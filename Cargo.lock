@@ -514,6 +514,7 @@ dependencies = [
  "cortex-host",
  "cortex-rs",
  "serde",
+ "serde_json",
  "tauri",
  "tauri-build",
 ]
