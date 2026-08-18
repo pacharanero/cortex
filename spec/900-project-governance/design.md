@@ -57,9 +57,9 @@ The prior-art licensing table in `AGENTS.md` is the source of truth for what may
 | Repo | License | Use |
 | --- | --- | --- |
 | `pyquadcortex` (stokes-audio) | MIT | **Port freely with attribution.** Recovered `.proto` vendored; framing, write-STALL, trailer envelope derived. |
-| `deskop-nano-cortex` (rixrix) | Apache-2.0 | **Adapt with attribution.** Architectural precedent for the Tauri app. No code copied yet. |
+| `deskop-nano-cortex` (rixrix) | Apache-2.0 | **Adapt with attribution.** Architectural precedent for the Tauri app and source for the adapted Nano current-state decoder/field map. |
 | `qc-stomp-tools` (VanIseghemThomas) | MIT | Adapt with attribution. On-device ioctls; relevant only if we target on-device builds. |
-| `nano-cortex-web-editor` (choldy) | MIT | No material currently used; indirect provenance for the BLE field map credited by `deskop-nano-cortex`. |
+| `nano-cortex-web-editor` (choldy) | MIT | Source of the Nano current-state command and field map adapted through `deskop-nano-cortex`; attributed in notices. |
 | `OpenCortex` (VanIseghemThomas) | No repository-wide licence; mixed file-level notices | **Reference only.** Do not copy. |
 | `qc-extras` (roelj) | No repository-wide licence; GPL-3.0-or-later source headers | **Reference only until scope is clarified.** Do not copy. |
 | `quad-cortex-usb-re-notes` (hsaastamoinen) | None declared | **Reference only.** Do not copy. |

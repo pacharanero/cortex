@@ -2944,8 +2944,8 @@ fn prot_006_13_io_settings_mutate_poll_restore() -> cortex_rs::Result<()> {
     exercise
 }
 
-/// NANO-001.2 hardware smoke: verify the Nano Cortex transport through
-/// repository code. Read-only, no mutation, no application codec needed.
+/// NANO-001.3 hardware smoke: verify the Nano Cortex transport and typed
+/// current-state decoder through repository code. Read-only, no mutation.
 ///
 /// Requires a Nano Cortex connected by USB with Bluetooth disconnected and
 /// the `70-neural-dsp-cortex.rules` udev rule installed. Does not print any
@@ -2955,6 +2955,7 @@ fn prot_006_13_io_settings_mutate_poll_restore() -> cortex_rs::Result<()> {
 fn nano_transport_geometry_and_state_read() -> cortex_rs::Result<()> {
     use std::time::Duration;
 
+    use cortex_rs::nano::{CURRENT_STATE_REQUEST, NanoSlotRole, decode_current_state};
     use cortex_rs::{DeviceKind, FrameReassembler, Transport};
 
     let geometry = DeviceKind::NanoCortex.report_geometry();
@@ -2969,14 +2970,7 @@ fn nano_transport_geometry_and_state_read() -> cortex_rs::Result<()> {
         "transport retained Nano kind"
     );
 
-    // The hardware-verified read-only current-state request body from
-    // docs/nano-cortex-hid.md. This is a Nano BLE application frame, not a
-    // Quad Cortex protobuf + trailer. encode_reports wraps it in a single
-    // COMPLETE report: [02][0C][C0][body...zero-padded].
-    let state_request: &[u8] = &[
-        0x08, 0x03, 0x18, 0x01, 0x20, 0x01, 0x28, 0x01, 0x01, 0x00, 0x00, 0x00,
-    ];
-    transport.write(state_request)?;
+    transport.write(&CURRENT_STATE_REQUEST)?;
 
     // Read and reassemble. The original 2026-08-11 probe measured nine
     // reports / 546 bytes, but the state body varies with device content
@@ -2987,7 +2981,7 @@ fn nano_transport_geometry_and_state_read() -> cortex_rs::Result<()> {
     let timeout = Duration::from_secs(5);
     let mut reassembler = FrameReassembler::new();
     let mut report_count = 0usize;
-    let reassembled_len;
+    let reassembled;
     let mut saw_first = false;
     let mut saw_last = false;
 
@@ -3005,11 +2999,12 @@ fn nano_transport_geometry_and_state_read() -> cortex_rs::Result<()> {
             saw_last = true;
         }
         if let Some(body) = reassembler.feed(&frame)? {
-            reassembled_len = body.len();
+            reassembled = body;
             break;
         }
     }
 
+    let reassembled_len = reassembled.len();
     eprintln!("reassembled: {report_count} reports, {reassembled_len} bytes");
     assert!(
         report_count >= 2,
@@ -3018,6 +3013,34 @@ fn nano_transport_geometry_and_state_read() -> cortex_rs::Result<()> {
     assert!(saw_first, "expected a FIRST report");
     assert!(saw_last, "expected a LAST report");
     assert!(reassembled_len > 0, "expected a non-empty reassembled body");
+
+    let state = decode_current_state(&reassembled)?;
+    assert_eq!(state.slots.len(), 8, "expected the fixed eight-role chain");
+    assert_eq!(state.slots[0].role, NanoSlotRole::Gate);
+    assert_eq!(state.slots[3].role, NanoSlotRole::Capture);
+    assert_eq!(state.slots[4].role, NanoSlotRole::IrCab);
+    assert_eq!(state.slots[7].role, NanoSlotRole::PostFx3);
+    assert!(
+        state.amp.gain.is_some()
+            || state.amp.level.is_some()
+            || state.amp.bass.is_some()
+            || state.amp.mid.is_some()
+            || state.amp.treble.is_some(),
+        "expected at least one decoded amp control"
+    );
+    eprintln!(
+        "typed state decoded: eight roles, {} amp controls present",
+        [
+            state.amp.gain,
+            state.amp.level,
+            state.amp.bass,
+            state.amp.mid,
+            state.amp.treble,
+        ]
+        .iter()
+        .flatten()
+        .count()
+    );
 
     Ok(())
 }

@@ -63,6 +63,7 @@ pub mod grid;
 pub mod helpers;
 pub mod link;
 pub mod message;
+pub mod nano;
 pub mod registry;
 pub mod safety;
 pub mod state;
