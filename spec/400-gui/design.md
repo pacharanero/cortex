@@ -63,6 +63,12 @@ Rust tests exercise scene-label conversion, connected/cache readiness, retry sig
 
 This first slice is not yet consulted by any Tauri command or rendered in the webview. GUI-004.2 therefore remains partial: its governing acceptance criterion requires the labels in the UI, not only a backend type. The natural consumers are the hardware-faithful panel (GUI-002) and the screen-reader surface (GUI-006), which is why the matrix lives beside the other Tauri backend types rather than as a one-off; completing the item requires exposing it through the Tauri boundary and rendering it there.
 
+## [DES-FAULT] Per-Panel Fault Isolation
+
+`gui/src/shared/ErrorBoundary.tsx` wraps the scene selector, grid and inspector panels independently in `App.tsx`. Before this, a thrown render error unmounted `SceneSelector` while the daemon and its writes kept working, which presented as "the keyboard stopped working" rather than an obvious crash - a live incident recorded in GUI-003.4, and the same class of fault a Rules-of-Hooks violation in the parameter editor would also cause. React error boundaries can only be class components with `getDerivedStateFromError`; the fallback names the failed panel, shows the caught error's message, and offers a reload rather than leaving a blank space, and it does not call `console.error` itself so React's own logging of the caught error is not duplicated or suppressed. Each panel gets its own boundary rather than one boundary around the whole dashboard, so a fault in the grid does not also blank the scene selector or inspector.
+
+`ErrorBoundary.test.tsx` (`gui/vitest.config.ts`, jsdom environment) proves the isolation directly against the component: a thrown test child produces the named fallback and a Reload control, `console.error` is still invoked, and a second boundary rendered alongside a failed one keeps showing its own children. This is the first automated frontend test in the repository; `npm run test` (`vitest run`) is wired into `npm run check`, so `s/lint` and CI exercise it the same way they exercise the TypeScript build.
+
 ## Known Limits
 
 - The directory currently contains complete setlist listings already known to the daemon; empty and unavailable folders are not represented as empty.
