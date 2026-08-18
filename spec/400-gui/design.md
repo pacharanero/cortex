@@ -61,7 +61,7 @@ Rust tests exercise scene-label conversion, connected/cache readiness, retry sig
 
 `default_matrix()` is seeded only from operations with a recorded hardware pass elsewhere in this repository (`spec/roadmap.md`), never from "it is implemented" or "it passed offline/fixture verification". `set_bypass`, `set_scene_label` and `set_scene_color` are the worked example: all three exist, are exercised by Rust unit tests, and are offline/fixture-verified - and all three stay `unverified` here, because GUI-003.3 and GUI-003.4 record their hardware follow-up as still needed. Promoting an operation requires editing this seed alongside the roadmap entry that supplies the hardware evidence, not on the strength of the code appearing to work.
 
-The matrix is not yet consulted by any Tauri command or rendered in the webview - GUI-004.2 scoped defining the type and proving its default, not wiring a display. The natural consumer is the hardware-faithful panel (GUI-002) and the screen-reader surface (GUI-006), which is why this lives beside the other Tauri backend types rather than as a one-off.
+This first slice is not yet consulted by any Tauri command or rendered in the webview. GUI-004.2 therefore remains partial: its governing acceptance criterion requires the labels in the UI, not only a backend type. The natural consumers are the hardware-faithful panel (GUI-002) and the screen-reader surface (GUI-006), which is why the matrix lives beside the other Tauri backend types rather than as a one-off; completing the item requires exposing it through the Tauri boundary and rendering it there.
 
 ## Known Limits
 

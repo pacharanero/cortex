@@ -83,8 +83,8 @@ pub fn default_matrix() -> CapabilityMatrix {
         // GUI-003.4, hardware-verified 2026-08-16: switch, then re-read; the
         // daemon's echoed scene is compared against the one requested.
         .insert("switch_scene", ConfirmedWritable)
-        // MCP-003.1, hardware-verified 2026-08-12 through the official MCP
-        // client; the CLI/GUI recall path is the same daemon request.
+        // GUI-003.1, hardware-verified 2026-08-17 through the sidebar: the
+        // daemon's echoed slot matched and the GUI re-read the working copy.
         .insert("recall_preset", ConfirmedWritable)
         // GUI-003.3, hardware-verified 2026-08-17: read a real block's
         // parameters through the catalog join.
