@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from "react";
 import { Grid } from "./features/quad/Grid";
 import { ParameterEditor } from "./features/quad/ParameterEditor";
 import { SceneSelector } from "./features/quad/SceneSelector";
+import { ErrorBoundary } from "./shared/ErrorBoundary";
 import { cortexApi } from "./shared/ipc/api";
 import type { DashboardSnapshot, LiveBlock, ParameterInput, ParameterView } from "./shared/ipc/types";
 
@@ -226,72 +227,78 @@ export function App() {
           {live && <>
             <Group justify="space-between"><div><Text c="dimmed" size="sm">Working grid</Text><Title order={3}>{live.preset_name}{live.preset_dirty ? " *" : ""}</Title></div><Text>Scene {activeSceneName(live)}</Text></Group>
             <Paper p="md" withBorder>
-              <SceneSelector
-                activeScene={live.active_scene}
-                disabled={!connected}
-                onRecolour={recolourScene}
-                onRename={renameScene}
-                onSwitch={switchScene}
-                scenes={live.scenes}
-              />
+              <ErrorBoundary name="Scene selector">
+                <SceneSelector
+                  activeScene={live.active_scene}
+                  disabled={!connected}
+                  onRecolour={recolourScene}
+                  onRename={renameScene}
+                  onSwitch={switchScene}
+                  scenes={live.scenes}
+                />
+              </ErrorBoundary>
             </Paper>
             {/* Grid first and full width, inspector beneath it. The grid is
                 the thing being read at a glance and benefits from the width;
                 the inspector will grow parameter controls, which need room to
                 lay out horizontally rather than in a narrow column. */}
             <Paper p="md" withBorder>
-              <Grid blocks={live.blocks} selected={selected} onSelect={(block) => setSelectedCell({ row: block.row, column: block.column })} />
+              <ErrorBoundary name="Grid">
+                <Grid blocks={live.blocks} selected={selected} onSelect={(block) => setSelectedCell({ row: block.row, column: block.column })} />
+              </ErrorBoundary>
             </Paper>
             <Paper p="md" withBorder>
-              <Group align="flex-start" justify="space-between" wrap="wrap">
-                <div>
-                  <Text c="dimmed" size="sm">Inspector</Text>
-                  <Title order={4}>{selected?.name ?? "Select a block"}</Title>
-                  <Text mt="sm">
-                    {selected
-                      ? `${selected.category} at row ${selected.screen_row}, column ${selected.column}.`
-                      : "Block details will appear here."}
-                  </Text>
-                  {selected?.based_on && <Text c="dimmed" mt="xs" size="sm">{selected.based_on}</Text>}
-                  {selected && (
-                    <Switch
-                      // Not disabled while writing: a disabled control cannot
-                      // hold focus, which is the fault recorded in
-                      // SceneSelector and ParameterEditor.
-                      checked={selected.bypassed}
-                      description="Applies to the active scene only, as the device stores it"
-                      disabled={!connected}
-                      label={selected.bypassed ? "Bypassed" : "Engaged"}
-                      mt="md"
-                      onChange={(event) => void toggleBypass(event.currentTarget.checked)}
-                    />
-                  )}
-                </div>
-                <div>
-                  <Text c="dimmed" size="sm">DSP load</Text>
-                  <Text>{live.cpu_load?.total == null ? "awaiting device push" : `${live.cpu_load.total.toFixed(1)}%`}</Text>
-                  {live.cpu_load?.chains.map((chain, row) => (
-                    <Text key={row} size="sm">
-                      Row {row + 1}: {chain.map((column) => `${column.load.toFixed(1)}${column.on_core2 ? "*" : ""}`).join("  ")}
+              <ErrorBoundary name="Inspector">
+                <Group align="flex-start" justify="space-between" wrap="wrap">
+                  <div>
+                    <Text c="dimmed" size="sm">Inspector</Text>
+                    <Title order={4}>{selected?.name ?? "Select a block"}</Title>
+                    <Text mt="sm">
+                      {selected
+                        ? `${selected.category} at row ${selected.screen_row}, column ${selected.column}.`
+                        : "Block details will appear here."}
                     </Text>
-                  ))}
-                </div>
-              </Group>
+                    {selected?.based_on && <Text c="dimmed" mt="xs" size="sm">{selected.based_on}</Text>}
+                    {selected && (
+                      <Switch
+                        // Not disabled while writing: a disabled control cannot
+                        // hold focus, which is the fault recorded in
+                        // SceneSelector and ParameterEditor.
+                        checked={selected.bypassed}
+                        description="Applies to the active scene only, as the device stores it"
+                        disabled={!connected}
+                        label={selected.bypassed ? "Bypassed" : "Engaged"}
+                        mt="md"
+                        onChange={(event) => void toggleBypass(event.currentTarget.checked)}
+                      />
+                    )}
+                  </div>
+                  <div>
+                    <Text c="dimmed" size="sm">DSP load</Text>
+                    <Text>{live.cpu_load?.total == null ? "awaiting device push" : `${live.cpu_load.total.toFixed(1)}%`}</Text>
+                    {live.cpu_load?.chains.map((chain, row) => (
+                      <Text key={row} size="sm">
+                        Row {row + 1}: {chain.map((column) => `${column.load.toFixed(1)}${column.on_core2 ? "*" : ""}`).join("  ")}
+                      </Text>
+                    ))}
+                  </div>
+                </Group>
 
-              {selected && (
-                <>
-                  <Divider label="Parameters" labelPosition="left" my="md" />
-                  {parameterError && <Alert color="orange" title="Parameters unavailable">{parameterError}</Alert>}
-                  {!parameterError && parameters === null && <Text c="dimmed" size="sm">Reading parameters...</Text>}
-                  {!parameterError && parameters !== null && (
-                    <ParameterEditor
-                      disabled={!connected}
-                      onWrite={writeParameter}
-                      parameters={parameters}
-                    />
-                  )}
-                </>
-              )}
+                {selected && (
+                  <>
+                    <Divider label="Parameters" labelPosition="left" my="md" />
+                    {parameterError && <Alert color="orange" title="Parameters unavailable">{parameterError}</Alert>}
+                    {!parameterError && parameters === null && <Text c="dimmed" size="sm">Reading parameters...</Text>}
+                    {!parameterError && parameters !== null && (
+                      <ParameterEditor
+                        disabled={!connected}
+                        onWrite={writeParameter}
+                        parameters={parameters}
+                      />
+                    )}
+                  </>
+                )}
+              </ErrorBoundary>
             </Paper>
           </>}
         </Stack>

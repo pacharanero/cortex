@@ -94,6 +94,7 @@ The first draft establishes the stack, mockable frontend API boundary, a demo Ta
 - **`s/gui-dev`** runs the Tauri dev server from any working directory (house-style tauri-gui.md).
 - **Versioning with the repo.** `gui/package.json` and `tauri.conf.json` versions move with the canonical version via `s/version++`.
 - **Same terminology as the domain specs and docs.** The UI uses the same terms as the CLI, MCP server, and public documentation. A future glossary may centralise them.
+- **Per-panel fault isolation.** A thrown frontend error in one editing panel is visible - naming the panel and offering a reload - rather than silently unmounting that panel while the daemon and its writes keep working.
 
 ## Acceptance Criteria
 
@@ -111,6 +112,7 @@ The first draft establishes the stack, mockable frontend API boundary, a demo Ta
 - [ ] A save action reuses the shared prepared-save surface (factory refusal, exact target, pre-edit backup, explicit confirmation).
 - [x] `gui/package.json`, `package-lock.json`, and `tauri.conf.json` versions move with `s/version++`.
 - [x] `docs/gui/` explains explicit fixture and daemon run modes, state freshness, and the read-only boundary.
+- [x] A thrown error in the scene selector, grid, or inspector renders a visible per-panel failure (naming the panel, offering a reload) instead of silently unmounting, proven by an automated test that throws.
 
 ## Non-Goals
 
