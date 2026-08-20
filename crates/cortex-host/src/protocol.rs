@@ -31,7 +31,7 @@
 //! @see spec/roadmap.md PROT-008.6
 //! @see spec/140-session/spec.md
 
-use cortex_rs::RecallConsent;
+use cortex_rs::{DeviceKind, RecallConsent};
 
 /// The daemon protocol version, checked by clients to detect skew
 /// after an upgrade leaves an old daemon running.
@@ -39,7 +39,7 @@ use cortex_rs::RecallConsent;
 /// Bump this whenever a `Request` variant changes shape or a new variant is
 /// added. A client that sees a mismatch refuses with an actionable message
 /// rather than sending a request the daemon will misparse.
-pub const DAEMON_PROTOCOL_VERSION: u32 = 13;
+pub const DAEMON_PROTOCOL_VERSION: u32 = 15;
 
 /// A request from a client to the daemon.
 ///
@@ -53,6 +53,15 @@ pub enum Request {
     Status,
     /// Interrupt reconnect backoff and make the next connection attempt now.
     ReconnectNow,
+    /// Read the Nano Cortex's complete fixed-chain state.
+    NanoState,
+    /// Set one Nano amp control and verify it through a fresh state read.
+    NanoSetAmp {
+        /// Typed amplifier control.
+        control: cortex_rs::nano::NanoAmpControl,
+        /// Raw device value, 0-255.
+        value: u8,
+    },
     /// Device firmware and identity.
     Version,
     /// The active scene index.
@@ -426,6 +435,8 @@ pub enum DaemonErrorCode {
     DeviceTimeout,
     /// The device or its session is unavailable.
     DeviceUnavailable,
+    /// Another transport owns the device's exclusive editor channel.
+    DeviceBusy,
     /// The daemon is reconnecting and the request may be retried later.
     Reconnecting,
     /// Another exclusive device operation is currently running.
@@ -451,6 +462,7 @@ impl DaemonErrorCode {
             | cortex_rs::Error::Trailer(_)
             | cortex_rs::Error::UnsupportedDeviceOperation { .. } => Self::Protocol,
             cortex_rs::Error::ReadTimeout(_) => Self::DeviceTimeout,
+            cortex_rs::Error::DeviceBusy { .. } => Self::DeviceBusy,
             cortex_rs::Error::DeviceSilent(_) | cortex_rs::Error::Session(_) => {
                 Self::DeviceUnavailable
             }
@@ -528,6 +540,9 @@ pub struct Status {
     /// Request-idle shutdown bound for an auto-managed daemon.
     #[serde(default)]
     pub idle_timeout_seconds: Option<u64>,
+    /// Product whose USB interface this daemon owns.
+    #[serde(default)]
+    pub device_kind: DeviceKind,
     /// Whether the device is currently answering.
     pub device: DeviceHealth,
     /// What the daemon has cached, and how fresh it is.
@@ -698,6 +713,8 @@ mod tests {
         assert_eq!(text, r#"{"op":"status"}"#);
         let text = serde_json::to_string(&Request::ReconnectNow).unwrap();
         assert_eq!(text, r#"{"op":"reconnect_now"}"#);
+        let text = serde_json::to_string(&Request::NanoState).unwrap();
+        assert_eq!(text, r#"{"op":"nano_state"}"#);
     }
 
     #[test]

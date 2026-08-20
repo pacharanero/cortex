@@ -16,6 +16,9 @@
 
 use crate::{Error, Result};
 
+#[cfg(feature = "hid")]
+use crate::{Frame, FrameReassembler, Transport};
+
 /// Hardware-verified read-only request for the complete Nano current state.
 ///
 /// The last four bytes are the request footer. Pass this application body to
@@ -27,6 +30,7 @@ pub const CURRENT_STATE_REQUEST: [u8; 12] = [
 
 /// Footer observed on a Nano current-state response.
 pub const CURRENT_STATE_RESPONSE_FOOTER: NanoFooter = NanoFooter([0x02, 0x00, 0x00, 0x00]);
+const CONFIRMATION_FOOTER: NanoFooter = NanoFooter([0x85, 0x00, 0x00, 0x00]);
 
 /// Four-byte command-specific footer on a Nano application message.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -80,6 +84,170 @@ pub struct NanoAmpState {
     pub mid: Option<u8>,
     /// Treble control.
     pub treble: Option<u8>,
+}
+
+impl NanoAmpState {
+    /// Value of one typed amp control, preserving absence.
+    #[must_use]
+    pub const fn value(&self, control: NanoAmpControl) -> Option<u8> {
+        match control {
+            NanoAmpControl::Gain => self.gain,
+            NanoAmpControl::Level => self.level,
+            NanoAmpControl::Bass => self.bass,
+            NanoAmpControl::Mid => self.mid,
+            NanoAmpControl::Treble => self.treble,
+        }
+    }
+}
+
+/// One of the Nano's five amplifier controls.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NanoAmpControl {
+    /// Gain control.
+    Gain,
+    /// Output level control.
+    Level,
+    /// Bass control.
+    Bass,
+    /// Mid control.
+    Mid,
+    /// Treble control.
+    Treble,
+}
+
+/// Nano roles addressable by the measured bypass command.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NanoBypassTarget {
+    /// Input gate.
+    Gate,
+    /// First pre effect.
+    PreFx1,
+    /// Second pre effect.
+    PreFx2,
+    /// First post effect.
+    PostFx1,
+    /// Second post effect.
+    PostFx2,
+    /// Third post effect.
+    PostFx3,
+}
+
+impl NanoBypassTarget {
+    const fn wire_id(self) -> u8 {
+        match self {
+            Self::PreFx1 => 4,
+            Self::PreFx2 => 5,
+            Self::PostFx1 => 6,
+            Self::PostFx2 => 7,
+            Self::PostFx3 => 8,
+            Self::Gate => 9,
+        }
+    }
+
+    /// Corresponding fixed-chain role.
+    #[must_use]
+    pub const fn role(self) -> NanoSlotRole {
+        match self {
+            Self::Gate => NanoSlotRole::Gate,
+            Self::PreFx1 => NanoSlotRole::PreFx1,
+            Self::PreFx2 => NanoSlotRole::PreFx2,
+            Self::PostFx1 => NanoSlotRole::PostFx1,
+            Self::PostFx2 => NanoSlotRole::PostFx2,
+            Self::PostFx3 => NanoSlotRole::PostFx3,
+        }
+    }
+}
+
+impl NanoAmpControl {
+    const fn wire_id(self) -> u8 {
+        match self {
+            Self::Gain => 0,
+            Self::Level => 1,
+            Self::Bass => 2,
+            Self::Mid => 3,
+            Self::Treble => 4,
+        }
+    }
+}
+
+/// Build the Nano application body that sets one amp control to a raw 0-255
+/// value. HID framing is added separately by the shared framing layer.
+#[must_use]
+pub fn build_set_amp(control: NanoAmpControl, value: u8) -> Vec<u8> {
+    let mut body = vec![0x18, control.wire_id(), 0x20];
+    push_varint(&mut body, u64::from(value));
+    body.extend([0x28, 0x00, 0x1a, 0x00, 0x00, 0x00]);
+    body
+}
+
+/// Send one Nano amp-control write. The device sends no acknowledgement;
+/// callers must wait for the state-read pacing interval and verify with a
+/// separate [`read_current_state`] request before reporting success.
+///
+/// # Errors
+///
+/// Returns a transport error, or rejects a transport opened for another
+/// device before any write.
+#[cfg(feature = "hid")]
+pub fn write_amp(transport: &Transport, control: NanoAmpControl, value: u8) -> Result<()> {
+    if transport.device_kind() != crate::DeviceKind::NanoCortex {
+        return Err(Error::UnsupportedDeviceOperation {
+            device: transport.device_kind(),
+            operation: "Nano amp-control write",
+        });
+    }
+    transport.write(&build_set_amp(control, value))
+}
+
+/// Build the Nano application body that bypasses or enables Gate/FX.
+#[must_use]
+pub fn build_set_bypass(target: NanoBypassTarget, bypassed: bool) -> [u8; 10] {
+    [
+        0x08,
+        0x01,
+        0x18,
+        target.wire_id(),
+        0x20,
+        u8::from(bypassed),
+        0x1f,
+        0x00,
+        0x00,
+        0x00,
+    ]
+}
+
+/// Send one Nano Gate/FX bypass write. Verify through a separately paced
+/// [`read_current_state`] request before reporting success.
+///
+/// # Errors
+///
+/// Returns a transport error, or rejects a transport opened for another
+/// device before any write.
+#[cfg(feature = "hid")]
+pub fn write_bypass(transport: &Transport, target: NanoBypassTarget, bypassed: bool) -> Result<()> {
+    if transport.device_kind() != crate::DeviceKind::NanoCortex {
+        return Err(Error::UnsupportedDeviceOperation {
+            device: transport.device_kind(),
+            operation: "Nano bypass write",
+        });
+    }
+    transport.write(&build_set_bypass(target, bypassed))
+}
+
+fn push_varint(output: &mut Vec<u8>, mut value: u64) {
+    loop {
+        let mut byte = (value & 0x7f) as u8;
+        value >>= 7;
+        if value != 0 {
+            byte |= 0x80;
+        }
+        output.push(byte);
+        if value == 0 {
+            return;
+        }
+    }
 }
 
 /// Assignments of the four Nano footswitch actions.
@@ -140,6 +308,9 @@ enum ProtoValue<'a> {
 /// current-state fields.
 pub fn decode_current_state(message: &[u8]) -> Result<NanoCurrentState> {
     let (body, footer) = split_envelope(message)?;
+    if footer == CONFIRMATION_FOOTER {
+        return Err(decode_confirmation(body)?);
+    }
     if footer != CURRENT_STATE_RESPONSE_FOOTER {
         return Err(Error::Decode(format!(
             "unexpected Nano current-state footer: {:02x?}",
@@ -232,6 +403,68 @@ pub fn decode_current_state(message: &[u8]) -> Result<NanoCurrentState> {
         footswitch_assignments,
         slots,
     })
+}
+
+fn decode_confirmation(body: &[u8]) -> Result<Error> {
+    let fields = parse_proto_fields(body)?;
+    let kind = match first(&fields, 1) {
+        Some(ProtoValue::Varint(value)) => *value,
+        _ => 0,
+    };
+    let text = bytes(&fields, 4).map(ascii).transpose()?;
+    if kind == 3 && text.as_deref() == Some("Device is busy!") {
+        return Ok(Error::DeviceBusy {
+            device: crate::DeviceKind::NanoCortex,
+        });
+    }
+    Err(Error::Decode(
+        "unrecognised Nano confirmation response".into(),
+    ))
+}
+
+/// Read and decode one complete current-state response from an open Nano
+/// transport.
+///
+/// The timeout is one total deadline for the whole multi-report response, not
+/// a fresh allowance for every report. The transport must have been opened for
+/// [`crate::DeviceKind::NanoCortex`].
+///
+/// # Errors
+///
+/// Returns a transport, framing, timeout, or decode error. A transport opened
+/// for another device is rejected before any write.
+#[cfg(feature = "hid")]
+pub fn read_current_state(
+    transport: &Transport,
+    timeout: std::time::Duration,
+) -> Result<NanoCurrentState> {
+    if transport.device_kind() != crate::DeviceKind::NanoCortex {
+        return Err(Error::UnsupportedDeviceOperation {
+            device: transport.device_kind(),
+            operation: "Nano current-state read",
+        });
+    }
+
+    transport.write(&CURRENT_STATE_REQUEST)?;
+    let deadline = std::time::Instant::now() + timeout;
+    let mut reassembler = FrameReassembler::new();
+    loop {
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        if remaining.is_zero() {
+            return Err(Error::ReadTimeout(timeout));
+        }
+        let report = transport.read(remaining)?;
+        let frame = Frame::parse(&report)?;
+        if let Some(message) = reassembler.feed(&frame)? {
+            let (_, footer) = split_envelope(&message)?;
+            if footer == CURRENT_STATE_RESPONSE_FOOTER || footer == CONFIRMATION_FOOTER {
+                return decode_current_state(&message);
+            }
+            // A write response can remain queued ahead of the requested state
+            // response. It has its own command footer and is not a decode
+            // failure for this request.
+        }
+    }
 }
 
 fn split_envelope(message: &[u8]) -> Result<(&[u8], NanoFooter)> {
@@ -480,6 +713,30 @@ mod tests {
     }
 
     #[test]
+    fn amp_write_builder_uses_typed_control_ids_and_complete_varints() {
+        assert_eq!(
+            build_set_amp(NanoAmpControl::Gain, 0),
+            [0x18, 0, 0x20, 0, 0x28, 0, 0x1a, 0, 0, 0]
+        );
+        assert_eq!(
+            build_set_amp(NanoAmpControl::Treble, 255),
+            [0x18, 4, 0x20, 0xff, 0x01, 0x28, 0, 0x1a, 0, 0, 0]
+        );
+    }
+
+    #[test]
+    fn bypass_builder_covers_only_gate_and_the_five_variable_fx_roles() {
+        assert_eq!(
+            build_set_bypass(NanoBypassTarget::PreFx1, false),
+            [0x08, 1, 0x18, 4, 0x20, 0, 0x1f, 0, 0, 0]
+        );
+        assert_eq!(
+            build_set_bypass(NanoBypassTarget::Gate, true),
+            [0x08, 1, 0x18, 9, 0x20, 1, 0x1f, 0, 0, 0]
+        );
+    }
+
+    #[test]
     fn fictional_current_state_decodes_to_one_ordered_eight_role_chain() {
         let state = decode_current_state(&fictional_state()).unwrap();
         assert_eq!(state.firmware.as_deref(), Some("NC-FICTION-1.2.3"));
@@ -537,6 +794,26 @@ mod tests {
         assert!(decode_current_state(&wrong_footer).is_err());
         let malformed = [0x1a, 0x80, 0x02, 0x02, 0, 0, 0];
         assert!(decode_current_state(&malformed).is_err());
+    }
+
+    #[test]
+    fn exact_bluetooth_ownership_confirmation_is_a_typed_busy_error() {
+        let mut message = Vec::new();
+        field_varint(&mut message, 1, 3);
+        field_bytes(&mut message, 4, b"Device is busy!");
+        message.extend(CONFIRMATION_FOOTER.0);
+        assert!(matches!(
+            decode_current_state(&message),
+            Err(Error::DeviceBusy {
+                device: crate::DeviceKind::NanoCortex
+            })
+        ));
+
+        message[4] = b'd';
+        assert!(matches!(
+            decode_current_state(&message),
+            Err(Error::Decode(_))
+        ));
     }
 
     #[test]

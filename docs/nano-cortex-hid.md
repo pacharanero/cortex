@@ -84,11 +84,19 @@ The existing Nano decoder successfully recovered firmware presence, four of five
 
 `cortex-rs::nano::decode_current_state` now implements this boundary as a strict, serialisable model with eight ordered roles: Gate, Pre FX 1-2, Capture, IR/Cab and Post FX 1-3. Missing protobuf fields remain absent rather than becoming confident zero values. A fresh hardware read on 2026-08-18 reassembled 10 reports / 594 meaningful bytes and decoded all eight roles with all five amp controls present. The varying size reinforces that clients must use frame flags and declared lengths, never a fixed report count.
 
+Repeated reads need pacing. On the held USB connection, issuing another current-state request immediately after the startup read timed out after five seconds; the next request then succeeded, producing a deterministic fail/succeed pattern when every CLI call wrote afresh. Waiting six seconds before the next request succeeded. The held daemon therefore retains the last decoded snapshot and refreshes from hardware no more often than every five seconds. Faster GUI and CLI polls read that snapshot rather than sending duplicate application requests. This is a measured Nano rule, not the Quad's push-cache behavior.
+
+Working-state writes differ by operation family. On 2026-08-18, all five raw amp controls accepted a typed write on one held connection and independently read back the exact value after six seconds; the reversible Gain test also restored its original value. Amp writes do not save anything. The daemon therefore verifies every amp write with a separately paced current-state request before returning success.
+
+Gate/FX bypass is not ready for host exposure. A typed Pre FX 1 write changed bypass and read back correctly, but a second bypass write on the same HID handle was ignored even after pacing. Closing and reopening the transport allowed the original state to be restored. During the fresh-connection verification, a complete response with footer `49 00 00 00` was queued ahead of the requested state response. The state reader now skips messages with unrelated command footers until footer `02 00 00 00` arrives, but the repeat-write limitation remains unresolved.
+
 ## Bluetooth and USB ownership
 
 The editor channel is exclusive across transports. While another Bluetooth client was making changes, USB requests received a valid Nano confirmation whose message was `Device is busy!`. The same current-state request succeeded immediately after the Bluetooth session disconnected.
 
-A host should surface this as an ownership conflict, not a timeout or missing device. A future held daemon must coordinate local USB clients exactly as it does for the Quad while also explaining that a phone or tablet may own the Nano remotely.
+The confirmation is now measured and decoded strictly: it is a 23-byte application message with footer `85 00 00 00`, protobuf field 1 varint `3`, and field 4 containing the exact message `Device is busy!`. `cortex-rs` validates that complete shape before returning the typed `DeviceBusy` error; it does not search arbitrary response bytes for the phrase. With the phone app connected on 2026-08-18, the hardware smoke returned that typed error in 0.07 seconds and `cortex session start --device nano` surfaced the ownership conflict directly.
+
+A host surfaces this as an ownership conflict, not a timeout or missing device. The held daemon coordinates local USB clients through the shared endpoint and explains when a phone or tablet owns the Nano remotely.
 
 ## Not the Quad protocol with a smaller report
 

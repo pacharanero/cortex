@@ -4,16 +4,28 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { CortexApi, DashboardSnapshot, ParameterInput, ParameterView } from "./types";
 
+async function invokeCommand<T>(command: string, args?: Record<string, unknown>): Promise<T> {
+  try {
+    return await invoke<T>(command, args);
+  } catch (reason) {
+    if (typeof reason === "object" && reason !== null && "message" in reason && typeof reason.message === "string") {
+      throw new Error(reason.message);
+    }
+    throw reason;
+  }
+}
+
 export const tauriApi: CortexApi = {
-  dashboard() { return invoke<DashboardSnapshot>("dashboard"); },
-  reconnectNow() { return invoke<void>("reconnect_now"); },
-  switchScene(scene: number) { return invoke<void>("switch_scene", { scene }); },
-  recallPreset(setlist: string, slot: string) { return invoke<void>("recall_preset", { setlist, slot }); },
-  blockParameters(row: number, column: number) { return invoke<ParameterView[]>("block_parameters", { row, column }); },
+  dashboard() { return invokeCommand<DashboardSnapshot>("dashboard"); },
+  reconnectNow() { return invokeCommand<void>("reconnect_now"); },
+  switchScene(scene: number) { return invokeCommand<void>("switch_scene", { scene }); },
+  recallPreset(setlist: string, slot: string) { return invokeCommand<void>("recall_preset", { setlist, slot }); },
+  blockParameters(row: number, column: number) { return invokeCommand<ParameterView[]>("block_parameters", { row, column }); },
   setParameter(row: number, column: number, index: number, input: ParameterInput) {
-    return invoke<void>("set_parameter", { row, column, index, input });
+    return invokeCommand<void>("set_parameter", { row, column, index, input });
   },
-  setSceneLabel(scene: number, label: string | null) { return invoke<void>("set_scene_label", { scene, label }); },
-  setSceneColor(scene: number, color: number) { return invoke<void>("set_scene_color", { scene, color }); },
-  setBypass(row: number, column: number, bypass: boolean) { return invoke<void>("set_bypass", { row, column, bypass }); },
+  setSceneLabel(scene: number, label: string | null) { return invokeCommand<void>("set_scene_label", { scene, label }); },
+  setSceneColor(scene: number, color: number) { return invokeCommand<void>("set_scene_color", { scene, color }); },
+  setBypass(row: number, column: number, bypass: boolean) { return invokeCommand<void>("set_bypass", { row, column, bypass }); },
+  setNanoAmp(control, value) { return invokeCommand<void>("set_nano_amp", { control, value }); },
 };

@@ -2955,8 +2955,8 @@ fn prot_006_13_io_settings_mutate_poll_restore() -> cortex_rs::Result<()> {
 fn nano_transport_geometry_and_state_read() -> cortex_rs::Result<()> {
     use std::time::Duration;
 
-    use cortex_rs::nano::{CURRENT_STATE_REQUEST, NanoSlotRole, decode_current_state};
-    use cortex_rs::{DeviceKind, FrameReassembler, Transport};
+    use cortex_rs::nano::{NanoSlotRole, read_current_state};
+    use cortex_rs::{DeviceKind, Transport};
 
     let geometry = DeviceKind::NanoCortex.report_geometry();
     assert_eq!(geometry.body_len(), 64, "Nano body length");
@@ -2970,51 +2970,7 @@ fn nano_transport_geometry_and_state_read() -> cortex_rs::Result<()> {
         "transport retained Nano kind"
     );
 
-    transport.write(&CURRENT_STATE_REQUEST)?;
-
-    // Read and reassemble. The original 2026-08-11 probe measured nine
-    // reports / 546 bytes, but the state body varies with device content
-    // (presets, captures, assignments). We assert the structural shape:
-    // a FIRST report, zero or more middle reports, a LAST report, and a
-    // reassembled body that is a positive multiple of the data capacity
-    // plus a final partial frame. We never print the body or padding.
-    let timeout = Duration::from_secs(5);
-    let mut reassembler = FrameReassembler::new();
-    let mut report_count = 0usize;
-    let reassembled;
-    let mut saw_first = false;
-    let mut saw_last = false;
-
-    loop {
-        let raw = transport.read(timeout)?;
-        report_count += 1;
-        let frame = cortex_rs::Frame::parse(&raw)?;
-        let flags_byte = frame.flags.0;
-        let frame_data_len = frame.data.len();
-        eprintln!("report {report_count}: flags={flags_byte:#04x} data_len={frame_data_len}");
-        if frame.flags.is_first() {
-            saw_first = true;
-        }
-        if frame.flags.is_last() {
-            saw_last = true;
-        }
-        if let Some(body) = reassembler.feed(&frame)? {
-            reassembled = body;
-            break;
-        }
-    }
-
-    let reassembled_len = reassembled.len();
-    eprintln!("reassembled: {report_count} reports, {reassembled_len} bytes");
-    assert!(
-        report_count >= 2,
-        "expected multi-report response, got {report_count}"
-    );
-    assert!(saw_first, "expected a FIRST report");
-    assert!(saw_last, "expected a LAST report");
-    assert!(reassembled_len > 0, "expected a non-empty reassembled body");
-
-    let state = decode_current_state(&reassembled)?;
+    let state = read_current_state(&transport, Duration::from_secs(5))?;
     assert_eq!(state.slots.len(), 8, "expected the fixed eight-role chain");
     assert_eq!(state.slots[0].role, NanoSlotRole::Gate);
     assert_eq!(state.slots[3].role, NanoSlotRole::Capture);
@@ -3043,6 +2999,164 @@ fn nano_transport_geometry_and_state_read() -> cortex_rs::Result<()> {
     );
 
     Ok(())
+}
+
+/// NANO-001.4 hardware smoke: Bluetooth ownership is a typed conflict, not a
+/// timeout, missing device, or substring match against arbitrary state bytes.
+#[test]
+#[ignore = "requires a Nano Cortex owned by the phone app over Bluetooth while USB remains connected"]
+fn nano_bluetooth_ownership_is_typed() -> cortex_rs::Result<()> {
+    use std::time::Duration;
+
+    use cortex_rs::nano::read_current_state;
+    use cortex_rs::{DeviceKind, Error, Transport};
+
+    let transport = Transport::open(DeviceKind::NanoCortex)?;
+    assert!(matches!(
+        read_current_state(&transport, Duration::from_secs(5)),
+        Err(Error::DeviceBusy {
+            device: DeviceKind::NanoCortex
+        })
+    ));
+    Ok(())
+}
+
+/// NANO-001.6 hardware smoke: change one amp control by one raw step, verify
+/// through a separate state request, then unconditionally restore and verify.
+#[test]
+#[ignore = "requires a Nano Cortex with Bluetooth disconnected; transiently changes gain by one raw step"]
+fn nano_amp_write_reads_back_and_restores() -> cortex_rs::Result<()> {
+    use std::time::Duration;
+
+    use cortex_rs::nano::{NanoAmpControl, read_current_state, write_amp};
+    use cortex_rs::{DeviceKind, Error, Transport};
+
+    let transport = Transport::open(DeviceKind::NanoCortex)?;
+    let original = read_current_state(&transport, Duration::from_secs(5))?
+        .amp
+        .gain
+        .ok_or_else(|| Error::Decode("Nano state omitted gain".into()))?;
+    let changed = if original == u8::MAX {
+        original - 1
+    } else {
+        original + 1
+    };
+
+    let exercise = (|| {
+        write_amp(&transport, NanoAmpControl::Gain, changed)?;
+        std::thread::sleep(Duration::from_secs(6));
+        let actual = read_current_state(&transport, Duration::from_secs(5))?
+            .amp
+            .gain;
+        if actual != Some(changed) {
+            return Err(Error::Decode(format!(
+                "Nano gain write did not read back: expected {changed}, got {actual:?}"
+            )));
+        }
+        Ok(())
+    })();
+
+    write_amp(&transport, NanoAmpControl::Gain, original)?;
+    std::thread::sleep(Duration::from_secs(6));
+    let restored = read_current_state(&transport, Duration::from_secs(5))?
+        .amp
+        .gain;
+    if restored != Some(original) {
+        return Err(Error::Decode(format!(
+            "Nano gain restoration failed: expected {original}, got {restored:?}"
+        )));
+    }
+    exercise
+}
+
+/// NANO-001.6 hardware smoke: every typed amp selector accepts a same-value
+/// write and reports that value through a separately paced state read.
+#[test]
+#[ignore = "requires a Nano Cortex with Bluetooth disconnected; writes each existing amp value back unchanged"]
+fn every_nano_amp_control_writes_and_reads_back() -> cortex_rs::Result<()> {
+    use std::time::Duration;
+
+    use cortex_rs::nano::{NanoAmpControl, read_current_state, write_amp};
+    use cortex_rs::{DeviceKind, Error, Transport};
+
+    let transport = Transport::open(DeviceKind::NanoCortex)?;
+    let controls = [
+        NanoAmpControl::Gain,
+        NanoAmpControl::Level,
+        NanoAmpControl::Bass,
+        NanoAmpControl::Mid,
+        NanoAmpControl::Treble,
+    ];
+    let initial = read_current_state(&transport, Duration::from_secs(5))?;
+    for control in controls {
+        let expected = initial
+            .amp
+            .value(control)
+            .ok_or_else(|| Error::Decode(format!("Nano state omitted {control:?}")))?;
+        write_amp(&transport, control, expected)?;
+        std::thread::sleep(Duration::from_secs(6));
+        let actual = read_current_state(&transport, Duration::from_secs(5))?
+            .amp
+            .value(control);
+        if actual != Some(expected) {
+            return Err(Error::Decode(format!(
+                "Nano {control:?} same-value write did not read back: expected {expected}, got {actual:?}"
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// NANO-001.6 hardware smoke: invert one FX bypass, verify independently,
+/// then unconditionally restore and verify the original state.
+#[test]
+#[ignore = "requires a Nano Cortex with Bluetooth disconnected; transiently toggles Pre FX 1 bypass"]
+fn nano_fx_bypass_reads_back_and_restores() -> cortex_rs::Result<()> {
+    use std::time::Duration;
+
+    use cortex_rs::nano::{NanoBypassTarget, NanoSlotRole, read_current_state, write_bypass};
+    use cortex_rs::{DeviceKind, Error, Transport};
+
+    let transport = Transport::open(DeviceKind::NanoCortex)?;
+    let bypass = |state: &cortex_rs::nano::NanoCurrentState| {
+        state
+            .slots
+            .iter()
+            .find(|slot| slot.role == NanoSlotRole::PreFx1)
+            .and_then(|slot| slot.bypassed)
+    };
+    let original = bypass(&read_current_state(&transport, Duration::from_secs(5))?)
+        .ok_or_else(|| Error::Decode("Nano state omitted Pre FX 1 bypass".into()))?;
+
+    let exercise = (|| {
+        write_bypass(&transport, NanoBypassTarget::PreFx1, !original)?;
+        std::thread::sleep(Duration::from_secs(6));
+        let actual = bypass(&read_current_state(&transport, Duration::from_secs(5))?);
+        if actual != Some(!original) {
+            return Err(Error::Decode(format!(
+                "Nano bypass did not read back: expected {}, got {actual:?}",
+                !original
+            )));
+        }
+        Ok(())
+    })();
+
+    // A second bypass write on the same HID connection is ignored even after
+    // pacing. Reopen for cleanup until that device behavior is understood.
+    drop(transport);
+    let restore_transport = Transport::open(DeviceKind::NanoCortex)?;
+    write_bypass(&restore_transport, NanoBypassTarget::PreFx1, original)?;
+    std::thread::sleep(Duration::from_secs(6));
+    let restored = bypass(&read_current_state(
+        &restore_transport,
+        Duration::from_secs(5),
+    )?);
+    if restored != Some(original) {
+        return Err(Error::Decode(format!(
+            "Nano bypass restoration failed: expected {original}, got {restored:?}"
+        )));
+    }
+    exercise
 }
 
 /// NANO-001.2 hardware smoke: verify the Quad Cortex request path and
