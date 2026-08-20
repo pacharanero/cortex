@@ -41,6 +41,10 @@ export function App() {
   const [parameters, setParameters] = useState<ParameterView[] | null>(null);
   const [parameterError, setParameterError] = useState<string | null>(null);
   const generation = useRef<number | null>(null);
+  // Pauses the auto-refresh while a Nano write is in progress. The write
+  // itself takes ~6 seconds and returns updated state, so the manual
+  // refresh after it completes is sufficient.
+  const [nanoWriteInProgress, setNanoWriteInProgress] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -59,9 +63,9 @@ export function App() {
         if (!cancelled) timer = window.setTimeout(refresh, 1000);
       }
     };
-    void refresh();
+    if (!nanoWriteInProgress) void refresh();
     return () => { cancelled = true; if (timer !== undefined) window.clearTimeout(timer); };
-  }, []);
+  }, [nanoWriteInProgress]);
 
   // Parameters are fetched for the selected cell only, not carried in the
   // one-second dashboard poll: they need the model catalog joined in, and
@@ -181,14 +185,24 @@ export function App() {
     }
   };
   const setNanoAmp = async (control: NanoAmpControl, value: number) => {
-    await cortexApi.setNanoAmp(control, value);
-    const next = await cortexApi.dashboard();
-    setSnapshot(next);
+    setNanoWriteInProgress(true);
+    try {
+      await cortexApi.setNanoAmp(control, value);
+      const next = await cortexApi.dashboard();
+      setSnapshot(next);
+    } finally {
+      setNanoWriteInProgress(false);
+    }
   };
   const setNanoBypass = async (target: NanoBypassTarget, bypassed: boolean) => {
-    await cortexApi.setNanoBypass(target, bypassed);
-    const next = await cortexApi.dashboard();
-    setSnapshot(next);
+    setNanoWriteInProgress(true);
+    try {
+      await cortexApi.setNanoBypass(target, bypassed);
+      const next = await cortexApi.dashboard();
+      setSnapshot(next);
+    } finally {
+      setNanoWriteInProgress(false);
+    }
   };
   const switchDevice = async (device: "quad_cortex" | "nano_cortex" | "auto") => {
     if (device === "auto") {

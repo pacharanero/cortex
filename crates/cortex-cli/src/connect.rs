@@ -1376,10 +1376,14 @@ impl NanoDaemon {
                     Response::ok(&cached.snapshot)
                         .unwrap_or_else(|error| Response::error(error.to_string()))
                 }
-                Err(TryLockError::WouldBlock) => Response::coded_error(
-                    DaemonErrorCode::Busy,
-                    "another Nano operation is already in progress",
-                ),
+                Err(TryLockError::WouldBlock) => {
+                    // A write is in progress (amp/bypass takes ~6s). Return
+                    // the cached snapshot rather than erroring, so the GUI's
+                    // auto-refresh gets a usable state instead of a failure.
+                    let cached = self.state.lock().unwrap();
+                    Response::ok(&cached.snapshot)
+                        .unwrap_or_else(|error| Response::error(error.to_string()))
+                }
                 Err(TryLockError::Poisoned(_)) => {
                     Response::error("Nano transport lock is unavailable")
                 }
