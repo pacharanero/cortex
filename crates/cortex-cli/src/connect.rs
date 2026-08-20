@@ -24,7 +24,7 @@ use cortex_host::{
     DeviceHealth, LocalEndpoint, LocalListener, PrepareSaveResult, Request, Response, Status,
     log_path, serve_listener,
 };
-use cortex_rs::{DeviceKind, QuadCortex, Session};
+use cortex_rs::{DeviceKind, QuadCortex, Session, Transport};
 
 /// How long a request may take before the daemon gives up on the device.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
@@ -367,6 +367,14 @@ impl Daemon {
                 Err(e) => Response::error(format!("building status: {e}")),
             },
             Request::ReconnectNow => self.reconnect_now(),
+            Request::NanoState => Response::coded_error(
+                DaemonErrorCode::Protocol,
+                "the held session owns a Quad Cortex; start it with `--device nano`",
+            ),
+            Request::NanoSetAmp { .. } => Response::coded_error(
+                DaemonErrorCode::Protocol,
+                "the held session owns a Quad Cortex; start it with `--device nano`",
+            ),
             // Answer in the same shape the direct path emits, so a caller
             // cannot tell whether it went through the daemon. A `{:?}` dump
             // of the protobuf would have been a second, worse format.
@@ -1063,6 +1071,7 @@ impl Daemon {
             uptime_seconds: self.started.elapsed().as_secs(),
             auto_managed: self.lifecycle.is_auto_managed(),
             idle_timeout_seconds: self.lifecycle.idle_timeout().map(|value| value.as_secs()),
+            device_kind: DeviceKind::QuadCortex,
             device,
             cache: CacheStatus {
                 generation: state.generation,
@@ -1261,8 +1270,205 @@ fn reconnect_loop<F>(
     }
 }
 
+struct NanoDaemon {
+    transport: Mutex<Transport>,
+    state: Mutex<NanoCache>,
+    health: Mutex<DeviceHealth>,
+    started: Instant,
+    lifecycle: DaemonLifecycle,
+}
+
+struct NanoCache {
+    snapshot: cortex_rs::nano::NanoCurrentState,
+    last_attempt: Instant,
+    last_received: Instant,
+    revision: u64,
+}
+
+impl NanoDaemon {
+    fn connect(lifecycle: DaemonLifecycle) -> Result<Self> {
+        eprintln!("cortex session: opening Nano Cortex ...");
+        let transport = Transport::open(DeviceKind::NanoCortex)?;
+        // Prove the editor channel is answering before startup reports ready.
+        let state = cortex_rs::nano::read_current_state(&transport, Duration::from_secs(5))?;
+        eprintln!("cortex session: Nano Cortex connected");
+        Ok(Self {
+            transport: Mutex::new(transport),
+            state: Mutex::new(NanoCache {
+                snapshot: state,
+                last_attempt: Instant::now(),
+                last_received: Instant::now(),
+                revision: 1,
+            }),
+            health: Mutex::new(DeviceHealth::Connected {
+                serial: None,
+                coros_version: None,
+                last_message_seconds: 0,
+            }),
+            started: Instant::now(),
+            lifecycle,
+        })
+    }
+
+    fn handle(&self, request: Request) -> Response {
+        match request {
+            Request::Status => {
+                let cached = self.state.lock().unwrap();
+                let cache = CacheStatus {
+                    generation: 1,
+                    revision: cached.revision,
+                    phase: cortex_rs::CachePhase::Live,
+                    ..CacheStatus::default()
+                };
+                let mut device = self.health.lock().unwrap().clone();
+                if let DeviceHealth::Connected {
+                    last_message_seconds,
+                    ..
+                } = &mut device
+                {
+                    *last_message_seconds = cached.last_received.elapsed().as_secs();
+                }
+                Response::ok(&Status {
+                    daemon_version: DAEMON_PROTOCOL_VERSION.to_string(),
+                    uptime_seconds: self.started.elapsed().as_secs(),
+                    auto_managed: self.lifecycle.is_auto_managed(),
+                    idle_timeout_seconds: self
+                        .lifecycle
+                        .idle_timeout()
+                        .map(|value| value.as_secs()),
+                    device_kind: DeviceKind::NanoCortex,
+                    device,
+                    cache,
+                })
+                .unwrap_or_else(|error| Response::error(error.to_string()))
+            }
+            Request::NanoState => match self.transport.try_lock() {
+                Ok(transport) => {
+                    let mut cached = self.state.lock().unwrap();
+                    if cached.last_attempt.elapsed() >= Duration::from_secs(5) {
+                        cached.last_attempt = Instant::now();
+                        match cortex_rs::nano::read_current_state(
+                            &transport,
+                            Duration::from_secs(5),
+                        ) {
+                            Ok(state) => {
+                                cached.snapshot = state;
+                                cached.last_received = Instant::now();
+                                cached.revision += 1;
+                                *self.health.lock().unwrap() = DeviceHealth::Connected {
+                                    serial: None,
+                                    coros_version: None,
+                                    last_message_seconds: 0,
+                                };
+                            }
+                            Err(error) => {
+                                *self.health.lock().unwrap() = DeviceHealth::Failed {
+                                    error: error.to_string(),
+                                };
+                                return Response::cortex_error(&error);
+                            }
+                        }
+                    }
+                    Response::ok(&cached.snapshot)
+                        .unwrap_or_else(|error| Response::error(error.to_string()))
+                }
+                Err(TryLockError::WouldBlock) => Response::coded_error(
+                    DaemonErrorCode::Busy,
+                    "another Nano operation is already in progress",
+                ),
+                Err(TryLockError::Poisoned(_)) => {
+                    Response::error("Nano transport lock is unavailable")
+                }
+            },
+            Request::NanoSetAmp { control, value } => match self.transport.try_lock() {
+                Ok(transport) => {
+                    if let Err(error) = cortex_rs::nano::write_amp(&transport, control, value) {
+                        return Response::cortex_error(&error);
+                    }
+                    std::thread::sleep(Duration::from_secs(6));
+                    match cortex_rs::nano::read_current_state(&transport, Duration::from_secs(5)) {
+                        Ok(state) if state.amp.value(control) == Some(value) => {
+                            let mut cached = self.state.lock().unwrap();
+                            cached.snapshot = state.clone();
+                            cached.last_attempt = Instant::now();
+                            cached.last_received = Instant::now();
+                            cached.revision += 1;
+                            *self.health.lock().unwrap() = DeviceHealth::Connected {
+                                serial: None,
+                                coros_version: None,
+                                last_message_seconds: 0,
+                            };
+                            Response::ok(&state)
+                                .unwrap_or_else(|error| Response::error(error.to_string()))
+                        }
+                        Ok(state) => {
+                            let actual = state.amp.value(control);
+                            let mut cached = self.state.lock().unwrap();
+                            cached.snapshot = state;
+                            cached.last_attempt = Instant::now();
+                            cached.last_received = Instant::now();
+                            cached.revision += 1;
+                            Response::coded_error(
+                                DaemonErrorCode::OutcomeUnconfirmed,
+                                format!(
+                                    "Nano amp write did not read back: expected {value}, got {actual:?}"
+                                ),
+                            )
+                        }
+                        Err(error) => {
+                            *self.health.lock().unwrap() = DeviceHealth::Failed {
+                                error: error.to_string(),
+                            };
+                            Response::cortex_error(&error)
+                        }
+                    }
+                }
+                Err(TryLockError::WouldBlock) => Response::coded_error(
+                    DaemonErrorCode::Busy,
+                    "another Nano operation is already in progress",
+                ),
+                Err(TryLockError::Poisoned(_)) => {
+                    Response::error("Nano transport lock is unavailable")
+                }
+            },
+            Request::Shutdown => Response::ok(&serde_json::json!({ "stopping": true }))
+                .unwrap_or_else(|error| Response::error(error.to_string())),
+            _ => Response::coded_error(
+                DaemonErrorCode::Protocol,
+                "the held session owns a Nano Cortex; this operation requires a Quad Cortex",
+            ),
+        }
+    }
+}
+
+enum DeviceDaemon {
+    Quad(Daemon),
+    Nano(NanoDaemon),
+}
+
+impl DeviceDaemon {
+    fn handle(&self, request: Request) -> Response {
+        match self {
+            Self::Quad(daemon) => daemon.handle(request),
+            Self::Nano(daemon) => daemon.handle(request),
+        }
+    }
+
+    fn start_monitor(&self) {
+        if let Self::Quad(daemon) = self {
+            daemon.start_reconnect_monitor();
+        }
+    }
+
+    fn shutdown(&self) {
+        if let Self::Quad(daemon) = self {
+            daemon.shutdown();
+        }
+    }
+}
+
 /// Run the daemon until explicitly stopped or its host-managed idle bound expires.
-pub fn run(lifecycle: DaemonLifecycle) -> Result<()> {
+pub fn run(device: DeviceKind, lifecycle: DaemonLifecycle) -> Result<()> {
     let endpoint = LocalEndpoint::daemon();
 
     // Claim local IPC BEFORE the handshake, not after.
@@ -1295,7 +1501,10 @@ pub fn run(lifecycle: DaemonLifecycle) -> Result<()> {
 
     // The endpoint now exists, so a failed handshake must clear it on the way
     // out; otherwise the next start finds a file it has to treat as stale.
-    let daemon = match Daemon::connect(lifecycle) {
+    let daemon = match match device {
+        DeviceKind::QuadCortex => Daemon::connect(lifecycle).map(DeviceDaemon::Quad),
+        DeviceKind::NanoCortex => NanoDaemon::connect(lifecycle).map(DeviceDaemon::Nano),
+    } {
         Ok(daemon) => daemon,
         Err(e) => {
             let _ = listener.cleanup_endpoint();
@@ -1313,7 +1522,7 @@ pub fn run(lifecycle: DaemonLifecycle) -> Result<()> {
             idle_timeout.as_secs()
         ),
     }
-    daemon.start_reconnect_monitor();
+    daemon.start_monitor();
 
     let serving = serve_listener(&listener, lifecycle, &|request| daemon.handle(request));
     if matches!(serving, Ok(cortex_host::ServerExit::IdleTimeout)) {
@@ -1438,7 +1647,7 @@ unsafe extern "C" {
 ///
 /// Returns an error if a session is already running, if the child cannot be
 /// spawned, or if it exits or goes quiet before it starts serving.
-pub fn start_detached(lifecycle: DaemonLifecycle) -> Result<()> {
+pub fn start_detached(device: DeviceKind, lifecycle: DaemonLifecycle) -> Result<()> {
     if is_running() {
         anyhow::bail!(
             "a cortex session is already running. \
@@ -1453,6 +1662,10 @@ pub fn start_detached(lifecycle: DaemonLifecycle) -> Result<()> {
 
     let mut cmd = std::process::Command::new(exe);
     cmd.args(["session", "start", "--foreground"]);
+    cmd.arg("--device").arg(match device {
+        DeviceKind::QuadCortex => "quad",
+        DeviceKind::NanoCortex => "nano",
+    });
     if let DaemonLifecycle::AutoManaged { idle_timeout } = lifecycle {
         cmd.arg("--auto-managed")
             .arg("--idle-timeout-seconds")

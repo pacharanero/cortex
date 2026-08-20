@@ -138,6 +138,7 @@ fn protocol_skew_daemon_fixture() {
                 uptime_seconds: 0,
                 auto_managed: false,
                 idle_timeout_seconds: None,
+                device_kind: cortex_rs::DeviceKind::QuadCortex,
                 device: DeviceHealth::Failed {
                     error: "fictional fixture".into(),
                 },

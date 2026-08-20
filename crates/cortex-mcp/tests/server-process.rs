@@ -33,8 +33,9 @@ async fn official_client_discovers_and_calls_the_real_server() -> anyhow::Result
     let socket = runtime_dir.join("cortex.sock");
     let endpoint = LocalEndpoint::at(socket);
     let listener = LocalListener::bind(&endpoint)?.listener;
-    // Startup compatibility, then compatibility + request for each tool call.
-    let daemon = std::thread::spawn(move || serve_daemon(listener, 11, false));
+    // Compatibility + request for each tool call. Startup is lazy so the
+    // first tool can select Quad or Nano before auto-managing a session.
+    let daemon = std::thread::spawn(move || serve_daemon(listener, 10, false));
 
     let transport = TokioChildProcess::builder(
         tokio::process::Command::new(env!("CARGO_BIN_EXE_cortex-mcp")).configure(|command| {
@@ -212,6 +213,7 @@ fn status(auto_managed: bool) -> Status {
         uptime_seconds: 1,
         auto_managed,
         idle_timeout_seconds: auto_managed.then_some(60),
+        device_kind: cortex_rs::DeviceKind::QuadCortex,
         device: DeviceHealth::Connected {
             serial: None,
             coros_version: Some("4.0.1".to_string()),

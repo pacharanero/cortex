@@ -7,8 +7,9 @@ import { Grid } from "./features/quad/Grid";
 import { ParameterEditor } from "./features/quad/ParameterEditor";
 import { SceneSelector } from "./features/quad/SceneSelector";
 import { ErrorBoundary } from "./shared/ErrorBoundary";
+import { NanoChain } from "./features/nano/NanoChain";
 import { cortexApi } from "./shared/ipc/api";
-import type { DashboardSnapshot, LiveBlock, ParameterInput, ParameterView } from "./shared/ipc/types";
+import type { DashboardSnapshot, LiveBlock, NanoAmpControl, ParameterInput, ParameterView } from "./shared/ipc/types";
 
 interface Cell { row: number; column: number }
 
@@ -95,11 +96,12 @@ export function App() {
   if (!snapshot) return <Alert color="red" m="xl" title="Cortex session unavailable">{error}</Alert>;
 
   const live = snapshot.live;
+  const nano = snapshot.nano;
   const selected: LiveBlock | null = selectedCell && live
     ? live.blocks.find((block) => block.row === selectedCell.row && block.column === selectedCell.column) ?? null
     : null;
   const health = healthLabel(snapshot);
-  const connected = live !== null;
+  const connected = live !== null || nano !== null;
   const reconnectState = snapshot.source === "daemon" && snapshot.status.device.state === "reconnecting" ? snapshot.status.device : null;
   // Switch, then re-read. The device is the authority on which scene is
   // active, so nothing is updated optimistically: if the unit refuses or
@@ -178,12 +180,17 @@ export function App() {
       setRetrying(false);
     }
   };
+  const setNanoAmp = async (control: NanoAmpControl, value: number) => {
+    await cortexApi.setNanoAmp(control, value);
+    const next = await cortexApi.dashboard();
+    setSnapshot(next);
+  };
 
   return (
     <AppShell header={{ height: 64 }} navbar={{ width: 250, breakpoint: "sm" }} padding="md">
       <AppShell.Header p="md">
         <Group justify="space-between">
-          <Group gap="xs"><Title order={2}>cortex</Title><Badge color="orange">Quad Cortex</Badge></Group>
+          <Group gap="xs"><Title order={2}>cortex</Title><Badge color="orange">{nano ? "Nano Cortex" : "Quad Cortex"}</Badge></Group>
           <Group gap="xs"><Badge color={snapshot.source === "fixture" ? "yellow" : connected ? "green" : "orange"}>{health}</Badge><Badge variant="outline">gen {snapshot.status.cache.generation} / rev {snapshot.status.cache.revision}</Badge></Group>
         </Group>
       </AppShell.Header>
@@ -215,7 +222,7 @@ export function App() {
         <Stack gap="md">
           {snapshot.source === "fixture" && <Alert color="yellow" title="Fixture mode">Browser development data is active. Fixture mode never falls back from a daemon error.</Alert>}
           {error && <Alert color="red" title="Refresh failed">{error}</Alert>}
-          {!live && <Alert color="orange" title={`Device ${snapshot.status.device.state}`}>
+          {!live && !nano && <Alert color="orange" title={`Device ${snapshot.status.device.state}`}>
             <Stack gap="xs">
               <Text>Live state is hidden until the daemon reports a connected, complete generation.</Text>
               {reconnectState && <>
@@ -224,6 +231,7 @@ export function App() {
               </>}
             </Stack>
           </Alert>}
+          {nano && <NanoChain onSetAmp={setNanoAmp} state={nano} />}
           {live && <>
             <Group justify="space-between"><div><Text c="dimmed" size="sm">Working grid</Text><Title order={3}>{live.preset_name}{live.preset_dirty ? " *" : ""}</Title></div><Text>Scene {activeSceneName(live)}</Text></Group>
             <Paper p="md" withBorder>

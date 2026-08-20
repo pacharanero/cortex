@@ -152,6 +152,14 @@ pub enum Error {
         operation: &'static str,
     },
 
+    /// Another transport, such as the Nano phone app over Bluetooth, owns the
+    /// device's exclusive editor channel.
+    #[error("{device:?} editor channel is busy on another transport")]
+    DeviceBusy {
+        /// Device that reported the ownership conflict.
+        device: DeviceKind,
+    },
+
     /// The device read timed out. On the Quad, whose writes deliberately
     /// stall, this is the reliable signal of a dead or unresponsive device.
     #[error("read timeout after {0:?}")]

@@ -1,9 +1,13 @@
 // SPDX-FileCopyrightText: 2026 Dr Marcus Baw
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-use std::sync::Arc;
+use std::io::Read;
+use std::path::PathBuf;
+use std::process::{Command, Stdio};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
-use cortex_host::{DaemonClient, DeviceHealth, Request, Status};
+use cortex_host::{DAEMON_PROTOCOL_VERSION, DaemonClient, DeviceHealth, Request, Status};
 use cortex_rs::client::{USER_SETLIST, is_factory_setlist};
 use cortex_rs::view::{CpuLoad, ParamValue, Preset, PresetSlot};
 
@@ -15,6 +19,8 @@ pub struct DashboardSnapshot {
     pub status: Status,
     pub live: Option<LiveSnapshot>,
     pub directory: Vec<SetlistSnapshot>,
+    /// Nano fixed-chain state; mutually exclusive with the Quad `live` grid.
+    pub nano: Option<cortex_rs::nano::NanoCurrentState>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -172,10 +178,150 @@ trait DashboardSource: Send + Sync {
         index: u32,
         input: cortex_rs::client::ParameterInput,
     ) -> Result<(), CommandError>;
+    fn set_nano_amp(
+        &self,
+        _control: cortex_rs::nano::NanoAmpControl,
+        _value: u8,
+    ) -> Result<(), CommandError> {
+        Err(CommandError::daemon(
+            "this dashboard source does not support Nano amp writes",
+        ))
+    }
+}
+
+const AUTO_MANAGED_IDLE_SECONDS: &str = "60";
+const STARTUP_TIMEOUT: Duration = Duration::from_secs(120);
+const STARTUP_POLL: Duration = Duration::from_millis(200);
+
+#[derive(Default)]
+struct GuiDaemonSupervisor {
+    startup: Mutex<()>,
+}
+
+impl GuiDaemonSupervisor {
+    fn ensure(&self, client: &DaemonClient) -> Result<(), CommandError> {
+        let _startup = self
+            .startup
+            .lock()
+            .map_err(|_| CommandError::daemon("session startup gate is unavailable"))?;
+        if let Ok(status) = client.status() {
+            return ensure_daemon_compatible(&status);
+        }
+
+        let sibling = sibling_cortex_binary()?;
+        let quad_error =
+            match start_auto_managed_session(client, &sibling, cortex_rs::DeviceKind::QuadCortex) {
+                Ok(()) => return Ok(()),
+                Err(error) => error,
+            };
+        // A failed `session start` exits and releases its ownership claim, so
+        // the same endpoint can be tried for the other product.
+        match start_auto_managed_session(client, &sibling, cortex_rs::DeviceKind::NanoCortex) {
+            Ok(()) => Ok(()),
+            Err(nano_error) => Err(CommandError::daemon(format!(
+                "could not start a session for a connected Cortex device. Quad Cortex: {}; Nano Cortex: {}",
+                quad_error.message, nano_error.message
+            ))),
+        }
+    }
+}
+
+fn ensure_daemon_compatible(status: &Status) -> Result<(), CommandError> {
+    let version = status.daemon_version.parse::<u32>().unwrap_or(0);
+    if version != DAEMON_PROTOCOL_VERSION {
+        return Err(CommandError::daemon(format!(
+            "session protocol mismatch: GUI expects {DAEMON_PROTOCOL_VERSION}, daemon reports {version}"
+        )));
+    }
+    Ok(())
+}
+
+fn start_auto_managed_session(
+    client: &DaemonClient,
+    sibling: &std::path::Path,
+    device_kind: cortex_rs::DeviceKind,
+) -> Result<(), CommandError> {
+    let mut command = Command::new(sibling);
+    command.args([
+        "session",
+        "start",
+        "--auto-managed",
+        "--idle-timeout-seconds",
+        AUTO_MANAGED_IDLE_SECONDS,
+    ]);
+    if device_kind == cortex_rs::DeviceKind::NanoCortex {
+        command.args(["--device", "nano"]);
+    }
+    let mut child = command
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| {
+            CommandError::daemon(format!(
+                "could not launch the session helper at {}: {error}",
+                sibling.display()
+            ))
+        })?;
+    let deadline = Instant::now() + STARTUP_TIMEOUT;
+    while Instant::now() < deadline {
+        if let Ok(status) = client.status() {
+            ensure_daemon_compatible(&status)?;
+            let _ = child.wait();
+            return Ok(());
+        }
+        if let Some(status) = child
+            .try_wait()
+            .map_err(|error| CommandError::daemon(format!("waiting for session helper: {error}")))?
+        {
+            let stderr = read_child_stderr(&mut child);
+            if !status.success() {
+                return Err(CommandError::daemon(if stderr.trim().is_empty() {
+                    format!("session helper exited with {status}")
+                } else {
+                    stderr.trim().to_string()
+                }));
+            }
+        }
+        std::thread::sleep(STARTUP_POLL);
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+    Err(CommandError::daemon(format!(
+        "session startup did not complete within {} seconds",
+        STARTUP_TIMEOUT.as_secs()
+    )))
+}
+
+fn read_child_stderr(child: &mut std::process::Child) -> String {
+    let mut stderr = String::new();
+    if let Some(mut pipe) = child.stderr.take() {
+        let _ = pipe.read_to_string(&mut stderr);
+    }
+    stderr
+}
+
+fn sibling_cortex_binary() -> Result<PathBuf, CommandError> {
+    let path = if let Some(path) = std::env::var_os("CORTEX_CLI_PATH") {
+        PathBuf::from(path)
+    } else {
+        std::env::current_exe()
+            .map_err(|error| {
+                CommandError::daemon(format!("could not locate the GUI executable: {error}"))
+            })?
+            .with_file_name(format!("cortex{}", std::env::consts::EXE_SUFFIX))
+    };
+    if !path.is_file() {
+        return Err(CommandError::daemon(format!(
+            "the session helper is missing at {}; reinstall the complete Cortex application",
+            path.display()
+        )));
+    }
+    Ok(path)
 }
 
 struct DaemonDashboardSource {
     client: DaemonClient,
+    supervisor: GuiDaemonSupervisor,
     directory_cache: std::sync::Mutex<Option<(u64, u64, Vec<SetlistSnapshot>)>>,
     /// The parsed model catalog. Fetched once and kept: it is a 46 KB transfer
     /// describing 533 models, and the models a unit knows do not change while
@@ -187,6 +333,7 @@ impl Default for DaemonDashboardSource {
     fn default() -> Self {
         Self {
             client: DaemonClient::default(),
+            supervisor: GuiDaemonSupervisor::default(),
             directory_cache: std::sync::Mutex::new(None),
             catalog_cache: std::sync::Mutex::new(None),
         }
@@ -195,16 +342,31 @@ impl Default for DaemonDashboardSource {
 
 impl DashboardSource for DaemonDashboardSource {
     fn dashboard(&self) -> Result<DashboardSnapshot, CommandError> {
+        self.supervisor.ensure(&self.client)?;
         let before = self
             .client
             .require_compatible()
             .map_err(|error| CommandError::daemon(error.to_string()))?;
+        if before.device_kind == cortex_rs::DeviceKind::NanoCortex {
+            let nano = self
+                .client
+                .request(&Request::NanoState)
+                .map_err(|error| CommandError::daemon(error.to_string()))?;
+            return Ok(DashboardSnapshot {
+                source: "daemon",
+                status: before,
+                live: None,
+                directory: Vec::new(),
+                nano: Some(nano),
+            });
+        }
         if !status_is_live(&before) {
             return Ok(DashboardSnapshot {
                 source: "daemon",
                 status: before,
                 live: None,
                 directory: Vec::new(),
+                nano: None,
             });
         }
 
@@ -232,6 +394,7 @@ impl DashboardSource for DaemonDashboardSource {
                 status: after,
                 live: None,
                 directory: Vec::new(),
+                nano: None,
             });
         }
 
@@ -284,7 +447,19 @@ impl DashboardSource for DaemonDashboardSource {
             }),
             status: after,
             directory,
+            nano: None,
         })
+    }
+
+    fn set_nano_amp(
+        &self,
+        control: cortex_rs::nano::NanoAmpControl,
+        value: u8,
+    ) -> Result<(), CommandError> {
+        self.client
+            .request::<cortex_rs::nano::NanoCurrentState>(&Request::NanoSetAmp { control, value })
+            .map(|_| ())
+            .map_err(|error| CommandError::daemon(error.to_string()))
     }
 
     fn reconnect_now(&self) -> Result<(), CommandError> {
@@ -851,6 +1026,18 @@ async fn set_bypass(
 }
 
 #[tauri::command]
+async fn set_nano_amp(
+    state: tauri::State<'_, AppState>,
+    control: cortex_rs::nano::NanoAmpControl,
+    value: u8,
+) -> Result<(), CommandError> {
+    let source = Arc::clone(&state.source);
+    tauri::async_runtime::spawn_blocking(move || source.set_nano_amp(control, value))
+        .await
+        .map_err(|error| CommandError::daemon(format!("Nano amp write task failed: {error}")))?
+}
+
+#[tauri::command]
 async fn set_scene_label(
     state: tauri::State<'_, AppState>,
     scene: u32,
@@ -936,7 +1123,8 @@ pub fn run() {
             set_parameter,
             set_scene_label,
             set_scene_color,
-            set_bypass
+            set_bypass,
+            set_nano_amp
         ])
         .run(tauri::generate_context!())
         .expect("Tauri application failed");
@@ -959,6 +1147,7 @@ mod tests {
             uptime_seconds: 1,
             auto_managed: false,
             idle_timeout_seconds: None,
+            device_kind: cortex_rs::DeviceKind::QuadCortex,
             device: DeviceHealth::Reconnecting {
                 attempts: 2,
                 last_error: "device absent".into(),
@@ -969,6 +1158,55 @@ mod tests {
             },
         };
         assert!(!status_is_live(&status));
+    }
+
+    #[test]
+    #[ignore = "requires a running Nano Cortex held session"]
+    fn nano_dashboard_reads_the_typed_fixed_chain_from_the_daemon() {
+        let snapshot = load_dashboard(&DaemonDashboardSource::default()).unwrap();
+        assert_eq!(
+            snapshot.status.device_kind,
+            cortex_rs::DeviceKind::NanoCortex
+        );
+        assert!(snapshot.live.is_none());
+        assert!(snapshot.directory.is_empty());
+        let nano = snapshot.nano.expect("Nano state");
+        assert_eq!(nano.slots.len(), 8);
+        assert_eq!(nano.slots[0].role, cortex_rs::nano::NanoSlotRole::Gate);
+        assert_eq!(nano.slots[7].role, cortex_rs::nano::NanoSlotRole::PostFx3);
+    }
+
+    #[test]
+    #[ignore = "requires a running Nano Cortex held session; transiently changes gain by one raw step"]
+    fn nano_amp_write_reaches_the_daemon_reads_back_and_restores() {
+        let source = DaemonDashboardSource::default();
+        let original = source
+            .dashboard()
+            .unwrap()
+            .nano
+            .unwrap()
+            .amp
+            .gain
+            .expect("gain");
+        let changed = if original == u8::MAX {
+            original - 1
+        } else {
+            original + 1
+        };
+        let exercise = (|| {
+            source.set_nano_amp(cortex_rs::nano::NanoAmpControl::Gain, changed)?;
+            let actual = source.dashboard()?.nano.unwrap().amp.gain;
+            assert_eq!(actual, Some(changed));
+            Ok::<_, CommandError>(())
+        })();
+        source
+            .set_nano_amp(cortex_rs::nano::NanoAmpControl::Gain, original)
+            .expect("restore gain");
+        assert_eq!(
+            source.dashboard().unwrap().nano.unwrap().amp.gain,
+            Some(original)
+        );
+        exercise.unwrap();
     }
 
     struct FailingSource;

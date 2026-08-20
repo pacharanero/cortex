@@ -2,7 +2,7 @@
 
 The desktop GUI is one of the toolkit's three user-facing interfaces alongside the CLI and MCP server. Its destination is one open-source editor for Quad Cortex and Nano Cortex on Linux, Windows and macOS over the same Rust transport and host foundation, not separate applications that reimplement device behaviour. Shared infrastructure will remain shared, while the Quad's grid and the Nano's fixed signal chain retain honest device-specific domain models and screens.
 
-The current first draft is a Quad Cortex-specific interactive shell with two explicit modes, described below. It reads status, grid, active scene, CPU and populated preset slots through `cortex-host` and the held `cortex session` daemon, and it never opens a second HID connection. Nano Cortex views are aspirational until the hardware-verified Nano transport and state decoder are integrated into that same daemon contract.
+The current first draft supports working Quad and Nano surfaces through one managed Rust backend. Quad mode reads status, grid, active scene, CPU and populated preset slots and exposes non-persistent recall, scene, parameter and bypass controls. Nano mode renders the fixed eight-role signal chain and exposes explicit Apply controls for the five raw amp values from the typed, paced daemon snapshot; it deliberately does not force those roles into the Quad grid model. Neither mode opens a second HID connection.
 
 Linux is the first and only hardware-verified baseline today because Neural DSP has not provided Cortex Control for Linux and this community project began by filling that gap for ourselves. Windows and macOS transport, local IPC, packaging and hardware testing remain outstanding; the project will not describe them as supported until that evidence exists.
 
@@ -12,8 +12,8 @@ It adapts the mockable IPC-boundary architecture of `rixrix/deskop-nano-cortex` 
 
 Install the platform's [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/), then install frontend dependencies in `gui/`.
 
-- **Daemon-backed mode**, the real thing: start the device owner with `cortex session start`, then run `s/gui-dev` from anywhere in the repository. This calls the managed Rust Tauri backend, which reads live device state through `cortex-host` and the held daemon.
-- **Browser fixture mode**, for frontend development without hardware: run `npm run dev` or `npm run dev:fixture` inside `gui/`. This serves fictional development data in an ordinary browser tab, with no Tauri backend and no daemon.
+- **Daemon-backed mode**, the real thing: run `s/gui-dev` from anywhere in the repository. The GUI reuses an existing compatible held session or starts an auto-managed one itself, trying Quad and then Nano when no session exists. If both products are connected, this first implementation selects Quad; an explicit in-GUI device selector remains outstanding.
+- **Browser fixture mode**, for frontend development without hardware: run `npm run dev` or `npm run dev:fixture` inside `gui/`. This serves fictional development data in an ordinary browser tab, with no Tauri backend and no daemon. Add `?device=nano` to the browser URL for the fictional Nano fixture.
 - Run `npm run check` inside `gui/` to type-check and build both adapters.
 
 The mode is never inferred from success or failure. A daemon error remains an error; Tauri mode does not fall back to plausible-looking fixture state. The header identifies fixture mode explicitly with a yellow banner.
@@ -45,6 +45,16 @@ Selecting a block on the grid opens its inspector: model name, category, positio
 Below that, every editable parameter the block's catalog entry describes gets its own control - a slider and number input in real units (dB, ms, Hz, etc.) where the catalog gives a usable range, a dropdown for a named-step switch, or a text field for a string parameter. Read-only meters are shown but not editable. A write is followed by a device read-back, so a clamped or refused value shows what the unit actually holds rather than what was asked for.
 
 Parameter and bypass edits are hardware-verified for the read/write/read-back cycle itself (2026-08-17); parameter search or grouping for models with many parameters is not yet implemented.
+
+### Nano Cortex surface
+
+When the held daemon owns a Nano Cortex, the GUI renders the fixed eight-role signal chain (Gate, Pre FX 1-2, Capture, IR/Cab, Post FX 1-3) as one responsive row of panels, each showing its loaded model name and bypass state. Below that, the five hardware-verified raw amp controls (Gain, Level, Bass, Mid, Treble) each get a 0-255 number input and an explicit **Apply** button. The Nano's roles are never forced into the Quad's grid, scenes or presets.
+
+Each Apply sends the typed amp write to the daemon, which paces a fresh state read after the device's measured six-second settle and confirms the value read back exactly before returning. The control stays disabled during that round-trip, so a second Apply cannot race the first, and the panel re-reads device state rather than displaying an optimistic value. The whole cycle changes heard working state and saves nothing.
+
+Gate/FX bypass is not exposed in the Nano surface. Hardware confirmed a single bypass write reads back, but a second bypass write on the same held HID connection was ignored despite pacing; reopening the handle allowed restoration. Bypass will not appear until that repeat-write behaviour is understood and made reliable.
+
+The header badge identifies which product is connected (Nano Cortex or Quad Cortex). With both products connected the auto-managed startup path selects Quad; an explicit in-GUI device selector remains outstanding.
 
 ### Health, reconnect and fault isolation
 

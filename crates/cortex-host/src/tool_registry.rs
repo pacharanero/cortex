@@ -39,6 +39,12 @@ fn reads() -> Vec<ToolSpec> {
             true,
         ),
         spec(
+            "read_nano_state",
+            "Read the Nano Cortex fixed eight-role chain and raw amp controls. Read-only; requires a Nano-owned held session.",
+            empty_schema(),
+            true,
+        ),
+        spec(
             "get_device_version",
             "Read device identity and CorOS version.",
             empty_schema(),
@@ -165,6 +171,15 @@ fn scenes() -> Vec<ToolSpec> {
 
 fn grid_edits() -> Vec<ToolSpec> {
     vec![
+        spec(
+            "set_nano_amp",
+            "Set one Nano amp control to a raw 0-255 value. Changes heard working state, saves nothing, and succeeds only after a fresh state read confirms the value. Requires a Nano-owned held session and takes about six seconds.",
+            object_schema(
+                &json!({"control":{"type":"string","enum":["gain","level","bass","mid","treble"]},"value":{"type":"integer","minimum":0,"maximum":255}}),
+                &["control", "value"],
+            ),
+            false,
+        ),
         spec(
             "copy_scene",
             "Copy one scene's parameter, bypass, label and colour state onto another scene in the unsaved working copy. Scenes A-H are zero-based 0-7; does not save.",

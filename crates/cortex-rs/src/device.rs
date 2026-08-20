@@ -16,9 +16,11 @@
 use serde::{Deserialize, Serialize};
 
 /// The kind of Neural DSP device on the other end of the USB connection.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum DeviceKind {
     /// The Neural DSP Quad Cortex. The primary verification target.
+    #[default]
     QuadCortex,
     /// The Neural DSP Nano Cortex (internal codename `ATMA`). Its HID framing
     /// and read-only state exchange are hardware-verified; runtime support is

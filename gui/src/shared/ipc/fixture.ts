@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Dr Marcus Baw
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-import type { CortexApi, DashboardSnapshot, LiveBlock, ParameterInput, ParameterView, SceneSnapshot } from "./types";
+import type { CortexApi, DashboardSnapshot, LiveBlock, NanoCurrentState, ParameterInput, ParameterView, SceneSnapshot } from "./types";
 
 /**
  * Parameters per block cell, keyed "row,column".
@@ -86,6 +86,7 @@ const dashboard: DashboardSnapshot = {
   status: {
     daemon_version: "fixture",
     uptime_seconds: 0,
+    device_kind: "quad_cortex",
     device: { state: "connected", serial: null, coros_version: null, last_message_seconds: 0 },
     cache: {
       generation: 1, revision: 1, storage_revision: 1, phase: "live", catalog: true,
@@ -125,6 +126,24 @@ const dashboard: DashboardSnapshot = {
       { index: 8, slot: "2A", name: storedPresets["2A"].name },
     ],
   }],
+  nano: null,
+};
+
+const nanoState: NanoCurrentState = {
+  firmware: "NC-FICTION-1.2.3",
+  amp: { gain: 101, level: 102, bass: 103, mid: 104, treble: 105 },
+  capture_slot: 2, capture_volume: 128, gate_reduction: 42,
+  footswitch_assignments: { ia: 1, ib: 2, iia: 3, iib: 4 },
+  slots: [
+    { role: "gate", loaded_name: null, model_id: null, bypassed: false },
+    { role: "pre_fx1", loaded_name: null, model_id: 1001, bypassed: false },
+    { role: "pre_fx2", loaded_name: null, model_id: 1002, bypassed: true },
+    { role: "capture", loaded_name: "Fictional Capture", model_id: null, bypassed: null },
+    { role: "ir_cab", loaded_name: "Fictional Cabinet", model_id: null, bypassed: false },
+    { role: "post_fx1", loaded_name: null, model_id: 1003, bypassed: false },
+    { role: "post_fx2", loaded_name: null, model_id: 1004, bypassed: false },
+    { role: "post_fx3", loaded_name: null, model_id: 1005, bypassed: false },
+  ],
 };
 
 /** The device answers an edit with a new revision; the header shows it. */
@@ -135,7 +154,16 @@ function bumpRevision() {
 }
 
 export const fixtureApi: CortexApi = {
-  async dashboard() { return structuredClone(dashboard); },
+  async dashboard() {
+    if (new URLSearchParams(window.location.search).get("device") === "nano") {
+      return structuredClone({
+        ...dashboard,
+        status: { ...dashboard.status, device_kind: "nano_cortex", cache: { ...dashboard.status.cache, phase: "unsubscribed" } },
+        live: null, directory: [], nano: nanoState,
+      });
+    }
+    return structuredClone(dashboard);
+  },
   async reconnectNow() {},
   async switchScene(scene: number) {
     // Refuse the same range the Rust boundary refuses, so fixture mode cannot
@@ -189,6 +217,10 @@ export const fixtureApi: CortexApi = {
     block.bypassed = bypass;
     if (dashboard.live) dashboard.live.preset_dirty = true;
     bumpRevision();
+  },
+  async setNanoAmp(control, value) {
+    if (!Number.isInteger(value) || value < 0 || value > 255) throw new Error("Nano amp value must be an integer from 0 to 255");
+    nanoState.amp[control] = value;
   },
   async blockParameters(row: number, column: number) {
     if (row < 0 || row > 3 || column < 0 || column > 7) throw new Error(`row ${row}, column ${column} is outside the grid`);

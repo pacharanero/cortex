@@ -29,8 +29,22 @@ export interface CacheStatus {
 export interface DaemonStatus {
   daemon_version: string;
   uptime_seconds: number;
+  device_kind: "quad_cortex" | "nano_cortex";
   device: DeviceHealth;
   cache: CacheStatus;
+}
+
+export type NanoSlotRole = "gate" | "pre_fx1" | "pre_fx2" | "capture" | "ir_cab" | "post_fx1" | "post_fx2" | "post_fx3";
+export type NanoAmpControl = "gain" | "level" | "bass" | "mid" | "treble";
+export interface NanoSlotState { role: NanoSlotRole; loaded_name: string | null; model_id: number | null; bypassed: boolean | null }
+export interface NanoCurrentState {
+  firmware: string | null;
+  amp: { gain: number | null; level: number | null; bass: number | null; mid: number | null; treble: number | null };
+  capture_slot: number | null;
+  capture_volume: number | null;
+  gate_reduction: number | null;
+  footswitch_assignments: { ia: number; ib: number; iia: number; iib: number } | null;
+  slots: NanoSlotState[];
 }
 
 export interface ParamValue {
@@ -96,6 +110,7 @@ export interface DashboardSnapshot {
   status: DaemonStatus;
   live: LiveSnapshot | null;
   directory: SetlistSnapshot[];
+  nano: NanoCurrentState | null;
 }
 
 /** How a parameter value is supplied to a write. Mirrors Rust's `ParameterInput`. */
@@ -183,4 +198,6 @@ export interface CortexApi {
    * scene only. `row` is the zero-based WIRE row, never the 1-4 screen row.
    */
   setBypass(row: number, column: number, bypass: boolean): Promise<void>;
+  /** Set one Nano amp control and wait for exact fresh read-back. */
+  setNanoAmp(control: NanoAmpControl, value: number): Promise<void>;
 }

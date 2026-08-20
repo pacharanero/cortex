@@ -221,6 +221,7 @@ mod tests {
             uptime_seconds: 0,
             auto_managed: false,
             idle_timeout_seconds: None,
+            device_kind: cortex_rs::DeviceKind::QuadCortex,
             device: crate::DeviceHealth::Failed {
                 error: "fixture".into(),
             },

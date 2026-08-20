@@ -241,6 +241,7 @@ fn fixture_status(lifecycle: DaemonLifecycle) -> Status {
         uptime_seconds: 0,
         auto_managed: lifecycle.is_auto_managed(),
         idle_timeout_seconds: lifecycle.idle_timeout().map(|timeout| timeout.as_secs()),
+        device_kind: cortex_rs::DeviceKind::QuadCortex,
         device: DeviceHealth::Failed {
             error: "fictional fixture".into(),
         },

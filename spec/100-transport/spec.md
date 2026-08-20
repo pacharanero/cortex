@@ -144,7 +144,7 @@ Re-plug the device. The interface number's `hidraw` path is assigned dynamically
 ## Future
 
 - **Protocol compatibility probe.** Device identity is cached, but the wire exposes no explicit protocol version. A CorOS update can still break compatibility silently.
-- **Nano Cortex application implementation.** Low-level discovery and report geometry are implemented. Add the Nano codec/session before exposing it through CLI, MCP or GUI.
+- **Nano Cortex application implementation.** The typed current-state codec and paced read-only held-daemon/CLI/GUI path are implemented. Nano writes, Bluetooth-ownership confirmation decoding and MCP tools remain outstanding under NANO-001.
 
 ## Glossary
 

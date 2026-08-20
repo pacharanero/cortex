@@ -5,5 +5,7 @@
 # Start the Cortex Tauri desktop GUI. Run `npm install` in gui/ once first.
 
 set -euo pipefail
-cd "$(git rev-parse --show-toplevel)/gui"
+root="$(git rev-parse --show-toplevel)"
+cargo build --manifest-path "$root/Cargo.toml" -p cortex-cli
+cd "$root/gui"
 exec npm run tauri dev "$@"

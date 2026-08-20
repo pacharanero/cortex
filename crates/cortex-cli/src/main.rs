@@ -30,8 +30,7 @@ use cortex_rs::proto::message_action::Enum as MessageAction;
 use cortex_rs::{DeviceKind, Transport};
 
 /// The `cortex` CLI: an unofficial, Linux-first command-line surface for the
-/// Neural DSP Quad Cortex over USB HID. Nano Cortex HID framing and state reads
-/// are hardware-verified, but CLI support is not yet implemented.
+/// Neural DSP Quad Cortex and Nano Cortex over USB HID.
 ///
 /// Not affiliated with or endorsed by Neural DSP. "Neural DSP", "Quad Cortex",
 /// and "Nano Cortex" are trademarks of Neural DSP Technologies. See the README
@@ -89,6 +88,23 @@ enum Format {
     Json,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, clap::ValueEnum, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+enum DeviceSelection {
+    #[default]
+    Quad,
+    Nano,
+}
+
+impl From<DeviceSelection> for cortex_rs::DeviceKind {
+    fn from(value: DeviceSelection) -> Self {
+        match value {
+            DeviceSelection::Quad => Self::QuadCortex,
+            DeviceSelection::Nano => Self::NanoCortex,
+        }
+    }
+}
+
 /// A complete local plan returned before any side-effect boundary is crossed.
 #[derive(Debug, serde::Serialize)]
 struct DryRunPlan {
@@ -134,6 +150,11 @@ enum Command {
     Session {
         #[command(subcommand)]
         command: SessionCmd,
+    },
+    /// Nano Cortex state and non-persistent amp operations.
+    Nano {
+        #[command(subcommand)]
+        command: NanoCmd,
     },
     /// Presets: list, inspect, recall, prepare/save, or delete.
     #[command(alias = "p")]
@@ -298,6 +319,9 @@ enum SessionCmd {
         after_help = "Examples:\n  cortex session start                # background, detached\n  cortex session start --foreground   # stay attached and watch it"
     )]
     Start {
+        /// Product whose USB interface the held daemon should own.
+        #[arg(long, value_enum, default_value = "quad")]
+        device: DeviceSelection,
         /// Stay in the foreground, logging to the terminal.
         ///
         /// This is what the background mode runs internally. Useful when a
@@ -317,6 +341,41 @@ enum SessionCmd {
     /// Ask a running session to shut down, announcing the disconnect first.
     #[command(after_help = "Examples:\n  cortex session stop")]
     Stop,
+}
+
+#[derive(Subcommand, Debug)]
+enum NanoCmd {
+    /// Read the complete fixed eight-role signal-chain state.
+    State,
+    /// Set one amp control as raw 0-255 and verify through fresh read-back.
+    SetAmp {
+        /// Amp control to change.
+        #[arg(value_enum)]
+        control: NanoAmpControlArg,
+        /// Raw device value from 0 to 255.
+        value: u8,
+    },
+}
+
+#[derive(Clone, Copy, Debug, clap::ValueEnum)]
+enum NanoAmpControlArg {
+    Gain,
+    Level,
+    Bass,
+    Mid,
+    Treble,
+}
+
+impl From<NanoAmpControlArg> for cortex_rs::nano::NanoAmpControl {
+    fn from(value: NanoAmpControlArg) -> Self {
+        match value {
+            NanoAmpControlArg::Gain => Self::Gain,
+            NanoAmpControlArg::Level => Self::Level,
+            NanoAmpControlArg::Bass => Self::Bass,
+            NanoAmpControlArg::Mid => Self::Mid,
+            NanoAmpControlArg::Treble => Self::Treble,
+        }
+    }
 }
 
 /// Commands acting on presets.
@@ -923,20 +982,27 @@ fn run(cli: Cli) -> Result<()> {
     match cli.command {
         Some(Command::Session { command }) => match command {
             SessionCmd::Start {
+                device,
                 foreground,
                 auto_managed,
                 idle_timeout_seconds,
             } => {
                 let lifecycle = session_lifecycle(auto_managed, idle_timeout_seconds)?;
                 if foreground {
-                    connect::run(lifecycle)
+                    connect::run(device.into(), lifecycle)
                 } else {
-                    connect::start_detached(lifecycle)
+                    connect::start_detached(device.into(), lifecycle)
                 }
             }
             SessionCmd::Status => cmd_connect(true, false, fmt),
             SessionCmd::Stop => cmd_connect(false, true, fmt),
         },
+        Some(Command::Nano {
+            command: NanoCmd::State,
+        }) => cmd_nano_state(fmt),
+        Some(Command::Nano {
+            command: NanoCmd::SetAmp { control, value },
+        }) => cmd_nano_set_amp(control.into(), value, fmt),
         Some(Command::Preset { command }) => match command {
             PresetCmd::Copy {
                 from_setlist,
@@ -1195,6 +1261,7 @@ fn dry_run_plan(command: Option<&Command>) -> Result<Option<DryRunPlan>> {
     let plan = match command {
         Command::Session { command } => match command {
             SessionCmd::Start {
+                device,
                 foreground,
                 auto_managed,
                 idle_timeout_seconds,
@@ -1203,6 +1270,7 @@ fn dry_run_plan(command: Option<&Command>) -> Result<Option<DryRunPlan>> {
                 "local process and device session",
                 serde_json::json!({
                     "foreground": foreground,
+                    "device": device,
                     "auto_managed": auto_managed,
                     "idle_timeout_seconds": idle_timeout_seconds,
                 }),
@@ -1219,6 +1287,19 @@ fn dry_run_plan(command: Option<&Command>) -> Result<Option<DryRunPlan>> {
                 &[
                     "announce disconnect",
                     "stop the daemon and remove its endpoint",
+                ],
+            )),
+        },
+        Command::Nano { command } => match command {
+            NanoCmd::State => None,
+            NanoCmd::SetAmp { control, value } => Some(plan(
+                "nano set-amp",
+                "Nano working state and heard audio",
+                serde_json::json!({ "control": format!("{control:?}").to_lowercase(), "value": value }),
+                &[
+                    "write the raw amp value",
+                    "wait six seconds",
+                    "read the state back and require an exact match",
                 ],
             )),
         },
@@ -3350,6 +3431,37 @@ fn cmd_set_split(row: u32, split: i32, mix: i32, fmt: Format) -> Result<()> {
 }
 
 /// Run, query, or stop the persistent connection.
+fn cmd_nano_state(fmt: Format) -> Result<()> {
+    let client = cortex_host::DaemonClient::default();
+    let state: cortex_rs::nano::NanoCurrentState =
+        client.request(&cortex_host::Request::NanoState)?;
+    emit(&state, fmt, |state| {
+        println!("Nano Cortex fixed chain:");
+        for slot in &state.slots {
+            let name = slot.loaded_name.as_deref().unwrap_or("-");
+            let model = slot
+                .model_id
+                .map_or_else(|| "-".into(), |id| id.to_string());
+            let bypass = slot
+                .bypassed
+                .map_or("unknown", |value| if value { "bypassed" } else { "on" });
+            println!("  {:?}: {name} model={model} {bypass}", slot.role);
+        }
+    })
+}
+
+fn cmd_nano_set_amp(
+    control: cortex_rs::nano::NanoAmpControl,
+    value: u8,
+    fmt: Format,
+) -> Result<()> {
+    let state: cortex_rs::nano::NanoCurrentState = cortex_host::DaemonClient::default()
+        .request(&cortex_host::Request::NanoSetAmp { control, value })?;
+    emit(&state, fmt, |_| {
+        println!("set {control:?} to {value}; verified by fresh read-back");
+    })
+}
+
 fn cmd_connect(status: bool, stop: bool, fmt: Format) -> Result<()> {
     if status {
         let Some(result) = connect::request(&cortex_host::Request::Status) else {
