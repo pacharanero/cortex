@@ -364,6 +364,22 @@ enum NanoCmd {
         #[arg(action = clap::ArgAction::Set)]
         bypassed: bool,
     },
+    /// Read FX parameter values (normalized 0.0-1.0) for one editable slot.
+    ReadFxParams {
+        /// FX slot to read.
+        #[arg(value_enum)]
+        slot: NanoFxSlotArg,
+    },
+    /// Set one FX parameter (normalized 0.0-1.0) and verify through fresh read-back.
+    SetFxParam {
+        /// FX slot to change.
+        #[arg(value_enum)]
+        slot: NanoFxSlotArg,
+        /// Parameter index within the slot's model.
+        param_index: u8,
+        /// Normalized value, 0.0 to 1.0.
+        value: f32,
+    },
 }
 
 #[derive(Clone, Copy, Debug, clap::ValueEnum)]
@@ -385,6 +401,27 @@ impl From<NanoBypassTargetArg> for cortex_rs::nano::NanoBypassTarget {
             NanoBypassTargetArg::PostFx1 => Self::PostFx1,
             NanoBypassTargetArg::PostFx2 => Self::PostFx2,
             NanoBypassTargetArg::PostFx3 => Self::PostFx3,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, clap::ValueEnum)]
+enum NanoFxSlotArg {
+    PreFx1,
+    PreFx2,
+    PostFx1,
+    PostFx2,
+    PostFx3,
+}
+
+impl From<NanoFxSlotArg> for cortex_rs::nano::NanoFxSlot {
+    fn from(value: NanoFxSlotArg) -> Self {
+        match value {
+            NanoFxSlotArg::PreFx1 => Self::PreFx1,
+            NanoFxSlotArg::PreFx2 => Self::PreFx2,
+            NanoFxSlotArg::PostFx1 => Self::PostFx1,
+            NanoFxSlotArg::PostFx2 => Self::PostFx2,
+            NanoFxSlotArg::PostFx3 => Self::PostFx3,
         }
     }
 }
@@ -1038,6 +1075,17 @@ fn run(cli: Cli) -> Result<()> {
         Some(Command::Nano {
             command: NanoCmd::SetBypass { target, bypassed },
         }) => cmd_nano_set_bypass(target.into(), bypassed, fmt),
+        Some(Command::Nano {
+            command: NanoCmd::ReadFxParams { slot },
+        }) => cmd_nano_read_fx_params(slot.into(), fmt),
+        Some(Command::Nano {
+            command:
+                NanoCmd::SetFxParam {
+                    slot,
+                    param_index,
+                    value,
+                },
+        }) => cmd_nano_set_fx_param(slot.into(), param_index, value, fmt),
         Some(Command::Preset { command }) => match command {
             PresetCmd::Copy {
                 from_setlist,
@@ -1345,6 +1393,21 @@ fn dry_run_plan(command: Option<&Command>) -> Result<Option<DryRunPlan>> {
                     "write the bypass value",
                     "wait six seconds",
                     "read the state back and require an exact match",
+                ],
+            )),
+            NanoCmd::ReadFxParams { slot: _ } => None,
+            NanoCmd::SetFxParam {
+                slot,
+                param_index,
+                value,
+            } => Some(plan(
+                "nano set-fx-param",
+                "Nano working state and heard audio",
+                serde_json::json!({ "slot": format!("{slot:?}").to_lowercase(), "param_index": param_index, "value": value }),
+                &[
+                    "write the normalized FX parameter value",
+                    "wait two seconds",
+                    "read the FX parameters back and require an exact match",
                 ],
             )),
         },
@@ -3516,6 +3579,34 @@ fn cmd_nano_set_bypass(
         .request(&cortex_host::Request::NanoSetBypass { target, bypassed })?;
     emit(&state, fmt, |_| {
         println!("set {target:?} bypass to {bypassed}; verified by fresh read-back");
+    })
+}
+
+fn cmd_nano_read_fx_params(slot: cortex_rs::nano::NanoFxSlot, fmt: Format) -> Result<()> {
+    let values: Vec<f32> = cortex_host::DaemonClient::default()
+        .request(&cortex_host::Request::NanoReadFxParams { slot })?;
+    emit(&values, fmt, |values| {
+        println!("{slot:?} FX parameters ({}):", values.len());
+        for (i, value) in values.iter().enumerate() {
+            println!("  param {i}: {value:.6}");
+        }
+    })
+}
+
+fn cmd_nano_set_fx_param(
+    slot: cortex_rs::nano::NanoFxSlot,
+    param_index: u8,
+    value: f32,
+    fmt: Format,
+) -> Result<()> {
+    let values: Vec<f32> =
+        cortex_host::DaemonClient::default().request(&cortex_host::Request::NanoSetFxParam {
+            slot,
+            param_index,
+            value,
+        })?;
+    emit(&values, fmt, |_| {
+        println!("set {slot:?} param {param_index} to {value:.6}; verified by fresh read-back");
     })
 }
 

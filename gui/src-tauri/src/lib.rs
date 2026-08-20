@@ -201,6 +201,24 @@ trait DashboardSource: Send + Sync {
             "this dashboard source does not support device switching",
         ))
     }
+    fn read_nano_fx_params(
+        &self,
+        _slot: cortex_rs::nano::NanoFxSlot,
+    ) -> Result<Vec<f32>, CommandError> {
+        Err(CommandError::daemon(
+            "this dashboard source does not support Nano FX parameter reads",
+        ))
+    }
+    fn set_nano_fx_param(
+        &self,
+        _slot: cortex_rs::nano::NanoFxSlot,
+        _param_index: u8,
+        _value: f32,
+    ) -> Result<(), CommandError> {
+        Err(CommandError::daemon(
+            "this dashboard source does not support Nano FX parameter writes",
+        ))
+    }
 }
 
 const AUTO_MANAGED_IDLE_SECONDS: &str = "60";
@@ -534,6 +552,31 @@ impl DashboardSource for DaemonDashboardSource {
     fn set_device(&self, device: Option<cortex_rs::DeviceKind>) -> Result<(), CommandError> {
         self.supervisor.set_device(device);
         Ok(())
+    }
+
+    fn read_nano_fx_params(
+        &self,
+        slot: cortex_rs::nano::NanoFxSlot,
+    ) -> Result<Vec<f32>, CommandError> {
+        self.client
+            .request::<Vec<f32>>(&Request::NanoReadFxParams { slot })
+            .map_err(|error| CommandError::daemon(error.to_string()))
+    }
+
+    fn set_nano_fx_param(
+        &self,
+        slot: cortex_rs::nano::NanoFxSlot,
+        param_index: u8,
+        value: f32,
+    ) -> Result<(), CommandError> {
+        self.client
+            .request::<Vec<f32>>(&Request::NanoSetFxParam {
+                slot,
+                param_index,
+                value,
+            })
+            .map(|_| ())
+            .map_err(|error| CommandError::daemon(error.to_string()))
     }
 
     fn reconnect_now(&self) -> Result<(), CommandError> {
@@ -1135,6 +1178,32 @@ async fn set_device(
 }
 
 #[tauri::command]
+async fn read_nano_fx_params(
+    state: tauri::State<'_, AppState>,
+    slot: cortex_rs::nano::NanoFxSlot,
+) -> Result<Vec<f32>, CommandError> {
+    let source = Arc::clone(&state.source);
+    tauri::async_runtime::spawn_blocking(move || source.read_nano_fx_params(slot))
+        .await
+        .map_err(|error| CommandError::daemon(format!("Nano FX param read task failed: {error}")))?
+}
+
+#[tauri::command]
+async fn set_nano_fx_param(
+    state: tauri::State<'_, AppState>,
+    slot: cortex_rs::nano::NanoFxSlot,
+    param_index: u8,
+    value: f32,
+) -> Result<(), CommandError> {
+    let source = Arc::clone(&state.source);
+    tauri::async_runtime::spawn_blocking(move || source.set_nano_fx_param(slot, param_index, value))
+        .await
+        .map_err(|error| {
+            CommandError::daemon(format!("Nano FX param write task failed: {error}"))
+        })?
+}
+
+#[tauri::command]
 async fn set_scene_label(
     state: tauri::State<'_, AppState>,
     scene: u32,
@@ -1223,7 +1292,9 @@ pub fn run() {
             set_bypass,
             set_nano_amp,
             set_nano_bypass,
-            set_device
+            set_device,
+            read_nano_fx_params,
+            set_nano_fx_param
         ])
         .run(tauri::generate_context!())
         .expect("Tauri application failed");

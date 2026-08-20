@@ -282,7 +282,7 @@ export function App() {
               </>}
             </Stack>
           </Alert>}
-          {nano && <NanoChain onSetAmp={setNanoAmp} onSetBypass={setNanoBypass} state={nano} />}
+          {nano && <NanoChain api={cortexApi} state={nano} />}
           {live && <>
             <Group justify="space-between"><div><Text c="dimmed" size="sm">Working grid</Text><Title order={3}>{live.preset_name}{live.preset_dirty ? " *" : ""}</Title></div><Text>Scene {activeSceneName(live)}</Text></Group>
             <Paper p="md" withBorder>

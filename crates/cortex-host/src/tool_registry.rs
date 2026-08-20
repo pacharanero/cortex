@@ -191,6 +191,24 @@ fn grid_edits() -> Vec<ToolSpec> {
             false,
         ),
         spec(
+            "read_nano_fx_params",
+            "Read normalized 0.0-1.0 FX parameter values for one editable Nano slot. Read-only; requires a Nano-owned held session.",
+            object_schema(
+                &json!({"slot":{"type":"string","enum":["pre_fx1","pre_fx2","post_fx1","post_fx2","post_fx3"]}}),
+                &["slot"],
+            ),
+            true,
+        ),
+        spec(
+            "set_nano_fx_param",
+            "Set one Nano FX parameter to a normalized 0.0-1.0 value. Changes heard working state, saves nothing, and succeeds only after a fresh read confirms the value. Requires a Nano-owned held session.",
+            object_schema(
+                &json!({"slot":{"type":"string","enum":["pre_fx1","pre_fx2","post_fx1","post_fx2","post_fx3"]},"param_index":{"type":"integer","minimum":0},"value":{"type":"number","minimum":0,"maximum":1}}),
+                &["slot", "param_index", "value"],
+            ),
+            false,
+        ),
+        spec(
             "copy_scene",
             "Copy one scene's parameter, bypass, label and colour state onto another scene in the unsaved working copy. Scenes A-H are zero-based 0-7; does not save.",
             scene_pair_schema("from_scene", "to_scene"),

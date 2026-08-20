@@ -29,5 +29,7 @@ export const tauriApi: CortexApi = {
   setBypass(row: number, column: number, bypass: boolean) { return invokeCommand<void>("set_bypass", { row, column, bypass }); },
   setNanoAmp(control, value) { return invokeCommand<void>("set_nano_amp", { control, value }); },
   setNanoBypass(target, bypassed) { return invokeCommand<void>("set_nano_bypass", { target, bypassed }); },
+  readNanoFxParams(slot) { return invokeCommand<number[]>("read_nano_fx_params", { slot }); },
+  setNanoFxParam(slot, paramIndex, value) { return invokeCommand<void>("set_nano_fx_param", { slot, paramIndex, value }); },
   setDevice(device) { return invokeCommand<void>("set_device", { device }); },
 };

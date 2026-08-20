@@ -379,6 +379,14 @@ impl Daemon {
                 DaemonErrorCode::Protocol,
                 "the held session owns a Quad Cortex; start it with `--device nano`",
             ),
+            Request::NanoReadFxParams { .. } => Response::coded_error(
+                DaemonErrorCode::Protocol,
+                "the held session owns a Quad Cortex; start it with `--device nano`",
+            ),
+            Request::NanoSetFxParam { .. } => Response::coded_error(
+                DaemonErrorCode::Protocol,
+                "the held session owns a Quad Cortex; start it with `--device nano`",
+            ),
             // Answer in the same shape the direct path emits, so a caller
             // cannot tell whether it went through the daemon. A `{:?}` dump
             // of the protobuf would have been a second, worse format.
@@ -1475,6 +1483,75 @@ impl NanoDaemon {
                                     ),
                                 )
                             }
+                        }
+                        Err(error) => {
+                            *self.health.lock().unwrap() = DeviceHealth::Failed {
+                                error: error.to_string(),
+                            };
+                            Response::cortex_error(&error)
+                        }
+                    }
+                }
+                Err(TryLockError::WouldBlock) => Response::coded_error(
+                    DaemonErrorCode::Busy,
+                    "another Nano operation is already in progress",
+                ),
+                Err(TryLockError::Poisoned(_)) => {
+                    Response::error("Nano transport lock is unavailable")
+                }
+            },
+            Request::NanoReadFxParams { slot } => match self.transport.try_lock() {
+                Ok(transport) => {
+                    match cortex_rs::nano::read_fx_params(&transport, slot, Duration::from_secs(5))
+                    {
+                        Ok(values) => Response::ok(&values)
+                            .unwrap_or_else(|error| Response::error(error.to_string())),
+                        Err(error) => {
+                            *self.health.lock().unwrap() = DeviceHealth::Failed {
+                                error: error.to_string(),
+                            };
+                            Response::cortex_error(&error)
+                        }
+                    }
+                }
+                Err(TryLockError::WouldBlock) => {
+                    let cached = self.state.lock().unwrap();
+                    Response::ok(&cached.snapshot)
+                        .unwrap_or_else(|error| Response::error(error.to_string()))
+                }
+                Err(TryLockError::Poisoned(_)) => {
+                    Response::error("Nano transport lock is unavailable")
+                }
+            },
+            Request::NanoSetFxParam {
+                slot,
+                param_index,
+                value,
+            } => match self.transport.try_lock() {
+                Ok(transport) => {
+                    if let Err(error) =
+                        cortex_rs::nano::write_fx_param(&transport, slot, param_index, value)
+                    {
+                        return Response::cortex_error(&error);
+                    }
+                    std::thread::sleep(Duration::from_secs(2));
+                    match cortex_rs::nano::read_fx_params(&transport, slot, Duration::from_secs(5))
+                    {
+                        Ok(values)
+                            if param_index < values.len() as u8
+                                && (values[param_index as usize] - value).abs() < 0.001 =>
+                        {
+                            Response::ok(&values)
+                                .unwrap_or_else(|error| Response::error(error.to_string()))
+                        }
+                        Ok(values) => {
+                            let actual = values.get(param_index as usize).copied();
+                            Response::coded_error(
+                                DaemonErrorCode::OutcomeUnconfirmed,
+                                format!(
+                                    "Nano FX param write did not read back: expected {value}, got {actual:?}"
+                                ),
+                            )
                         }
                         Err(error) => {
                             *self.health.lock().unwrap() = DeviceHealth::Failed {

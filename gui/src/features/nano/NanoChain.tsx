@@ -1,9 +1,9 @@
 // SPDX-FileCopyrightText: 2026 Dr Marcus Baw
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-import { Alert, Badge, Button, Group, NumberInput, Paper, SimpleGrid, Stack, Switch, Text, Title } from "@mantine/core";
+import { Alert, Badge, Button, Group, NumberInput, Paper, SimpleGrid, Slider, Stack, Switch, Text, Title } from "@mantine/core";
 import { useEffect, useState } from "react";
-import type { NanoAmpControl, NanoBypassTarget, NanoCurrentState, NanoSlotRole } from "../../shared/ipc/types";
+import type { CortexApi, NanoAmpControl, NanoBypassTarget, NanoCurrentState, NanoFxSlot, NanoSlotRole } from "../../shared/ipc/types";
 
 const roleNames: Record<NanoSlotRole, string> = {
   gate: "Gate", pre_fx1: "Pre FX 1", pre_fx2: "Pre FX 2", capture: "Capture",
@@ -19,31 +19,66 @@ const bypassTargets: { role: NanoSlotRole; target: NanoBypassTarget }[] = [
   { role: "post_fx3", target: "post_fx3" },
 ];
 
+const fxSlots: { role: NanoSlotRole; slot: NanoFxSlot }[] = [
+  { role: "pre_fx1", slot: "pre_fx1" },
+  { role: "pre_fx2", slot: "pre_fx2" },
+  { role: "post_fx1", slot: "post_fx1" },
+  { role: "post_fx2", slot: "post_fx2" },
+  { role: "post_fx3", slot: "post_fx3" },
+];
+
 interface NanoChainProps {
   state: NanoCurrentState;
-  onSetAmp: (control: NanoAmpControl, value: number) => Promise<void>;
-  onSetBypass: (target: NanoBypassTarget, bypassed: boolean) => Promise<void>;
+  api: CortexApi;
 }
 
-export function NanoChain({ state, onSetAmp, onSetBypass }: NanoChainProps) {
+export function NanoChain({ state, api }: NanoChainProps) {
   const [draft, setDraft] = useState(state.amp);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [selectedSlot, setSelectedSlot] = useState<NanoFxSlot | null>(null);
+  const [fxParams, setFxParams] = useState<number[] | null>(null);
+  const [fxDraft, setFxDraft] = useState<number[]>([]);
   useEffect(() => { if (!busy) setDraft(state.amp); }, [state.amp, busy]);
 
   const apply = async (control: NanoAmpControl) => {
     const value = draft[control];
     if (value == null) return;
-    setBusy(control); setError(null);
-    try { await onSetAmp(control, value); }
+    setBusy(`amp:${control}`); setError(null);
+    try { await api.setNanoAmp(control, value); }
     catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
     finally { setBusy(null); }
   };
 
   const toggleBypass = async (target: NanoBypassTarget, bypassed: boolean) => {
     setBusy(`bypass:${target}`); setError(null);
-    try { await onSetBypass(target, bypassed); }
+    try { await api.setNanoBypass(target, bypassed); }
     catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
+    finally { setBusy(null); }
+  };
+
+  const loadFxParams = async (slot: NanoFxSlot) => {
+    setSelectedSlot(slot);
+    setFxParams(null);
+    setBusy(`fx-read:${slot}`); setError(null);
+    try {
+      const values = await api.readNanoFxParams(slot);
+      setFxParams(values);
+      setFxDraft(values);
+    } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
+    finally { setBusy(null); }
+  };
+
+  const applyFxParam = async (slot: NanoFxSlot, paramIndex: number) => {
+    const value = fxDraft[paramIndex];
+    if (value == null) return;
+    setBusy(`fx-write:${slot}:${paramIndex}`); setError(null);
+    try {
+      await api.setNanoFxParam(slot, paramIndex, value);
+      const values = await api.readNanoFxParams(slot);
+      setFxParams(values);
+      setFxDraft(values);
+    } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
     finally { setBusy(null); }
   };
 
@@ -53,20 +88,27 @@ export function NanoChain({ state, onSetAmp, onSetBypass }: NanoChainProps) {
       <Badge color="orange" variant="outline">Amp and bypass editing hardware verified</Badge>
     </Group>
     <SimpleGrid cols={{ base: 2, sm: 4, lg: 8 }} spacing="xs">
-      {state.slots.map((slot) => <Paper key={slot.role} p="sm" withBorder data-bypassed={slot.bypassed || undefined}>
-        <Text c="dimmed" fw={700} size="xs" tt="uppercase">{roleNames[slot.role]}</Text>
-        <Text fw={600} mt="xs">{slot.loaded_name ?? (slot.model_id == null ? "Assigned by device" : `Model ${slot.model_id}`)}</Text>
-        <Text c={slot.bypassed ? "orange" : "dimmed"} size="xs">
-          {slot.bypassed == null ? "state unavailable" : slot.bypassed ? "bypassed" : "on"}
-        </Text>
-      </Paper>)}
+      {state.slots.map((slot) => {
+        const fxSlot = fxSlots.find((f) => f.role === slot.role);
+        const isSelected = fxSlot && selectedSlot === fxSlot.slot;
+        return <Paper key={slot.role} p="sm" withBorder data-bypassed={slot.bypassed || undefined}
+          style={fxSlot ? { cursor: "pointer", borderColor: isSelected ? "var(--mantine-color-blue-5)" : undefined } : undefined}
+          onClick={fxSlot ? () => void loadFxParams(fxSlot.slot) : undefined}>
+          <Text c="dimmed" fw={700} size="xs" tt="uppercase">{roleNames[slot.role]}</Text>
+          <Text fw={600} mt="xs">{slot.loaded_name ?? (slot.model_id == null ? "Assigned by device" : `Model ${slot.model_id}`)}</Text>
+          <Text c={slot.bypassed ? "orange" : "dimmed"} size="xs">
+            {slot.bypassed == null ? "state unavailable" : slot.bypassed ? "bypassed" : "on"}
+          </Text>
+          {fxSlot && <Text c={isSelected ? "blue" : "dimmed"} size="xs" mt={2}>{isSelected ? "editing" : "click to edit"}</Text>}
+        </Paper>;
+      })}
     </SimpleGrid>
     <Paper p="md" withBorder>
       <Text c="dimmed" fw={700} size="xs" tt="uppercase">Amp controls (raw 0-255)</Text>
       <SimpleGrid cols={{ base: 1, sm: 3, lg: 5 }} mt="sm">
         {(Object.keys(state.amp) as NanoAmpControl[]).map((control) => <Group align="flex-end" key={control} wrap="nowrap">
-          <NumberInput aria-busy={busy === control} clampBehavior="strict" label={control[0].toUpperCase() + control.slice(1)} max={255} min={0} onChange={(value) => setDraft((current) => ({ ...current, [control]: typeof value === "number" ? value : null }))} value={draft[control] ?? ""} />
-          <Button disabled={draft[control] == null || busy !== null} loading={busy === control} onClick={() => void apply(control)}>Apply</Button>
+          <NumberInput aria-busy={busy === `amp:${control}`} clampBehavior="strict" label={control[0].toUpperCase() + control.slice(1)} max={255} min={0} onChange={(value) => setDraft((current) => ({ ...current, [control]: typeof value === "number" ? value : null }))} value={draft[control] ?? ""} />
+          <Button disabled={draft[control] == null || busy !== null} loading={busy === `amp:${control}`} onClick={() => void apply(control)}>Apply</Button>
         </Group>)}
       </SimpleGrid>
       <Text c="dimmed" mt="sm" size="xs">Changes heard working state and saves nothing. Apply waits about six seconds for fresh device read-back.</Text>
@@ -90,7 +132,24 @@ export function NanoChain({ state, onSetAmp, onSetBypass }: NanoChainProps) {
         })}
       </SimpleGrid>
       <Text c="dimmed" mt="sm" size="xs">Toggling bypass changes heard working state and saves nothing. Each toggle waits about six seconds for fresh device read-back. The Gate&apos;s &quot;on&quot; state may read back as unknown because the device represents it by omitting the field.</Text>
-      {error && <Alert color="red" mt="sm" title="Nano write failed">{error}</Alert>}
     </Paper>
+    {selectedSlot && fxParams != null && <Paper p="md" withBorder>
+      <Group justify="space-between">
+        <Text c="dimmed" fw={700} size="xs" tt="uppercase">FX parameters: {roleNames[fxSlots.find((f) => f.slot === selectedSlot)?.role ?? "pre_fx1"]}</Text>
+        <Button size="xs" variant="subtle" onClick={() => { setSelectedSlot(null); setFxParams(null); }}>Close</Button>
+      </Group>
+      <SimpleGrid cols={{ base: 1, sm: 2, lg: 3 }} mt="sm">
+        {fxParams.map((value, i) => <Group align="flex-end" key={i} wrap="nowrap">
+          <div style={{ flex: 1 }}>
+            <Text size="xs" fw={600}>Param {i}</Text>
+            <Slider aria-busy={busy === `fx-write:${selectedSlot}:${i}`} disabled={busy !== null} label={(v) => v.toFixed(2)} max={1} min={0} onChange={(v) => setFxDraft((current) => { const next = [...current]; next[i] = v; return next; })} size="sm" step={0.001} value={fxDraft[i] ?? value} />
+            <Text c="dimmed" size="xs">device: {value.toFixed(3)} | draft: {(fxDraft[i] ?? value).toFixed(3)}</Text>
+          </div>
+          <Button disabled={busy !== null || Math.abs((fxDraft[i] ?? value) - value) < 0.0005} loading={busy === `fx-write:${selectedSlot}:${i}`} onClick={() => selectedSlot && void applyFxParam(selectedSlot, i)} size="xs">Apply</Button>
+        </Group>)}
+      </SimpleGrid>
+      <Text c="dimmed" mt="sm" size="xs">Normalized 0.0-1.0. Each Apply writes one parameter and verifies through fresh read-back. Values vary by loaded model.</Text>
+    </Paper>}
+    {error && <Alert color="red" title="Nano write failed">{error}</Alert>}
   </Stack>;
 }
