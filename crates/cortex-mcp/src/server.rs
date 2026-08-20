@@ -356,6 +356,10 @@ impl CortexMcp {
                 value: u8::try_from(bounded_u32(args, "value", 0, 255)?)
                     .context("Nano amp value must be 0-255")?,
             },
+            "set_nano_bypass" => Request::NanoSetBypass {
+                target: serde_json::from_value(required(args, "target")?.clone())?,
+                bypassed: bool_arg(args, "bypassed", false)?,
+            },
             "copy_scene" => Request::CopyScene {
                 from_scene: bounded_u32(args, "from_scene", 0, 7)?,
                 to_scene: bounded_u32(args, "to_scene", 0, 7)?,

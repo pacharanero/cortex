@@ -36,6 +36,7 @@ export interface DaemonStatus {
 
 export type NanoSlotRole = "gate" | "pre_fx1" | "pre_fx2" | "capture" | "ir_cab" | "post_fx1" | "post_fx2" | "post_fx3";
 export type NanoAmpControl = "gain" | "level" | "bass" | "mid" | "treble";
+export type NanoBypassTarget = "gate" | "pre_fx1" | "pre_fx2" | "post_fx1" | "post_fx2" | "post_fx3";
 export interface NanoSlotState { role: NanoSlotRole; loaded_name: string | null; model_id: number | null; bypassed: boolean | null }
 export interface NanoCurrentState {
   firmware: string | null;
@@ -200,4 +201,5 @@ export interface CortexApi {
   setBypass(row: number, column: number, bypass: boolean): Promise<void>;
   /** Set one Nano amp control and wait for exact fresh read-back. */
   setNanoAmp(control: NanoAmpControl, value: number): Promise<void>;
+  setNanoBypass(target: NanoBypassTarget, bypassed: boolean): Promise<void>;
 }

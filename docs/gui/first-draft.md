@@ -52,7 +52,9 @@ When the held daemon owns a Nano Cortex, the GUI renders the fixed eight-role si
 
 Each Apply sends the typed amp write to the daemon, which paces a fresh state read after the device's measured six-second settle and confirms the value read back exactly before returning. The control stays disabled during that round-trip, so a second Apply cannot race the first, and the panel re-reads device state rather than displaying an optimistic value. The whole cycle changes heard working state and saves nothing.
 
-Gate/FX bypass is not exposed in the Nano surface. Hardware confirmed a single bypass write reads back, but a second bypass write on the same held HID connection was ignored despite pacing; reopening the handle allowed restoration. Bypass will not appear until that repeat-write behaviour is understood and made reliable.
+Gate/FX bypass is also exposed: a Switch control for each of the six addressable roles (Gate, Pre FX 1-2, Post FX 1-3) toggles bypass on or off. Like amp writes, each toggle sends the typed bypass write to the daemon, which paces a fresh state read after the device's measured six-second settle and confirms the new value before returning. The whole cycle changes heard working state and saves nothing.
+
+One decoder caveat: the Gate's "on" state is represented by the absence of field 54 in the state protobuf, so the decoder reports `bypassed = None` (unknown) when the gate is on rather than `Some(false)`. The bypass toggle for the Gate is therefore disabled in the UI when the state reads as unknown; this is a decoder limitation, not a write failure, and the write itself still works.
 
 The header badge identifies which product is connected (Nano Cortex or Quad Cortex). With both products connected the auto-managed startup path selects Quad; an explicit in-GUI device selector remains outstanding.
 

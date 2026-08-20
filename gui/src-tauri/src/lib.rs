@@ -187,6 +187,15 @@ trait DashboardSource: Send + Sync {
             "this dashboard source does not support Nano amp writes",
         ))
     }
+    fn set_nano_bypass(
+        &self,
+        _target: cortex_rs::nano::NanoBypassTarget,
+        _bypassed: bool,
+    ) -> Result<(), CommandError> {
+        Err(CommandError::daemon(
+            "this dashboard source does not support Nano bypass writes",
+        ))
+    }
 }
 
 const AUTO_MANAGED_IDLE_SECONDS: &str = "60";
@@ -458,6 +467,20 @@ impl DashboardSource for DaemonDashboardSource {
     ) -> Result<(), CommandError> {
         self.client
             .request::<cortex_rs::nano::NanoCurrentState>(&Request::NanoSetAmp { control, value })
+            .map(|_| ())
+            .map_err(|error| CommandError::daemon(error.to_string()))
+    }
+
+    fn set_nano_bypass(
+        &self,
+        target: cortex_rs::nano::NanoBypassTarget,
+        bypassed: bool,
+    ) -> Result<(), CommandError> {
+        self.client
+            .request::<cortex_rs::nano::NanoCurrentState>(&Request::NanoSetBypass {
+                target,
+                bypassed,
+            })
             .map(|_| ())
             .map_err(|error| CommandError::daemon(error.to_string()))
     }
@@ -1038,6 +1061,18 @@ async fn set_nano_amp(
 }
 
 #[tauri::command]
+async fn set_nano_bypass(
+    state: tauri::State<'_, AppState>,
+    target: cortex_rs::nano::NanoBypassTarget,
+    bypassed: bool,
+) -> Result<(), CommandError> {
+    let source = Arc::clone(&state.source);
+    tauri::async_runtime::spawn_blocking(move || source.set_nano_bypass(target, bypassed))
+        .await
+        .map_err(|error| CommandError::daemon(format!("Nano bypass write task failed: {error}")))?
+}
+
+#[tauri::command]
 async fn set_scene_label(
     state: tauri::State<'_, AppState>,
     scene: u32,
@@ -1124,7 +1159,8 @@ pub fn run() {
             set_scene_label,
             set_scene_color,
             set_bypass,
-            set_nano_amp
+            set_nano_amp,
+            set_nano_bypass
         ])
         .run(tauri::generate_context!())
         .expect("Tauri application failed");

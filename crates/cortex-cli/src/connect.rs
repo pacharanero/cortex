@@ -375,6 +375,10 @@ impl Daemon {
                 DaemonErrorCode::Protocol,
                 "the held session owns a Quad Cortex; start it with `--device nano`",
             ),
+            Request::NanoSetBypass { .. } => Response::coded_error(
+                DaemonErrorCode::Protocol,
+                "the held session owns a Quad Cortex; start it with `--device nano`",
+            ),
             // Answer in the same shape the direct path emits, so a caller
             // cannot tell whether it went through the daemon. A `{:?}` dump
             // of the protobuf would have been a second, worse format.
@@ -1414,6 +1418,59 @@ impl NanoDaemon {
                                     "Nano amp write did not read back: expected {value}, got {actual:?}"
                                 ),
                             )
+                        }
+                        Err(error) => {
+                            *self.health.lock().unwrap() = DeviceHealth::Failed {
+                                error: error.to_string(),
+                            };
+                            Response::cortex_error(&error)
+                        }
+                    }
+                }
+                Err(TryLockError::WouldBlock) => Response::coded_error(
+                    DaemonErrorCode::Busy,
+                    "another Nano operation is already in progress",
+                ),
+                Err(TryLockError::Poisoned(_)) => {
+                    Response::error("Nano transport lock is unavailable")
+                }
+            },
+            Request::NanoSetBypass { target, bypassed } => match self.transport.try_lock() {
+                Ok(transport) => {
+                    if let Err(error) = cortex_rs::nano::write_bypass(&transport, target, bypassed)
+                    {
+                        return Response::cortex_error(&error);
+                    }
+                    std::thread::sleep(Duration::from_secs(6));
+                    match cortex_rs::nano::read_current_state(&transport, Duration::from_secs(5)) {
+                        Ok(state) => {
+                            let actual = state
+                                .slots
+                                .iter()
+                                .find(|slot| slot.role == target.role())
+                                .and_then(|slot| slot.bypassed);
+                            let confirmed = actual == Some(bypassed);
+                            let mut cached = self.state.lock().unwrap();
+                            cached.snapshot = state.clone();
+                            cached.last_attempt = Instant::now();
+                            cached.last_received = Instant::now();
+                            cached.revision += 1;
+                            *self.health.lock().unwrap() = DeviceHealth::Connected {
+                                serial: None,
+                                coros_version: None,
+                                last_message_seconds: 0,
+                            };
+                            if confirmed {
+                                Response::ok(&state)
+                                    .unwrap_or_else(|error| Response::error(error.to_string()))
+                            } else {
+                                Response::coded_error(
+                                    DaemonErrorCode::OutcomeUnconfirmed,
+                                    format!(
+                                        "Nano bypass write did not read back: expected {bypassed}, got {actual:?}"
+                                    ),
+                                )
+                            }
                         }
                         Err(error) => {
                             *self.health.lock().unwrap() = DeviceHealth::Failed {

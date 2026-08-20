@@ -222,6 +222,10 @@ export const fixtureApi: CortexApi = {
     if (!Number.isInteger(value) || value < 0 || value > 255) throw new Error("Nano amp value must be an integer from 0 to 255");
     nanoState.amp[control] = value;
   },
+  async setNanoBypass(target, bypassed) {
+    const slot = nanoState.slots.find((s) => s.role === target);
+    if (slot) slot.bypassed = bypassed;
+  },
   async blockParameters(row: number, column: number) {
     if (row < 0 || row > 3 || column < 0 || column > 7) throw new Error(`row ${row}, column ${column} is outside the grid`);
     const found = blockParameters[`${row},${column}`];

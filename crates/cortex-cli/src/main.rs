@@ -355,6 +355,38 @@ enum NanoCmd {
         /// Raw device value from 0 to 255.
         value: u8,
     },
+    /// Bypass or engage one Gate/FX role and verify through fresh read-back.
+    SetBypass {
+        /// Gate or FX role to change.
+        #[arg(value_enum)]
+        target: NanoBypassTargetArg,
+        /// `true` to bypass, `false` to engage.
+        #[arg(action = clap::ArgAction::Set)]
+        bypassed: bool,
+    },
+}
+
+#[derive(Clone, Copy, Debug, clap::ValueEnum)]
+enum NanoBypassTargetArg {
+    Gate,
+    PreFx1,
+    PreFx2,
+    PostFx1,
+    PostFx2,
+    PostFx3,
+}
+
+impl From<NanoBypassTargetArg> for cortex_rs::nano::NanoBypassTarget {
+    fn from(value: NanoBypassTargetArg) -> Self {
+        match value {
+            NanoBypassTargetArg::Gate => Self::Gate,
+            NanoBypassTargetArg::PreFx1 => Self::PreFx1,
+            NanoBypassTargetArg::PreFx2 => Self::PreFx2,
+            NanoBypassTargetArg::PostFx1 => Self::PostFx1,
+            NanoBypassTargetArg::PostFx2 => Self::PostFx2,
+            NanoBypassTargetArg::PostFx3 => Self::PostFx3,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, clap::ValueEnum)]
@@ -1003,6 +1035,9 @@ fn run(cli: Cli) -> Result<()> {
         Some(Command::Nano {
             command: NanoCmd::SetAmp { control, value },
         }) => cmd_nano_set_amp(control.into(), value, fmt),
+        Some(Command::Nano {
+            command: NanoCmd::SetBypass { target, bypassed },
+        }) => cmd_nano_set_bypass(target.into(), bypassed, fmt),
         Some(Command::Preset { command }) => match command {
             PresetCmd::Copy {
                 from_setlist,
@@ -1298,6 +1333,16 @@ fn dry_run_plan(command: Option<&Command>) -> Result<Option<DryRunPlan>> {
                 serde_json::json!({ "control": format!("{control:?}").to_lowercase(), "value": value }),
                 &[
                     "write the raw amp value",
+                    "wait six seconds",
+                    "read the state back and require an exact match",
+                ],
+            )),
+            NanoCmd::SetBypass { target, bypassed } => Some(plan(
+                "nano set-bypass",
+                "Nano working state and heard audio",
+                serde_json::json!({ "target": format!("{target:?}").to_lowercase(), "bypassed": bypassed }),
+                &[
+                    "write the bypass value",
                     "wait six seconds",
                     "read the state back and require an exact match",
                 ],
@@ -3459,6 +3504,18 @@ fn cmd_nano_set_amp(
         .request(&cortex_host::Request::NanoSetAmp { control, value })?;
     emit(&state, fmt, |_| {
         println!("set {control:?} to {value}; verified by fresh read-back");
+    })
+}
+
+fn cmd_nano_set_bypass(
+    target: cortex_rs::nano::NanoBypassTarget,
+    bypassed: bool,
+    fmt: Format,
+) -> Result<()> {
+    let state: cortex_rs::nano::NanoCurrentState = cortex_host::DaemonClient::default()
+        .request(&cortex_host::Request::NanoSetBypass { target, bypassed })?;
+    emit(&state, fmt, |_| {
+        println!("set {target:?} bypass to {bypassed}; verified by fresh read-back");
     })
 }
 

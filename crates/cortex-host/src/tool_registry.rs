@@ -169,6 +169,7 @@ fn scenes() -> Vec<ToolSpec> {
     ]
 }
 
+#[allow(clippy::too_many_lines)]
 fn grid_edits() -> Vec<ToolSpec> {
     vec![
         spec(
@@ -177,6 +178,15 @@ fn grid_edits() -> Vec<ToolSpec> {
             object_schema(
                 &json!({"control":{"type":"string","enum":["gain","level","bass","mid","treble"]},"value":{"type":"integer","minimum":0,"maximum":255}}),
                 &["control", "value"],
+            ),
+            false,
+        ),
+        spec(
+            "set_nano_bypass",
+            "Bypass or engage one Nano Gate/FX role. Changes heard working state, saves nothing, and succeeds only after a fresh state read confirms the value. Requires a Nano-owned held session and takes about six seconds.",
+            object_schema(
+                &json!({"target":{"type":"string","enum":["gate","pre_fx1","pre_fx2","post_fx1","post_fx2","post_fx3"]},"bypassed":{"type":"boolean"}}),
+                &["target", "bypassed"],
             ),
             false,
         ),
