@@ -39,7 +39,7 @@ use cortex_rs::{DeviceKind, RecallConsent};
 /// Bump this whenever a `Request` variant changes shape or a new variant is
 /// added. A client that sees a mismatch refuses with an actionable message
 /// rather than sending a request the daemon will misparse.
-pub const DAEMON_PROTOCOL_VERSION: u32 = 15;
+pub const DAEMON_PROTOCOL_VERSION: u32 = 16;
 
 /// A request from a client to the daemon.
 ///
@@ -61,6 +61,13 @@ pub enum Request {
         control: cortex_rs::nano::NanoAmpControl,
         /// Raw device value, 0-255.
         value: u8,
+    },
+    /// Set one Nano Gate/FX bypass and verify it through a fresh state read.
+    NanoSetBypass {
+        /// Typed bypass target (Gate, Pre FX 1-2, Post FX 1-3).
+        target: cortex_rs::nano::NanoBypassTarget,
+        /// `true` to bypass, `false` to engage.
+        bypassed: bool,
     },
     /// Device firmware and identity.
     Version,
@@ -715,6 +722,15 @@ mod tests {
         assert_eq!(text, r#"{"op":"reconnect_now"}"#);
         let text = serde_json::to_string(&Request::NanoState).unwrap();
         assert_eq!(text, r#"{"op":"nano_state"}"#);
+        let text = serde_json::to_string(&Request::NanoSetBypass {
+            target: cortex_rs::nano::NanoBypassTarget::PreFx1,
+            bypassed: true,
+        })
+        .unwrap();
+        assert_eq!(
+            text,
+            r#"{"op":"nano_set_bypass","target":"pre_fx1","bypassed":true}"#
+        );
     }
 
     #[test]

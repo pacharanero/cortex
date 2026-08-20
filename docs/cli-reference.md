@@ -251,9 +251,10 @@ Nano Cortex state and non-persistent amp operations
 Usage: cortex nano [OPTIONS] <COMMAND>
 
 Commands:
-  state    Read the complete fixed eight-role signal-chain state
-  set-amp  Set one amp control as raw 0-255 and verify through fresh read-back
-  help     Print this message or the help of the given subcommand(s)
+  state       Read the complete fixed eight-role signal-chain state
+  set-amp     Set one amp control as raw 0-255 and verify through fresh read-back
+  set-bypass  Bypass or engage one Gate/FX role and verify through fresh read-back
+  help        Print this message or the help of the given subcommand(s)
 
 Options:
       --format <FORMAT>
@@ -341,6 +342,56 @@ Arguments:
 
   <VALUE>
           Raw device value from 0 to 255
+
+Options:
+      --format <FORMAT>
+          Output format. `text` is for humans; `json` is for scripts and agents, and is stable enough to parse.
+
+          Only the RESULT changes format. Progress, warnings, and errors always go to stderr as plain text, so `cortex preset list --format json | jq` gets clean JSON regardless.
+
+          Possible values:
+          - text: Human-readable, the default
+          - json: Machine-readable JSON
+
+          [default: text]
+
+      --schema
+          Print the shared agent-operation JSON Schemas used by cortex-mcp
+
+      --zero-based
+          Take `--row` as 0-3 rather than the 1-4 shown on the unit.
+
+          The unit labels its rows 1-4 and the wire numbers them 0-3, so the default matches what a player sees. Scripts and agents generally have a zero-based index already, and converting it back by hand is exactly the sort of arithmetic that silently edits the wrong row.
+
+  -n, --dry-run
+          Print the operation plan without changing device or local state. Read-only commands accept and ignore this flag
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+  -V, --version
+          Print version
+```
+
+#### `cortex nano set-bypass`
+
+Bypass or engage one Gate/FX role and verify through fresh read-back.
+
+```text
+Bypass or engage one Gate/FX role and verify through fresh read-back
+
+Usage: cortex nano set-bypass [OPTIONS] <TARGET> <BYPASSED>
+
+Arguments:
+  <TARGET>
+          Gate or FX role to change
+
+          [possible values: gate, pre-fx1, pre-fx2, post-fx1, post-fx2, post-fx3]
+
+  <BYPASSED>
+          `true` to bypass, `false` to engage
+
+          [possible values: true, false]
 
 Options:
       --format <FORMAT>

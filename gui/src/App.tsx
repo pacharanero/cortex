@@ -9,7 +9,7 @@ import { SceneSelector } from "./features/quad/SceneSelector";
 import { ErrorBoundary } from "./shared/ErrorBoundary";
 import { NanoChain } from "./features/nano/NanoChain";
 import { cortexApi } from "./shared/ipc/api";
-import type { DashboardSnapshot, LiveBlock, NanoAmpControl, ParameterInput, ParameterView } from "./shared/ipc/types";
+import type { DashboardSnapshot, LiveBlock, NanoAmpControl, NanoBypassTarget, ParameterInput, ParameterView } from "./shared/ipc/types";
 
 interface Cell { row: number; column: number }
 
@@ -185,6 +185,11 @@ export function App() {
     const next = await cortexApi.dashboard();
     setSnapshot(next);
   };
+  const setNanoBypass = async (target: NanoBypassTarget, bypassed: boolean) => {
+    await cortexApi.setNanoBypass(target, bypassed);
+    const next = await cortexApi.dashboard();
+    setSnapshot(next);
+  };
 
   return (
     <AppShell header={{ height: 64 }} navbar={{ width: 250, breakpoint: "sm" }} padding="md">
@@ -231,7 +236,7 @@ export function App() {
               </>}
             </Stack>
           </Alert>}
-          {nano && <NanoChain onSetAmp={setNanoAmp} state={nano} />}
+          {nano && <NanoChain onSetAmp={setNanoAmp} onSetBypass={setNanoBypass} state={nano} />}
           {live && <>
             <Group justify="space-between"><div><Text c="dimmed" size="sm">Working grid</Text><Title order={3}>{live.preset_name}{live.preset_dirty ? " *" : ""}</Title></div><Text>Scene {activeSceneName(live)}</Text></Group>
             <Paper p="md" withBorder>
