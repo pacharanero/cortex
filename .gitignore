@@ -40,3 +40,4 @@
 # MUST NOT be committed - each one records local firmware details from a
 # hardware test run.
 /smoke-fixtures
+.playwright-mcp/
