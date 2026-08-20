@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 //! Concurrent request serving and request-based daemon lifecycle.
+//!
+//! @see spec/200-cli/spec.md [FR-21] [FR-26] [FR-27] [FR-28]
+//! @see spec/200-cli/design.md [DES-CLI]
 
 use std::io::{BufRead, BufReader, Write};
 use std::sync::atomic::{AtomicBool, Ordering};

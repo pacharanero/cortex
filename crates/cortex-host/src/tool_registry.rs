@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 //! Machine-discoverable agent tool contracts shared by the CLI and MCP server.
+//!
+//! @see spec/roadmap.md [CLI-007.1]
+//! @see spec/200-cli/spec.md [FR-16]
 
 use serde_json::{Map, Value, json};
 
