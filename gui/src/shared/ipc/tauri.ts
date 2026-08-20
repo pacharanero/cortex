@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 import { invoke } from "@tauri-apps/api/core";
-import type { CortexApi, DashboardSnapshot, ParameterInput, ParameterView } from "./types";
+import type { CortexApi, DashboardSnapshot, DeviceKind, ParameterInput, ParameterView } from "./types";
 
 async function invokeCommand<T>(command: string, args?: Record<string, unknown>): Promise<T> {
   try {
@@ -29,4 +29,5 @@ export const tauriApi: CortexApi = {
   setBypass(row: number, column: number, bypass: boolean) { return invokeCommand<void>("set_bypass", { row, column, bypass }); },
   setNanoAmp(control, value) { return invokeCommand<void>("set_nano_amp", { control, value }); },
   setNanoBypass(target, bypassed) { return invokeCommand<void>("set_nano_bypass", { target, bypassed }); },
+  setDevice(device) { return invokeCommand<void>("set_device", { device }); },
 };

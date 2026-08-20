@@ -56,7 +56,7 @@ Gate/FX bypass is also exposed: a Switch control for each of the six addressable
 
 One decoder caveat: the Gate's "on" state is represented by the absence of field 54 in the state protobuf, so the decoder reports `bypassed = None` (unknown) when the gate is on rather than `Some(false)`. The bypass toggle for the Gate is therefore disabled in the UI when the state reads as unknown; this is a decoder limitation, not a write failure, and the write itself still works.
 
-The header badge identifies which product is connected (Nano Cortex or Quad Cortex). With both products connected the auto-managed startup path selects Quad; an explicit in-GUI device selector remains outstanding.
+The header badge identifies which product is connected (Nano Cortex or Quad Cortex) and is also the device selector: click it to switch between Quad Cortex, Nano Cortex, or Auto-detect when both products are connected. Switching stops the current daemon session and starts one for the preferred device, so the dashboard re-reads from the new device on the next refresh.
 
 ### Health, reconnect and fault isolation
 

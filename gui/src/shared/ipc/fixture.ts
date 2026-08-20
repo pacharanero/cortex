@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Dr Marcus Baw
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-import type { CortexApi, DashboardSnapshot, LiveBlock, NanoCurrentState, ParameterInput, ParameterView, SceneSnapshot } from "./types";
+import type { CortexApi, DashboardSnapshot, DeviceKind, LiveBlock, NanoCurrentState, ParameterInput, ParameterView, SceneSnapshot } from "./types";
 
 /**
  * Parameters per block cell, keyed "row,column".
@@ -226,6 +226,7 @@ export const fixtureApi: CortexApi = {
     const slot = nanoState.slots.find((s) => s.role === target);
     if (slot) slot.bypassed = bypassed;
   },
+  async setDevice(_device) {},
   async blockParameters(row: number, column: number) {
     if (row < 0 || row > 3 || column < 0 || column > 7) throw new Error(`row ${row}, column ${column} is outside the grid`);
     const found = blockParameters[`${row},${column}`];

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Dr Marcus Baw
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-import { Alert, AppShell, Badge, Button, Divider, Group, NavLink, Paper, ScrollArea, Stack, Switch, Text, Title } from "@mantine/core";
+import { Alert, AppShell, Badge, Button, Divider, Group, Menu, NavLink, Paper, ScrollArea, Stack, Switch, Text, Title } from "@mantine/core";
 import { useEffect, useRef, useState } from "react";
 import { Grid } from "./features/quad/Grid";
 import { ParameterEditor } from "./features/quad/ParameterEditor";
@@ -190,12 +190,44 @@ export function App() {
     const next = await cortexApi.dashboard();
     setSnapshot(next);
   };
+  const switchDevice = async (device: "quad_cortex" | "nano_cortex" | "auto") => {
+    if (device === "auto") {
+      await cortexApi.setDevice(null);
+    } else {
+      await cortexApi.setDevice(device);
+    }
+    const next = await cortexApi.dashboard();
+    setSnapshot(next);
+  };
+
+  const currentDeviceLabel = nano ? "Nano Cortex" : "Quad Cortex";
+  const currentDeviceKind = nano ? "nano_cortex" : "quad_cortex";
 
   return (
     <AppShell header={{ height: 64 }} navbar={{ width: 250, breakpoint: "sm" }} padding="md">
       <AppShell.Header p="md">
         <Group justify="space-between">
-          <Group gap="xs"><Title order={2}>cortex</Title><Badge color="orange">{nano ? "Nano Cortex" : "Quad Cortex"}</Badge></Group>
+          <Group gap="xs">
+            <Title order={2}>cortex</Title>
+            <Menu shadow="md" position="bottom-start" width={200}>
+              <Menu.Target>
+                <Badge color="orange" style={{ cursor: "pointer" }} variant="filled">{currentDeviceLabel}</Badge>
+              </Menu.Target>
+              <Menu.Dropdown>
+                <Menu.Label>Device</Menu.Label>
+                <Menu.Item leftSection={currentDeviceKind === "quad_cortex" ? "●" : undefined} onClick={() => void switchDevice("quad_cortex")}>
+                  Quad Cortex
+                </Menu.Item>
+                <Menu.Item leftSection={currentDeviceKind === "nano_cortex" ? "●" : undefined} onClick={() => void switchDevice("nano_cortex")}>
+                  Nano Cortex
+                </Menu.Item>
+                <Menu.Divider />
+                <Menu.Item onClick={() => void switchDevice("auto")}>
+                  Auto-detect
+                </Menu.Item>
+              </Menu.Dropdown>
+            </Menu>
+          </Group>
           <Group gap="xs"><Badge color={snapshot.source === "fixture" ? "yellow" : connected ? "green" : "orange"}>{health}</Badge><Badge variant="outline">gen {snapshot.status.cache.generation} / rev {snapshot.status.cache.revision}</Badge></Group>
         </Group>
       </AppShell.Header>

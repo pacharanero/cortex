@@ -196,6 +196,11 @@ trait DashboardSource: Send + Sync {
             "this dashboard source does not support Nano bypass writes",
         ))
     }
+    fn set_device(&self, _device: Option<cortex_rs::DeviceKind>) -> Result<(), CommandError> {
+        Err(CommandError::daemon(
+            "this dashboard source does not support device switching",
+        ))
+    }
 }
 
 const AUTO_MANAGED_IDLE_SECONDS: &str = "60";
@@ -205,6 +210,11 @@ const STARTUP_POLL: Duration = Duration::from_millis(200);
 #[derive(Default)]
 struct GuiDaemonSupervisor {
     startup: Mutex<()>,
+    /// User's device preference. `None` means "try Quad then Nano" (the
+    /// original auto-detect behaviour). `Some(Quad)` or `Some(Nano)` means
+    /// the user explicitly chose a device; if the running session owns the
+    /// wrong one, stop it and start the preferred one.
+    preferred_device: Mutex<Option<cortex_rs::DeviceKind>>,
 }
 
 impl GuiDaemonSupervisor {
@@ -213,24 +223,60 @@ impl GuiDaemonSupervisor {
             .startup
             .lock()
             .map_err(|_| CommandError::daemon("session startup gate is unavailable"))?;
+        let preference = *self
+            .preferred_device
+            .lock()
+            .map_err(|_| CommandError::daemon("device preference lock is unavailable"))?;
+
+        // If a session is already running, check it matches the preference.
         if let Ok(status) = client.status() {
-            return ensure_daemon_compatible(&status);
+            ensure_daemon_compatible(&status)?;
+            if let Some(wanted) = preference {
+                if status.device_kind != wanted {
+                    // Wrong device: stop the current session and start the
+                    // preferred one. The endpoint is released when the daemon
+                    // exits, so the new start can claim it.
+                    let _ = client.request::<bool>(&cortex_host::Request::Shutdown);
+                    std::thread::sleep(Duration::from_millis(500));
+                    let sibling = sibling_cortex_binary()?;
+                    return start_auto_managed_session(client, &sibling, wanted);
+                }
+            }
+            return Ok(());
         }
 
         let sibling = sibling_cortex_binary()?;
-        let quad_error =
-            match start_auto_managed_session(client, &sibling, cortex_rs::DeviceKind::QuadCortex) {
-                Ok(()) => return Ok(()),
-                Err(error) => error,
-            };
-        // A failed `session start` exits and releases its ownership claim, so
-        // the same endpoint can be tried for the other product.
-        match start_auto_managed_session(client, &sibling, cortex_rs::DeviceKind::NanoCortex) {
-            Ok(()) => Ok(()),
-            Err(nano_error) => Err(CommandError::daemon(format!(
-                "could not start a session for a connected Cortex device. Quad Cortex: {}; Nano Cortex: {}",
-                quad_error.message, nano_error.message
-            ))),
+        match preference {
+            Some(device) => start_auto_managed_session(client, &sibling, device),
+            None => {
+                let quad_error = match start_auto_managed_session(
+                    client,
+                    &sibling,
+                    cortex_rs::DeviceKind::QuadCortex,
+                ) {
+                    Ok(()) => return Ok(()),
+                    Err(error) => error,
+                };
+                // A failed `session start` exits and releases its ownership
+                // claim, so the same endpoint can be tried for the other product.
+                match start_auto_managed_session(
+                    client,
+                    &sibling,
+                    cortex_rs::DeviceKind::NanoCortex,
+                ) {
+                    Ok(()) => Ok(()),
+                    Err(nano_error) => Err(CommandError::daemon(format!(
+                        "could not start a session for a connected Cortex device. Quad Cortex: {}; Nano Cortex: {}",
+                        quad_error.message, nano_error.message
+                    ))),
+                }
+            }
+        }
+    }
+
+    fn set_device(&self, device: Option<cortex_rs::DeviceKind>) {
+        if let Ok(mut pref) = self.preferred_device.lock() {
+            *pref = device;
         }
     }
 }
@@ -483,6 +529,11 @@ impl DashboardSource for DaemonDashboardSource {
             })
             .map(|_| ())
             .map_err(|error| CommandError::daemon(error.to_string()))
+    }
+
+    fn set_device(&self, device: Option<cortex_rs::DeviceKind>) -> Result<(), CommandError> {
+        self.supervisor.set_device(device);
+        Ok(())
     }
 
     fn reconnect_now(&self) -> Result<(), CommandError> {
@@ -1073,6 +1124,17 @@ async fn set_nano_bypass(
 }
 
 #[tauri::command]
+async fn set_device(
+    state: tauri::State<'_, AppState>,
+    device: Option<cortex_rs::DeviceKind>,
+) -> Result<(), CommandError> {
+    let source = Arc::clone(&state.source);
+    tauri::async_runtime::spawn_blocking(move || source.set_device(device))
+        .await
+        .map_err(|error| CommandError::daemon(format!("set_device task failed: {error}")))?
+}
+
+#[tauri::command]
 async fn set_scene_label(
     state: tauri::State<'_, AppState>,
     scene: u32,
@@ -1160,7 +1222,8 @@ pub fn run() {
             set_scene_color,
             set_bypass,
             set_nano_amp,
-            set_nano_bypass
+            set_nano_bypass,
+            set_device
         ])
         .run(tauri::generate_context!())
         .expect("Tauri application failed");

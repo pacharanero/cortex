@@ -26,10 +26,12 @@ export interface CacheStatus {
   last_rejection: string | null;
 }
 
+export type DeviceKind = "quad_cortex" | "nano_cortex";
+
 export interface DaemonStatus {
   daemon_version: string;
   uptime_seconds: number;
-  device_kind: "quad_cortex" | "nano_cortex";
+  device_kind: DeviceKind;
   device: DeviceHealth;
   cache: CacheStatus;
 }
@@ -202,4 +204,5 @@ export interface CortexApi {
   /** Set one Nano amp control and wait for exact fresh read-back. */
   setNanoAmp(control: NanoAmpControl, value: number): Promise<void>;
   setNanoBypass(target: NanoBypassTarget, bypassed: boolean): Promise<void>;
+  setDevice(device: DeviceKind | null): Promise<void>;
 }
