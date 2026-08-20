@@ -2,9 +2,9 @@
 
 This page records the first hardware-verified Nano Cortex exchange over USB HID and the boundary it establishes for independent clients. It deliberately separates what the Nano shares with the Quad Cortex from what remains Nano-specific.
 
-!!! warning "Transport verified; toolkit integration pending"
+!!! warning "Read-only codec verified; host integration pending"
 
-    A real Nano Cortex answered read-only USB HID probes on Linux on 2026-08-11. Report geometry, framing, multi-report reassembly, cross-transport ownership and one complete state read are hardware-verified. `cortex-rs` now knows the Nano USB identity and raw report geometry, but its Nano codec/session and every CLI, MCP and GUI operation remain pending, so this is an implementer reference rather than a support claim.
+    A real Nano Cortex answered read-only USB HID probes on Linux on 2026-08-11. Report geometry, framing, multi-report reassembly, cross-transport ownership and one complete state read are hardware-verified. The typed read-only codec was implemented and hardware-verified on 2026-08-18, but the held daemon and every CLI, MCP and GUI operation remain pending, so this is an implementer reference rather than a support claim.
 
 ## USB identity
 
@@ -82,6 +82,8 @@ The reassembled response is a Nano state protobuf followed by a command-specific
 
 The existing Nano decoder successfully recovered firmware presence, four of five amp controls present in that message, capture and IR assignments, five bypass values and all five FX model IDs. No real identifiers or user-assigned names from that response are published here.
 
+`cortex-rs::nano::decode_current_state` now implements this boundary as a strict, serialisable model with eight ordered roles: Gate, Pre FX 1-2, Capture, IR/Cab and Post FX 1-3. Missing protobuf fields remain absent rather than becoming confident zero values. A fresh hardware read on 2026-08-18 reassembled 10 reports / 594 meaningful bytes and decoded all eight roles with all five amp controls present. The varying size reinforces that clients must use frame flags and declared lengths, never a fixed report count.
+
 ## Bluetooth and USB ownership
 
 The editor channel is exclusive across transports. While another Bluetooth client was making changes, USB requests received a valid Nano confirmation whose message was `Device is busy!`. The same current-state request succeeded immediately after the Bluetooth session disconnected.
@@ -105,4 +107,4 @@ This boundary is what makes one cross-platform, dual-device toolkit realistic wi
 
 The measurements came from bounded read-only probes with usbmon capture. Captures are not committed because protobuf bodies and even bytes beyond declared frame length can contain serials, user preset names, capture names and other identifying strings. Public examples must use fictional data.
 
-The Nano application command and field map has prior art in [`rixrix/deskop-nano-cortex`](https://github.com/rixrix/deskop-nano-cortex) (Apache-2.0), which in turn credits [`choldy/nano-cortex-web-editor`](https://github.com/choldy/nano-cortex-web-editor) (MIT). Reusing that decoder in this toolkit will require both attributions; the transport measurements on this page are this project's own hardware observations.
+The Nano application command and field map is adapted from [`rixrix/deskop-nano-cortex`](https://github.com/rixrix/deskop-nano-cortex) (Apache-2.0), which in turn credits [`choldy/nano-cortex-web-editor`](https://github.com/choldy/nano-cortex-web-editor) (MIT). Both are attributed in `NOTICE` and `THIRD-PARTY-NOTICES.md`; the transport and decoder measurements on this page are this project's own hardware observations.

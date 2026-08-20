@@ -47,7 +47,7 @@ This zone owns the files that encode these obligations.
 | `LICENSES/MIT.txt` is present (for the vendored .proto) | Implemented | MIT license text in `LICENSES/` |
 | `NOTICE` records attribution for `pyquadcortex` (MIT) | Implemented | `NOTICE` -> Recovered schema provenance |
 | `NOTICE` records attribution for `deskop-nano-cortex` (Apache-2.0) | Implemented | `NOTICE` -> architectural precedent |
-| `THIRD-PARTY-NOTICES.md` matches the current prior-art table | Implemented | Distinguishes incorporated/adapted, MIT reference, indirect Nano BLE provenance, mixed file-level notices, and no-licence reference projects |
+| `THIRD-PARTY-NOTICES.md` matches the current prior-art table | Implemented | Distinguishes incorporated/adapted Nano and Quad sources, licensed references, mixed file-level notices, and no-licence reference projects |
 | `REUSE.toml` covers header-less files | Implemented | `REUSE.toml` bulk annotations for `**/*.md`, `**/*.txt`, `**/*.json`, `**/Cargo.lock`, `LICENSE`, `.gitignore`, `.editorconfig`, etc. |
 | Every file is REUSE-covered | Implemented | Source files use inline SPDX where supported; generated/headerless files use bulk annotations |
 | Vendored `.proto` files keep their own MIT SPDX header | Implemented | `crates/cortex-rs/proto/*.proto` carry `SPDX-FileCopyrightText: 2026 Stokes` / `SPDX-License-Identifier: MIT` |
@@ -91,7 +91,7 @@ Maintainers, downstream consumers, and anyone auditing the project's legal postu
 | FR-2 | Every source file carries an SPDX header: `SPDX-FileCopyrightText: 2026 Dr Marcus Baw` and `SPDX-License-Identifier: AGPL-3.0-or-later`, using the language's comment prefix. | Must Have |
 | FR-3 | `REUSE.toml` first covers headerless assets/config as AGPL, then applies a final matching CC-BY-SA annotation to Markdown. Matching order is part of the contract. | Must Have |
 | FR-4 | `NOTICE` records the project copyright, the AGPL+CC-BY-SA license decision, and the attribution for `pyquadcortex` (MIT, vendored .proto) and `deskop-nano-cortex` (Apache-2.0, architectural precedent). | Must Have |
-| FR-5 | `THIRD-PARTY-NOTICES.md` records full attribution and applicable licence text or link for incorporated/adapted work (`pyquadcortex` MIT and `deskop-nano-cortex` Apache-2.0), the licensed projects currently retained as references (`qc-stomp-tools` and the indirect `nano-cortex-web-editor` BLE provenance), and the reference-only repositories without a clear repository-wide licence (`OpenCortex`, `qc-extras`, `quad-cortex-usb-re-notes`, `toneparse`). | Must Have |
+| FR-5 | `THIRD-PARTY-NOTICES.md` records full attribution and applicable licence text or link for incorporated/adapted work (`pyquadcortex` MIT, `deskop-nano-cortex` Apache-2.0 and `nano-cortex-web-editor` MIT), the licensed project currently retained as a reference (`qc-stomp-tools`), and the reference-only repositories without a clear repository-wide licence (`OpenCortex`, `qc-extras`, `quad-cortex-usb-re-notes`, `toneparse`). | Must Have |
 | FR-6 | `LICENSES/MIT.txt` is present, covering the vendored `.proto` files' license. | Must Have |
 | FR-7 | The vendored `.proto` files in `crates/cortex-rs/proto/` keep their own MIT SPDX header (`SPDX-FileCopyrightText: 2026 Stokes` / `SPDX-License-Identifier: MIT`) above the recovery note. | Must Have |
 | FR-8 | `reuse lint` passes (CI-enforced in zone 600, locally in zone 500). | Must Have |

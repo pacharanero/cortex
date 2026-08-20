@@ -59,15 +59,17 @@ SOFTWARE.
   close, honest verified-vs-provisional capability model, mockable frontend
   boundary, AFX spec zones, traceability approach, version synchronization,
   release/DX tooling, and hardware-smoke evidence shape informed this
-  project's GUI, specs, and plans. The existing GUI is independently
-  implemented and currently fixture-backed; no source code has been copied
-  from deskop-nano-cortex. Any future source adaptation will be recorded here
-  and retain its upstream copyright and Apache-2.0 terms.
+  project's GUI, specs, and plans. Its current-state decoder and fixed-chain
+  domain model were adapted in `crates/cortex-rs/src/nano.rs`, retaining the
+  field-presence and provisional-evidence discipline while independently
+  implementing strict malformed-input handling and the HID envelope boundary.
+  That decoder credits `choldy/nano-cortex-web-editor` for the field map, so
+  both upstreams are attributed here.
 
 ### Apache License 2.0 (deskop-nano-cortex)
 
-A copy of the Apache License 2.0 is available at
-<https://www.apache.org/licenses/LICENSE-2.0>.
+A copy of the Apache License 2.0 is distributed in
+`LICENSES/Apache-2.0.txt`.
 
 ## VanIseghemThomas/qc-stomp-tools
 
@@ -87,10 +89,38 @@ A copy of the Apache License 2.0 is available at
   Nano Cortex.
 - **Repository:** <https://github.com/choldy/nano-cortex-web-editor>
 - **License:** MIT
-- **Use in cortex-rs:** No material is currently used. This project is recorded
-  because deskop-nano-cortex credits its provisional Nano BLE field map to this
-  upstream. Any future adaptation of that decoder must attribute both projects
-  and retain their respective MIT and Apache-2.0 terms.
+- **Copyright:** (c) 2026 Nano Cortex Web Editor Contributors
+- **Use in cortex-rs:** The Nano current-state command and protobuf field map
+  used by `crates/cortex-rs/src/nano.rs` derive from this project through the
+  Apache-2.0-licensed `deskop-nano-cortex` Rust decoder. The implementation is
+  tested against fictional data and independently hardware-verified over USB;
+  upstream evidence is not treated as verification of this implementation.
+
+### MIT License (nano-cortex-web-editor)
+
+```text
+MIT License
+
+Copyright (c) 2026 Nano Cortex Web Editor Contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
 
 ## Reference-only projects (no material incorporated)
 
