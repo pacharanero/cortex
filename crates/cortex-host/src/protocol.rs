@@ -753,6 +753,69 @@ mod tests {
     }
 
     #[test]
+    fn every_nano_request_has_an_exact_typed_json_shape() {
+        let requests = [
+            (
+                Request::NanoState,
+                serde_json::json!({ "op": "nano_state" }),
+            ),
+            (
+                Request::NanoSetAmp {
+                    control: cortex_rs::nano::NanoAmpControl::Gain,
+                    value: 127,
+                },
+                serde_json::json!({
+                    "op": "nano_set_amp",
+                    "control": "gain",
+                    "value": 127
+                }),
+            ),
+            (
+                Request::NanoSetBypass {
+                    target: cortex_rs::nano::NanoBypassTarget::PostFx3,
+                    bypassed: false,
+                },
+                serde_json::json!({
+                    "op": "nano_set_bypass",
+                    "target": "post_fx3",
+                    "bypassed": false
+                }),
+            ),
+            (
+                Request::NanoReadFxParams {
+                    slot: cortex_rs::nano::NanoFxSlot::PreFx2,
+                },
+                serde_json::json!({
+                    "op": "nano_read_fx_params",
+                    "slot": "pre_fx2"
+                }),
+            ),
+            (
+                Request::NanoSetFxParam {
+                    slot: cortex_rs::nano::NanoFxSlot::PostFx1,
+                    param_index: 3,
+                    value: 0.5,
+                },
+                serde_json::json!({
+                    "op": "nano_set_fx_param",
+                    "slot": "post_fx1",
+                    "param_index": 3,
+                    "value": 0.5
+                }),
+            ),
+        ];
+
+        for (request, expected) in requests {
+            let actual = serde_json::to_value(&request).unwrap();
+            assert_eq!(actual, expected);
+            assert_eq!(
+                serde_json::to_value(serde_json::from_value::<Request>(actual).unwrap()).unwrap(),
+                expected
+            );
+        }
+    }
+
+    #[test]
     fn responses_distinguish_success_from_failure() {
         let ok = Response::ok(&vec![1, 2, 3]).unwrap();
         let text = serde_json::to_string(&ok).unwrap();
