@@ -13,6 +13,9 @@
 //! commands in this crate (`set_bypass`, `set_scene_label`, `set_scene_color`)
 //! are exactly that: implemented, offline-verified, and still `unverified`
 //! here because no hardware pass has confirmed them yet.
+//!
+//! @see spec/400-gui/spec.md
+//! @see spec/400-gui/design.md [DES-CAPABILITY]
 
 use std::collections::BTreeMap;
 
