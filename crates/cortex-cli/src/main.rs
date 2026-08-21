@@ -3962,6 +3962,24 @@ mod tests {
         let cases: &[&[&str]] = &[
             &["cortex", "session", "start", "--dry-run"],
             &["cortex", "session", "stop", "--dry-run"],
+            &["cortex", "nano", "set-amp", "gain", "127", "--dry-run"],
+            &[
+                "cortex",
+                "nano",
+                "set-bypass",
+                "post-fx3",
+                "true",
+                "--dry-run",
+            ],
+            &[
+                "cortex",
+                "nano",
+                "set-fx-param",
+                "pre-fx1",
+                "3",
+                "0.5",
+                "--dry-run",
+            ],
             &[
                 "cortex",
                 "preset",

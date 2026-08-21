@@ -643,6 +643,403 @@ pub struct CacheStatus {
 mod tests {
     use super::*;
 
+    #[allow(clippy::too_many_lines)]
+    fn canonical_request_fixtures() -> Vec<(Request, serde_json::Value)> {
+        let capture = cortex_rs::LibraryEntry {
+            key: "a".repeat(64),
+            name: "Fictional Capture".into(),
+        };
+        let ir = cortex_rs::LibraryEntry {
+            key: "fictional-ir".into(),
+            name: "Fictional IR".into(),
+        };
+        vec![
+            (Request::Status, serde_json::json!({ "op": "status" })),
+            (
+                Request::ReconnectNow,
+                serde_json::json!({ "op": "reconnect_now" }),
+            ),
+            (
+                Request::NanoState,
+                serde_json::json!({ "op": "nano_state" }),
+            ),
+            (
+                Request::NanoSetAmp {
+                    control: cortex_rs::nano::NanoAmpControl::Gain,
+                    value: 127,
+                },
+                serde_json::json!({ "op": "nano_set_amp", "control": "gain", "value": 127 }),
+            ),
+            (
+                Request::NanoSetBypass {
+                    target: cortex_rs::nano::NanoBypassTarget::PostFx3,
+                    bypassed: false,
+                },
+                serde_json::json!({ "op": "nano_set_bypass", "target": "post_fx3", "bypassed": false }),
+            ),
+            (
+                Request::NanoReadFxParams {
+                    slot: cortex_rs::nano::NanoFxSlot::PreFx2,
+                },
+                serde_json::json!({ "op": "nano_read_fx_params", "slot": "pre_fx2" }),
+            ),
+            (
+                Request::NanoSetFxParam {
+                    slot: cortex_rs::nano::NanoFxSlot::PostFx1,
+                    param_index: 3,
+                    value: 0.5,
+                },
+                serde_json::json!({ "op": "nano_set_fx_param", "slot": "post_fx1", "param_index": 3, "value": 0.5 }),
+            ),
+            (Request::Version, serde_json::json!({ "op": "version" })),
+            (
+                Request::ActiveScene,
+                serde_json::json!({ "op": "active_scene" }),
+            ),
+            (
+                Request::SwitchScene { scene: 3 },
+                serde_json::json!({ "op": "switch_scene", "scene": 3 }),
+            ),
+            (
+                Request::SetSceneLabel {
+                    scene: 2,
+                    label: None,
+                },
+                serde_json::json!({ "op": "set_scene_label", "scene": 2, "label": null }),
+            ),
+            (
+                Request::SetSceneColor {
+                    scene: 4,
+                    color: 0xff12_3456,
+                },
+                serde_json::json!({ "op": "set_scene_color", "scene": 4, "color": 4_279_383_126_u32 }),
+            ),
+            (
+                Request::CopyScene {
+                    from_scene: 1,
+                    to_scene: 6,
+                    swap: true,
+                },
+                serde_json::json!({ "op": "copy_scene", "from_scene": 1, "to_scene": 6, "swap": true }),
+            ),
+            (
+                Request::CurrentPreset {
+                    with_params: true,
+                    timeout_seconds: 15,
+                },
+                serde_json::json!({ "op": "current_preset", "with_params": true, "timeout_seconds": 15 }),
+            ),
+            (
+                Request::ReadPreset {
+                    setlist: "/media/p4/Presets/Fictional".into(),
+                    slot: "2B".into(),
+                    factory: false,
+                    with_params: true,
+                    timeout_seconds: 15,
+                },
+                serde_json::json!({
+                    "op": "read_preset", "setlist": "/media/p4/Presets/Fictional", "slot": "2B",
+                    "factory": false, "with_params": true, "timeout_seconds": 15
+                }),
+            ),
+            (
+                Request::RecallPreset {
+                    setlist: "/media/p4/Presets/Fictional".into(),
+                    slot: "2B".into(),
+                    factory: false,
+                },
+                serde_json::json!({ "op": "recall_preset", "setlist": "/media/p4/Presets/Fictional", "slot": "2B", "factory": false }),
+            ),
+            (
+                Request::ListPresets {
+                    setlist: "/media/p4/Presets/Fictional".into(),
+                    include_empty: true,
+                    timeout_seconds: 15,
+                },
+                serde_json::json!({ "op": "list_presets", "setlist": "/media/p4/Presets/Fictional", "include_empty": true, "timeout_seconds": 15 }),
+            ),
+            (
+                Request::ListFolders { window_seconds: 3 },
+                serde_json::json!({ "op": "list_folders", "window_seconds": 3 }),
+            ),
+            (
+                Request::Catalog {
+                    timeout_seconds: 15,
+                },
+                serde_json::json!({ "op": "catalog", "timeout_seconds": 15 }),
+            ),
+            (
+                Request::ListCaptures {
+                    timeout_seconds: 15,
+                },
+                serde_json::json!({ "op": "list_captures", "timeout_seconds": 15 }),
+            ),
+            (
+                Request::ListIrs {
+                    folder: None,
+                    timeout_seconds: 15,
+                },
+                serde_json::json!({ "op": "list_irs", "folder": null, "timeout_seconds": 15 }),
+            ),
+            (
+                Request::SetCapture {
+                    row: 0,
+                    column: 2,
+                    capture: capture.clone(),
+                    model: Some(1001),
+                    timeout_seconds: 15,
+                },
+                serde_json::json!({
+                    "op": "set_capture", "row": 0, "column": 2,
+                    "capture": { "key": "a".repeat(64), "name": "Fictional Capture" },
+                    "model": 1001, "timeout_seconds": 15
+                }),
+            ),
+            (
+                Request::SetIr {
+                    row: 0,
+                    column: 3,
+                    ir: ir.clone(),
+                    slot: 1,
+                    model: None,
+                    folder: Some("Fictional Folder".into()),
+                    timeout_seconds: 15,
+                },
+                serde_json::json!({
+                    "op": "set_ir", "row": 0, "column": 3,
+                    "ir": { "key": "fictional-ir", "name": "Fictional IR" }, "slot": 1,
+                    "model": null, "folder": "Fictional Folder", "timeout_seconds": 15
+                }),
+            ),
+            (
+                Request::SetParam {
+                    row: 1,
+                    column: 2,
+                    target: cortex_rs::ParameterTarget::Name("GAIN".into()),
+                    input: cortex_rs::ParameterInput::Real(7.5),
+                    scene: Some(3),
+                    promote: true,
+                    timeout_seconds: 15,
+                },
+                serde_json::json!({
+                    "op": "set_param", "row": 1, "column": 2,
+                    "target": { "by": "name", "value": "GAIN" },
+                    "input": { "kind": "real", "value": 7.5 }, "scene": 3,
+                    "promote": true, "timeout_seconds": 15
+                }),
+            ),
+            (
+                Request::SetBlock {
+                    row: 0,
+                    column: 2,
+                    model: 1001,
+                    verify: true,
+                    timeout_seconds: 15,
+                },
+                serde_json::json!({ "op": "set_block", "row": 0, "column": 2, "model": 1001, "verify": true, "timeout_seconds": 15 }),
+            ),
+            (
+                Request::SetBypass {
+                    row: 0,
+                    column: 2,
+                    bypass: true,
+                },
+                serde_json::json!({ "op": "set_bypass", "row": 0, "column": 2, "bypass": true }),
+            ),
+            (
+                Request::RemoveBlock { row: 0, column: 2 },
+                serde_json::json!({ "op": "remove_block", "row": 0, "column": 2 }),
+            ),
+            (
+                Request::MoveBlock {
+                    from_row: 0,
+                    from_column: 2,
+                    to_row: 1,
+                    to_column: 6,
+                    timeout_seconds: 15,
+                },
+                serde_json::json!({
+                    "op": "move_block", "from_row": 0, "from_column": 2,
+                    "to_row": 1, "to_column": 6, "timeout_seconds": 15
+                }),
+            ),
+            (
+                Request::SetSplit {
+                    row: 0,
+                    split: 3,
+                    mix: 6,
+                },
+                serde_json::json!({ "op": "set_split", "row": 0, "split": 3, "mix": 6 }),
+            ),
+            (
+                Request::SetRouting {
+                    row: 0,
+                    input: Some(cortex_rs::GridInputPort::PreviousRow),
+                    output: None,
+                },
+                serde_json::json!({ "op": "set_routing", "row": 0, "input": "previous_row", "output": null }),
+            ),
+            (
+                Request::PrepareSave {
+                    setlist: "/media/p4/Presets/Fictional".into(),
+                    slot: "2B".into(),
+                    recall_consent: RecallConsent::DiscardWorkingCopy,
+                    timeout_seconds: 40,
+                },
+                serde_json::json!({
+                    "op": "prepare_save", "setlist": "/media/p4/Presets/Fictional", "slot": "2B",
+                    "recall_consent": "discard_working_copy", "timeout_seconds": 40
+                }),
+            ),
+            (
+                Request::CommitSave {
+                    token: "save-fictional".into(),
+                    confirmed: true,
+                    name: Some("Fictional".into()),
+                    instrument: cortex_rs::Instrument::Vocal,
+                    timeout_seconds: 40,
+                },
+                serde_json::json!({
+                    "op": "commit_save", "token": "save-fictional", "confirmed": true,
+                    "name": "Fictional", "instrument": "vocal", "timeout_seconds": 40
+                }),
+            ),
+            (
+                Request::DeletePreset {
+                    setlist: "/media/p4/Presets/Fictional".into(),
+                    name: "Fictional".into(),
+                },
+                serde_json::json!({ "op": "delete_preset", "setlist": "/media/p4/Presets/Fictional", "name": "Fictional" }),
+            ),
+            (
+                Request::MovePreset {
+                    setlist: "/media/p4/Presets/Fictional".into(),
+                    from_slot: "2A".into(),
+                    to_slot: "2B".into(),
+                    confirmed: true,
+                },
+                serde_json::json!({
+                    "op": "move_preset", "setlist": "/media/p4/Presets/Fictional",
+                    "from_slot": "2A", "to_slot": "2B", "confirmed": true
+                }),
+            ),
+            (
+                Request::CopyPreset {
+                    from_setlist: "/media/p4/Presets/Fictional".into(),
+                    from_slot: "2A".into(),
+                    to_setlist: "/media/p4/Presets/Fictional Copy".into(),
+                    to_slot: "2B".into(),
+                    name: None,
+                    instrument: cortex_rs::Instrument::Bass,
+                    confirmed: true,
+                },
+                serde_json::json!({
+                    "op": "copy_preset", "from_setlist": "/media/p4/Presets/Fictional", "from_slot": "2A",
+                    "to_setlist": "/media/p4/Presets/Fictional Copy", "to_slot": "2B", "name": null,
+                    "instrument": "bass", "confirmed": true
+                }),
+            ),
+            (
+                Request::CreateSetlist {
+                    name: "Fictional Setlist".into(),
+                    confirmed: true,
+                },
+                serde_json::json!({ "op": "create_setlist", "name": "Fictional Setlist", "confirmed": true }),
+            ),
+            (
+                Request::DeleteSetlist {
+                    name: "Fictional Setlist".into(),
+                    confirmed: true,
+                },
+                serde_json::json!({ "op": "delete_setlist", "name": "Fictional Setlist", "confirmed": true }),
+            ),
+            (
+                Request::DuplicateSetlist {
+                    source_name: "My Presets".into(),
+                    destination_name: "Fictional Duplicate".into(),
+                    limit: Some(2),
+                    confirmed: true,
+                },
+                serde_json::json!({
+                    "op": "duplicate_setlist", "source_name": "My Presets",
+                    "destination_name": "Fictional Duplicate", "limit": 2, "confirmed": true
+                }),
+            ),
+            (Request::CpuLoad, serde_json::json!({ "op": "cpu_load" })),
+            (
+                Request::AnalyzeCpuFit,
+                serde_json::json!({ "op": "analyze_cpu_fit" }),
+            ),
+            (Request::Shutdown, serde_json::json!({ "op": "shutdown" })),
+        ]
+    }
+
+    fn request_operation(request: &Request) -> &'static str {
+        match request {
+            Request::Status => "status",
+            Request::ReconnectNow => "reconnect_now",
+            Request::NanoState => "nano_state",
+            Request::NanoSetAmp { .. } => "nano_set_amp",
+            Request::NanoSetBypass { .. } => "nano_set_bypass",
+            Request::NanoReadFxParams { .. } => "nano_read_fx_params",
+            Request::NanoSetFxParam { .. } => "nano_set_fx_param",
+            Request::Version => "version",
+            Request::ActiveScene => "active_scene",
+            Request::SwitchScene { .. } => "switch_scene",
+            Request::SetSceneLabel { .. } => "set_scene_label",
+            Request::SetSceneColor { .. } => "set_scene_color",
+            Request::CopyScene { .. } => "copy_scene",
+            Request::CurrentPreset { .. } => "current_preset",
+            Request::ReadPreset { .. } => "read_preset",
+            Request::RecallPreset { .. } => "recall_preset",
+            Request::ListPresets { .. } => "list_presets",
+            Request::ListFolders { .. } => "list_folders",
+            Request::Catalog { .. } => "catalog",
+            Request::ListCaptures { .. } => "list_captures",
+            Request::ListIrs { .. } => "list_irs",
+            Request::SetCapture { .. } => "set_capture",
+            Request::SetIr { .. } => "set_ir",
+            Request::SetParam { .. } => "set_param",
+            Request::SetBlock { .. } => "set_block",
+            Request::SetBypass { .. } => "set_bypass",
+            Request::RemoveBlock { .. } => "remove_block",
+            Request::MoveBlock { .. } => "move_block",
+            Request::SetSplit { .. } => "set_split",
+            Request::SetRouting { .. } => "set_routing",
+            Request::PrepareSave { .. } => "prepare_save",
+            Request::CommitSave { .. } => "commit_save",
+            Request::DeletePreset { .. } => "delete_preset",
+            Request::MovePreset { .. } => "move_preset",
+            Request::CopyPreset { .. } => "copy_preset",
+            Request::CreateSetlist { .. } => "create_setlist",
+            Request::DeleteSetlist { .. } => "delete_setlist",
+            Request::DuplicateSetlist { .. } => "duplicate_setlist",
+            Request::CpuLoad => "cpu_load",
+            Request::AnalyzeCpuFit => "analyze_cpu_fit",
+            Request::Shutdown => "shutdown",
+        }
+    }
+
+    #[test]
+    fn every_request_variant_has_a_canonical_json_fixture() {
+        let fixtures = canonical_request_fixtures();
+        assert_eq!(fixtures.len(), 41);
+        let mut operations = std::collections::BTreeSet::new();
+
+        for (request, expected) in fixtures {
+            let operation = request_operation(&request);
+            assert!(
+                operations.insert(operation),
+                "duplicate fixture for {operation}"
+            );
+            assert_eq!(expected["op"], operation);
+            assert_eq!(serde_json::to_value(&request).unwrap(), expected);
+            let decoded: Request = serde_json::from_value(expected.clone()).unwrap();
+            assert_eq!(request_operation(&decoded), operation);
+            assert_eq!(serde_json::to_value(decoded).unwrap(), expected);
+        }
+    }
+
     #[test]
     fn requests_round_trip_as_tagged_json() {
         // The tag makes the wire form readable with `jq` and stable against
