@@ -1020,6 +1020,7 @@ fn run(cli: Cli) -> Result<()> {
                     "description": tool.description,
                     "input_schema": tool.input_schema,
                     "read_only": tool.read_only,
+                    "device_requirement": tool.device_requirement,
                 })
             })
             .collect::<Vec<_>>();

@@ -20,6 +20,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result};
 use cortex_host::{
     DAEMON_PROTOCOL_VERSION, DaemonClient, DaemonError, DaemonErrorCode, Request, Status,
+    tool_registry::DeviceRequirement,
 };
 use rmcp::model::{
     CacheScope, CallToolRequestParams, CallToolResponse, CallToolResult, DiscoverResult,
@@ -52,7 +53,7 @@ impl DaemonSupervisor {
         }
     }
 
-    fn ensure(&self, device_kind: cortex_rs::DeviceKind) -> Result<()> {
+    fn ensure(&self, requirement: DeviceRequirement) -> Result<()> {
         let _startup = self
             .startup
             .lock()
@@ -61,7 +62,9 @@ impl DaemonSupervisor {
         while Instant::now() < deadline {
             if let Some(status) = self.ready_status() {
                 ensure_status_compatible(&status)?;
-                if status.device_kind != device_kind {
+                if let Some(device_kind) = required_device_kind(requirement)
+                    && status.device_kind != device_kind
+                {
                     anyhow::bail!(
                         "the held session owns {:?}; this tool requires {:?}. Run `cortex session stop`, then retry.",
                         status.device_kind,
@@ -71,7 +74,14 @@ impl DaemonSupervisor {
                 return Ok(());
             }
             if !self.probe.is_running() {
-                self.start_sibling(deadline, device_kind)?;
+                self.start_sibling(
+                    deadline,
+                    required_device_kind(requirement)
+                        // A device-agnostic call preserves an existing Nano
+                        // session, but retains the historical Quad default when
+                        // it must start a session itself.
+                        .unwrap_or(cortex_rs::DeviceKind::QuadCortex),
+                )?;
             }
             std::thread::sleep(STARTUP_POLL);
         }
@@ -121,6 +131,14 @@ impl DaemonSupervisor {
             STARTUP_TIMEOUT.as_secs(),
             stderr.trim()
         )
+    }
+}
+
+fn required_device_kind(requirement: DeviceRequirement) -> Option<cortex_rs::DeviceKind> {
+    match requirement {
+        DeviceRequirement::Any => None,
+        DeviceRequirement::Quad => Some(cortex_rs::DeviceKind::QuadCortex),
+        DeviceRequirement::Nano => Some(cortex_rs::DeviceKind::NanoCortex),
     }
 }
 
@@ -267,13 +285,10 @@ impl ServerHandler for CortexMcp {
 
 impl CortexMcp {
     fn call_sync(&self, request: CallToolRequestParams) -> Result<CallToolResult, ErrorData> {
-        let device_kind =
-            if request.name.starts_with("read_nano_") || request.name.starts_with("set_nano_") {
-                cortex_rs::DeviceKind::NanoCortex
-            } else {
-                cortex_rs::DeviceKind::QuadCortex
-            };
-        if let Err(error) = self.daemon.ensure(device_kind) {
+        let Some(requirement) = tool_requirement(request.name.as_ref()) else {
+            return Ok(tool_error(format!("unknown tool: {}", request.name)));
+        };
+        if let Err(error) = self.daemon.ensure(requirement) {
             return Ok(tool_error_code(
                 DaemonErrorCode::DeviceUnavailable,
                 error.to_string(),
@@ -358,7 +373,7 @@ impl CortexMcp {
             },
             "set_nano_bypass" => Request::NanoSetBypass {
                 target: serde_json::from_value(required(args, "target")?.clone())?,
-                bypassed: bool_arg(args, "bypassed", false)?,
+                bypassed: required_bool_arg(args, "bypassed")?,
             },
             "read_nano_fx_params" => Request::NanoReadFxParams {
                 slot: serde_json::from_value(required(args, "slot")?.clone())?,
@@ -468,6 +483,13 @@ impl CortexMcp {
     }
 }
 
+fn tool_requirement(name: &str) -> Option<DeviceRequirement> {
+    cortex_host::tool_registry::tools()
+        .into_iter()
+        .find(|tool| tool.name == name)
+        .map(|tool| tool.device_requirement)
+}
+
 fn tool_error(message: impl Into<String>) -> CallToolResult {
     tool_error_code(DaemonErrorCode::Internal, message)
 }
@@ -536,6 +558,11 @@ fn bool_arg(args: &Value, name: &str, default: bool) -> Result<bool> {
         v.as_bool()
             .with_context(|| format!("{name} must be a boolean"))
     })
+}
+fn required_bool_arg(args: &Value, name: &str) -> Result<bool> {
+    required(args, name)?
+        .as_bool()
+        .with_context(|| format!("{name} must be a boolean"))
 }
 fn u64_arg(args: &Value, name: &str, default: u64) -> Result<u64> {
     args.get(name).map_or(Ok(default), |v| {
@@ -619,6 +646,25 @@ mod tests {
                 .iter()
                 .any(|argument| argument == "--device")
         );
+    }
+
+    #[test]
+    fn tool_routing_uses_registry_device_metadata() {
+        assert_eq!(tool_requirement("get_status"), Some(DeviceRequirement::Any));
+        assert_eq!(
+            tool_requirement("read_nano_state"),
+            Some(DeviceRequirement::Nano)
+        );
+        assert_eq!(
+            tool_requirement("read_current_preset"),
+            Some(DeviceRequirement::Quad)
+        );
+    }
+
+    #[test]
+    fn nano_bypass_requires_an_explicit_boolean_intent() {
+        assert!(required_bool_arg(&json!({}), "bypassed").is_err());
+        assert!(required_bool_arg(&json!({ "bypassed": true }), "bypassed").unwrap());
     }
 
     #[test]
