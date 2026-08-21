@@ -175,7 +175,7 @@ export function NanoChain({ state, onSetAmp, onSetBypass, onReadFxParams, onSetF
           <Button disabled={busy !== null || Math.abs((fxDraft[i] ?? value) - value) < 0.0005} loading={busy === `fx-write:${selectedSlot}:${i}`} onClick={() => selectedSlot && void applyFxParam(selectedSlot, i)} size="xs">Apply</Button>
         </Group>)}
       </SimpleGrid>
-      <Text c="dimmed" mt="sm" size="xs">Provisional: this normalized 0.0-1.0 read/write path is offline-tested but not hardware-verified. Values vary by loaded model.</Text>
+      <Text c="dimmed" mt="sm" size="xs">The core, daemon/CLI and Tauri backend normalized 0.0-1.0 path is hardware-verified; this rendered control still awaits its own hardware smoke. Values vary by loaded model.</Text>
     </Paper>}
     {error && <Alert color="red" title="Nano write failed">{error}</Alert>}
   </Stack>;

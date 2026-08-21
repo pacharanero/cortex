@@ -1267,6 +1267,43 @@ mod tests {
         exercise.unwrap();
     }
 
+    #[test]
+    #[ignore = "requires a running Nano Cortex held session; sends a same-value FX parameter write"]
+    fn nano_fx_parameters_reach_the_daemon_and_read_back() {
+        let source = DaemonDashboardSource::default();
+        let slots = [
+            cortex_rs::nano::NanoFxSlot::PreFx1,
+            cortex_rs::nano::NanoFxSlot::PreFx2,
+            cortex_rs::nano::NanoFxSlot::PostFx1,
+            cortex_rs::nano::NanoFxSlot::PostFx2,
+            cortex_rs::nano::NanoFxSlot::PostFx3,
+        ];
+
+        let mut first_value = None;
+        for slot in slots {
+            let values = source.read_nano_fx_params(slot).unwrap();
+            assert!(!values.is_empty(), "{slot:?} returned no parameters");
+            assert!(
+                values
+                    .iter()
+                    .all(|value| value.is_finite() && (0.0..=1.0).contains(value)),
+                "{slot:?} returned a non-normalized parameter"
+            );
+            if slot == cortex_rs::nano::NanoFxSlot::PreFx1 {
+                first_value = values.first().copied();
+            }
+        }
+
+        let original = first_value.expect("Pre FX 1 returned no parameters");
+        source
+            .set_nano_fx_param(cortex_rs::nano::NanoFxSlot::PreFx1, 0, original)
+            .unwrap();
+        let confirmed = source
+            .read_nano_fx_params(cortex_rs::nano::NanoFxSlot::PreFx1)
+            .unwrap();
+        assert!((confirmed[0] - original).abs() <= 0.001);
+    }
+
     struct FailingSource;
 
     impl DashboardSource for FailingSource {

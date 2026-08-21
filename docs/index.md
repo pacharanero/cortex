@@ -31,7 +31,7 @@ Linux is the first implementation and the only hardware-verified host today, but
 
 The project's central discipline is being honest about what has actually run against real hardware. Throughout these docs:
 
-<span class="status verified">verified</span> means exercised against a real Quad Cortex running CorOS 4.0.1 from this project's own code.
+<span class="status verified">verified</span> means exercised against the applicable real hardware from this project's own code. Quad Cortex claims name CorOS 4.0.1 where version dependence matters; Nano claims identify their own measured operation boundary.
 
 <span class="status provisional">provisional</span> means implemented but not yet verified against the applicable hardware or production integration boundary.
 
@@ -49,9 +49,9 @@ The project's central discipline is being honest about what has actually run aga
 | Prepared save, stored read-back and delete | <span class="status verified">verified</span> |
 | Capture and IR export/import | <span class="status provisional">investigation; no working export/import</span> |
 | MCP server read, recall, scene management and live-grid tools | <span class="status verified">verified; no save/delete tools</span> |
-| Desktop GUI shell | <span class="status provisional">daemon read boundary verified on Linux; native reconnect UI smoke pending</span> |
+| Desktop GUI shell | <span class="status provisional">daemon-backed Rust read/write boundaries verified on Linux; rendered native interaction smokes remain partial</span> |
 | Windows and macOS hardware paths and packaging | <span class="status planned">planned; Linux is the only verified host</span> |
-| Nano Cortex | <span class="status provisional">USB HID framing and state read hardware-verified; toolkit support not yet implemented</span> |
+| Nano Cortex | <span class="status provisional">USB HID, state, amp, bypass and core/daemon/Tauri-backend raw FX parameter paths verified on Linux; wider operations and host integrations remain partial</span> |
 
 ## Start here
 

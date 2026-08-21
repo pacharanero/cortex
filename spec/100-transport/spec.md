@@ -139,12 +139,12 @@ sudo udevadm control --reload-rules
 sudo udevadm trigger --action=add --subsystem-match=hidraw
 ```
 
-Re-plug the device. The interface number's `hidraw` path is assigned dynamically; see the installation guide for checks that do not assume a numbered node. The rule prepares Nano permissions but does not claim the current CLI supports Nano operations.
+Re-plug the device. The interface number's `hidraw` path is assigned dynamically; see the installation guide for checks that do not assume a numbered node. Nano state, raw amp, bypass and raw FX parameter operations use this transport through the held daemon; that does not imply support for the wider Nano application protocol.
 
 ## Future
 
 - **Protocol compatibility probe.** Device identity is cached, but the wire exposes no explicit protocol version. A CorOS update can still break compatibility silently.
-- **Nano Cortex application implementation.** The typed current-state codec and paced read-only held-daemon/CLI/GUI path are implemented. Nano writes, Bluetooth-ownership confirmation decoding and MCP tools remain outstanding under NANO-001.
+- **Wider Nano Cortex application implementation.** Typed current-state, Bluetooth-ownership, raw amp, bypass and raw FX parameter paths are implemented. Save, preset/model replacement, Capture/IR selection and other application operations remain outstanding under NANO-001.
 
 ## Glossary
 

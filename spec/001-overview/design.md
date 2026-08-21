@@ -14,16 +14,16 @@ spec: spec.md
 
 ## [DES-OVR] Overview
 
-A Rust workspace with a leaf crate (`cortex-rs`) owning the Cortex Control USB HID protocol and typed domain model, a shared daemon IPC crate (`cortex-host`), and three host surfaces: the usable `cortex-cli`, the hardware-verified non-persistent `cortex-mcp`, and an interactive read-only Tauri GUI with explicit fixture and daemon-backed modes. The crate is a port of the protocol behaviour established by the MIT-licensed `stokes-audio/pyquadcortex` Python library, re-verified against a real Quad Cortex on Linux. The GUI target is cross-platform; Linux is the only verified host today.
+A Rust workspace with a leaf crate (`cortex-rs`) owning the Cortex Control USB HID protocol and typed domain model, a shared daemon IPC crate (`cortex-host`), and three host surfaces: the usable `cortex-cli`, the hardware-verified non-persistent `cortex-mcp`, and an interactive Tauri GUI with explicit fixture and daemon-backed modes. The crate is a port of the protocol behaviour established by the MIT-licensed `stokes-audio/pyquadcortex` Python library, re-verified against a real Quad Cortex on Linux. The GUI target is cross-platform; Linux is the only verified host today.
 
-State honesty is the central invariant: verification is attached to each operation and host path. The implemented core Quad Cortex paths are hardware-verified. Nano Cortex HID framing and one read-only state exchange are hardware-verified, while Nano runtime integration, other operations, untested edge cases, and new host platforms remain provisional.
+State honesty is the central invariant: verification is attached to each operation and host path. The implemented core Quad Cortex paths are hardware-verified. Nano Cortex HID framing, typed state, Bluetooth ownership, held-daemon runtime, raw amp, bypass and raw FX parameter operations are hardware-verified on Linux; wider Nano operations, untested host integrations, edge cases and new host platforms remain provisional.
 
 ## [DES-ARCH] System Context and Flow Map
 
 ```text
 [Flow.CLI]      cortex binary + held daemon (200)
 [Flow.MCP]      cortex-mcp binary (300) -- daemon-backed non-persistent tools
-[Flow.GUI]      Tauri backend (400) -> cortex-host -> held daemon (read-only)
+[Flow.GUI]      Tauri backend (400) -> cortex-host -> held daemon (working state)
       |
       v
 [Flow.Host]     cortex-host (200) -- typed daemon contract + platform local IPC
