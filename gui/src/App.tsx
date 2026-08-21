@@ -263,7 +263,7 @@ export function App() {
             <Title order={2}>cortex</Title>
             <Menu shadow="md" position="bottom-start" width={200}>
               <Menu.Target>
-                <Badge color="orange" style={{ cursor: "pointer" }} variant="filled">{currentDeviceLabel}</Badge>
+                <Button aria-label={`Select device, current ${currentDeviceLabel}`} color="orange" size="compact-xs" tt="uppercase" variant="filled">{currentDeviceLabel}</Button>
               </Menu.Target>
               <Menu.Dropdown>
                 <Menu.Label>Device</Menu.Label>

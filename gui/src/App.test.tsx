@@ -80,10 +80,10 @@ function renderApp() {
 }
 
 async function chooseDevice(name: "Quad Cortex" | "Nano Cortex") {
-  const badge = screen.getByText(/Cortex$/, { selector: ".mantine-Badge-label" }).parentElement!;
-  if (badge.getAttribute("aria-expanded") !== "true") fireEvent.click(badge);
+  const selector = screen.getByRole("button", { name: /Select device, current/ });
+  if (selector.getAttribute("aria-expanded") !== "true") fireEvent.click(selector);
   fireEvent.click(await screen.findByRole("menuitem", { name }));
-  await waitFor(() => expect(badge.getAttribute("aria-expanded")).toBe("false"));
+  await waitFor(() => expect(selector.getAttribute("aria-expanded")).toBe("false"));
 }
 
 describe("device switching", () => {
@@ -98,10 +98,11 @@ describe("device switching", () => {
       .mockImplementationOnce(() => firstSwitch.promise)
       .mockResolvedValueOnce(undefined);
     renderApp();
-    await screen.findByText("Quad Cortex", { selector: ".mantine-Badge-label" });
+    const selector = await screen.findByRole("button", { name: "Select device, current Quad Cortex" });
 
-    const badge = screen.getByText("Quad Cortex", { selector: ".mantine-Badge-label" }).parentElement!;
-    fireEvent.click(badge);
+    expect(selector.tagName).toBe("BUTTON");
+    expect(selector.tabIndex).toBe(0);
+    fireEvent.click(selector);
     const nanoItem = await screen.findByRole("menuitem", { name: "Nano Cortex" });
     const quadItem = [...document.querySelectorAll<HTMLElement>("[role=menuitem]")]
       .find((item) => item.textContent?.includes("Quad Cortex"))!;
@@ -110,7 +111,7 @@ describe("device switching", () => {
     await act(async () => firstSwitch.resolve());
 
     await waitFor(() => expect(api.setDevice.mock.calls).toEqual([["nano_cortex"], ["quad_cortex"]]));
-    expect(screen.getByText("Quad Cortex", { selector: ".mantine-Badge-label" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Select device, current Quad Cortex" })).toBeTruthy();
   });
 
   it("does not let an older dashboard poll overwrite a completed switch", async () => {
@@ -121,13 +122,13 @@ describe("device switching", () => {
       .mockImplementationOnce(() => stalePoll.promise);
     api.setDevice.mockResolvedValue(undefined);
     renderApp();
-    await screen.findByText("Quad Cortex", { selector: ".mantine-Badge-label" });
+    await screen.findByRole("button", { name: "Select device, current Quad Cortex" });
     await waitFor(() => expect(api.dashboard).toHaveBeenCalledTimes(2), { timeout: 2_000 });
 
     await chooseDevice("Nano Cortex");
-    await screen.findByText("Nano Cortex", { selector: ".mantine-Badge-label" });
+    await screen.findByRole("button", { name: "Select device, current Nano Cortex" });
     await act(async () => stalePoll.resolve(snapshot("quad_cortex")));
 
-    expect(screen.getByText("Nano Cortex", { selector: ".mantine-Badge-label" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Select device, current Nano Cortex" })).toBeTruthy();
   });
 });
