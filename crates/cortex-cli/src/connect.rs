@@ -1322,6 +1322,20 @@ impl NanoDaemon {
         })
     }
 
+    fn mark_connected(&self) {
+        *self.health.lock().unwrap() = DeviceHealth::Connected {
+            serial: None,
+            coros_version: None,
+            last_message_seconds: 0,
+        };
+    }
+
+    fn mark_failed(&self, error: &cortex_rs::Error) {
+        *self.health.lock().unwrap() = DeviceHealth::Failed {
+            error: error.to_string(),
+        };
+    }
+
     fn handle(&self, request: Request) -> Response {
         match request {
             Request::Status => {
@@ -1367,16 +1381,10 @@ impl NanoDaemon {
                                 cached.snapshot = state;
                                 cached.last_received = Instant::now();
                                 cached.revision += 1;
-                                *self.health.lock().unwrap() = DeviceHealth::Connected {
-                                    serial: None,
-                                    coros_version: None,
-                                    last_message_seconds: 0,
-                                };
+                                self.mark_connected();
                             }
                             Err(error) => {
-                                *self.health.lock().unwrap() = DeviceHealth::Failed {
-                                    error: error.to_string(),
-                                };
+                                self.mark_failed(&error);
                                 return Response::cortex_error(&error);
                             }
                         }
@@ -1399,6 +1407,7 @@ impl NanoDaemon {
             Request::NanoSetAmp { control, value } => match self.transport.try_lock() {
                 Ok(transport) => {
                     if let Err(error) = cortex_rs::nano::write_amp(&transport, control, value) {
+                        self.mark_failed(&error);
                         return Response::cortex_error(&error);
                     }
                     std::thread::sleep(Duration::from_secs(6));
@@ -1409,11 +1418,7 @@ impl NanoDaemon {
                             cached.last_attempt = Instant::now();
                             cached.last_received = Instant::now();
                             cached.revision += 1;
-                            *self.health.lock().unwrap() = DeviceHealth::Connected {
-                                serial: None,
-                                coros_version: None,
-                                last_message_seconds: 0,
-                            };
+                            self.mark_connected();
                             Response::ok(&state)
                                 .unwrap_or_else(|error| Response::error(error.to_string()))
                         }
@@ -1424,6 +1429,7 @@ impl NanoDaemon {
                             cached.last_attempt = Instant::now();
                             cached.last_received = Instant::now();
                             cached.revision += 1;
+                            self.mark_connected();
                             Response::coded_error(
                                 DaemonErrorCode::OutcomeUnconfirmed,
                                 format!(
@@ -1432,9 +1438,7 @@ impl NanoDaemon {
                             )
                         }
                         Err(error) => {
-                            *self.health.lock().unwrap() = DeviceHealth::Failed {
-                                error: error.to_string(),
-                            };
+                            self.mark_failed(&error);
                             Response::cortex_error(&error)
                         }
                     }
@@ -1451,6 +1455,7 @@ impl NanoDaemon {
                 Ok(transport) => {
                     if let Err(error) = cortex_rs::nano::write_bypass(&transport, target, bypassed)
                     {
+                        self.mark_failed(&error);
                         return Response::cortex_error(&error);
                     }
                     std::thread::sleep(Duration::from_secs(6));
@@ -1467,11 +1472,7 @@ impl NanoDaemon {
                             cached.last_attempt = Instant::now();
                             cached.last_received = Instant::now();
                             cached.revision += 1;
-                            *self.health.lock().unwrap() = DeviceHealth::Connected {
-                                serial: None,
-                                coros_version: None,
-                                last_message_seconds: 0,
-                            };
+                            self.mark_connected();
                             if confirmed {
                                 Response::ok(&state)
                                     .unwrap_or_else(|error| Response::error(error.to_string()))
@@ -1485,9 +1486,7 @@ impl NanoDaemon {
                             }
                         }
                         Err(error) => {
-                            *self.health.lock().unwrap() = DeviceHealth::Failed {
-                                error: error.to_string(),
-                            };
+                            self.mark_failed(&error);
                             Response::cortex_error(&error)
                         }
                     }
@@ -1504,21 +1503,22 @@ impl NanoDaemon {
                 Ok(transport) => {
                     match cortex_rs::nano::read_fx_params(&transport, slot, Duration::from_secs(5))
                     {
-                        Ok(values) => Response::ok(&values)
-                            .unwrap_or_else(|error| Response::error(error.to_string())),
+                        Ok(values) => {
+                            self.state.lock().unwrap().last_received = Instant::now();
+                            self.mark_connected();
+                            Response::ok(&values)
+                                .unwrap_or_else(|error| Response::error(error.to_string()))
+                        }
                         Err(error) => {
-                            *self.health.lock().unwrap() = DeviceHealth::Failed {
-                                error: error.to_string(),
-                            };
+                            self.mark_failed(&error);
                             Response::cortex_error(&error)
                         }
                     }
                 }
-                Err(TryLockError::WouldBlock) => {
-                    let cached = self.state.lock().unwrap();
-                    Response::ok(&cached.snapshot)
-                        .unwrap_or_else(|error| Response::error(error.to_string()))
-                }
+                Err(TryLockError::WouldBlock) => Response::coded_error(
+                    DaemonErrorCode::Busy,
+                    "another Nano operation is already in progress",
+                ),
                 Err(TryLockError::Poisoned(_)) => {
                     Response::error("Nano transport lock is unavailable")
                 }
@@ -1532,6 +1532,7 @@ impl NanoDaemon {
                     if let Err(error) =
                         cortex_rs::nano::write_fx_param(&transport, slot, param_index, value)
                     {
+                        self.mark_failed(&error);
                         return Response::cortex_error(&error);
                     }
                     std::thread::sleep(Duration::from_secs(2));
@@ -1541,10 +1542,14 @@ impl NanoDaemon {
                             if param_index < values.len() as u8
                                 && (values[param_index as usize] - value).abs() < 0.001 =>
                         {
+                            self.state.lock().unwrap().last_received = Instant::now();
+                            self.mark_connected();
                             Response::ok(&values)
                                 .unwrap_or_else(|error| Response::error(error.to_string()))
                         }
                         Ok(values) => {
+                            self.state.lock().unwrap().last_received = Instant::now();
+                            self.mark_connected();
                             let actual = values.get(param_index as usize).copied();
                             Response::coded_error(
                                 DaemonErrorCode::OutcomeUnconfirmed,
@@ -1554,9 +1559,7 @@ impl NanoDaemon {
                             )
                         }
                         Err(error) => {
-                            *self.health.lock().unwrap() = DeviceHealth::Failed {
-                                error: error.to_string(),
-                            };
+                            self.mark_failed(&error);
                             Response::cortex_error(&error)
                         }
                     }
