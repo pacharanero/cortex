@@ -364,6 +364,7 @@ export function App() {
                     {selected?.based_on && <Text c="dimmed" mt="xs" size="sm">{selected.based_on}</Text>}
                     {selected && (
                       <Switch
+                        aria-label={`${selected.name} bypass, ${selected.bypassed ? "bypassed" : "engaged"}`}
                         // Not disabled while writing: a disabled control cannot
                         // hold focus, which is the fault recorded in
                         // SceneSelector and ParameterEditor.

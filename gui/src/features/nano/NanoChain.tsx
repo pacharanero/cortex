@@ -144,7 +144,7 @@ export function NanoChain({ state, onSetAmp, onSetBypass, onReadFxParams, onSetF
             setDraft((current) => ({ ...current, [control]: typeof value === "number" ? value : null }));
             setDirtyAmpControls((current) => new Set(current).add(control));
           }} value={draft[control] ?? ""} />
-          <Button disabled={draft[control] == null || busy !== null} loading={busy === `amp:${control}`} onClick={() => void apply(control)}>Apply</Button>
+          <Button aria-label={`Apply ${control}`} disabled={draft[control] == null || busy !== null} loading={busy === `amp:${control}`} onClick={() => void apply(control)}>Apply</Button>
         </Group>)}
       </SimpleGrid>
       <Text c="dimmed" mt="sm" size="xs">Changes heard working state and saves nothing. Apply waits about six seconds for fresh device read-back.</Text>
@@ -158,6 +158,7 @@ export function NanoChain({ state, onSetAmp, onSetBypass, onReadFxParams, onSetF
           return <Group key={target} justify="space-between" wrap="nowrap">
             <div><Text size="sm" fw={600}>{roleNames[role]}</Text></div>
             <Switch
+              aria-label={`${roleNames[role]} bypass, ${bypassed == null ? "state unknown" : bypassed ? "bypassed" : "on"}`}
               aria-busy={busy === `bypass:${target}`}
               checked={bypassed ?? false}
               disabled={bypassed == null || busy !== null}
@@ -178,10 +179,10 @@ export function NanoChain({ state, onSetAmp, onSetBypass, onReadFxParams, onSetF
         {fxParams.map((value, i) => <Group align="flex-end" key={i} wrap="nowrap">
           <div style={{ flex: 1 }}>
             <Text size="xs" fw={600}>Param {i}</Text>
-            <Slider aria-busy={busy === `fx-write:${selectedSlot}:${i}`} disabled={busy !== null} label={(v) => v.toFixed(2)} max={1} min={0} onChange={(v) => setFxDraft((current) => { const next = [...current]; next[i] = v; return next; })} size="sm" step={0.001} value={fxDraft[i] ?? value} />
+            <Slider aria-busy={busy === `fx-write:${selectedSlot}:${i}`} disabled={busy !== null} label={(v) => v.toFixed(2)} max={1} min={0} onChange={(v) => setFxDraft((current) => { const next = [...current]; next[i] = v; return next; })} size="sm" step={0.001} thumbLabel={`FX parameter ${i} normalized value`} value={fxDraft[i] ?? value} />
             <Text c="dimmed" size="xs">device: {value.toFixed(3)} | draft: {(fxDraft[i] ?? value).toFixed(3)}</Text>
           </div>
-          <Button disabled={busy !== null || Math.abs((fxDraft[i] ?? value) - value) < 0.0005} loading={busy === `fx-write:${selectedSlot}:${i}`} onClick={() => selectedSlot && void applyFxParam(selectedSlot, i)} size="xs">Apply</Button>
+          <Button aria-label={`Apply FX parameter ${i}`} disabled={busy !== null || Math.abs((fxDraft[i] ?? value) - value) < 0.0005} loading={busy === `fx-write:${selectedSlot}:${i}`} onClick={() => selectedSlot && void applyFxParam(selectedSlot, i)} size="xs">Apply</Button>
         </Group>)}
       </SimpleGrid>
       <Text c="dimmed" mt="sm" size="xs">The normalized 0.0-1.0 path and this rendered Linux control are hardware-verified with device read-back and restoration. Values vary by loaded model.</Text>

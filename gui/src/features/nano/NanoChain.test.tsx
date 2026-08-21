@@ -75,5 +75,18 @@ describe("NanoChain", () => {
 
     expect(onReadFxParams).toHaveBeenCalledWith("pre_fx1");
     expect(await screen.findByText("Param 0")).toBeTruthy();
+    expect(screen.getByRole("slider", { name: "FX parameter 0 normalized value" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Apply FX parameter 0" })).toBeTruthy();
+  });
+
+  it("names each amp action for its control", () => {
+    renderNano({
+      ...state,
+      slots: [{ role: "pre_fx1", loaded_name: null, model_id: 1001, bypassed: false }],
+    });
+
+    expect(screen.getByRole("button", { name: "Apply gain" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Apply treble" })).toBeTruthy();
+    expect(screen.getByRole("switch", { name: "Pre FX 1 bypass, on" })).toBeTruthy();
   });
 });
