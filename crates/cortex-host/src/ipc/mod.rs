@@ -5,6 +5,9 @@
 //!
 //! Unix currently uses a user-owned domain socket. Windows will use a
 //! current-user named pipe behind the same API once that adapter is selected.
+//!
+//! @see spec/200-cli/spec.md [FR-18]
+//! @see spec/200-cli/design.md [DES-CLI]
 
 #[cfg(unix)]
 mod unix;

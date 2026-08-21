@@ -6,6 +6,8 @@
 //! The host contract compiles independently of Unix socket types. Runtime IPC
 //! remains unsupported until a reviewed safe named-pipe dependency supplies
 //! current-user ACLs and duplex byte-stream semantics.
+//!
+//! @see spec/roadmap.md [CLI-004.12]
 
 use std::fmt;
 use std::io::{Read, Write};

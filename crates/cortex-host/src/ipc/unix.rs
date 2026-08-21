@@ -1,6 +1,11 @@
 // SPDX-FileCopyrightText: 2026 Dr Marcus Baw
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+//! The Unix domain socket adapter behind the local IPC facade.
+//!
+//! @see spec/200-cli/spec.md [FR-18]
+//! @see spec/200-cli/design.md [DES-CLI]
+
 use std::fmt;
 use std::fs::File;
 use std::io::{Read, Write};

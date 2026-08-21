@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 //! Read-only interpretation of the Quad Cortex CPU-load push.
+//!
+//! @see spec/roadmap.md [MCP-003.2]
 
 use cortex_rs::view::{CpuLoad, Preset};
 
