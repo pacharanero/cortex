@@ -9,7 +9,7 @@ import { SceneSelector } from "./features/quad/SceneSelector";
 import { ErrorBoundary } from "./shared/ErrorBoundary";
 import { NanoChain } from "./features/nano/NanoChain";
 import { cortexApi } from "./shared/ipc/api";
-import type { DashboardSnapshot, LiveBlock, NanoAmpControl, NanoBypassTarget, ParameterInput, ParameterView } from "./shared/ipc/types";
+import type { DashboardSnapshot, LiveBlock, NanoAmpControl, NanoBypassTarget, NanoFxSlot, ParameterInput, ParameterView } from "./shared/ipc/types";
 
 interface Cell { row: number; column: number }
 
@@ -204,6 +204,16 @@ export function App() {
       setNanoWriteInProgress(false);
     }
   };
+  const setNanoFxParam = async (slot: NanoFxSlot, paramIndex: number, value: number) => {
+    setNanoWriteInProgress(true);
+    try {
+      await cortexApi.setNanoFxParam(slot, paramIndex, value);
+      const next = await cortexApi.dashboard();
+      setSnapshot(next);
+    } finally {
+      setNanoWriteInProgress(false);
+    }
+  };
   const switchDevice = async (device: "quad_cortex" | "nano_cortex" | "auto") => {
     if (device === "auto") {
       await cortexApi.setDevice(null);
@@ -282,7 +292,13 @@ export function App() {
               </>}
             </Stack>
           </Alert>}
-          {nano && <NanoChain api={cortexApi} state={nano} />}
+          {nano && <NanoChain
+            onReadFxParams={cortexApi.readNanoFxParams}
+            onSetAmp={setNanoAmp}
+            onSetBypass={setNanoBypass}
+            onSetFxParam={setNanoFxParam}
+            state={nano}
+          />}
           {live && <>
             <Group justify="space-between"><div><Text c="dimmed" size="sm">Working grid</Text><Title order={3}>{live.preset_name}{live.preset_dirty ? " *" : ""}</Title></div><Text>Scene {activeSceneName(live)}</Text></Group>
             <Paper p="md" withBorder>

@@ -3,7 +3,7 @@
 
 import { Alert, Badge, Button, Group, NumberInput, Paper, SimpleGrid, Slider, Stack, Switch, Text, Title } from "@mantine/core";
 import { useEffect, useState } from "react";
-import type { CortexApi, NanoAmpControl, NanoBypassTarget, NanoCurrentState, NanoFxSlot, NanoSlotRole } from "../../shared/ipc/types";
+import type { NanoAmpControl, NanoBypassTarget, NanoCurrentState, NanoFxSlot, NanoSlotRole } from "../../shared/ipc/types";
 
 const roleNames: Record<NanoSlotRole, string> = {
   gate: "Gate", pre_fx1: "Pre FX 1", pre_fx2: "Pre FX 2", capture: "Capture",
@@ -29,30 +29,54 @@ const fxSlots: { role: NanoSlotRole; slot: NanoFxSlot }[] = [
 
 interface NanoChainProps {
   state: NanoCurrentState;
-  api: CortexApi;
+  onSetAmp: (control: NanoAmpControl, value: number) => Promise<void>;
+  onSetBypass: (target: NanoBypassTarget, bypassed: boolean) => Promise<void>;
+  onReadFxParams: (slot: NanoFxSlot) => Promise<number[]>;
+  onSetFxParam: (slot: NanoFxSlot, paramIndex: number, value: number) => Promise<void>;
 }
 
-export function NanoChain({ state, api }: NanoChainProps) {
+export function NanoChain({ state, onSetAmp, onSetBypass, onReadFxParams, onSetFxParam }: NanoChainProps) {
   const [draft, setDraft] = useState(state.amp);
+  const [dirtyAmpControls, setDirtyAmpControls] = useState<Set<NanoAmpControl>>(new Set());
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [selectedSlot, setSelectedSlot] = useState<NanoFxSlot | null>(null);
   const [fxParams, setFxParams] = useState<number[] | null>(null);
   const [fxDraft, setFxDraft] = useState<number[]>([]);
-  useEffect(() => { if (!busy) setDraft(state.amp); }, [state.amp, busy]);
+  useEffect(() => {
+    if (busy) return;
+    setDraft((current) => {
+      const next = { ...current };
+      let changed = false;
+      for (const control of Object.keys(state.amp) as NanoAmpControl[]) {
+        if (!dirtyAmpControls.has(control) && next[control] !== state.amp[control]) {
+          next[control] = state.amp[control];
+          changed = true;
+        }
+      }
+      return changed ? next : current;
+    });
+  }, [state.amp, busy, dirtyAmpControls]);
 
   const apply = async (control: NanoAmpControl) => {
     const value = draft[control];
     if (value == null) return;
     setBusy(`amp:${control}`); setError(null);
-    try { await api.setNanoAmp(control, value); }
+    try {
+      await onSetAmp(control, value);
+      setDirtyAmpControls((current) => {
+        const next = new Set(current);
+        next.delete(control);
+        return next;
+      });
+    }
     catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
     finally { setBusy(null); }
   };
 
   const toggleBypass = async (target: NanoBypassTarget, bypassed: boolean) => {
     setBusy(`bypass:${target}`); setError(null);
-    try { await api.setNanoBypass(target, bypassed); }
+    try { await onSetBypass(target, bypassed); }
     catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
     finally { setBusy(null); }
   };
@@ -62,7 +86,7 @@ export function NanoChain({ state, api }: NanoChainProps) {
     setFxParams(null);
     setBusy(`fx-read:${slot}`); setError(null);
     try {
-      const values = await api.readNanoFxParams(slot);
+      const values = await onReadFxParams(slot);
       setFxParams(values);
       setFxDraft(values);
     } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
@@ -74,8 +98,8 @@ export function NanoChain({ state, api }: NanoChainProps) {
     if (value == null) return;
     setBusy(`fx-write:${slot}:${paramIndex}`); setError(null);
     try {
-      await api.setNanoFxParam(slot, paramIndex, value);
-      const values = await api.readNanoFxParams(slot);
+      await onSetFxParam(slot, paramIndex, value);
+      const values = await onReadFxParams(slot);
       setFxParams(values);
       setFxDraft(values);
     } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
@@ -107,7 +131,10 @@ export function NanoChain({ state, api }: NanoChainProps) {
       <Text c="dimmed" fw={700} size="xs" tt="uppercase">Amp controls (raw 0-255)</Text>
       <SimpleGrid cols={{ base: 1, sm: 3, lg: 5 }} mt="sm">
         {(Object.keys(state.amp) as NanoAmpControl[]).map((control) => <Group align="flex-end" key={control} wrap="nowrap">
-          <NumberInput aria-busy={busy === `amp:${control}`} clampBehavior="strict" label={control[0].toUpperCase() + control.slice(1)} max={255} min={0} onChange={(value) => setDraft((current) => ({ ...current, [control]: typeof value === "number" ? value : null }))} value={draft[control] ?? ""} />
+          <NumberInput aria-busy={busy === `amp:${control}`} clampBehavior="strict" label={control[0].toUpperCase() + control.slice(1)} max={255} min={0} onChange={(value) => {
+            setDraft((current) => ({ ...current, [control]: typeof value === "number" ? value : null }));
+            setDirtyAmpControls((current) => new Set(current).add(control));
+          }} value={draft[control] ?? ""} />
           <Button disabled={draft[control] == null || busy !== null} loading={busy === `amp:${control}`} onClick={() => void apply(control)}>Apply</Button>
         </Group>)}
       </SimpleGrid>

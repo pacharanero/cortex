@@ -1,0 +1,56 @@
+// SPDX-FileCopyrightText: 2026 Dr Marcus Baw
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
+import { MantineProvider } from "@mantine/core";
+import { fireEvent, render, screen } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
+import { NanoChain } from "./NanoChain";
+import type { NanoCurrentState } from "../../shared/ipc/types";
+
+const state: NanoCurrentState = {
+  firmware: null,
+  amp: { gain: 100, level: 101, bass: 102, mid: 103, treble: 104 },
+  capture_slot: null,
+  capture_volume: null,
+  gate_reduction: null,
+  footswitch_assignments: null,
+  slots: [],
+};
+
+function renderNano(current: NanoCurrentState) {
+  return render(
+    <MantineProvider>
+      <NanoChain
+        onReadFxParams={vi.fn(async () => [])}
+        onSetAmp={vi.fn(async () => {})}
+        onSetBypass={vi.fn(async () => {})}
+        onSetFxParam={vi.fn(async () => {})}
+        state={current}
+      />
+    </MantineProvider>,
+  );
+}
+
+describe("NanoChain", () => {
+  it("preserves an unsubmitted amp draft across a dashboard refresh", () => {
+    const view = renderNano(state);
+    const gain = screen.getByLabelText("Gain") as HTMLInputElement;
+
+    fireEvent.change(gain, { target: { value: "121" } });
+    expect(gain.value).toBe("121");
+
+    view.rerender(
+      <MantineProvider>
+        <NanoChain
+          onReadFxParams={vi.fn(async () => [])}
+          onSetAmp={vi.fn(async () => {})}
+          onSetBypass={vi.fn(async () => {})}
+          onSetFxParam={vi.fn(async () => {})}
+          state={{ ...state, amp: { ...state.amp, gain: 99 } }}
+        />
+      </MantineProvider>,
+    );
+
+    expect((screen.getByLabelText("Gain") as HTMLInputElement).value).toBe("121");
+  });
+});
