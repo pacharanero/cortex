@@ -14,10 +14,14 @@
 //! @see spec/roadmap.md [NANO-001.3]
 //! @see spec/110-framing/design.md
 
-use crate::{Error, Result, link::HidLink};
+use crate::{Error, Result};
+
+#[cfg(any(feature = "hid", test))]
+use crate::link::HidLink;
 
 #[cfg(feature = "hid")]
 use crate::Transport;
+#[cfg(any(feature = "hid", test))]
 use crate::{Frame, FrameReassembler};
 
 /// Hardware-verified read-only request for the complete Nano current state.
@@ -334,6 +338,7 @@ pub fn read_fx_params(
 /// regression-tested without a physical device. Callers that own a
 /// [`Transport`] must use [`read_fx_params`], which first verifies the device
 /// family.
+#[cfg(any(feature = "hid", test))]
 fn read_fx_params_from_link(
     link: &impl HidLink,
     slot: NanoFxSlot,
@@ -354,13 +359,14 @@ fn read_fx_params_from_link(
     }
 }
 
+#[cfg(any(feature = "hid", test))]
 fn write_nano_message(link: &impl HidLink, message: &[u8]) -> Result<()> {
     for report in
         crate::framing::encode_reports(crate::framing::HidReportGeometry::NANO_CORTEX, message)
     {
         let written = link.write(&report)?;
         if written != report.len() {
-            return Err(Error::Hid(format!(
+            return Err(Error::Framing(format!(
                 "short HID write: wrote {written} of {} bytes",
                 report.len()
             )));
@@ -369,6 +375,7 @@ fn write_nano_message(link: &impl HidLink, message: &[u8]) -> Result<()> {
     Ok(())
 }
 
+#[cfg(any(feature = "hid", test))]
 fn read_nano_message(link: &impl HidLink, timeout: std::time::Duration) -> Result<Vec<u8>> {
     let deadline = std::time::Instant::now() + timeout;
     let mut reassembler = FrameReassembler::new();
@@ -396,6 +403,7 @@ fn read_nano_message(link: &impl HidLink, timeout: std::time::Duration) -> Resul
 /// The measured response has no slot or request identifier. The held daemon
 /// serializes Nano operations, but an older queued response remains
 /// wire-indistinguishable from the requested slot's reply.
+#[cfg(any(feature = "hid", test))]
 fn decode_fx_param_refresh_response(message: &[u8]) -> Result<Option<Vec<f32>>> {
     // The refresh reply shape: 08 06 22 <length> <f32 values...> 8a 00 00 00.
     if message.len() < 3 || message[..3] != [0x08, 0x06, 0x22] {

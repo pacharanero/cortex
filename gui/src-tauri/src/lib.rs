@@ -1,13 +1,9 @@
 // SPDX-FileCopyrightText: 2026 Dr Marcus Baw
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-use std::io::Read;
-use std::path::PathBuf;
-use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
 
-use cortex_host::{DAEMON_PROTOCOL_VERSION, DaemonClient, DeviceHealth, Request, Status};
+use cortex_host::{DaemonClient, DaemonSupervisor, DeviceHealth, DevicePolicy, Request, Status};
 use cortex_rs::client::{USER_SETLIST, is_factory_setlist};
 use cortex_rs::view::{CpuLoad, ParamValue, Preset, PresetSlot};
 
@@ -221,13 +217,8 @@ trait DashboardSource: Send + Sync {
     }
 }
 
-const AUTO_MANAGED_IDLE_SECONDS: &str = "60";
-const STARTUP_TIMEOUT: Duration = Duration::from_secs(120);
-const STARTUP_POLL: Duration = Duration::from_millis(200);
-
-#[derive(Default)]
 struct GuiDaemonSupervisor {
-    startup: Mutex<()>,
+    daemon: DaemonSupervisor,
     /// User's device preference. `None` means "try Quad then Nano" (the
     /// original auto-detect behaviour). `Some(Quad)` or `Some(Nano)` means
     /// the user explicitly chose a device; if the running session owns the
@@ -235,61 +226,25 @@ struct GuiDaemonSupervisor {
     preferred_device: Mutex<Option<cortex_rs::DeviceKind>>,
 }
 
+impl Default for GuiDaemonSupervisor {
+    fn default() -> Self {
+        Self {
+            daemon: DaemonSupervisor::default(),
+            preferred_device: Mutex::new(None),
+        }
+    }
+}
+
 impl GuiDaemonSupervisor {
-    fn ensure(&self, client: &DaemonClient) -> Result<(), CommandError> {
-        let _startup = self
-            .startup
-            .lock()
-            .map_err(|_| CommandError::daemon("session startup gate is unavailable"))?;
+    fn ensure(&self) -> Result<(), CommandError> {
         let preference = *self
             .preferred_device
             .lock()
             .map_err(|_| CommandError::daemon("device preference lock is unavailable"))?;
-
-        // If a session is already running, check it matches the preference.
-        if let Ok(status) = client.status() {
-            ensure_daemon_compatible(&status)?;
-            if let Some(wanted) = preference {
-                if status.device_kind != wanted {
-                    // Wrong device: stop the current session and start the
-                    // preferred one. The endpoint is released when the daemon
-                    // exits, so the new start can claim it.
-                    let _ = client.request::<bool>(&cortex_host::Request::Shutdown);
-                    std::thread::sleep(Duration::from_millis(500));
-                    let sibling = sibling_cortex_binary()?;
-                    return start_auto_managed_session(client, &sibling, wanted);
-                }
-            }
-            return Ok(());
-        }
-
-        let sibling = sibling_cortex_binary()?;
-        match preference {
-            Some(device) => start_auto_managed_session(client, &sibling, device),
-            None => {
-                let quad_error = match start_auto_managed_session(
-                    client,
-                    &sibling,
-                    cortex_rs::DeviceKind::QuadCortex,
-                ) {
-                    Ok(()) => return Ok(()),
-                    Err(error) => error,
-                };
-                // A failed `session start` exits and releases its ownership
-                // claim, so the same endpoint can be tried for the other product.
-                match start_auto_managed_session(
-                    client,
-                    &sibling,
-                    cortex_rs::DeviceKind::NanoCortex,
-                ) {
-                    Ok(()) => Ok(()),
-                    Err(nano_error) => Err(CommandError::daemon(format!(
-                        "could not start a session for a connected Cortex device. Quad Cortex: {}; Nano Cortex: {}",
-                        quad_error.message, nano_error.message
-                    ))),
-                }
-            }
-        }
+        let policy = preference.map_or(DevicePolicy::Detect, DevicePolicy::Replace);
+        self.daemon
+            .ensure(policy)
+            .map_err(|error| CommandError::daemon(error.to_string()))
     }
 
     fn set_device(&self, device: Option<cortex_rs::DeviceKind>) {
@@ -297,99 +252,6 @@ impl GuiDaemonSupervisor {
             *pref = device;
         }
     }
-}
-
-fn ensure_daemon_compatible(status: &Status) -> Result<(), CommandError> {
-    let version = status.daemon_version.parse::<u32>().unwrap_or(0);
-    if version != DAEMON_PROTOCOL_VERSION {
-        return Err(CommandError::daemon(format!(
-            "session protocol mismatch: GUI expects {DAEMON_PROTOCOL_VERSION}, daemon reports {version}"
-        )));
-    }
-    Ok(())
-}
-
-fn start_auto_managed_session(
-    client: &DaemonClient,
-    sibling: &std::path::Path,
-    device_kind: cortex_rs::DeviceKind,
-) -> Result<(), CommandError> {
-    let mut command = Command::new(sibling);
-    command.args([
-        "session",
-        "start",
-        "--auto-managed",
-        "--idle-timeout-seconds",
-        AUTO_MANAGED_IDLE_SECONDS,
-    ]);
-    if device_kind == cortex_rs::DeviceKind::NanoCortex {
-        command.args(["--device", "nano"]);
-    }
-    let mut child = command
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|error| {
-            CommandError::daemon(format!(
-                "could not launch the session helper at {}: {error}",
-                sibling.display()
-            ))
-        })?;
-    let deadline = Instant::now() + STARTUP_TIMEOUT;
-    while Instant::now() < deadline {
-        if let Ok(status) = client.status() {
-            ensure_daemon_compatible(&status)?;
-            let _ = child.wait();
-            return Ok(());
-        }
-        if let Some(status) = child
-            .try_wait()
-            .map_err(|error| CommandError::daemon(format!("waiting for session helper: {error}")))?
-        {
-            let stderr = read_child_stderr(&mut child);
-            if !status.success() {
-                return Err(CommandError::daemon(if stderr.trim().is_empty() {
-                    format!("session helper exited with {status}")
-                } else {
-                    stderr.trim().to_string()
-                }));
-            }
-        }
-        std::thread::sleep(STARTUP_POLL);
-    }
-    let _ = child.kill();
-    let _ = child.wait();
-    Err(CommandError::daemon(format!(
-        "session startup did not complete within {} seconds",
-        STARTUP_TIMEOUT.as_secs()
-    )))
-}
-
-fn read_child_stderr(child: &mut std::process::Child) -> String {
-    let mut stderr = String::new();
-    if let Some(mut pipe) = child.stderr.take() {
-        let _ = pipe.read_to_string(&mut stderr);
-    }
-    stderr
-}
-
-fn sibling_cortex_binary() -> Result<PathBuf, CommandError> {
-    let path = if let Some(path) = std::env::var_os("CORTEX_CLI_PATH") {
-        PathBuf::from(path)
-    } else {
-        std::env::current_exe()
-            .map_err(|error| {
-                CommandError::daemon(format!("could not locate the GUI executable: {error}"))
-            })?
-            .with_file_name(format!("cortex{}", std::env::consts::EXE_SUFFIX))
-    };
-    if !path.is_file() {
-        return Err(CommandError::daemon(format!(
-            "the session helper is missing at {}; reinstall the complete Cortex application",
-            path.display()
-        )));
-    }
-    Ok(path)
 }
 
 struct DaemonDashboardSource {
@@ -415,7 +277,7 @@ impl Default for DaemonDashboardSource {
 
 impl DashboardSource for DaemonDashboardSource {
     fn dashboard(&self) -> Result<DashboardSnapshot, CommandError> {
-        self.supervisor.ensure(&self.client)?;
+        self.supervisor.ensure()?;
         let before = self
             .client
             .require_compatible()

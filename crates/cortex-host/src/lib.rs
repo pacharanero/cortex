@@ -19,6 +19,7 @@ mod cpu_fit;
 mod ipc;
 mod protocol;
 mod server;
+mod supervisor;
 pub mod tool_registry;
 
 pub use client::{DaemonClient, DaemonError, is_running, request, request_with_timeout};
@@ -29,3 +30,4 @@ pub use protocol::{
     Request, Response, Status,
 };
 pub use server::{DaemonLifecycle, ServerExit, serve_listener};
+pub use supervisor::{DaemonSupervisor, DevicePolicy};
