@@ -16,6 +16,7 @@
 use serde::{Deserialize, Serialize};
 
 /// The kind of Neural DSP device on the other end of the USB connection.
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DeviceKind {

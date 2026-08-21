@@ -12,9 +12,13 @@ repository.workspace = true
 homepage.workspace = true
 description = "Shared host and daemon IPC boundary for cortex-rs applications."
 
+[features]
+typescript = ["cortex-rs/typescript", "dep:ts-rs"]
+
 [dependencies]
 cortex-rs = { path = "../cortex-rs", default-features = false }
 anyhow = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 fs4 = { workspace = true }
+ts-rs = { workspace = true, optional = true }

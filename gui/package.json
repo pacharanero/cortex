@@ -10,7 +10,9 @@
     "build": "npm run build:fixture",
     "build:fixture": "tsc --noEmit && vite build --mode fixture",
     "build:tauri": "tsc --noEmit && vite build --mode tauri",
-    "check": "npm run build:fixture && npm run build:tauri && npm run test",
+    "generate:ipc": "cargo run --manifest-path ../Cargo.toml -p cortex-gui --example generate-typescript",
+    "check:ipc": "npm run generate:ipc && git diff --exit-code -- src/shared/ipc/generated",
+    "check": "npm run check:ipc && npm run build:fixture && npm run build:tauri && npm run test",
     "test": "vitest run",
     "tauri": "tauri"
   },

@@ -165,6 +165,7 @@ pub struct Block {
 }
 
 /// One stored parameter value on a block.
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ParamValue {
     /// The wire index, which is what `set-param --index` takes.
@@ -183,6 +184,7 @@ pub struct ParamValue {
 }
 
 /// What a stored parameter value actually is.
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(untagged)]
 pub enum ParamValueKind {
@@ -353,6 +355,7 @@ impl From<&crate::proto::VersionMessage> for DeviceVersion {
 }
 
 /// One grid column's share of the DSP load.
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct CpuColumn {
     /// Load for this column, as the device reports it.
@@ -362,6 +365,7 @@ pub struct CpuColumn {
 }
 
 /// DSP load, total and broken down by chain and column.
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct CpuLoad {
     /// Total load across both cores, if the device reported one.
@@ -396,6 +400,7 @@ impl From<&crate::proto::CpuLoadMessage> for CpuLoad {
 }
 
 /// A stable setlist-slot view for CLI, daemon, MCP, and GUI consumers.
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct PresetSlot {
     /// Linear slot index, 0-255.

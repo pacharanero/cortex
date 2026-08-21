@@ -327,12 +327,6 @@ The method is documented in the [protocol reference](../docs/protocol.md#observi
 
 - [~] **ENG-006.2**: Daemon start/status/stop and routed read/edit/save paths are scripted and hardware-verified. Physical unplug/replug was manually verified on 2026-08-07; only a safe automated reconnect substitute remains optional
 
-### ENG-007: Audit follow-up, 2026-08-21
-
-The cross-surface audit found behavioural gaps and structural duplication in the Nano additions and surrounding daemon/GUI boundaries. The first items are ordered by user impact; do not combine the correctness fixes with later refactors merely because they touch the same files.
-
-- [ ] **ENG-007.8**: Replace the hand-maintained Rust/TypeScript IPC mirror with a generated or compiler-checked contract only if it can keep the Rust-owned serialisable types and bounded Tauri boundary. Do not introduce a second behavioural implementation in the webview
-
 ### NANO-001: Nano Cortex over USB HID
 
 - [x] **NANO-001.1**: Hardware discovery established VID:PID `152A:88E7`, HID interface 5, input/output report IDs `0x01`/`0x02`, 64-byte report bodies, shared length/flag framing, and shared `FIRST`/middle/`LAST` reassembly. The known read-only Nano current-state command returned nine USB HID reports and the existing decoder recovered firmware, control, assignment, bypass, and FX-model state. Bluetooth ownership produced an explicit `Device is busy!`; the same request succeeded after Bluetooth disconnected. Raw captures remain private because their padding and payload contain device and user strings

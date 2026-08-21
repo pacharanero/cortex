@@ -548,18 +548,22 @@ impl Response {
 /// Health is reported rather than inferred from whether a call hangs. A
 /// client that cannot tell "the device went away" from "this is just slow"
 /// has no way to give the user a useful message.
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
+#[cfg_attr(feature = "typescript", ts(rename = "DaemonStatus"))]
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Status {
     /// The daemon's own version, so a client can detect skew after an
     /// upgrade left an old daemon running.
     pub daemon_version: String,
     /// Seconds since the daemon started.
+    #[cfg_attr(feature = "typescript", ts(type = "number"))]
     pub uptime_seconds: u64,
     /// Whether another host started this daemon on demand.
     #[serde(default)]
     pub auto_managed: bool,
     /// Request-idle shutdown bound for an auto-managed daemon.
     #[serde(default)]
+    #[cfg_attr(feature = "typescript", ts(type = "number | null"))]
     pub idle_timeout_seconds: Option<u64>,
     /// Product whose USB interface this daemon owns.
     #[serde(default)]
@@ -571,6 +575,7 @@ pub struct Status {
 }
 
 /// Whether the device is answering, and what it is.
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum DeviceHealth {
@@ -585,6 +590,7 @@ pub enum DeviceHealth {
         /// A healthy session reads 0 here even when idle, because the
         /// device pushes continuously while it is being kept alive. A large
         /// value means something is wrong. See roadmap PROT-008.6.4.
+        #[cfg_attr(feature = "typescript", ts(type = "number"))]
         last_message_seconds: u64,
     },
     /// The connection dropped and the daemon is trying to re-establish it.
@@ -602,14 +608,18 @@ pub enum DeviceHealth {
 }
 
 /// What the daemon holds, and whether it can be trusted.
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 #[allow(clippy::struct_excessive_bools)]
 pub struct CacheStatus {
     /// Physical-session generation that owns the values.
+    #[cfg_attr(feature = "typescript", ts(type = "number"))]
     pub generation: u64,
     /// Monotonic state revision for coalescing updates.
+    #[cfg_attr(feature = "typescript", ts(type = "number"))]
     pub revision: u64,
     /// Stored-preset mutation epoch in this generation.
+    #[cfg_attr(feature = "typescript", ts(type = "number"))]
     pub storage_revision: u64,
     /// Overall cache readiness.
     pub phase: cortex_rs::CachePhase,
@@ -628,12 +638,16 @@ pub struct CacheStatus {
     /// How many device pushes have been applied since connecting. A cache
     /// kept current by pushes is only as trustworthy as the push stream, so
     /// this is worth surfacing.
+    #[cfg_attr(feature = "typescript", ts(type = "number"))]
     pub pushes_applied: u64,
     /// State-bearing messages observed in this generation.
+    #[cfg_attr(feature = "typescript", ts(type = "number"))]
     pub messages_seen: u64,
     /// Messages rejected because applying them would require guessing.
+    #[cfg_attr(feature = "typescript", ts(type = "number"))]
     pub messages_rejected: u64,
     /// Broken frame sequences that invalidated continuity.
+    #[cfg_attr(feature = "typescript", ts(type = "number"))]
     pub stream_gaps: u64,
     /// Why the most recent state message was rejected.
     pub last_rejection: Option<String>,

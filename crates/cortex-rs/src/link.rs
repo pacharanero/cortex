@@ -51,6 +51,7 @@ pub trait HidLink: Send {
 ///
 /// Returns a transport or framing error, or [`crate::Error::ReadTimeout`] when
 /// no complete message arrives before `timeout`.
+#[cfg(any(feature = "hid", test))]
 pub(crate) fn read_message(
     link: &impl HidLink,
     geometry: crate::framing::HidReportGeometry,

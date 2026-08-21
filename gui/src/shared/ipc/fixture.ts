@@ -86,6 +86,8 @@ const dashboard: DashboardSnapshot = {
   status: {
     daemon_version: "fixture",
     uptime_seconds: 0,
+    auto_managed: false,
+    idle_timeout_seconds: null,
     device_kind: "quad_cortex",
     device: { state: "connected", serial: null, coros_version: null, last_message_seconds: 0 },
     cache: {

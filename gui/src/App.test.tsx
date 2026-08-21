@@ -39,6 +39,8 @@ function snapshot(device: "quad_cortex" | "nano_cortex"): DashboardSnapshot {
     status: {
       daemon_version: "fixture",
       uptime_seconds: 1,
+      auto_managed: false,
+      idle_timeout_seconds: null,
       device_kind: device,
       device: { state: "connected", serial: null, coros_version: null, last_message_seconds: 0 },
       cache: {

@@ -33,6 +33,7 @@ use crate::proto::{
 };
 
 /// Whether a cache is ready to answer without device I/O.
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CachePhase {

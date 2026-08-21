@@ -42,6 +42,7 @@ const CONFIRMATION_FOOTER: NanoFooter = NanoFooter([0x85, 0x00, 0x00, 0x00]);
 pub struct NanoFooter(pub [u8; 4]);
 
 /// Fixed roles in the Nano Cortex signal chain, in signal-flow order.
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum NanoSlotRole {
@@ -64,6 +65,7 @@ pub enum NanoSlotRole {
 }
 
 /// One role in the fixed Nano signal chain.
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct NanoSlotState {
     /// Position and function of this slot.
@@ -71,12 +73,14 @@ pub struct NanoSlotState {
     /// Assigned Capture or IR name when the state message supplies one.
     pub loaded_name: Option<String>,
     /// Numeric model identifier for one of the five variable FX slots.
+    #[cfg_attr(feature = "typescript", ts(type = "number | null"))]
     pub model_id: Option<u64>,
     /// Bypass state when present in the current-state message.
     pub bypassed: Option<bool>,
 }
 
 /// Raw 0-255 values for the Nano's five amplifier controls.
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct NanoAmpState {
     /// Gain control.
@@ -106,6 +110,7 @@ impl NanoAmpState {
 }
 
 /// One of the Nano's five amplifier controls.
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum NanoAmpControl {
@@ -122,6 +127,7 @@ pub enum NanoAmpControl {
 }
 
 /// Nano roles addressable by the measured bypass command.
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum NanoBypassTarget {
@@ -244,6 +250,7 @@ pub fn write_bypass(transport: &Transport, target: NanoBypassTarget, bypassed: b
 /// One of the Nano's five editable FX slots, addressable by the parameter
 /// refresh and write commands. The wire index maps to the fixed chain order:
 /// 0 = Pre FX 1, 1 = Pre FX 2, 2 = Post FX 1, 3 = Post FX 2, 4 = Post FX 3.
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum NanoFxSlot {
@@ -459,6 +466,7 @@ fn push_varint(output: &mut Vec<u8>, mut value: u64) {
 }
 
 /// Assignments of the four Nano footswitch actions.
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct NanoFootswitchAssignments {
     /// Switch I, action A.
@@ -477,6 +485,7 @@ pub struct NanoFootswitchAssignments {
 /// not zero, false, or an empty string. `slots` always contains the eight fixed
 /// roles in signal-flow order so hosts can render one chain without pretending
 /// it is a Quad grid.
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct NanoCurrentState {
     /// Firmware string supplied by the device, if present.

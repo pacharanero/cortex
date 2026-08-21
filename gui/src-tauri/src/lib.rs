@@ -9,9 +9,16 @@ use cortex_rs::view::{CpuLoad, ParamValue, Preset, PresetSlot};
 
 pub mod capability;
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize, ts_rs::TS)]
+#[serde(rename_all = "snake_case")]
+pub enum DashboardSnapshotSource {
+    Daemon,
+    Fixture,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, ts_rs::TS)]
 pub struct DashboardSnapshot {
-    pub source: &'static str,
+    pub source: DashboardSnapshotSource,
     pub status: Status,
     pub live: Option<LiveSnapshot>,
     pub directory: Vec<SetlistSnapshot>,
@@ -19,10 +26,13 @@ pub struct DashboardSnapshot {
     pub nano: Option<cortex_rs::nano::NanoCurrentState>,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, ts_rs::TS)]
 pub struct LiveSnapshot {
+    #[ts(type = "number")]
     pub generation: u64,
+    #[ts(type = "number")]
     pub revision: u64,
+    #[ts(type = "number")]
     pub storage_revision: u64,
     pub preset_name: String,
     pub active_scene: u32,
@@ -40,7 +50,7 @@ pub struct LiveSnapshot {
 /// the displayed letter, or displays the wire index, is the row-numbering trap
 /// in a different costume. The letter is rendered here rather than in the
 /// webview so there is one implementation of that mapping.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, ts_rs::TS)]
 pub struct SceneSnapshot {
     pub index: u32,
     pub letter: String,
@@ -48,7 +58,7 @@ pub struct SceneSnapshot {
     pub color: Option<u32>,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, ts_rs::TS)]
 pub struct LiveBlock {
     pub row: usize,
     pub screen_row: usize,
@@ -109,7 +119,7 @@ fn block_family(category: &str) -> &'static str {
     }
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, ts_rs::TS)]
 pub struct SetlistSnapshot {
     pub key: String,
     pub name: String,
@@ -294,7 +304,7 @@ impl DashboardSource for DaemonDashboardSource {
                 .request(&Request::NanoState)
                 .map_err(|error| CommandError::daemon(error.to_string()))?;
             return Ok(DashboardSnapshot {
-                source: "daemon",
+                source: DashboardSnapshotSource::Daemon,
                 status: before,
                 live: None,
                 directory: Vec::new(),
@@ -303,7 +313,7 @@ impl DashboardSource for DaemonDashboardSource {
         }
         if !status_is_live(&before) {
             return Ok(DashboardSnapshot {
-                source: "daemon",
+                source: DashboardSnapshotSource::Daemon,
                 status: before,
                 live: None,
                 directory: Vec::new(),
@@ -331,7 +341,7 @@ impl DashboardSource for DaemonDashboardSource {
             .map_err(|error| CommandError::daemon(error.to_string()))?;
         if !status_is_live(&after) || after.cache.generation != before.cache.generation {
             return Ok(DashboardSnapshot {
-                source: "daemon",
+                source: DashboardSnapshotSource::Daemon,
                 status: after,
                 live: None,
                 directory: Vec::new(),
@@ -373,7 +383,7 @@ impl DashboardSource for DaemonDashboardSource {
             })
             .collect();
         Ok(DashboardSnapshot {
-            source: "daemon",
+            source: DashboardSnapshotSource::Daemon,
             live: Some(LiveSnapshot {
                 generation: after.cache.generation,
                 revision: after.cache.revision,
@@ -645,7 +655,19 @@ struct RecallAck {
 /// **Measured on CorOS 4.0.1:** stored float values are normalised - a
 /// compressor's `THRESHOLD` reads `0.1458`, not a dB figure - so `real` is the
 /// converted value and `normalised` is what the device actually holds.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize, ts_rs::TS)]
+#[serde(rename_all = "snake_case")]
+pub enum ParameterViewKind {
+    Float,
+    Int,
+    Switch,
+    Str,
+    Fader,
+    Meter,
+    Unknown,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, ts_rs::TS)]
 pub struct ParameterView {
     /// Positional wire index, which is what a write addresses.
     pub index: u32,
@@ -653,7 +675,7 @@ pub struct ParameterView {
     pub name: String,
     /// Control kind: `float`, `int`, `switch`, `str`, `fader`, `meter`, or
     /// `unknown`. `empty` slots are not returned at all.
-    pub kind: String,
+    pub kind: ParameterViewKind,
     /// Units string from the catalog, often empty.
     pub units: String,
     /// Range in the parameter's own units.
@@ -777,7 +799,7 @@ fn parameter_views(model: &cortex_rs::catalog::Model, stored: &[ParamValue]) -> 
             ParameterView {
                 index,
                 name: parameter.name.clone(),
-                kind: parameter_kind_name(parameter.kind).into(),
+                kind: parameter_kind_name(parameter.kind),
                 units: parameter.units.clone(),
                 min: parameter.min,
                 max: parameter.max,
@@ -794,17 +816,16 @@ fn parameter_views(model: &cortex_rs::catalog::Model, stored: &[ParamValue]) -> 
         .collect()
 }
 
-fn parameter_kind_name(kind: cortex_rs::catalog::ParameterKind) -> &'static str {
+fn parameter_kind_name(kind: cortex_rs::catalog::ParameterKind) -> ParameterViewKind {
     use cortex_rs::catalog::ParameterKind;
     match kind {
-        ParameterKind::Float => "float",
-        ParameterKind::Int => "int",
-        ParameterKind::Switch => "switch",
-        ParameterKind::Str => "str",
-        ParameterKind::Fader => "fader",
-        ParameterKind::Meter => "meter",
-        ParameterKind::Empty => "empty",
-        ParameterKind::Unknown => "unknown",
+        ParameterKind::Float => ParameterViewKind::Float,
+        ParameterKind::Int => ParameterViewKind::Int,
+        ParameterKind::Switch => ParameterViewKind::Switch,
+        ParameterKind::Str => ParameterViewKind::Str,
+        ParameterKind::Fader => ParameterViewKind::Fader,
+        ParameterKind::Meter => ParameterViewKind::Meter,
+        ParameterKind::Empty | ParameterKind::Unknown => ParameterViewKind::Unknown,
     }
 }
 
@@ -1982,7 +2003,12 @@ mod tests {
                 !parameter.read_only
                     && parameter.normalised.is_some()
                     && parameter.max != parameter.min
-                    && matches!(parameter.kind.as_str(), "float" | "int" | "fader")
+                    && matches!(
+                        parameter.kind,
+                        ParameterViewKind::Float
+                            | ParameterViewKind::Int
+                            | ParameterViewKind::Fader
+                    )
             })
             .expect("the block should have at least one writable numeric parameter")
             .clone();

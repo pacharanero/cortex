@@ -1958,6 +1958,7 @@ pub enum ParameterTarget {
 }
 
 /// A parameter value before any catalog conversion.
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "kind", content = "value", rename_all = "snake_case")]
 pub enum ParameterInput {
