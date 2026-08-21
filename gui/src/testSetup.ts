@@ -27,3 +27,13 @@ if (!window.matchMedia) {
     dispatchEvent: () => false,
   }) as MediaQueryList;
 }
+
+// Mantine's ScrollArea observes its viewport, but jsdom has no layout engine
+// and therefore no ResizeObserver implementation.
+if (!globalThis.ResizeObserver) {
+  globalThis.ResizeObserver = class ResizeObserver {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  };
+}

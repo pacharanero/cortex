@@ -1919,6 +1919,8 @@ pub fn start_detached(device: DeviceKind, lifecycle: DaemonLifecycle) -> Result<
         }
         std::thread::sleep(Duration::from_millis(200));
     }
+    let _ = child.kill();
+    let _ = child.wait();
     anyhow::bail!(
         "the session did not start within 120s; see {}",
         log.display()

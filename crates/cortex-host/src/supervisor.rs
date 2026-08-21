@@ -13,8 +13,11 @@ use anyhow::{Context, Result};
 
 use crate::{DaemonClient, Request, Status, client::ensure_compatible};
 
-const STARTUP_TIMEOUT: Duration = Duration::from_secs(120);
+// The CLI launcher owns a 120-second startup timeout and cleans up its detached
+// child. Leave it time to do that before this outer supervisor gives up.
+const STARTUP_TIMEOUT: Duration = Duration::from_secs(125);
 const STARTUP_POLL: Duration = Duration::from_millis(200);
+const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// How a client should handle the device owned by a held session.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -82,7 +85,7 @@ impl DaemonSupervisor {
             return self.handle_running(&status, policy);
         }
         if self.probe.is_running() {
-            return self.wait_for_existing_session();
+            return self.wait_for_existing_session(policy);
         }
 
         match policy {
@@ -111,8 +114,9 @@ impl DaemonSupervisor {
                 device
             ),
             DevicePolicy::Replace(device) if status.device_kind != device => {
-                self.client.request::<bool>(&Request::Shutdown)?;
-                std::thread::sleep(Duration::from_millis(500));
+                self.client
+                    .request::<serde_json::Value>(&Request::Shutdown)?;
+                self.wait_for_session_stop()?;
                 self.start(device)
             }
             DevicePolicy::Any
@@ -122,11 +126,12 @@ impl DaemonSupervisor {
         }
     }
 
-    fn wait_for_existing_session(&self) -> Result<()> {
+    fn wait_for_existing_session(&self, policy: DevicePolicy) -> Result<()> {
         let deadline = Instant::now() + STARTUP_TIMEOUT;
         while Instant::now() < deadline {
             if let Ok(status) = self.probe.status() {
-                return ensure_compatible(&status, &Request::Status);
+                ensure_compatible(&status, &Request::Status)?;
+                return self.handle_running(&status, policy);
             }
             if !self.probe.is_running() {
                 anyhow::bail!("the held cortex session stopped before it became ready");
@@ -136,6 +141,20 @@ impl DaemonSupervisor {
         anyhow::bail!(
             "the held cortex session did not become ready within {}s",
             STARTUP_TIMEOUT.as_secs()
+        )
+    }
+
+    fn wait_for_session_stop(&self) -> Result<()> {
+        let deadline = Instant::now() + SHUTDOWN_TIMEOUT;
+        while Instant::now() < deadline {
+            if !self.probe.is_running() {
+                return Ok(());
+            }
+            std::thread::sleep(STARTUP_POLL);
+        }
+        anyhow::bail!(
+            "the previous cortex session did not release its endpoint within {}s",
+            SHUTDOWN_TIMEOUT.as_secs()
         )
     }
 
@@ -154,6 +173,20 @@ impl DaemonSupervisor {
         while Instant::now() < deadline {
             if let Ok(status) = self.probe.status() {
                 ensure_compatible(&status, &Request::Status)?;
+                if status.device_kind != device {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    anyhow::bail!(
+                        "the held session became ready for {:?} while starting {:?}",
+                        status.device_kind,
+                        device
+                    );
+                }
+                // The child is the short-lived detached-session launcher. Reap
+                // it after it exits without delaying readiness for the daemon.
+                std::thread::spawn(move || {
+                    let _ = child.wait();
+                });
                 return Ok(());
             }
             if let Some(status) = child.try_wait().context("waiting for sibling cortex")? {

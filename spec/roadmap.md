@@ -331,7 +331,6 @@ The method is documented in the [protocol reference](../docs/protocol.md#observi
 
 The cross-surface audit found behavioural gaps and structural duplication in the Nano additions and surrounding daemon/GUI boundaries. The first items are ordered by user impact; do not combine the correctness fixes with later refactors merely because they touch the same files.
 
-- [ ] **ENG-007.7**: Review device-switching lifecycle ownership in the Tauri backend. A cancelled or superseded switch must not let a detached process or stale health task overwrite the selected device's current state
 - [ ] **ENG-007.8**: Replace the hand-maintained Rust/TypeScript IPC mirror with a generated or compiler-checked contract only if it can keep the Rust-owned serialisable types and bounded Tauri boundary. Do not introduce a second behavioural implementation in the webview
 
 ### NANO-001: Nano Cortex over USB HID

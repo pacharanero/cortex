@@ -237,20 +237,26 @@ impl Default for GuiDaemonSupervisor {
 
 impl GuiDaemonSupervisor {
     fn ensure(&self) -> Result<(), CommandError> {
-        let preference = *self
+        let preference = self
             .preferred_device
             .lock()
             .map_err(|_| CommandError::daemon("device preference lock is unavailable"))?;
-        let policy = preference.map_or(DevicePolicy::Detect, DevicePolicy::Replace);
+        let policy = (*preference).map_or(DevicePolicy::Detect, DevicePolicy::Replace);
         self.daemon
             .ensure(policy)
             .map_err(|error| CommandError::daemon(error.to_string()))
     }
 
-    fn set_device(&self, device: Option<cortex_rs::DeviceKind>) {
-        if let Ok(mut pref) = self.preferred_device.lock() {
-            *pref = device;
-        }
+    fn set_device(&self, device: Option<cortex_rs::DeviceKind>) -> Result<(), CommandError> {
+        let mut preference = self
+            .preferred_device
+            .lock()
+            .map_err(|_| CommandError::daemon("device preference lock is unavailable"))?;
+        *preference = device;
+        let policy = device.map_or(DevicePolicy::Detect, DevicePolicy::Replace);
+        self.daemon
+            .ensure(policy)
+            .map_err(|error| CommandError::daemon(error.to_string()))
     }
 }
 
@@ -412,8 +418,7 @@ impl DashboardSource for DaemonDashboardSource {
     }
 
     fn set_device(&self, device: Option<cortex_rs::DeviceKind>) -> Result<(), CommandError> {
-        self.supervisor.set_device(device);
-        Ok(())
+        self.supervisor.set_device(device)
     }
 
     fn read_nano_fx_params(

@@ -9,7 +9,7 @@ import { SceneSelector } from "./features/quad/SceneSelector";
 import { ErrorBoundary } from "./shared/ErrorBoundary";
 import { NanoChain } from "./features/nano/NanoChain";
 import { cortexApi } from "./shared/ipc/api";
-import type { DashboardSnapshot, LiveBlock, NanoAmpControl, NanoBypassTarget, NanoFxSlot, ParameterInput, ParameterView } from "./shared/ipc/types";
+import type { DashboardSnapshot, DeviceKind, LiveBlock, NanoAmpControl, NanoBypassTarget, NanoFxSlot, ParameterInput, ParameterView } from "./shared/ipc/types";
 
 interface Cell { row: number; column: number }
 
@@ -41,6 +41,10 @@ export function App() {
   const [parameters, setParameters] = useState<ParameterView[] | null>(null);
   const [parameterError, setParameterError] = useState<string | null>(null);
   const generation = useRef<number | null>(null);
+  const dashboardEpoch = useRef(0);
+  const pendingDeviceSwitch = useRef<{ device: DeviceKind | null; epoch: number } | null>(null);
+  const deviceSwitchRunning = useRef(false);
+  const [deviceSwitchInProgress, setDeviceSwitchInProgress] = useState(false);
   // Pauses the auto-refresh while a Nano write is in progress. The write
   // itself takes ~6 seconds and returns updated state, so the manual
   // refresh after it completes is sufficient.
@@ -50,9 +54,10 @@ export function App() {
     let cancelled = false;
     let timer: number | undefined;
     const refresh = async () => {
+      const requestEpoch = dashboardEpoch.current;
       try {
         const next = await cortexApi.dashboard();
-        if (cancelled) return;
+        if (cancelled || requestEpoch !== dashboardEpoch.current) return;
         if (generation.current !== null && generation.current !== next.status.cache.generation) setSelectedCell(null);
         generation.current = next.status.cache.generation;
         setSnapshot(next);
@@ -63,9 +68,9 @@ export function App() {
         if (!cancelled) timer = window.setTimeout(refresh, 1000);
       }
     };
-    if (!nanoWriteInProgress) void refresh();
+    if (!nanoWriteInProgress && !deviceSwitchInProgress) void refresh();
     return () => { cancelled = true; if (timer !== undefined) window.clearTimeout(timer); };
-  }, [nanoWriteInProgress]);
+  }, [deviceSwitchInProgress, nanoWriteInProgress]);
 
   // Parameters are fetched for the selected cell only, not carried in the
   // one-second dashboard poll: they need the model catalog joined in, and
@@ -215,13 +220,36 @@ export function App() {
     }
   };
   const switchDevice = async (device: "quad_cortex" | "nano_cortex" | "auto") => {
-    if (device === "auto") {
-      await cortexApi.setDevice(null);
-    } else {
-      await cortexApi.setDevice(device);
+    const epoch = dashboardEpoch.current + 1;
+    dashboardEpoch.current = epoch;
+    pendingDeviceSwitch.current = { device: device === "auto" ? null : device, epoch };
+    if (deviceSwitchRunning.current) return;
+
+    deviceSwitchRunning.current = true;
+    setDeviceSwitchInProgress(true);
+    try {
+      while (pendingDeviceSwitch.current) {
+        const selection = pendingDeviceSwitch.current;
+        pendingDeviceSwitch.current = null;
+        try {
+          await cortexApi.setDevice(selection.device);
+          if (selection.epoch !== dashboardEpoch.current) continue;
+          const next = await cortexApi.dashboard();
+          if (selection.epoch !== dashboardEpoch.current) continue;
+          generation.current = next.status.cache.generation;
+          setSnapshot(next);
+          setSelectedCell(null);
+          setError(null);
+        } catch (reason) {
+          if (selection.epoch === dashboardEpoch.current) {
+            setError(reason instanceof Error ? reason.message : String(reason));
+          }
+        }
+      }
+    } finally {
+      deviceSwitchRunning.current = false;
+      setDeviceSwitchInProgress(false);
     }
-    const next = await cortexApi.dashboard();
-    setSnapshot(next);
   };
 
   const currentDeviceLabel = nano ? "Nano Cortex" : "Quad Cortex";
