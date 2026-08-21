@@ -335,20 +335,52 @@ pub fn read_fx_params(
         let report = transport.read(remaining)?;
         let frame = Frame::parse(&report)?;
         if let Some(message) = reassembler.feed(&frame)? {
-            // The refresh reply shape: 08 06 22 <len> <f32 values...> <footer>
-            if message.len() >= 4 && message[0] == 0x08 && message[1] == 0x06 && message[2] == 0x22
-            {
-                let val_len = message[3] as usize;
-                if val_len > 0 && val_len % 4 == 0 && message.len() >= 4 + val_len {
-                    return Ok(message[4..4 + val_len]
-                        .chunks_exact(4)
-                        .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
-                        .collect());
-                }
+            if let Some(values) = decode_fx_param_refresh_response(&message)? {
+                return Ok(values);
             }
             // Skip unrelated messages (ack footers, etc.)
         }
     }
+}
+
+/// Decode one FX parameter refresh response, ignoring unrelated Nano messages.
+///
+/// The measured response has no slot or request identifier. The held daemon
+/// serializes Nano operations, but an older queued response remains
+/// wire-indistinguishable from the requested slot's reply.
+fn decode_fx_param_refresh_response(message: &[u8]) -> Result<Option<Vec<f32>>> {
+    // The refresh reply shape: 08 06 22 <length> <f32 values...> 8a 00 00 00.
+    if message.len() < 3 || message[..3] != [0x08, 0x06, 0x22] {
+        return Ok(None);
+    }
+    if message.len() < 4 {
+        return Err(Error::Decode(
+            "Nano FX parameter refresh is missing its length".into(),
+        ));
+    }
+    let value_len = message[3] as usize;
+    if value_len % 4 != 0 {
+        return Err(Error::Decode(
+            "Nano FX parameter refresh has a non-float value length".into(),
+        ));
+    }
+    let expected_len = 4 + value_len + FX_PARAM_REFRESH_FOOTER.0.len();
+    if message.len() != expected_len {
+        return Err(Error::Decode(
+            "Nano FX parameter refresh has an unexpected message length".into(),
+        ));
+    }
+    if message[4 + value_len..] != FX_PARAM_REFRESH_FOOTER.0 {
+        return Err(Error::Decode(
+            "Nano FX parameter refresh has an unexpected footer".into(),
+        ));
+    }
+    Ok(Some(
+        message[4..4 + value_len]
+            .chunks_exact(4)
+            .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+            .collect(),
+    ))
 }
 
 /// Send one Nano FX parameter write. The device does not acknowledge; callers
@@ -885,6 +917,25 @@ mod tests {
             build_fx_param_refresh(NanoFxSlot::PostFx3),
             [0x08, 0x03, 0x18, 4, 0x89, 0, 0, 0]
         );
+    }
+
+    #[test]
+    fn fx_param_refresh_reply_requires_its_measured_footer() {
+        let mut response = vec![0x08, 0x06, 0x22, 8];
+        response.extend(0.25_f32.to_le_bytes());
+        response.extend(0.75_f32.to_le_bytes());
+        response.extend(FX_PARAM_REFRESH_FOOTER.0);
+        assert_eq!(
+            decode_fx_param_refresh_response(&response).unwrap(),
+            Some(vec![0.25, 0.75])
+        );
+
+        *response.last_mut().unwrap() = 1;
+        assert!(decode_fx_param_refresh_response(&response).is_err());
+        assert!(matches!(
+            decode_fx_param_refresh_response(&[0x08, 0x01]),
+            Ok(None)
+        ));
     }
 
     #[test]
