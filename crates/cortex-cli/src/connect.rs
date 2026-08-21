@@ -1432,6 +1432,84 @@ impl<T: NanoOperations> NanoDaemon<T> {
         self.mark_connected();
     }
 
+    fn with_operation(&self, operation: impl FnOnce(&T) -> Response) -> Response {
+        match self.transport.try_lock() {
+            Ok(transport) => operation(&transport),
+            Err(TryLockError::WouldBlock) => Response::coded_error(
+                DaemonErrorCode::Busy,
+                "another Nano operation is already in progress",
+            ),
+            Err(TryLockError::Poisoned(_)) => Response::error("Nano transport lock is unavailable"),
+        }
+    }
+
+    fn write_state_and_confirm(
+        &self,
+        transport: &T,
+        settle: Duration,
+        write: impl FnOnce(&T) -> cortex_rs::Result<()>,
+        mismatch: impl FnOnce(&cortex_rs::nano::NanoCurrentState) -> Option<String>,
+    ) -> Response {
+        self.mark_attempted();
+        if let Err(error) = write(transport) {
+            self.mark_failed(&error);
+            return Response::cortex_error(&error);
+        }
+        std::thread::sleep(settle);
+        match transport.read_state(Duration::from_secs(5)) {
+            Ok(state) => {
+                let mismatch = mismatch(&state);
+                self.replace_snapshot(state.clone());
+                mismatch.map_or_else(
+                    || {
+                        Response::ok(&state)
+                            .unwrap_or_else(|error| Response::error(error.to_string()))
+                    },
+                    |message| Response::coded_error(DaemonErrorCode::OutcomeUnconfirmed, message),
+                )
+            }
+            Err(error) => {
+                self.mark_failed(&error);
+                Response::cortex_error(&error)
+            }
+        }
+    }
+
+    fn write_fx_and_confirm(
+        &self,
+        transport: &T,
+        slot: cortex_rs::nano::NanoFxSlot,
+        param_index: u8,
+        value: f32,
+    ) -> Response {
+        self.mark_attempted();
+        if let Err(error) = transport.write_fx_param(slot, param_index, value) {
+            self.mark_failed(&error);
+            return Response::cortex_error(&error);
+        }
+        std::thread::sleep(self.fx_settle);
+        match transport.read_fx_params(slot, Duration::from_secs(5)) {
+            Ok(values) => {
+                self.mark_message_received();
+                let actual = values.get(param_index as usize).copied();
+                if actual.is_some_and(|actual| (actual - value).abs() < 0.001) {
+                    Response::ok(&values).unwrap_or_else(|error| Response::error(error.to_string()))
+                } else {
+                    Response::coded_error(
+                        DaemonErrorCode::OutcomeUnconfirmed,
+                        format!(
+                            "Nano FX param write did not read back: expected {value}, got {actual:?}"
+                        ),
+                    )
+                }
+            }
+            Err(error) => {
+                self.mark_failed(&error);
+                Response::cortex_error(&error)
+            }
+        }
+    }
+
     fn handle(&self, request: Request) -> Response {
         match request {
             Request::Status => {
@@ -1497,89 +1575,41 @@ impl<T: NanoOperations> NanoDaemon<T> {
                     Response::error("Nano transport lock is unavailable")
                 }
             },
-            Request::NanoSetAmp { control, value } => match self.transport.try_lock() {
-                Ok(transport) => {
-                    self.mark_attempted();
-                    if let Err(error) = transport.write_amp(control, value) {
-                        self.mark_failed(&error);
-                        return Response::cortex_error(&error);
-                    }
-                    std::thread::sleep(self.amp_settle);
-                    match transport.read_state(Duration::from_secs(5)) {
-                        Ok(state) if state.amp.value(control) == Some(value) => {
-                            self.replace_snapshot(state.clone());
-                            Response::ok(&state)
-                                .unwrap_or_else(|error| Response::error(error.to_string()))
-                        }
-                        Ok(state) => {
-                            let actual = state.amp.value(control);
-                            self.replace_snapshot(state);
-                            Response::coded_error(
-                                DaemonErrorCode::OutcomeUnconfirmed,
-                                format!(
-                                    "Nano amp write did not read back: expected {value}, got {actual:?}"
-                                ),
+            Request::NanoSetAmp { control, value } => self.with_operation(|transport| {
+                self.write_state_and_confirm(
+                    transport,
+                    self.amp_settle,
+                    |transport| transport.write_amp(control, value),
+                    |state| {
+                        let actual = state.amp.value(control);
+                        (actual != Some(value)).then(|| {
+                            format!(
+                                "Nano amp write did not read back: expected {value}, got {actual:?}"
                             )
-                        }
-                        Err(error) => {
-                            self.mark_failed(&error);
-                            Response::cortex_error(&error)
-                        }
-                    }
-                }
-                Err(TryLockError::WouldBlock) => Response::coded_error(
-                    DaemonErrorCode::Busy,
-                    "another Nano operation is already in progress",
-                ),
-                Err(TryLockError::Poisoned(_)) => {
-                    Response::error("Nano transport lock is unavailable")
-                }
-            },
-            Request::NanoSetBypass { target, bypassed } => match self.transport.try_lock() {
-                Ok(transport) => {
-                    self.mark_attempted();
-                    if let Err(error) = transport.write_bypass(target, bypassed) {
-                        self.mark_failed(&error);
-                        return Response::cortex_error(&error);
-                    }
-                    std::thread::sleep(self.amp_settle);
-                    match transport.read_state(Duration::from_secs(5)) {
-                        Ok(state) => {
-                            let actual = state
-                                .slots
-                                .iter()
-                                .find(|slot| slot.role == target.role())
-                                .and_then(|slot| slot.bypassed);
-                            let confirmed = actual == Some(bypassed);
-                            self.replace_snapshot(state.clone());
-                            if confirmed {
-                                Response::ok(&state)
-                                    .unwrap_or_else(|error| Response::error(error.to_string()))
-                            } else {
-                                Response::coded_error(
-                                    DaemonErrorCode::OutcomeUnconfirmed,
-                                    format!(
-                                        "Nano bypass write did not read back: expected {bypassed}, got {actual:?}"
-                                    ),
-                                )
-                            }
-                        }
-                        Err(error) => {
-                            self.mark_failed(&error);
-                            Response::cortex_error(&error)
-                        }
-                    }
-                }
-                Err(TryLockError::WouldBlock) => Response::coded_error(
-                    DaemonErrorCode::Busy,
-                    "another Nano operation is already in progress",
-                ),
-                Err(TryLockError::Poisoned(_)) => {
-                    Response::error("Nano transport lock is unavailable")
-                }
-            },
-            Request::NanoReadFxParams { slot } => match self.transport.try_lock() {
-                Ok(transport) => {
+                        })
+                    },
+                )
+            }),
+            Request::NanoSetBypass { target, bypassed } => self.with_operation(|transport| {
+                self.write_state_and_confirm(
+                    transport,
+                    self.amp_settle,
+                    |transport| transport.write_bypass(target, bypassed),
+                    |state| {
+                        let actual = state
+                            .slots
+                            .iter()
+                            .find(|slot| slot.role == target.role())
+                            .and_then(|slot| slot.bypassed);
+                        (actual != Some(bypassed)).then(|| {
+                            format!(
+                                "Nano bypass write did not read back: expected {bypassed}, got {actual:?}"
+                            )
+                        })
+                    },
+                )
+            }),
+            Request::NanoReadFxParams { slot } => self.with_operation(|transport| {
                     self.mark_attempted();
                     match transport.read_fx_params(slot, Duration::from_secs(5)) {
                         Ok(values) => {
@@ -1592,60 +1622,14 @@ impl<T: NanoOperations> NanoDaemon<T> {
                             Response::cortex_error(&error)
                         }
                     }
-                }
-                Err(TryLockError::WouldBlock) => Response::coded_error(
-                    DaemonErrorCode::Busy,
-                    "another Nano operation is already in progress",
-                ),
-                Err(TryLockError::Poisoned(_)) => {
-                    Response::error("Nano transport lock is unavailable")
-                }
-            },
+            }),
             Request::NanoSetFxParam {
                 slot,
                 param_index,
                 value,
-            } => match self.transport.try_lock() {
-                Ok(transport) => {
-                    self.mark_attempted();
-                    if let Err(error) = transport.write_fx_param(slot, param_index, value) {
-                        self.mark_failed(&error);
-                        return Response::cortex_error(&error);
-                    }
-                    std::thread::sleep(self.fx_settle);
-                    match transport.read_fx_params(slot, Duration::from_secs(5)) {
-                        Ok(values)
-                            if param_index < values.len() as u8
-                                && (values[param_index as usize] - value).abs() < 0.001 =>
-                        {
-                            self.mark_message_received();
-                            Response::ok(&values)
-                                .unwrap_or_else(|error| Response::error(error.to_string()))
-                        }
-                        Ok(values) => {
-                            self.mark_message_received();
-                            let actual = values.get(param_index as usize).copied();
-                            Response::coded_error(
-                                DaemonErrorCode::OutcomeUnconfirmed,
-                                format!(
-                                    "Nano FX param write did not read back: expected {value}, got {actual:?}"
-                                ),
-                            )
-                        }
-                        Err(error) => {
-                            self.mark_failed(&error);
-                            Response::cortex_error(&error)
-                        }
-                    }
-                }
-                Err(TryLockError::WouldBlock) => Response::coded_error(
-                    DaemonErrorCode::Busy,
-                    "another Nano operation is already in progress",
-                ),
-                Err(TryLockError::Poisoned(_)) => {
-                    Response::error("Nano transport lock is unavailable")
-                }
-            },
+            } => self.with_operation(|transport| {
+                self.write_fx_and_confirm(transport, slot, param_index, value)
+            }),
             Request::Shutdown => Response::ok(&serde_json::json!({ "stopping": true }))
                 .unwrap_or_else(|error| Response::error(error.to_string())),
             _ => Response::coded_error(
