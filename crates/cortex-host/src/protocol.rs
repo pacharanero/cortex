@@ -39,7 +39,7 @@ use cortex_rs::{DeviceKind, RecallConsent};
 /// Bump this whenever a `Request` variant changes shape or a new variant is
 /// added. A client that sees a mismatch refuses with an actionable message
 /// rather than sending a request the daemon will misparse.
-pub const DAEMON_PROTOCOL_VERSION: u32 = 16;
+pub const DAEMON_PROTOCOL_VERSION: u32 = 17;
 
 /// A request from a client to the daemon.
 ///
@@ -68,6 +68,20 @@ pub enum Request {
         target: cortex_rs::nano::NanoBypassTarget,
         /// `true` to bypass, `false` to engage.
         bypassed: bool,
+    },
+    /// Read FX parameter values for one editable Nano slot.
+    NanoReadFxParams {
+        /// Typed FX slot (Pre FX 1-2, Post FX 1-3).
+        slot: cortex_rs::nano::NanoFxSlot,
+    },
+    /// Set one Nano FX parameter and verify it through a fresh read.
+    NanoSetFxParam {
+        /// Typed FX slot (Pre FX 1-2, Post FX 1-3).
+        slot: cortex_rs::nano::NanoFxSlot,
+        /// Parameter index within the slot's model.
+        param_index: u8,
+        /// Normalized 0.0-1.0 value.
+        value: f32,
     },
     /// Device firmware and identity.
     Version,
@@ -731,6 +745,11 @@ mod tests {
             text,
             r#"{"op":"nano_set_bypass","target":"pre_fx1","bypassed":true}"#
         );
+        let text = serde_json::to_string(&Request::NanoReadFxParams {
+            slot: cortex_rs::nano::NanoFxSlot::PostFx1,
+        })
+        .unwrap();
+        assert_eq!(text, r#"{"op":"nano_read_fx_params","slot":"post_fx1"}"#);
     }
 
     #[test]

@@ -236,6 +236,145 @@ pub fn write_bypass(transport: &Transport, target: NanoBypassTarget, bypassed: b
     transport.write(&build_set_bypass(target, bypassed))
 }
 
+/// One of the Nano's five editable FX slots, addressable by the parameter
+/// refresh and write commands. The wire index maps to the fixed chain order:
+/// 0 = Pre FX 1, 1 = Pre FX 2, 2 = Post FX 1, 3 = Post FX 2, 4 = Post FX 3.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NanoFxSlot {
+    /// First pre effect.
+    PreFx1,
+    /// Second pre effect.
+    PreFx2,
+    /// First post effect.
+    PostFx1,
+    /// Second post effect.
+    PostFx2,
+    /// Third post effect.
+    PostFx3,
+}
+
+impl NanoFxSlot {
+    const fn wire_id(self) -> u8 {
+        match self {
+            Self::PreFx1 => 0,
+            Self::PreFx2 => 1,
+            Self::PostFx1 => 2,
+            Self::PostFx2 => 3,
+            Self::PostFx3 => 4,
+        }
+    }
+
+    /// Corresponding fixed-chain role.
+    #[must_use]
+    pub const fn role(self) -> NanoSlotRole {
+        match self {
+            Self::PreFx1 => NanoSlotRole::PreFx1,
+            Self::PreFx2 => NanoSlotRole::PreFx2,
+            Self::PostFx1 => NanoSlotRole::PostFx1,
+            Self::PostFx2 => NanoSlotRole::PostFx2,
+            Self::PostFx3 => NanoSlotRole::PostFx3,
+        }
+    }
+}
+
+/// Footer on a Nano FX parameter refresh response.
+#[allow(dead_code)]
+const FX_PARAM_REFRESH_FOOTER: NanoFooter = NanoFooter([0x8a, 0x00, 0x00, 0x00]);
+
+/// Build the Nano application body that requests an FX parameter refresh for
+/// one editable slot. The device returns normalized f32 parameter values.
+#[must_use]
+pub fn build_fx_param_refresh(slot: NanoFxSlot) -> [u8; 8] {
+    [0x08, 0x03, 0x18, slot.wire_id(), 0x89, 0x00, 0x00, 0x00]
+}
+
+/// Build the Nano application body that sets one FX parameter to a normalized
+/// 0.0-1.0 value. The value is clamped before encoding.
+#[must_use]
+pub fn build_fx_param_write(slot: NanoFxSlot, param_index: u8, normalized: f32) -> Vec<u8> {
+    let value = if normalized.is_finite() {
+        normalized.clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    let mut body = vec![0x08, 0x01, 0x18, slot.wire_id(), 0x20, param_index, 0x2d];
+    body.extend(value.to_le_bytes());
+    body.extend([0x63, 0x00, 0x00, 0x00]);
+    body
+}
+
+/// Read and decode FX parameter values for one editable slot from an open
+/// Nano transport. Returns normalized 0.0-1.0 f32 values, one per parameter
+/// the loaded model exposes. The number of values varies by model.
+///
+/// # Errors
+///
+/// Returns a transport, framing, timeout, or decode error. A transport opened
+/// for another device is rejected before any write.
+#[cfg(feature = "hid")]
+pub fn read_fx_params(
+    transport: &Transport,
+    slot: NanoFxSlot,
+    timeout: std::time::Duration,
+) -> Result<Vec<f32>> {
+    if transport.device_kind() != crate::DeviceKind::NanoCortex {
+        return Err(Error::UnsupportedDeviceOperation {
+            device: transport.device_kind(),
+            operation: "Nano FX parameter refresh",
+        });
+    }
+    transport.write(&build_fx_param_refresh(slot))?;
+    let deadline = std::time::Instant::now() + timeout;
+    let mut reassembler = FrameReassembler::new();
+    loop {
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        if remaining.is_zero() {
+            return Err(Error::ReadTimeout(timeout));
+        }
+        let report = transport.read(remaining)?;
+        let frame = Frame::parse(&report)?;
+        if let Some(message) = reassembler.feed(&frame)? {
+            // The refresh reply shape: 08 06 22 <len> <f32 values...> <footer>
+            if message.len() >= 4 && message[0] == 0x08 && message[1] == 0x06 && message[2] == 0x22
+            {
+                let val_len = message[3] as usize;
+                if val_len > 0 && val_len % 4 == 0 && message.len() >= 4 + val_len {
+                    return Ok(message[4..4 + val_len]
+                        .chunks_exact(4)
+                        .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+                        .collect());
+                }
+            }
+            // Skip unrelated messages (ack footers, etc.)
+        }
+    }
+}
+
+/// Send one Nano FX parameter write. The device does not acknowledge; callers
+/// must verify with a separate [`read_fx_params`] request before reporting
+/// success.
+///
+/// # Errors
+///
+/// Returns a transport error, or rejects a transport opened for another
+/// device before any write.
+#[cfg(feature = "hid")]
+pub fn write_fx_param(
+    transport: &Transport,
+    slot: NanoFxSlot,
+    param_index: u8,
+    normalized: f32,
+) -> Result<()> {
+    if transport.device_kind() != crate::DeviceKind::NanoCortex {
+        return Err(Error::UnsupportedDeviceOperation {
+            device: transport.device_kind(),
+            operation: "Nano FX parameter write",
+        });
+    }
+    transport.write(&build_fx_param_write(slot, param_index, normalized))
+}
+
 fn push_varint(output: &mut Vec<u8>, mut value: u64) {
     loop {
         let mut byte = (value & 0x7f) as u8;
@@ -734,6 +873,37 @@ mod tests {
             build_set_bypass(NanoBypassTarget::Gate, true),
             [0x08, 1, 0x18, 9, 0x20, 1, 0x1f, 0, 0, 0]
         );
+    }
+
+    #[test]
+    fn fx_param_refresh_builder_uses_typed_slot_ids() {
+        assert_eq!(
+            build_fx_param_refresh(NanoFxSlot::PreFx1),
+            [0x08, 0x03, 0x18, 0, 0x89, 0, 0, 0]
+        );
+        assert_eq!(
+            build_fx_param_refresh(NanoFxSlot::PostFx3),
+            [0x08, 0x03, 0x18, 4, 0x89, 0, 0, 0]
+        );
+    }
+
+    #[test]
+    fn fx_param_write_builder_encodes_little_endian_float_with_footer_63() {
+        let body = build_fx_param_write(NanoFxSlot::PostFx1, 0, 0.5);
+        assert_eq!(
+            body,
+            vec![
+                0x08, 0x01, 0x18, 2, 0x20, 0, 0x2d, 0x00, 0x00, 0x00, 0x3f, 0x63, 0, 0, 0
+            ]
+        );
+    }
+
+    #[test]
+    fn fx_param_write_clamps_out_of_range_values() {
+        let high = build_fx_param_write(NanoFxSlot::PreFx1, 1, 2.0);
+        assert_eq!(&high[7..11], &1.0f32.to_le_bytes());
+        let low = build_fx_param_write(NanoFxSlot::PreFx1, 1, -1.0);
+        assert_eq!(&low[7..11], &0.0f32.to_le_bytes());
     }
 
     #[test]

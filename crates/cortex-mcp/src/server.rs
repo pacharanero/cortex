@@ -360,6 +360,14 @@ impl CortexMcp {
                 target: serde_json::from_value(required(args, "target")?.clone())?,
                 bypassed: bool_arg(args, "bypassed", false)?,
             },
+            "read_nano_fx_params" => Request::NanoReadFxParams {
+                slot: serde_json::from_value(required(args, "slot")?.clone())?,
+            },
+            "set_nano_fx_param" => Request::NanoSetFxParam {
+                slot: serde_json::from_value(required(args, "slot")?.clone())?,
+                param_index: bounded_u32(args, "param_index", 0, 255)? as u8,
+                value: f32_arg(args, "value")?,
+            },
             "copy_scene" => Request::CopyScene {
                 from_scene: bounded_u32(args, "from_scene", 0, 7)?,
                 to_scene: bounded_u32(args, "to_scene", 0, 7)?,
@@ -562,6 +570,13 @@ fn bounded_u32(args: &Value, name: &str, min: u32, max: u32) -> Result<u32> {
     let value = u32_arg(args, name)?;
     anyhow::ensure!((min..=max).contains(&value), "{name} must be {min}-{max}");
     Ok(value)
+}
+
+fn f32_arg(args: &Value, name: &str) -> Result<f32> {
+    let value = required(args, name)?
+        .as_f64()
+        .with_context(|| format!("{name} must be a number"))?;
+    Ok(value as f32)
 }
 fn optional_bounded_u32(args: &Value, name: &str, min: u32, max: u32) -> Result<Option<u32>> {
     match args.get(name) {

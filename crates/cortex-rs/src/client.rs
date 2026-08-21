@@ -2948,8 +2948,7 @@ impl QuadCortex {
             timeout,
             move |message| {
                 prost::Message::decode(message.body.as_ref())
-                    .ok()
-                    .is_some_and(|decoded: T| predicate(&decoded))
+                    .is_ok_and(|decoded: T| predicate(&decoded))
             },
         )?;
         prost::Message::decode(reply.body.as_ref())
@@ -2977,11 +2976,9 @@ impl QuadCortex {
             || self.session.send(MessageType::File, &payload),
             timeout,
             move |message| {
-                prost::Message::decode(message.body.as_ref())
-                    .ok()
-                    .is_some_and(|file: FileMessage| {
-                        matches_library_listing(&file, request_id, &match_key)
-                    })
+                prost::Message::decode(message.body.as_ref()).is_ok_and(|file: FileMessage| {
+                    matches_library_listing(&file, request_id, &match_key)
+                })
             },
         )?;
         let decoded: FileMessage = prost::Message::decode(reply.body.as_ref())
@@ -3198,11 +3195,9 @@ impl QuadCortex {
             || self.session.send(MessageType::RecentsFavorites, &payload),
             timeout,
             move |inbound| {
-                prost::Message::decode(inbound.body.as_ref())
-                    .ok()
-                    .is_some_and(|echo: RecentsFavoritesMessage| {
-                        matches_favorite_echo(&echo, action, &target)
-                    })
+                prost::Message::decode(inbound.body.as_ref()).is_ok_and(
+                    |echo: RecentsFavoritesMessage| matches_favorite_echo(&echo, action, &target),
+                )
             },
         )?;
         Ok(())
@@ -3977,17 +3972,15 @@ impl QuadCortex {
         let payload = prost::Message::encode_to_vec(&request);
 
         let match_key = wanted.clone();
-        let reply =
-            self.session.await_broadcast(
-                MessageType::File,
-                || self.session.send(MessageType::File, &payload),
-                timeout,
-                move |m| {
-                    prost::Message::decode(m.body.as_ref()).ok().is_some_and(
-                        |message: FileMessage| matches_setlist_listing(&message, &match_key),
-                    )
-                },
-            )?;
+        let reply = self.session.await_broadcast(
+            MessageType::File,
+            || self.session.send(MessageType::File, &payload),
+            timeout,
+            move |m| {
+                prost::Message::decode(m.body.as_ref())
+                    .is_ok_and(|message: FileMessage| matches_setlist_listing(&message, &match_key))
+            },
+        )?;
 
         let decoded: FileMessage = prost::Message::decode(reply.body.as_ref())
             .map_err(|e| crate::Error::Decode(format!("FileMessage: {e}")))?;
@@ -4062,8 +4055,7 @@ impl QuadCortex {
             window,
             |message| {
                 prost::Message::decode(message.body.as_ref())
-                    .ok()
-                    .is_some_and(|file: FileMessage| file.action == MessageAction::Update as i32)
+                    .is_ok_and(|file: FileMessage| file.action == MessageAction::Update as i32)
             },
         )?;
 
@@ -4268,8 +4260,7 @@ impl QuadCortex {
             deadline.saturating_duration_since(Instant::now()),
             move |message| {
                 prost::Message::decode(message.body.as_ref())
-                    .ok()
-                    .is_some_and(|file: FileMessage| matches_save_ack(&file, &wanted, index))
+                    .is_ok_and(|file: FileMessage| matches_save_ack(&file, &wanted, index))
             },
         )?;
 
@@ -4624,10 +4615,7 @@ impl QuadCortex {
             timeout,
             move |message| {
                 prost::Message::decode(message.body.as_ref())
-                    .ok()
-                    .is_some_and(|file: FileMessage| {
-                        matches_delete_ack(&file, &wanted, &target_key)
-                    })
+                    .is_ok_and(|file: FileMessage| matches_delete_ack(&file, &wanted, &target_key))
             },
         )?;
         Ok(())

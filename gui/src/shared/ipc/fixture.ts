@@ -226,6 +226,8 @@ export const fixtureApi: CortexApi = {
     const slot = nanoState.slots.find((s) => s.role === target);
     if (slot) slot.bypassed = bypassed;
   },
+  async readNanoFxParams(_slot) { return [0.5, 0.25, 0.75, 0.0, 1.0]; },
+  async setNanoFxParam(_slot, _paramIndex, _value) {},
   async setDevice(_device) {},
   async blockParameters(row: number, column: number) {
     if (row < 0 || row > 3 || column < 0 || column > 7) throw new Error(`row ${row}, column ${column} is outside the grid`);
