@@ -109,15 +109,24 @@ export function NanoChain({ state, onSetAmp, onSetBypass, onReadFxParams, onSetF
   return <Stack gap="md">
     <Group justify="space-between">
       <div><Text c="dimmed" size="sm">Fixed signal chain</Text><Title order={3}>Nano Cortex</Title></div>
-      <Badge color="orange" variant="outline">Amp and bypass editing hardware verified</Badge>
+      <Badge color="orange" variant="outline">Amp, bypass and FX paths hardware verified</Badge>
     </Group>
     <SimpleGrid cols={{ base: 2, sm: 4, lg: 8 }} spacing="xs">
       {state.slots.map((slot) => {
         const fxSlot = fxSlots.find((f) => f.role === slot.role);
-        const isSelected = fxSlot && selectedSlot === fxSlot.slot;
+        const isSelected = fxSlot?.slot === selectedSlot;
         return <Paper key={slot.role} p="sm" withBorder data-bypassed={slot.bypassed || undefined}
+          aria-pressed={fxSlot ? isSelected : undefined}
+          role={fxSlot ? "button" : undefined}
           style={fxSlot ? { cursor: "pointer", borderColor: isSelected ? "var(--mantine-color-blue-5)" : undefined } : undefined}
-          onClick={fxSlot ? () => void loadFxParams(fxSlot.slot) : undefined}>
+          tabIndex={fxSlot ? 0 : undefined}
+          onClick={fxSlot ? () => void loadFxParams(fxSlot.slot) : undefined}
+          onKeyDown={fxSlot ? (event) => {
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
+              void loadFxParams(fxSlot.slot);
+            }
+          } : undefined}>
           <Text c="dimmed" fw={700} size="xs" tt="uppercase">{roleNames[slot.role]}</Text>
           <Text fw={600} mt="xs">{slot.loaded_name ?? (slot.model_id == null ? "Assigned by device" : `Model ${slot.model_id}`)}</Text>
           <Text c={slot.bypassed ? "orange" : "dimmed"} size="xs">
@@ -175,7 +184,7 @@ export function NanoChain({ state, onSetAmp, onSetBypass, onReadFxParams, onSetF
           <Button disabled={busy !== null || Math.abs((fxDraft[i] ?? value) - value) < 0.0005} loading={busy === `fx-write:${selectedSlot}:${i}`} onClick={() => selectedSlot && void applyFxParam(selectedSlot, i)} size="xs">Apply</Button>
         </Group>)}
       </SimpleGrid>
-      <Text c="dimmed" mt="sm" size="xs">The core, daemon/CLI and Tauri backend normalized 0.0-1.0 path is hardware-verified; this rendered control still awaits its own hardware smoke. Values vary by loaded model.</Text>
+      <Text c="dimmed" mt="sm" size="xs">The normalized 0.0-1.0 path and this rendered Linux control are hardware-verified with device read-back and restoration. Values vary by loaded model.</Text>
     </Paper>}
     {error && <Alert color="red" title="Nano write failed">{error}</Alert>}
   </Stack>;

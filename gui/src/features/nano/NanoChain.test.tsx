@@ -53,4 +53,27 @@ describe("NanoChain", () => {
 
     expect((screen.getByLabelText("Gain") as HTMLInputElement).value).toBe("121");
   });
+
+  it("opens an FX parameter inspector from the keyboard", async () => {
+    const onReadFxParams = vi.fn(async () => [0.5]);
+    render(
+      <MantineProvider>
+        <NanoChain
+          onReadFxParams={onReadFxParams}
+          onSetAmp={vi.fn(async () => {})}
+          onSetBypass={vi.fn(async () => {})}
+          onSetFxParam={vi.fn(async () => {})}
+          state={{
+            ...state,
+            slots: [{ role: "pre_fx1", loaded_name: null, model_id: 1001, bypassed: false }],
+          }}
+        />
+      </MantineProvider>,
+    );
+
+    fireEvent.keyDown(screen.getByRole("button", { name: /Pre FX 1/i }), { key: "Enter" });
+
+    expect(onReadFxParams).toHaveBeenCalledWith("pre_fx1");
+    expect(await screen.findByText("Param 0")).toBeTruthy();
+  });
 });
