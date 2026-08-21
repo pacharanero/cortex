@@ -339,10 +339,25 @@ fn read_fx_params_from_link(
     slot: NanoFxSlot,
     timeout: std::time::Duration,
 ) -> Result<Vec<f32>> {
-    for report in crate::framing::encode_reports(
-        crate::framing::HidReportGeometry::NANO_CORTEX,
-        &build_fx_param_refresh(slot),
-    ) {
+    write_nano_message(link, &build_fx_param_refresh(slot))?;
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        if remaining.is_zero() {
+            return Err(Error::ReadTimeout(timeout));
+        }
+        let message = read_nano_message(link, remaining)?;
+        if let Some(values) = decode_fx_param_refresh_response(&message)? {
+            return Ok(values);
+        }
+        // Skip unrelated messages (ack footers, etc.)
+    }
+}
+
+fn write_nano_message(link: &impl HidLink, message: &[u8]) -> Result<()> {
+    for report in
+        crate::framing::encode_reports(crate::framing::HidReportGeometry::NANO_CORTEX, message)
+    {
         let written = link.write(&report)?;
         if written != report.len() {
             return Err(Error::Hid(format!(
@@ -351,6 +366,10 @@ fn read_fx_params_from_link(
             )));
         }
     }
+    Ok(())
+}
+
+fn read_nano_message(link: &impl HidLink, timeout: std::time::Duration) -> Result<Vec<u8>> {
     let deadline = std::time::Instant::now() + timeout;
     let mut reassembler = FrameReassembler::new();
     loop {
@@ -366,12 +385,8 @@ fn read_fx_params_from_link(
             continue;
         }
         report.truncate(read);
-        let frame = Frame::parse(&report)?;
-        if let Some(message) = reassembler.feed(&frame)? {
-            if let Some(values) = decode_fx_param_refresh_response(&message)? {
-                return Ok(values);
-            }
-            // Skip unrelated messages (ack footers, etc.)
+        if let Some(message) = reassembler.feed(&Frame::parse(&report)?)? {
+            return Ok(message);
         }
     }
 }
@@ -649,25 +664,21 @@ pub fn read_current_state(
         });
     }
 
-    transport.write(&CURRENT_STATE_REQUEST)?;
+    write_nano_message(transport.raw_device(), &CURRENT_STATE_REQUEST)?;
     let deadline = std::time::Instant::now() + timeout;
-    let mut reassembler = FrameReassembler::new();
     loop {
         let remaining = deadline.saturating_duration_since(std::time::Instant::now());
         if remaining.is_zero() {
             return Err(Error::ReadTimeout(timeout));
         }
-        let report = transport.read(remaining)?;
-        let frame = Frame::parse(&report)?;
-        if let Some(message) = reassembler.feed(&frame)? {
-            let (_, footer) = split_envelope(&message)?;
-            if footer == CURRENT_STATE_RESPONSE_FOOTER || footer == CONFIRMATION_FOOTER {
-                return decode_current_state(&message);
-            }
-            // A write response can remain queued ahead of the requested state
-            // response. It has its own command footer and is not a decode
-            // failure for this request.
+        let message = read_nano_message(transport.raw_device(), remaining)?;
+        let (_, footer) = split_envelope(&message)?;
+        if footer == CURRENT_STATE_RESPONSE_FOOTER || footer == CONFIRMATION_FOOTER {
+            return decode_current_state(&message);
         }
+        // A write response can remain queued ahead of the requested state
+        // response. It has its own command footer and is not a decode failure
+        // for this request.
     }
 }
 
