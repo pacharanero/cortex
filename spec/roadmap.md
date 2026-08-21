@@ -337,7 +337,6 @@ The cross-surface audit found behavioural gaps and structural duplication in the
 - [ ] **ENG-007.6**: Reduce repeated Nano lock/write/read-back handlers in the daemon only after the individual operation semantics have regression coverage. The helper must retain each operation's distinct settle time, confirmation predicate and cached-state consequence
 - [ ] **ENG-007.7**: Review device-switching lifecycle ownership in the Tauri backend. A cancelled or superseded switch must not let a detached process or stale health task overwrite the selected device's current state
 - [ ] **ENG-007.8**: Replace the hand-maintained Rust/TypeScript IPC mirror with a generated or compiler-checked contract only if it can keep the Rust-owned serialisable types and bounded Tauri boundary. Do not introduce a second behavioural implementation in the webview
-- [ ] **ENG-007.9**: Keep the public GUI guide aligned with the delivered Nano surface, including the FX parameter inspector and any verified-vs-provisional labels
 
 ### NANO-001: Nano Cortex over USB HID
 

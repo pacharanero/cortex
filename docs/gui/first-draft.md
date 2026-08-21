@@ -2,7 +2,7 @@
 
 The desktop GUI is one of the toolkit's three user-facing interfaces alongside the CLI and MCP server. Its destination is one open-source editor for Quad Cortex and Nano Cortex on Linux, Windows and macOS over the same Rust transport and host foundation, not separate applications that reimplement device behaviour. Shared infrastructure will remain shared, while the Quad's grid and the Nano's fixed signal chain retain honest device-specific domain models and screens.
 
-The current first draft supports working Quad and Nano surfaces through one managed Rust backend. Quad mode reads status, grid, active scene, CPU and populated preset slots and exposes non-persistent recall, scene, parameter and bypass controls. Nano mode renders the fixed eight-role signal chain and exposes explicit Apply controls for the five raw amp values from the typed, paced daemon snapshot; it deliberately does not force those roles into the Quad grid model. Neither mode opens a second HID connection.
+The current first draft supports working Quad and Nano surfaces through one managed Rust backend. Quad mode reads status, grid, active scene, CPU and populated preset slots and exposes non-persistent recall, scene, parameter and bypass controls. Nano mode renders the fixed eight-role signal chain, exposes explicit Apply controls for the five raw amp values from the typed, paced daemon snapshot, and provides an FX parameter inspector with clearly provisional writes; it deliberately does not force those roles into the Quad grid model. Neither mode opens a second HID connection.
 
 Linux is the first and only hardware-verified baseline today because Neural DSP has not provided Cortex Control for Linux and this community project began by filling that gap for ourselves. Windows and macOS transport, local IPC, packaging and hardware testing remain outstanding; the project will not describe them as supported until that evidence exists.
 
@@ -12,7 +12,7 @@ It adapts the mockable IPC-boundary architecture of `rixrix/deskop-nano-cortex` 
 
 Install the platform's [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/), then install frontend dependencies in `gui/`.
 
-- **Daemon-backed mode**, the real thing: run `s/gui-dev` from anywhere in the repository. The GUI reuses an existing compatible held session or starts an auto-managed one itself, trying Quad and then Nano when no session exists. If both products are connected, this first implementation selects Quad; an explicit in-GUI device selector remains outstanding.
+- **Daemon-backed mode**, the real thing: run `s/gui-dev` from anywhere in the repository. The GUI reuses an existing compatible held session or starts an auto-managed one itself, trying Quad and then Nano when no session exists. The header device selector can explicitly choose Quad, Nano, or Auto-detect; choosing a different device replaces the existing held session.
 - **Browser fixture mode**, for frontend development without hardware: run `npm run dev` or `npm run dev:fixture` inside `gui/`. This serves fictional development data in an ordinary browser tab, with no Tauri backend and no daemon. Add `?device=nano` to the browser URL for the fictional Nano fixture.
 - Run `npm run check` inside `gui/` to type-check and build both adapters.
 
@@ -53,6 +53,8 @@ When the held daemon owns a Nano Cortex, the GUI renders the fixed eight-role si
 Each Apply sends the typed amp write to the daemon, which paces a fresh state read after the device's measured six-second settle and confirms the value read back exactly before returning. The control stays disabled during that round-trip, so a second Apply cannot race the first, and the panel re-reads device state rather than displaying an optimistic value. The whole cycle changes heard working state and saves nothing.
 
 Gate/FX bypass is also exposed: a Switch control for each of the six addressable roles (Gate, Pre FX 1-2, Post FX 1-3) toggles bypass on or off. Like amp writes, each toggle sends the typed bypass write to the daemon, which paces a fresh state read after the device's measured six-second settle and confirms the new value before returning. The whole cycle changes heard working state and saves nothing.
+
+Selecting an FX panel opens its parameter inspector. The inspector first requests the model's normalized parameter values and only enables **Apply** once they are available. Its typed read and write paths are offline-tested, but have not yet been hardware-verified. They are therefore labelled provisional and must not be treated as a confirmation that an edit reached or persisted on a connected Nano. Amp and bypass controls have the hardware verification described above; no Nano operation saves a preset.
 
 One decoder caveat: the Gate's "on" state is represented by the absence of field 54 in the state protobuf, so the decoder reports `bypassed = None` (unknown) when the gate is on rather than `Some(false)`. The bypass toggle for the Gate is therefore disabled in the UI when the state reads as unknown; this is a decoder limitation, not a write failure, and the write itself still works.
 
