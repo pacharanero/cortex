@@ -14,10 +14,11 @@
 //! @see spec/roadmap.md [NANO-001.3]
 //! @see spec/110-framing/design.md
 
-use crate::{Error, Result};
+use crate::{Error, Result, link::HidLink};
 
 #[cfg(feature = "hid")]
-use crate::{Frame, FrameReassembler, Transport};
+use crate::Transport;
+use crate::{Frame, FrameReassembler};
 
 /// Hardware-verified read-only request for the complete Nano current state.
 ///
@@ -324,7 +325,32 @@ pub fn read_fx_params(
             operation: "Nano FX parameter refresh",
         });
     }
-    transport.write(&build_fx_param_refresh(slot))?;
+    read_fx_params_from_link(transport.raw_device(), slot, timeout)
+}
+
+/// Read Nano FX parameters through a raw HID link.
+///
+/// This is deliberately link-based so the Nano-specific envelope can be
+/// regression-tested without a physical device. Callers that own a
+/// [`Transport`] must use [`read_fx_params`], which first verifies the device
+/// family.
+fn read_fx_params_from_link(
+    link: &impl HidLink,
+    slot: NanoFxSlot,
+    timeout: std::time::Duration,
+) -> Result<Vec<f32>> {
+    for report in crate::framing::encode_reports(
+        crate::framing::HidReportGeometry::NANO_CORTEX,
+        &build_fx_param_refresh(slot),
+    ) {
+        let written = link.write(&report)?;
+        if written != report.len() {
+            return Err(Error::Hid(format!(
+                "short HID write: wrote {written} of {} bytes",
+                report.len()
+            )));
+        }
+    }
     let deadline = std::time::Instant::now() + timeout;
     let mut reassembler = FrameReassembler::new();
     loop {
@@ -332,7 +358,14 @@ pub fn read_fx_params(
         if remaining.is_zero() {
             return Err(Error::ReadTimeout(timeout));
         }
-        let report = transport.read(remaining)?;
+        let mut report = vec![0; crate::framing::HidReportGeometry::NANO_CORTEX.report_len()];
+        let timeout_ms =
+            i32::try_from(remaining.as_millis().min(i32::MAX as u128)).unwrap_or(i32::MAX);
+        let read = link.read_timeout(&mut report, timeout_ms)?;
+        if read == 0 {
+            continue;
+        }
+        report.truncate(read);
         let frame = Frame::parse(&report)?;
         if let Some(message) = reassembler.feed(&frame)? {
             if let Some(values) = decode_fx_param_refresh_response(&message)? {
@@ -801,7 +834,9 @@ fn gate_reduction_from_dump_value(value: f32) -> Option<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Frame, FrameReassembler, HidReportGeometry, framing::encode_reports};
+    use crate::{
+        Frame, FrameReassembler, HidReportGeometry, framing::encode_reports, link::FakeLink,
+    };
 
     fn varint(mut value: u64) -> Vec<u8> {
         let mut bytes = Vec::new();
@@ -936,6 +971,36 @@ mod tests {
             decode_fx_param_refresh_response(&[0x08, 0x01]),
             Ok(None)
         ));
+    }
+
+    #[test]
+    fn fx_param_refresh_uses_the_hid_link_and_skips_unrelated_messages() {
+        let link = FakeLink::new();
+        let unrelated = encode_reports(HidReportGeometry::NANO_CORTEX, &[0x08, 0x01, 0, 0, 0, 0]);
+        let mut response = vec![0x08, 0x06, 0x22, 4];
+        response.extend(0.5_f32.to_le_bytes());
+        response.extend(FX_PARAM_REFRESH_FOOTER.0);
+        let response = encode_reports(HidReportGeometry::NANO_CORTEX, &response);
+        for report in unrelated.into_iter().chain(response) {
+            link.push_inbound(report);
+        }
+
+        assert_eq!(
+            read_fx_params_from_link(
+                &link,
+                NanoFxSlot::PostFx1,
+                std::time::Duration::from_millis(20)
+            )
+            .unwrap(),
+            vec![0.5]
+        );
+        assert_eq!(
+            link.written(),
+            encode_reports(
+                HidReportGeometry::NANO_CORTEX,
+                &build_fx_param_refresh(NanoFxSlot::PostFx1)
+            )
+        );
     }
 
     #[test]

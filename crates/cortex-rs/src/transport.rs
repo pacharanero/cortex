@@ -86,6 +86,12 @@ impl Transport {
         self.kind
     }
 
+    /// The raw HID link for Nano's distinct application-envelope codec.
+    #[cfg(feature = "hid")]
+    pub(crate) fn raw_device(&self) -> &hidapi::HidDevice {
+        &self.device
+    }
+
     /// Send an already-formed host-to-device body using this device's report
     /// geometry and the shared FIRST/LAST/COMPLETE/MIDDLE flags.
     ///

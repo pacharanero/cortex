@@ -282,6 +282,10 @@ Kept rather than deleted: many carry the measurement that settled a question, an
 
 ## Engineering (ENG) - later additions
 
+### ENG-007: Audit follow-up
+
+- [x] **ENG-007.4**: Nano FX parameter refresh now performs its raw report write/read/reassembly through the existing `HidLink` seam, while the public `Transport` entry point still checks that the held device is Nano before access. A `FakeLink` test proves the exact request frames, unrelated-message skipping and successful response decode without USB hardware. The strict decoder validates the measured `8A 00 00 00` footer and rejects malformed length/footer shapes. The response has no slot or request ID, so the held daemon serializes operations but cannot distinguish a delayed earlier refresh from the requested slot's response; this limit is documented in `docs/nano-cortex-hid.md`
+
 - [x] **ENG-001.y**: **A fake transport, so everything above the wire is testable.** `link::HidLink` is the seam - two operations, `write` and `read_timeout`, which is all `Session` ever needed - with `FakeLink` behind a `test-support` feature. `Session::over` takes any link; `Session::open` is that with a real device attached.
   - Coverage: `session.rs` **42.7% -> 71.5%**, workspace **40.0% -> 46.0%**.
   - Five tests pin behaviour that previously only hardware could check, and that has already shipped bugs: a waiting writer is not starved by the RX loop (the fake is *saturated* so reads always return immediately, which is the only condition under which the race is lost), a reassembled message reaches its waiter, keepalives go out about once a second, silence means nothing until the device has spoken, and a malformed report does not stop the loop.
