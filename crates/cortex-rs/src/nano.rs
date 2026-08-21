@@ -22,7 +22,7 @@ use crate::link::HidLink;
 #[cfg(feature = "hid")]
 use crate::Transport;
 #[cfg(any(feature = "hid", test))]
-use crate::{Frame, FrameReassembler};
+use crate::link::read_message;
 
 /// Hardware-verified read-only request for the complete Nano current state.
 ///
@@ -351,7 +351,11 @@ fn read_fx_params_from_link(
         if remaining.is_zero() {
             return Err(Error::ReadTimeout(timeout));
         }
-        let message = read_nano_message(link, remaining)?;
+        let message = read_message(
+            link,
+            crate::framing::HidReportGeometry::NANO_CORTEX,
+            remaining,
+        )?;
         if let Some(values) = decode_fx_param_refresh_response(&message)? {
             return Ok(values);
         }
@@ -373,29 +377,6 @@ fn write_nano_message(link: &impl HidLink, message: &[u8]) -> Result<()> {
         }
     }
     Ok(())
-}
-
-#[cfg(any(feature = "hid", test))]
-fn read_nano_message(link: &impl HidLink, timeout: std::time::Duration) -> Result<Vec<u8>> {
-    let deadline = std::time::Instant::now() + timeout;
-    let mut reassembler = FrameReassembler::new();
-    loop {
-        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
-        if remaining.is_zero() {
-            return Err(Error::ReadTimeout(timeout));
-        }
-        let mut report = vec![0; crate::framing::HidReportGeometry::NANO_CORTEX.report_len()];
-        let timeout_ms =
-            i32::try_from(remaining.as_millis().min(i32::MAX as u128)).unwrap_or(i32::MAX);
-        let read = link.read_timeout(&mut report, timeout_ms)?;
-        if read == 0 {
-            continue;
-        }
-        report.truncate(read);
-        if let Some(message) = reassembler.feed(&Frame::parse(&report)?)? {
-            return Ok(message);
-        }
-    }
 }
 
 /// Decode one FX parameter refresh response, ignoring unrelated Nano messages.
@@ -679,7 +660,11 @@ pub fn read_current_state(
         if remaining.is_zero() {
             return Err(Error::ReadTimeout(timeout));
         }
-        let message = read_nano_message(transport.raw_device(), remaining)?;
+        let message = read_message(
+            transport.raw_device(),
+            crate::framing::HidReportGeometry::NANO_CORTEX,
+            remaining,
+        )?;
         let (_, footer) = split_envelope(&message)?;
         if footer == CURRENT_STATE_RESPONSE_FOOTER || footer == CONFIRMATION_FOOTER {
             return decode_current_state(&message);

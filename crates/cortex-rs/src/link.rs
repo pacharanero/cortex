@@ -41,6 +41,42 @@ pub trait HidLink: Send {
     fn read_timeout(&self, buf: &mut [u8], timeout_ms: i32) -> crate::Result<usize>;
 }
 
+/// Read and reassemble one complete logical message from a HID report channel.
+///
+/// This stops at the framing boundary. Quad callers decode the eight-byte
+/// trailer with [`crate::Message`]; Nano callers retain their distinct
+/// command-specific four-byte footer codec.
+///
+/// # Errors
+///
+/// Returns a transport or framing error, or [`crate::Error::ReadTimeout`] when
+/// no complete message arrives before `timeout`.
+pub(crate) fn read_message(
+    link: &impl HidLink,
+    geometry: crate::framing::HidReportGeometry,
+    timeout: std::time::Duration,
+) -> crate::Result<Vec<u8>> {
+    let deadline = std::time::Instant::now() + timeout;
+    let mut reassembler = crate::framing::FrameReassembler::new();
+    loop {
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        if remaining.is_zero() {
+            return Err(crate::Error::ReadTimeout(timeout));
+        }
+        let mut report = vec![0; geometry.report_len()];
+        let timeout_ms =
+            i32::try_from(remaining.as_millis().min(i32::MAX as u128)).unwrap_or(i32::MAX);
+        let read = link.read_timeout(&mut report, timeout_ms)?;
+        if read == 0 {
+            continue;
+        }
+        report.truncate(read);
+        if let Some(message) = reassembler.feed(&crate::framing::Frame::parse(&report)?)? {
+            return Ok(message);
+        }
+    }
+}
+
 #[cfg(feature = "hid")]
 impl HidLink for hidapi::HidDevice {
     fn write(&self, report: &[u8]) -> crate::Result<usize> {
@@ -174,5 +210,43 @@ pub mod fake {
             std::thread::sleep(self.read_delay);
             Ok(0)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use super::{FakeLink, read_message};
+    use crate::framing::{HidReportGeometry, encode_reports};
+
+    #[test]
+    fn reads_one_complete_multi_report_message() {
+        let link = FakeLink::new();
+        let body = vec![0x5a; HidReportGeometry::NANO_CORTEX.data_capacity() + 1];
+        for report in encode_reports(HidReportGeometry::NANO_CORTEX, &body) {
+            link.push_inbound(report);
+        }
+
+        assert_eq!(
+            read_message(
+                &link,
+                HidReportGeometry::NANO_CORTEX,
+                Duration::from_secs(1)
+            )
+            .unwrap(),
+            body
+        );
+    }
+
+    #[test]
+    fn times_out_without_a_complete_message() {
+        let link = FakeLink::new().with_read_delay(Duration::from_millis(1));
+        let timeout = Duration::from_millis(2);
+
+        assert!(matches!(
+            read_message(&link, HidReportGeometry::QUAD_CORTEX, timeout),
+            Err(crate::Error::ReadTimeout(actual)) if actual == timeout
+        ));
     }
 }
