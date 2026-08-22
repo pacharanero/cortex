@@ -1,11 +1,11 @@
 // SPDX-FileCopyrightText: 2026 Dr Marcus Baw
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-//! The managed Tauri backend: one `AppState`, the daemon-backed dashboard
-//! snapshot and its Tauri commands (scene, bypass, parameters, recall), and
-//! the auto-managed session used when no daemon is already running. Command
-//! bodies call `cortex-host`/`cortex-rs` and return typed serialisable data;
-//! no protocol/domain logic lives here or in the webview.
+//! The managed Tauri backend: one `AppState`, generation-checked Quad/Nano
+//! snapshots, typed non-persistent device operations, device selection, and
+//! the auto-managed session used when no daemon is already running. Commands
+//! call `cortex-host`/`cortex-rs` and return typed serialisable data; no
+//! protocol/domain logic lives here or in the webview.
 //!
 //! @see spec/400-gui/spec.md
 //! @see spec/400-gui/design.md [DES-BOUNDARY] [DES-SNAPSHOT] [DES-CAPABILITY]
