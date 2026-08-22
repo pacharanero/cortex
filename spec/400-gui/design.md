@@ -49,7 +49,7 @@ npm run check
 
 React owns polling, loading/error presentation, selected cell identity, layout and accessibility. It starts the next one-second refresh only after the previous request settles, so requests cannot overlap. Selection is stored as `{row,column}` and resolved against the newest snapshot; stale block objects are never retained. Reconnecting state shows the daemon's attempt count and last error plus a **Reconnect now** action; it does not invent a determinate progress bar because the daemon uses bounded exponential backoff rather than a fixed-duration operation.
 
-The first daemon-backed milestone is read-only. The GUI shows health, cache generation/revision, live grid, active scene, CPU total and per-core columns, and populated setlist slots. Recall, edits and persistent actions remain outside this milestone.
+The daemon-backed GUI shows health, cache generation/revision, the Quad live grid, active scene, CPU total and per-core columns, populated setlist slots, and the Nano fixed signal chain. It exposes typed non-persistent recall and working-state edits for the implemented Quad and Nano operations. Persistent save/delete actions remain outside this milestone until the GUI implements the shared safety contract and confirmation UX.
 
 ## [DES-TESTING] Boundary Evidence
 

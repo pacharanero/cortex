@@ -14,7 +14,7 @@ spec: spec.md
 
 ## [DES-OVR] Overview
 
-A Rust workspace with a leaf crate (`cortex-rs`) owning the Cortex Control USB HID protocol and typed domain model, a shared daemon IPC crate (`cortex-host`), and three host surfaces: the usable `cortex-cli`, the hardware-verified non-persistent `cortex-mcp`, and an interactive Tauri GUI with explicit fixture and daemon-backed modes. The crate is a port of the protocol behaviour established by the MIT-licensed `stokes-audio/pyquadcortex` Python library, re-verified against a real Quad Cortex on Linux. The GUI target is cross-platform; Linux is the only verified host today.
+A Rust workspace with a leaf crate (`cortex-rs`) owning the Cortex Control USB HID protocol and typed device-specific domain models, a shared daemon IPC crate (`cortex-host`), and three host surfaces: the usable `cortex-cli`, the hardware-verified non-persistent `cortex-mcp`, and an interactive non-persistent Tauri GUI with explicit fixture and daemon-backed modes. The Quad implementation ports protocol behaviour established by the MIT-licensed `stokes-audio/pyquadcortex` Python library and re-verifies it against real hardware on Linux. The GUI target is cross-platform; Linux is the only verified host today.
 
 State honesty is the central invariant: verification is attached to each operation and host path. The implemented core Quad Cortex paths are hardware-verified. Nano Cortex HID framing, typed state, Bluetooth ownership, held-daemon runtime, raw amp, bypass and raw FX parameter operations are hardware-verified on Linux; wider Nano operations, untested host integrations, edge cases and new host platforms remain provisional.
 
@@ -23,7 +23,7 @@ State honesty is the central invariant: verification is attached to each operati
 ```text
 [Flow.CLI]      cortex binary + held daemon (200)
 [Flow.MCP]      cortex-mcp binary (300) -- daemon-backed non-persistent tools
-[Flow.GUI]      Tauri backend (400) -> cortex-host -> held daemon (working state)
+[Flow.GUI]      Tauri backend (400) -> cortex-host -> held daemon (non-persistent)
       |
       v
 [Flow.Host]     cortex-host (200) -- typed daemon contract + platform local IPC
@@ -60,7 +60,7 @@ hidapi -> Quad Cortex HID interface 5
 | `[Flow.Client]` | 150 | `client.rs` |
 | `[Flow.Host]` / `[Flow.CLI]` | 200 | `crates/cortex-host/src/`, `crates/cortex-cli/src/{main,connect,decode}.rs` |
 | `[Flow.MCP]` | 300 | `crates/cortex-mcp/src/{main,server,transport}.rs`, process tests |
-| `[Flow.GUI]` | 400 | `gui/` (explicit fixture and daemon-backed read modes) |
+| `[Flow.GUI]` | 400 | `gui/` (explicit fixture and daemon-backed working-state modes) |
 
 ## [DES-DEC] Cross-Cutting Key Decisions
 
@@ -71,7 +71,7 @@ hidapi -> Quad Cortex HID interface 5
 | Protobuf | `prost` with vendored .proto files | Compile-time typed Rust; no runtime protobuf dependency |
 | HID backend | `hidapi` crate (hidraw on Linux) | Cross-platform; the same backend pyquadcortex uses |
 | Transport model | One background session owns HID; ordinary commands route through transport-neutral local IPC or one bounded direct session | The device does not enforce exclusivity; opening twice wedges the held owner. Unix uses an owner-only domain socket; Windows will use a current-user named pipe behind `cortex-host`'s endpoint/listener/connection facade |
-| Planned multi-device model | `DeviceKind::{QuadCortex, NanoCortex}` with application paths separated | Low-level discovery and framing understand both measured geometries; Quad requests/sessions reject Nano until its distinct envelope and domain model are implemented |
+| Multi-device model | `DeviceKind::{QuadCortex, NanoCortex}` with application paths separated | Discovery and framing understand both measured geometries; the Quad grid and Nano fixed chain remain distinct typed domains behind one host boundary |
 | License | AGPL-3.0-or-later (code), CC-BY-SA-4.0 (content) | Not available for proprietary subsumption; MIT/Apache prior art ported with attribution |
 
 ## [DES-FILES] Repository Map
@@ -84,7 +84,7 @@ crates/
   cortex-mcp/   Hardware-verified non-persistent agent tools over the daemon
 spec/           AFX zone specs (this tree)
 s/              Repo scripts: test, lint, hardware smoke, docs, GUI dev, release
-gui/            Tauri 2 + React + Mantine read-only fixture/daemon first draft
+gui/            Tauri 2 + React + Mantine fixture/daemon working-state editor
 docs/           Protocol reference, runbooks, CLI reference and GUI notes
 ```
 
