@@ -1,0 +1,84 @@
+#!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Dr Marcus Baw
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# Resolve every `@see` traceability header in the owned Rust tree against its
+# target document, so a moved or renumbered spec/roadmap item is caught here
+# rather than left as a dead pointer for the next reader to trip over.
+#
+# Each `@see` line is `<path> [ID] [ID2] ...` or `<path> ID` (a lone,
+# unbracketed node id) or just `<path>` with no id at all. This script does
+# not require a file to carry an `@see` header at all - a header-less file is
+# ENG-004.1's job, not this gate's - it only checks headers that exist:
+#
+#   - the target path must exist in the tree
+#   - each node id must resolve inside that target, as one of:
+#       a bold roadmap/completed item marker  **ID**
+#       a bracketed design-doc heading        ## [ID] ...
+#       an FR/NFR requirements-table row      | ID | ...
+#
+# This deliberately does not check for a back-reference from the spec back to
+# the source file: only 8 of 13 zone spec.md files currently name an "Owned
+# source" line, so that check would be noisy against zones that simply
+# haven't adopted the convention yet rather than catching a real defect.
+
+set -euo pipefail
+cd "$(git rev-parse --show-toplevel)"
+
+findings=0
+checked=0
+
+fail() {
+	findings=$((findings + 1))
+	echo "  $1" >&2
+}
+
+while IFS= read -r file; do
+	[[ -f "$file" ]] || continue
+
+	while IFS= read -r matched; do
+		lineno="${matched%%:*}"
+		content="${matched#*:}"
+
+		after="${content#*@see}"
+		after="${after# }"
+		[[ -z "$after" ]] && continue
+
+		target=$(awk '{print $1}' <<<"$after")
+		ids_raw=$(awk '{$1=""; print $0}' <<<"$after" | sed -E 's/^ +| +$//g')
+
+		checked=$((checked + 1))
+
+		if [[ ! -f "$target" ]]; then
+			fail "$file:$lineno: @see target '$target' does not exist"
+			continue
+		fi
+
+		ids=()
+		if [[ "$ids_raw" == *"["* ]]; then
+			while IFS= read -r id; do
+				[[ -n "$id" ]] && ids+=("$id")
+			done < <(grep -oE '\[[^][]+\]' <<<"$ids_raw" | sed -E 's/^\[|\]$//g')
+		elif [[ -n "$ids_raw" ]]; then
+			ids+=("$ids_raw")
+		fi
+
+		for id in "${ids[@]}"; do
+			grep -qF "**${id}**" "$target" && continue
+			grep -qE "^#+ \[${id}\]" "$target" && continue
+			grep -qE "^\| ${id} \|" "$target" && continue
+			fail "$file:$lineno: @see $target [$id] - node id not found in $target"
+		done
+	done < <(grep -n '@see ' "$file" || true)
+done < <(git ls-files -- '*.rs')
+
+if [[ "$findings" -gt 0 ]]; then
+	{
+		echo
+		echo "ERROR: $findings broken traceability link(s) among $checked @see line(s)."
+		echo "Fix the path or node id, or update the target document to carry it."
+	} >&2
+	exit 1
+fi
+
+echo "traceability ok: $checked @see line(s) resolved cleanly"

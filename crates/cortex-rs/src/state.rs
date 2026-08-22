@@ -15,7 +15,7 @@
 //! sweep.
 //!
 //! @see spec/140-session/spec.md
-//! @see spec/roadmap.md PROT-008.6.5
+//! @see spec/completed.md PROT-008.6
 
 #![allow(clippy::missing_panics_doc)]
 

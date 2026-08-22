@@ -15,7 +15,7 @@
 //! the device pushing - and none of them are visible from the outside until
 //! something has already gone wrong on real hardware.
 //!
-//! @see spec/roadmap.md ENG-001.y
+//! @see spec/completed.md ENG-001.y
 
 /// A bidirectional HID report channel.
 ///
