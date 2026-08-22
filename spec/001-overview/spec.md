@@ -24,7 +24,7 @@ tags: ["overview", "cortex-rs", "rust", "usb-hid", "quad-cortex", "nano-cortex",
 
 ## Problem Statement
 
-cortex-rs is an unofficial, Linux-first Rust toolkit for the Neural DSP Quad Cortex (and, in time, the Nano Cortex). The core deliverable is a low-level leaf crate that speaks the Cortex Control USB HID protocol and exposes a typed domain model for presets, the grid, blocks, scene metadata, and active-scene state. A shared `cortex-host` daemon IPC boundary serves three host surfaces: the hardware-verified `cortex` CLI; the hardware-verified, non-persistent `cortex-mcp` server; and a Tauri desktop GUI whose interactive read-only first draft has explicit fixture and daemon-backed modes. The GUI target is cross-platform, while Linux is the only verified host today.
+cortex-rs is an unofficial, Linux-first Rust toolkit for the Neural DSP Quad Cortex and Nano Cortex. The core deliverable is a low-level leaf crate that speaks the Cortex Control USB HID protocol and exposes honest device-specific domain models: presets, grids, blocks and scenes for the Quad; a fixed signal chain for the Nano. A shared `cortex-host` daemon IPC boundary serves three host surfaces: the hardware-verified `cortex` CLI; the hardware-verified, non-persistent `cortex-mcp` server; and a Tauri desktop GUI with explicit fixture and daemon-backed modes plus non-persistent working-state edits. The GUI target is cross-platform, while Linux is the only verified host today.
 
 The project is a Rust port of the protocol behaviour established by the MIT-licensed `stokes-audio/pyquadcortex` Python library, with the implemented core paths re-verified against a real Quad Cortex on Linux running CorOS 4.0.1. It is not affiliated with or endorsed by Neural DSP.
 
@@ -92,7 +92,7 @@ Maintainers, AI coding agents, and downstream crate consumers.
 
 - Feature requirements (each zone spec owns its own).
 - GUI interaction and presentation requirements (owned by zone `400-gui`).
-- Full Nano Cortex support. Hardware verification established shared USB HID framing and a decoded Nano state read, but device-dependent transport geometry, the Nano-specific envelope/domain, and host surfaces remain active work under NANO-001.
+- Full Nano Cortex support. Shared USB HID framing, the Nano-specific envelope and fixed-chain state, and bounded host operations are implemented; wider operation families remain active work under NANO-001.
 - On-device builds (the `qc-stomp-tools` ioctl route; not in scope for this USB-first project).
 
 ## Dependencies
@@ -152,7 +152,7 @@ To answer "where are we up to", read `roadmap.md`. To answer "what must this do"
 300-399    - MCP server (cortex-mcp binary)
   300      - MCP safety surface and tool list
 400-499    - GUI (cross-platform Tauri desktop app; first draft in progress)
-  400      - Tauri 2 + React + Mantine + Vite (read-only fixture/daemon first draft)
+  400      - Tauri 2 + React + Mantine + Vite (fixture/daemon working-state editor)
 500-599    - DX (linting, formatting, testing)
 600-699    - CI / release
 900-999    - reserved for cross-cutting living behaviour
@@ -170,7 +170,7 @@ To answer "where are we up to", read `roadmap.md`. To answer "what must this do"
 | [150-client](../150-client/spec.md) | Client API | `crates/cortex-rs/src/client.rs` | Partial; implemented core read/edit/save paths hardware-verified |
 | [200-cli](../200-cli/spec.md) | CLI and shared host boundary | `crates/cortex-cli/src/{main,connect,decode}.rs`, `crates/cortex-host/src/` | Linux usable pre-alpha; Windows IPC adapter planned |
 | [300-mcp](../300-mcp/spec.md) | MCP server | `crates/cortex-mcp/src/{main,server,transport}.rs`, process tests | Non-persistent tools hardware-verified; save/delete absent |
-| [400-gui](../400-gui/spec.md) | Tauri GUI | `gui/` | Interactive read-only first draft; fixture and daemon-backed modes |
+| [400-gui](../400-gui/spec.md) | Tauri GUI | `gui/` | Interactive non-persistent editor; fixture and daemon-backed modes |
 | [500-dx-tooling](../500-dx-tooling/spec.md) | DX/tests | `s/`, `.editorconfig`, lint configs | Partial |
 | [600-ci-release](../600-ci-release/spec.md) | CI/release | `.github/workflows/`, `dependabot.yml` | Partial |
 | [900-project-governance](../900-project-governance/spec.md) | Governance | `AGENTS.md`, `NOTICE`, `THIRD-PARTY-NOTICES.md`, `LICENSE` | Implemented |

@@ -11,7 +11,7 @@ tags: ["gui", "tauri", "react", "mantine", "vite", "in-progress", "accessible"]
 
 # 400 GUI - Spec (in progress)
 
-> The cross-platform Tauri 2 desktop app: a consumer of the shared Rust engine and host boundary, not a second implementation. The read-only first draft now has explicit fixture and daemon-backed Tauri modes. It does not write to the device.
+> The cross-platform Tauri 2 desktop app: a consumer of the shared Rust engine and host boundary, not a second implementation. Explicit fixture and daemon-backed Tauri modes expose non-persistent Quad and Nano working-state operations; the GUI has no save or delete action.
 
 ## References
 
@@ -28,7 +28,7 @@ tags: ["gui", "tauri", "react", "mantine", "vite", "in-progress", "accessible"]
 
 The GUI is the interactive surface for a player who wants a desktop editor for the Quad Cortex. The project is Linux-first because Linux has no official editor and is the only host verified here today, but the intended Tauri product supports Linux, Windows and macOS once each platform is implemented, packaged and tested. The Tauri backend will call `cortex-host` for daemon-owned operations and use shared `cortex-rs` types and behavior; the React webview renders typed results and owns view state, forms, layout, and keyboard interaction.
 
-The live read/edit and shared save-safety foundations are present: typed serialisable views and parameter inputs live in `cortex-rs`, every ordinary CLI operation routes through one held session, subscribed state is reduced into generation/revision snapshots, health/reconnect invalidates stale state, and `safety.rs` supplies exact-target authorisation plus opaque prepared-save tokens. Core save/reconnect correctness blockers are closed. GUI save remains disabled until the GUI implements exact-target preparation and confirmation UX, restoration semantics, typed failures and its own hardware smoke.
+The live read/edit and shared save-safety foundations are present: typed serialisable views and parameter inputs live in `cortex-rs`, every ordinary CLI operation routes through one held session, subscribed state is reduced into generation/revision snapshots, health/reconnect invalidates stale state, and `safety.rs` supplies exact-target authorisation plus opaque prepared-save tokens. Core save/reconnect correctness blockers are closed. GUI save remains absent until the GUI implements exact-target preparation and confirmation UX, restoration semantics, typed failures and its own hardware smoke.
 
 **`safety.rs` is enforced by the daemon.** The CLI routes through `PrepareSave`/`CommitSave` with server-held preparations and opaque tokens. The GUI must call that enforced API and present its policy clearly; it must never call the unsafe primitive directly.
 
@@ -79,7 +79,7 @@ The hardware-faithful view is the default; the wrapper panels are tabs or sideba
 
 ## Requirements
 
-The first draft establishes the stack, mockable frontend API boundary, a demo Tauri command, an accessible 4x8 grid and a basic inspector. The remaining requirements are:
+The first draft establishes the stack, mockable frontend API boundary, typed Tauri commands, an accessible 4x8 grid, a parameter inspector and a device-specific Nano fixed-chain surface. The remaining requirements are:
 
 - **Rust owns behaviour.** Tauri commands call `cortex-host` and shared `cortex-rs` APIs, returning typed serialisable data. No protocol/domain logic lives in TypeScript.
 - **The webview owns interaction.** View state, forms, layout, keyboard interaction, copy/paste affordances, and presentation live in the React frontend.
@@ -111,7 +111,7 @@ The first draft establishes the stack, mockable frontend API boundary, a demo Ta
 - [ ] The GUI labels hardware-verified vs provisional surfaces in the UI.
 - [ ] A save action reuses the shared prepared-save surface (factory refusal, exact target, pre-edit backup, explicit confirmation).
 - [x] `gui/package.json`, `package-lock.json`, and `tauri.conf.json` versions move with `s/version++`.
-- [x] `docs/gui/` explains explicit fixture and daemon run modes, state freshness, and the read-only boundary.
+- [x] `docs/gui/` explains explicit fixture and daemon run modes, state freshness, non-persistent working-state edits, and the absent save boundary.
 - [x] A thrown error in the scene selector, grid, or inspector renders a visible per-panel failure (naming the panel, offering a reload) instead of silently unmounting, proven by an automated test that throws.
 
 ## Non-Goals
@@ -136,7 +136,7 @@ The first draft establishes the stack, mockable frontend API boundary, a demo Ta
 
 ## Next
 
-- **Hardware-faithful panel.** Expand the daemon-backed read surface into the footswitch/OLED presentation without widening the write boundary.
+- **Hardware-faithful panel.** Expand the daemon-backed working-state surface into the footswitch/OLED presentation without adding persistent writes.
 - **E2E tests.** Add browser/Tauri workflow automation as the interaction surface grows; avoid brittle visual snapshots.
 - **Nano Cortex specifics.** Provisional until verified against real hardware; the GUI labels them.
 
@@ -144,7 +144,7 @@ The first draft establishes the stack, mockable frontend API boundary, a demo Ta
 
 | Term | Definition |
 | --- | --- |
-| First draft | The stack and interactive read-only shell exist with explicit fixture and daemon-backed modes; write workflows do not. |
+| First draft | The stack and interactive shell exist with explicit fixture and daemon-backed modes; implemented working-state edits are non-persistent and save/delete workflows do not exist. |
 | Tauri command | A Rust function exposed to the webview; calls `cortex-host`, uses shared `cortex-rs` views, and returns typed serialisable data |
 | `s/gui-dev` | Repo script that runs the Tauri dev server from any working directory |
 | Safety surface reuse | The GUI gates saves through the same prepared-target contract as the MCP server (factory refusal, exact target, pre-edit backup, explicit confirmation) |
