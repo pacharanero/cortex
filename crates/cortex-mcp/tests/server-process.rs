@@ -1,6 +1,14 @@
 // SPDX-FileCopyrightText: 2026 Dr Marcus Baw
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+//! Process tests driving the real `cortex-mcp` binary through an official
+//! MCP SDK client: daemon discovery/startup, concurrent sibling races,
+//! auto-managed idle recovery, and the hardware-smoke tool calls.
+//!
+//! @see spec/300-mcp/spec.md
+//! @see spec/300-mcp/design.md [DES-FRAMEWORK]
+//! @see spec/roadmap.md [MCP-003.1] [MCP-003.2]
+
 #![cfg(unix)]
 
 use std::io::{BufRead, BufReader, Write};

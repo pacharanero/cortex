@@ -1,6 +1,12 @@
 // SPDX-FileCopyrightText: 2026 Dr Marcus Baw
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+//! Process tests proving preset/setlist file operations dry-run with no
+//! daemon, device, or filesystem I/O, and that protected or escaping
+//! setlist names are refused before process I/O.
+//!
+//! @see spec/200-cli/spec.md [FR-24] [FR-25]
+
 use std::process::Command;
 
 fn cortex(args: &[&str]) -> std::process::Output {
