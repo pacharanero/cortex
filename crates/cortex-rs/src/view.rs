@@ -17,7 +17,7 @@
 //! Serialisable both ways: these cross local daemon IPC as well as being
 //! rendered.
 //!
-//! @see spec/roadmap.md PROT-004
+//! @see spec/130-domain-model/spec.md
 
 /// Per-row routing and branch points.
 fn preset_rows(preset: &crate::proto::BinaryPreset) -> Vec<Row> {

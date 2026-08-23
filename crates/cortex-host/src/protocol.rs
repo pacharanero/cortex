@@ -28,8 +28,8 @@
 //! over a binary framing because it is inspectable with `nc` and `jq`, and
 //! the volumes here are tiny compared with the USB traffic underneath.
 //!
-//! @see spec/roadmap.md PROT-008.6
-//! @see spec/140-session/spec.md
+//! @see spec/200-cli/spec.md [FR-18] [FR-19]
+//! @see spec/200-cli/design.md [DES-CLI]
 
 use cortex_rs::{DeviceKind, RecallConsent};
 

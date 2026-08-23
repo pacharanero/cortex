@@ -6,13 +6,13 @@ Run them from anywhere in the repo.
 
 ## `s/test`
 
-Run the test suite across the workspace.
+Run the Rust and frontend build/test gate, including the traceability checker's isolated fixture suite. Run it with `s/lint` before committing; CI additionally checks the Windows host boundary and Tauri integration build.
 
 - `s/test` - everything
 
 ## `s/lint`
 
-The full local gate, mirroring CI: `cargo fmt --check`, clippy with `-D warnings` on both feature paths, the tests, Markdown lint, and `reuse lint`. A green run here means a green run in CI.
+Run the lint half of the local gate: Rust formatting and clippy on both feature paths, frontend checks, Markdown and REUSE lint, device-data protection, version synchronization, and traceability validation. Run it with `s/test` before committing.
 
 - `s/lint`
 
@@ -27,6 +27,12 @@ The linter runs through `npx` at a pinned version, so a local run and CI check t
 - `s/markdownlint` - lint every tracked Markdown file
 - `s/markdownlint --fix` - apply the auto-fixable findings
 - `s/markdownlint docs/*.md` - lint a subset
+
+## `s/check-traceability`
+
+Validate every existing Rust `@see` header against its target document and node identifier. Each covered file must link to at least one living zone `spec.md` or `design.md`; progress-ledger links may supplement that target but cannot replace it. Run by `s/lint` and CI, with parser behavior covered by `tests/check-traceability.sh` in `s/test` and CI.
+
+- `s/check-traceability`
 
 ## `s/install-hooks`
 

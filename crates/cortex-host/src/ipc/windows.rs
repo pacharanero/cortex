@@ -8,6 +8,8 @@
 //! current-user ACLs and duplex byte-stream semantics.
 //!
 //! @see spec/roadmap.md [CLI-004.12]
+//! @see spec/200-cli/spec.md [FR-18]
+//! @see spec/200-cli/design.md [DES-LIMITS]
 
 use std::fmt;
 use std::io::{Read, Write};

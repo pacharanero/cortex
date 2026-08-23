@@ -57,6 +57,11 @@ jobs:
       - name: Workspace and GUI manifest versions match
         run: s/check-versions
 
+      - name: Traceability links
+        run: |
+          tests/check-traceability.sh
+          s/check-traceability
+
       - name: Install frontend dependencies
         run: npm ci --prefix gui
 
