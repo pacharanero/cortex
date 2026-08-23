@@ -55,6 +55,8 @@ export interface CortexApi {
   setBypass(row: number, column: number, bypass: boolean): Promise<void>;
   /** Set one Nano amp control and wait for exact fresh read-back. */
   setNanoAmp(control: NanoAmpControl, value: number): Promise<void>;
+  /** Set Nano Gate reduction to 0-100% and wait for exact fresh read-back. */
+  setNanoGateReduction(percent: number): Promise<void>;
   setNanoBypass(target: NanoBypassTarget, bypassed: boolean): Promise<void>;
   readNanoFxParams(slot: NanoFxSlot): Promise<number[]>;
   setNanoFxParam(slot: NanoFxSlot, paramIndex: number, value: number): Promise<void>;

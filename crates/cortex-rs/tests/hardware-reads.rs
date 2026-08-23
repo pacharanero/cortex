@@ -3107,6 +3107,52 @@ fn every_nano_amp_control_writes_and_reads_back() -> cortex_rs::Result<()> {
     Ok(())
 }
 
+/// NANO-001.6 hardware smoke: change Gate reduction by one percentage point,
+/// verify through a separate state request, then unconditionally restore and
+/// verify the original value on a fresh transport.
+#[test]
+#[ignore = "requires a Nano Cortex with Bluetooth disconnected and a readable original Gate reduction; transiently changes it by one percentage point"]
+fn nano_gate_reduction_reads_back_and_restores() -> cortex_rs::Result<()> {
+    use std::time::Duration;
+
+    use cortex_rs::nano::{read_current_state, write_gate_reduction};
+    use cortex_rs::{DeviceKind, Error, Transport};
+
+    let transport = Transport::open(DeviceKind::NanoCortex)?;
+    let original = read_current_state(&transport, Duration::from_secs(5))?
+        .gate_reduction
+        .ok_or_else(|| Error::Decode("Nano state omitted Gate reduction".into()))?;
+    let changed = if original == 100 {
+        original - 1
+    } else {
+        original + 1
+    };
+
+    let exercise = (|| {
+        write_gate_reduction(&transport, changed)?;
+        std::thread::sleep(Duration::from_secs(6));
+        let actual = read_current_state(&transport, Duration::from_secs(5))?.gate_reduction;
+        if actual != Some(changed) {
+            return Err(Error::Decode(format!(
+                "Nano Gate reduction did not read back: expected {changed}, got {actual:?}"
+            )));
+        }
+        Ok(())
+    })();
+
+    drop(transport);
+    let restore_transport = Transport::open(DeviceKind::NanoCortex)?;
+    write_gate_reduction(&restore_transport, original)?;
+    std::thread::sleep(Duration::from_secs(6));
+    let restored = read_current_state(&restore_transport, Duration::from_secs(5))?.gate_reduction;
+    if restored != Some(original) {
+        return Err(Error::Decode(format!(
+            "Nano Gate-reduction restoration failed: expected {original}, got {restored:?}"
+        )));
+    }
+    exercise
+}
+
 /// NANO-001.6 hardware smoke: invert one FX bypass, verify independently,
 /// then unconditionally restore and verify the original state.
 #[test]

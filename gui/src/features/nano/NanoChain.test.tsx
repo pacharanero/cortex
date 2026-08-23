@@ -23,6 +23,7 @@ function renderNano(current: NanoCurrentState) {
       <NanoChain
         onReadFxParams={vi.fn(async () => [])}
         onSetAmp={vi.fn(async () => {})}
+        onSetGateReduction={vi.fn(async () => {})}
         onSetBypass={vi.fn(async () => {})}
         onSetFxParam={vi.fn(async () => {})}
         state={current}
@@ -44,6 +45,7 @@ describe("NanoChain", () => {
         <NanoChain
           onReadFxParams={vi.fn(async () => [])}
           onSetAmp={vi.fn(async () => {})}
+          onSetGateReduction={vi.fn(async () => {})}
           onSetBypass={vi.fn(async () => {})}
           onSetFxParam={vi.fn(async () => {})}
           state={{ ...state, amp: { ...state.amp, gain: 99 } }}
@@ -61,6 +63,7 @@ describe("NanoChain", () => {
         <NanoChain
           onReadFxParams={onReadFxParams}
           onSetAmp={vi.fn(async () => {})}
+          onSetGateReduction={vi.fn(async () => {})}
           onSetBypass={vi.fn(async () => {})}
           onSetFxParam={vi.fn(async () => {})}
           state={{
@@ -88,5 +91,26 @@ describe("NanoChain", () => {
     expect(screen.getByRole("button", { name: "Apply gain" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Apply treble" })).toBeTruthy();
     expect(screen.getByRole("switch", { name: "Pre FX 1 bypass, on" })).toBeTruthy();
+  });
+
+  it("submits Gate reduction as an explicit percentage", () => {
+    const onSetGateReduction = vi.fn(async () => {});
+    render(
+      <MantineProvider>
+        <NanoChain
+          onReadFxParams={vi.fn(async () => [])}
+          onSetAmp={vi.fn(async () => {})}
+          onSetGateReduction={onSetGateReduction}
+          onSetBypass={vi.fn(async () => {})}
+          onSetFxParam={vi.fn(async () => {})}
+          state={{ ...state, gate_reduction: 42 }}
+        />
+      </MantineProvider>,
+    );
+
+    fireEvent.change(screen.getByLabelText("Gate reduction"), { target: { value: "43" } });
+    fireEvent.click(screen.getByRole("button", { name: "Apply Gate reduction" }));
+
+    expect(onSetGateReduction).toHaveBeenCalledWith(43);
   });
 });

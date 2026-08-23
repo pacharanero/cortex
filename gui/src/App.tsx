@@ -199,6 +199,16 @@ export function App() {
       setNanoWriteInProgress(false);
     }
   };
+  const setNanoGateReduction = async (percent: number) => {
+    setNanoWriteInProgress(true);
+    try {
+      await cortexApi.setNanoGateReduction(percent);
+      const next = await cortexApi.dashboard();
+      setSnapshot(next);
+    } finally {
+      setNanoWriteInProgress(false);
+    }
+  };
   const setNanoBypass = async (target: NanoBypassTarget, bypassed: boolean) => {
     setNanoWriteInProgress(true);
     try {
@@ -323,6 +333,7 @@ export function App() {
           {nano && <NanoChain
             onReadFxParams={cortexApi.readNanoFxParams}
             onSetAmp={setNanoAmp}
+            onSetGateReduction={setNanoGateReduction}
             onSetBypass={setNanoBypass}
             onSetFxParam={setNanoFxParam}
             state={nano}

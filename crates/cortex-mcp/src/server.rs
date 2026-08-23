@@ -216,6 +216,10 @@ impl CortexMcp {
                 value: u8::try_from(bounded_u32(args, "value", 0, 255)?)
                     .context("Nano amp value must be 0-255")?,
             },
+            "set_nano_gate_reduction" => Request::NanoSetGateReduction {
+                percent: u8::try_from(bounded_u32(args, "percent", 0, 100)?)
+                    .context("Nano Gate reduction must be 0-100%")?,
+            },
             "set_nano_bypass" => Request::NanoSetBypass {
                 target: serde_json::from_value(required(args, "target")?.clone())?,
                 bypassed: required_bool_arg(args, "bypassed")?,

@@ -628,7 +628,7 @@ async fn hardware_smoke_analyzes_cpu_fit_without_editing() -> anyhow::Result<()>
 }
 
 #[tokio::test]
-#[ignore = "requires a real Nano Cortex with Bluetooth disconnected and a held Nano session; sends same-value amp, bypass, and FX writes"]
+#[ignore = "requires a real Nano Cortex with Bluetooth disconnected, readable Gate reduction, and a held Nano session; sends same-value amp, Gate reduction, bypass, and FX writes"]
 async fn hardware_smoke_reads_and_confirms_nano_tools_through_official_client() -> anyhow::Result<()>
 {
     let transport = TokioChildProcess::new(tokio::process::Command::new(env!(
@@ -641,6 +641,7 @@ async fn hardware_smoke_reads_and_confirms_nano_tools_through_official_client() 
     for expected in [
         "read_nano_state",
         "set_nano_amp",
+        "set_nano_gate_reduction",
         "set_nano_bypass",
         "read_nano_fx_params",
         "set_nano_fx_param",
@@ -667,6 +668,16 @@ async fn hardware_smoke_reads_and_confirms_nano_tools_through_official_client() 
         &client,
         "set_nano_amp",
         serde_json::json!({"control":"gain","value":gain}),
+    )
+    .await?;
+
+    let gate_reduction = state
+        .gate_reduction
+        .context("Nano state omitted Gate reduction")?;
+    call(
+        &client,
+        "set_nano_gate_reduction",
+        serde_json::json!({"percent":gate_reduction}),
     )
     .await?;
 

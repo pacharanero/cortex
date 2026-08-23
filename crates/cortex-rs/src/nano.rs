@@ -3,13 +3,15 @@
 // SPDX-FileCopyrightText: 2026 Nano Cortex Web Editor Contributors
 // SPDX-License-Identifier: AGPL-3.0-or-later AND Apache-2.0 AND MIT
 
-//! Nano Cortex application envelope and read-only current-state model.
+//! Nano Cortex application envelope, current-state model, and bounded
+//! working-state operations.
 //!
 //! The Nano shares the Quad's HID framing, but not its application envelope or
 //! domain model. Its current-state response is a protobuf-style body followed
 //! by a four-byte footer. The field map is adapted from the Apache-2.0-licensed
 //! `rixrix/deskop-nano-cortex` decoder, which credits the MIT-licensed
-//! `choldy/nano-cortex-web-editor`; see `THIRD-PARTY-NOTICES.md`.
+//! `choldy/nano-cortex-web-editor`. The Gate-reduction write layout follows
+//! the same licensed sources; see `THIRD-PARTY-NOTICES.md`.
 //!
 //! @see spec/roadmap.md [NANO-001.3]
 //! @see spec/110-framing/design.md
@@ -210,6 +212,45 @@ pub fn write_amp(transport: &Transport, control: NanoAmpControl, value: u8) -> R
         });
     }
     transport.write(&build_set_amp(control, value))
+}
+
+/// Build the Nano application body that sets Gate reduction as a percentage.
+/// HID framing is added separately by the shared framing layer.
+///
+/// # Errors
+///
+/// Returns [`Error::InvalidParameter`] when `percent` is greater than 100.
+pub fn build_set_gate_reduction(percent: u8) -> Result<Vec<u8>> {
+    if percent > 100 {
+        return Err(Error::InvalidParameter(format!(
+            "Nano Gate reduction must be 0-100%, got {percent}"
+        )));
+    }
+    let mut body = vec![0x18, 0x0b, 0x20];
+    push_varint(&mut body, u64::from(percent) + 108);
+    body.extend([0x28, 0x00, 0x1a, 0x00, 0x00, 0x00]);
+    Ok(body)
+}
+
+/// Send one Nano Gate-reduction write. Callers must not treat the successful
+/// transport write as confirmation: wait for the state-read pacing interval
+/// and verify with a separate [`read_current_state`] request.
+///
+/// # Errors
+///
+/// Returns [`Error::InvalidParameter`] for a percentage greater than 100, a
+/// transport error, or rejects a transport opened for another device before
+/// any write.
+#[cfg(feature = "hid")]
+pub fn write_gate_reduction(transport: &Transport, percent: u8) -> Result<()> {
+    let body = build_set_gate_reduction(percent)?;
+    if transport.device_kind() != crate::DeviceKind::NanoCortex {
+        return Err(Error::UnsupportedDeviceOperation {
+            device: transport.device_kind(),
+            operation: "Nano Gate-reduction write",
+        });
+    }
+    transport.write(&body)
 }
 
 /// Build the Nano application body that bypasses or enables Gate/FX.
@@ -941,6 +982,34 @@ mod tests {
             build_set_amp(NanoAmpControl::Treble, 255),
             [0x18, 4, 0x20, 0xff, 0x01, 0x28, 0, 0x1a, 0, 0, 0]
         );
+    }
+
+    #[test]
+    fn gate_reduction_builder_encodes_the_offset_and_varint_boundary() {
+        assert_eq!(
+            build_set_gate_reduction(0).unwrap(),
+            [0x18, 0x0b, 0x20, 0x6c, 0x28, 0, 0x1a, 0, 0, 0]
+        );
+        assert_eq!(
+            build_set_gate_reduction(19).unwrap(),
+            [0x18, 0x0b, 0x20, 0x7f, 0x28, 0, 0x1a, 0, 0, 0]
+        );
+        assert_eq!(
+            build_set_gate_reduction(20).unwrap(),
+            [0x18, 0x0b, 0x20, 0x80, 0x01, 0x28, 0, 0x1a, 0, 0, 0]
+        );
+        assert_eq!(
+            build_set_gate_reduction(100).unwrap(),
+            [0x18, 0x0b, 0x20, 0xd0, 0x01, 0x28, 0, 0x1a, 0, 0, 0]
+        );
+    }
+
+    #[test]
+    fn gate_reduction_builder_rejects_values_above_one_hundred() {
+        assert!(matches!(
+            build_set_gate_reduction(101),
+            Err(Error::InvalidParameter(_))
+        ));
     }
 
     #[test]

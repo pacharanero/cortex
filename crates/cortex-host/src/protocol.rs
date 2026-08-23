@@ -39,7 +39,7 @@ use cortex_rs::{DeviceKind, RecallConsent};
 /// Bump this whenever a `Request` variant changes shape or a new variant is
 /// added. A client that sees a mismatch refuses with an actionable message
 /// rather than sending a request the daemon will misparse.
-pub const DAEMON_PROTOCOL_VERSION: u32 = 17;
+pub const DAEMON_PROTOCOL_VERSION: u32 = 18;
 
 /// A request from a client to the daemon.
 ///
@@ -61,6 +61,11 @@ pub enum Request {
         control: cortex_rs::nano::NanoAmpControl,
         /// Raw device value, 0-255.
         value: u8,
+    },
+    /// Set Nano Gate reduction and verify it through a fresh state read.
+    NanoSetGateReduction {
+        /// Gate reduction percentage, 0-100.
+        percent: u8,
     },
     /// Set one Nano Gate/FX bypass and verify it through a fresh state read.
     NanoSetBypass {
@@ -685,6 +690,10 @@ mod tests {
                 serde_json::json!({ "op": "nano_set_amp", "control": "gain", "value": 127 }),
             ),
             (
+                Request::NanoSetGateReduction { percent: 42 },
+                serde_json::json!({ "op": "nano_set_gate_reduction", "percent": 42 }),
+            ),
+            (
                 Request::NanoSetBypass {
                     target: cortex_rs::nano::NanoBypassTarget::PostFx3,
                     bypassed: false,
@@ -994,6 +1003,7 @@ mod tests {
             Request::ReconnectNow => "reconnect_now",
             Request::NanoState => "nano_state",
             Request::NanoSetAmp { .. } => "nano_set_amp",
+            Request::NanoSetGateReduction { .. } => "nano_set_gate_reduction",
             Request::NanoSetBypass { .. } => "nano_set_bypass",
             Request::NanoReadFxParams { .. } => "nano_read_fx_params",
             Request::NanoSetFxParam { .. } => "nano_set_fx_param",
@@ -1037,7 +1047,7 @@ mod tests {
     #[test]
     fn every_request_variant_has_a_canonical_json_fixture() {
         let fixtures = canonical_request_fixtures();
-        assert_eq!(fixtures.len(), 41);
+        assert_eq!(fixtures.len(), 42);
         let mut operations = std::collections::BTreeSet::new();
 
         for (request, expected) in fixtures {
@@ -1179,6 +1189,13 @@ mod tests {
                     "op": "nano_set_amp",
                     "control": "gain",
                     "value": 127
+                }),
+            ),
+            (
+                Request::NanoSetGateReduction { percent: 42 },
+                serde_json::json!({
+                    "op": "nano_set_gate_reduction",
+                    "percent": 42
                 }),
             ),
             (

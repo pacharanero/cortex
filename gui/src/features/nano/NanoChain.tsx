@@ -30,14 +30,17 @@ const fxSlots: { role: NanoSlotRole; slot: NanoFxSlot }[] = [
 interface NanoChainProps {
   state: NanoCurrentState;
   onSetAmp: (control: NanoAmpControl, value: number) => Promise<void>;
+  onSetGateReduction: (percent: number) => Promise<void>;
   onSetBypass: (target: NanoBypassTarget, bypassed: boolean) => Promise<void>;
   onReadFxParams: (slot: NanoFxSlot) => Promise<number[]>;
   onSetFxParam: (slot: NanoFxSlot, paramIndex: number, value: number) => Promise<void>;
 }
 
-export function NanoChain({ state, onSetAmp, onSetBypass, onReadFxParams, onSetFxParam }: NanoChainProps) {
+export function NanoChain({ state, onSetAmp, onSetGateReduction, onSetBypass, onReadFxParams, onSetFxParam }: NanoChainProps) {
   const [draft, setDraft] = useState(state.amp);
   const [dirtyAmpControls, setDirtyAmpControls] = useState<Set<NanoAmpControl>>(new Set());
+  const [gateDraft, setGateDraft] = useState<number | string>(state.gate_reduction ?? "");
+  const [gateDirty, setGateDirty] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [selectedSlot, setSelectedSlot] = useState<NanoFxSlot | null>(null);
@@ -57,6 +60,9 @@ export function NanoChain({ state, onSetAmp, onSetBypass, onReadFxParams, onSetF
       return changed ? next : current;
     });
   }, [state.amp, busy, dirtyAmpControls]);
+  useEffect(() => {
+    if (!busy && !gateDirty) setGateDraft(state.gate_reduction ?? "");
+  }, [state.gate_reduction, busy, gateDirty]);
 
   const apply = async (control: NanoAmpControl) => {
     const value = draft[control];
@@ -69,6 +75,17 @@ export function NanoChain({ state, onSetAmp, onSetBypass, onReadFxParams, onSetF
         next.delete(control);
         return next;
       });
+    }
+    catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
+    finally { setBusy(null); }
+  };
+
+  const applyGateReduction = async () => {
+    if (typeof gateDraft !== "number") return;
+    setBusy("gate:reduction"); setError(null);
+    try {
+      await onSetGateReduction(gateDraft);
+      setGateDirty(false);
     }
     catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
     finally { setBusy(null); }
@@ -151,6 +168,14 @@ export function NanoChain({ state, onSetAmp, onSetBypass, onReadFxParams, onSetF
     </Paper>
     <Paper p="md" withBorder>
       <Text c="dimmed" fw={700} size="xs" tt="uppercase">Gate / FX bypass</Text>
+      <Group align="flex-end" mt="sm">
+        <NumberInput aria-busy={busy === "gate:reduction"} clampBehavior="strict" label="Gate reduction" max={100} min={0} onChange={(value) => {
+          setGateDraft(value);
+          setGateDirty(true);
+        }} style={{ flex: "1 1 160px" }} suffix="%" value={gateDraft} />
+        <Button aria-label="Apply Gate reduction" disabled={typeof gateDraft !== "number" || !gateDirty || busy !== null} loading={busy === "gate:reduction"} onClick={() => void applyGateReduction()}>Apply</Button>
+        <Badge color="yellow" variant="outline">provisional</Badge>
+      </Group>
       <SimpleGrid cols={{ base: 2, sm: 3, lg: 6 }} mt="sm">
         {bypassTargets.map(({ role, target }) => {
           const slot = state.slots.find((s) => s.role === role);

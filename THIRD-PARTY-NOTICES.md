@@ -59,12 +59,13 @@ SOFTWARE.
   close, honest verified-vs-provisional capability model, mockable frontend
   boundary, AFX spec zones, traceability approach, version synchronization,
   release/DX tooling, and hardware-smoke evidence shape informed this
-  project's GUI, specs, and plans. Its current-state decoder and fixed-chain
-  domain model were adapted in `crates/cortex-rs/src/nano.rs`, retaining the
-  field-presence and provisional-evidence discipline while independently
-  implementing strict malformed-input handling and the HID envelope boundary.
-  That decoder credits `choldy/nano-cortex-web-editor` for the field map, so
-  both upstreams are attributed here.
+  project's GUI, specs, and plans. Its current-state decoder, fixed-chain
+  domain model, and Gate-reduction write layout were adapted in
+  `crates/cortex-rs/src/nano.rs`, retaining the field-presence and
+  provisional-evidence discipline while independently implementing strict
+  malformed-input handling and the HID envelope boundary. That material
+  credits `choldy/nano-cortex-web-editor`, so both upstreams are attributed
+  here.
 
 ### Apache License 2.0 (deskop-nano-cortex)
 
@@ -90,10 +91,12 @@ A copy of the Apache License 2.0 is distributed in
 - **Repository:** <https://github.com/choldy/nano-cortex-web-editor>
 - **License:** MIT
 - **Copyright:** (c) 2026 Nano Cortex Web Editor Contributors
-- **Use in cortex-rs:** The Nano current-state command and protobuf field map
-  used by `crates/cortex-rs/src/nano.rs` derive from this project through the
-  Apache-2.0-licensed `deskop-nano-cortex` Rust decoder. The implementation is
-  tested against fictional data and independently hardware-verified over USB;
+- **Use in cortex-rs:** The Nano current-state command, protobuf field map, and
+  Gate-reduction write layout used by `crates/cortex-rs/src/nano.rs` derive
+  from this project through the Apache-2.0-licensed `deskop-nano-cortex` Rust
+  implementation. The state decoder is tested against fictional data and
+  independently hardware-verified over USB. The Gate-reduction writer is
+  byte-tested against licensed vectors but remains hardware-provisional;
   upstream evidence is not treated as verification of this implementation.
 
 ### MIT License (nano-cortex-web-editor)

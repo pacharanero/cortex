@@ -224,6 +224,10 @@ export const fixtureApi: CortexApi = {
     if (!Number.isInteger(value) || value < 0 || value > 255) throw new Error("Nano amp value must be an integer from 0 to 255");
     nanoState.amp[control] = value;
   },
+  async setNanoGateReduction(percent) {
+    if (!Number.isInteger(percent) || percent < 0 || percent > 100) throw new Error("Nano Gate reduction must be an integer from 0 to 100");
+    nanoState.gate_reduction = percent;
+  },
   async setNanoBypass(target, bypassed) {
     const slot = nanoState.slots.find((s) => s.role === target);
     if (slot) slot.bypassed = bypassed;

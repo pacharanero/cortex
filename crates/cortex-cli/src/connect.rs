@@ -375,6 +375,10 @@ impl Daemon {
                 DaemonErrorCode::Protocol,
                 "the held session owns a Quad Cortex; start it with `--device nano`",
             ),
+            Request::NanoSetGateReduction { .. } => Response::coded_error(
+                DaemonErrorCode::Protocol,
+                "the held session owns a Quad Cortex; start it with `--device nano`",
+            ),
             Request::NanoSetBypass { .. } => Response::coded_error(
                 DaemonErrorCode::Protocol,
                 "the held session owns a Quad Cortex; start it with `--device nano`",
@@ -1290,6 +1294,7 @@ trait NanoOperations: Send {
         control: cortex_rs::nano::NanoAmpControl,
         value: u8,
     ) -> cortex_rs::Result<()>;
+    fn write_gate_reduction(&self, percent: u8) -> cortex_rs::Result<()>;
     fn write_bypass(
         &self,
         target: cortex_rs::nano::NanoBypassTarget,
@@ -1322,6 +1327,10 @@ impl NanoOperations for Transport {
         value: u8,
     ) -> cortex_rs::Result<()> {
         cortex_rs::nano::write_amp(self, control, value)
+    }
+
+    fn write_gate_reduction(&self, percent: u8) -> cortex_rs::Result<()> {
+        cortex_rs::nano::write_gate_reduction(self, percent)
     }
 
     fn write_bypass(
@@ -1590,6 +1599,26 @@ impl<T: NanoOperations> NanoDaemon<T> {
                     },
                 )
             }),
+            Request::NanoSetGateReduction { percent } => {
+                if let Err(error) = cortex_rs::nano::build_set_gate_reduction(percent) {
+                    return Response::cortex_error(&error);
+                }
+                self.with_operation(|transport| {
+                    self.write_state_and_confirm(
+                        transport,
+                        self.amp_settle,
+                        |transport| transport.write_gate_reduction(percent),
+                        |state| {
+                            let actual = state.gate_reduction;
+                            (actual != Some(percent)).then(|| {
+                                format!(
+                                    "Nano Gate-reduction write did not read back: expected {percent}, got {actual:?}"
+                                )
+                            })
+                        },
+                    )
+                })
+            }
             Request::NanoSetBypass { target, bypassed } => self.with_operation(|transport| {
                 self.write_state_and_confirm(
                     transport,
@@ -2064,6 +2093,10 @@ mod tests {
                 .map_or(Ok(()), Err)
         }
 
+        fn write_gate_reduction(&self, _percent: u8) -> cortex_rs::Result<()> {
+            Ok(())
+        }
+
         fn write_bypass(
             &self,
             _target: cortex_rs::nano::NanoBypassTarget,
@@ -2113,7 +2146,7 @@ mod tests {
             },
             capture_slot: None,
             capture_volume: None,
-            gate_reduction: None,
+            gate_reduction: Some(50),
             footswitch_assignments: None,
             slots: [
                 NanoSlotRole::Gate,
@@ -2325,6 +2358,43 @@ mod tests {
             *daemon.health.lock().unwrap(),
             DeviceHealth::Failed { .. }
         ));
+    }
+
+    #[test]
+    fn nano_gate_reduction_write_replaces_cache_only_after_exact_read_back() {
+        let operations = FakeNanoOperations::default();
+        operations
+            .states
+            .lock()
+            .unwrap()
+            .push_back(Ok(cortex_rs::nano::NanoCurrentState {
+                gate_reduction: Some(51),
+                ..nano_state(10, false)
+            }));
+        let daemon = fake_nano_daemon(operations);
+        assert!(matches!(
+            daemon.handle(Request::NanoSetGateReduction { percent: 51 }),
+            Response::Ok { .. }
+        ));
+        let cached = daemon.state.lock().unwrap();
+        assert_eq!(cached.snapshot.gate_reduction, Some(51));
+        assert_eq!(cached.revision, 2);
+    }
+
+    #[test]
+    fn invalid_nano_gate_reduction_is_rejected_without_failing_device_health() {
+        let daemon = fake_nano_daemon(FakeNanoOperations::default());
+        let Response::Error { code, .. } =
+            daemon.handle(Request::NanoSetGateReduction { percent: 101 })
+        else {
+            panic!("an invalid Gate percentage must fail");
+        };
+        assert_eq!(code, DaemonErrorCode::InvalidParameter);
+        assert!(matches!(
+            *daemon.health.lock().unwrap(),
+            DeviceHealth::Connected { .. }
+        ));
+        assert_eq!(daemon.state.lock().unwrap().revision, 1);
     }
 
     #[test]

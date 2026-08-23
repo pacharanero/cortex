@@ -18,6 +18,7 @@ const api = vi.hoisted(() => ({
   setSceneColor: vi.fn(),
   setBypass: vi.fn(),
   setNanoAmp: vi.fn(),
+  setNanoGateReduction: vi.fn(),
   setNanoBypass: vi.fn(),
   readNanoFxParams: vi.fn(),
   setNanoFxParam: vi.fn(),

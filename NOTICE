@@ -23,9 +23,10 @@ React webview interaction, honest verified-vs-provisional labelling, managed
 state, bounded device release, AFX spec layout, and release/DX tooling) was
 informed by the Apache-2.0-licensed project rixrix/deskop-nano-cortex
 (<https://github.com/rixrix/deskop-nano-cortex>, (c) 2026 Richard Sentino).
-Its Nano Cortex current-state field map and decoder were subsequently adapted
-to Rust in `crates/cortex-rs/src/nano.rs`. That field map in turn derives from
-the MIT-licensed choldy/nano-cortex-web-editor
+Its Nano Cortex current-state field map, decoder, and Gate-reduction write
+layout were subsequently adapted to Rust in `crates/cortex-rs/src/nano.rs`.
+That material in turn derives from the MIT-licensed
+choldy/nano-cortex-web-editor
 (<https://github.com/choldy/nano-cortex-web-editor>, (c) 2026 Nano Cortex Web
 Editor Contributors). Both upstreams are attributed in
 THIRD-PARTY-NOTICES.md.

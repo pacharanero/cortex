@@ -2,9 +2,9 @@
 
 This page records the first hardware-verified Nano Cortex exchange over USB HID and the boundary it establishes for independent clients. It deliberately separates what the Nano shares with the Quad Cortex from what remains Nano-specific.
 
-!!! warning "Read-only codec verified; host integration pending"
+!!! warning "Capability-specific verification"
 
-    A real Nano Cortex answered read-only USB HID probes on Linux on 2026-08-11. Report geometry, framing, multi-report reassembly, cross-transport ownership and one complete state read are hardware-verified. The typed read-only codec was implemented and hardware-verified on 2026-08-18, but the held daemon and every CLI, MCP and GUI operation remain pending, so this is an implementer reference rather than a support claim.
+    Report geometry, framing, multi-report reassembly, cross-transport ownership, typed state, held-daemon integration, amp, bypass and raw FX parameter operations are hardware-verified on Linux. Gate-reduction writing is implemented across the same surfaces but remains provisional because the connected unit omitted the independently readable original value needed for a reversible hardware test.
 
 ## USB identity
 
@@ -87,6 +87,8 @@ The existing Nano decoder successfully recovered firmware presence, four of five
 Repeated reads need pacing. On the held USB connection, issuing another current-state request immediately after the startup read timed out after five seconds; the next request then succeeded, producing a deterministic fail/succeed pattern when every CLI call wrote afresh. Waiting six seconds before the next request succeeded. The held daemon therefore retains the last decoded snapshot and refreshes from hardware no more often than every five seconds. Faster GUI and CLI polls read that snapshot rather than sending duplicate application requests. This is a measured Nano rule, not the Quad's push-cache behavior.
 
 Working-state writes differ by operation family. On 2026-08-18, all five raw amp controls accepted a typed write on one held connection and independently read back the exact value after six seconds; the reversible Gain test also restored its original value. Amp writes do not save anything. The daemon therefore verifies every amp write with a separately paced current-state request before returning success.
+
+Gate reduction uses application body `18 0B 20 <varint(percent + 108)> 28 00 1A 00 00 00` for integer percentages from 0 through 100. The raw value crosses the one-byte varint boundary between 19% and 20%; callers must encode the complete varint and reject out-of-range input rather than silently clamp it. Current-state field 53 is a little-endian fixed32 float decoded as `round(value * 255 - 108)`. Field 53 is optional: omission means unknown, not 0%. On 2026-08-22 the connected unit omitted field 53, so the reversible hardware smoke refused before writing because it could not retain a trustworthy original value. The builder, range validation, daemon read-back contract and host surfaces are implemented and offline-tested, but the write itself remains hardware-provisional until a readable original can be changed, read back, restored and verified.
 
 Gate/FX bypass is now exposed with the same read-back discipline as amp writes. The device sends an immediate 8-byte acknowledgement with footer `73 00 00 00` after each bypass write, and a fresh state read after the measured six-second settle confirms the new value. The earlier observation (2026-08-18) that a second bypass write on the same HID handle was ignored could not be reproduced on 2026-08-20 across Pre FX 1, Pre FX 2, Post FX 1 and Gate, including a rapid-fire test sending all four toggles in quick succession. The daemon verifies every bypass write with a separately paced current-state request before returning success. One decoder caveat: the Gate's "on" state is represented by the absence of field 54, so the decoder reports `bypassed = None` when the gate is on rather than `Some(false)`; this is a decoder limitation, not a write failure.
 

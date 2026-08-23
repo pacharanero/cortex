@@ -57,7 +57,7 @@ fn reads() -> Vec<ToolSpec> {
         ),
         nano_spec(
             "read_nano_state",
-            "Read the Nano Cortex fixed eight-role chain and raw amp controls. Read-only; requires a Nano-owned held session.",
+            "Read the Nano Cortex fixed eight-role chain, raw amp controls and optional Gate reduction. Read-only; requires a Nano-owned held session.",
             empty_schema(),
             true,
         ),
@@ -195,6 +195,15 @@ fn grid_edits() -> Vec<ToolSpec> {
             object_schema(
                 &json!({"control":{"type":"string","enum":["gain","level","bass","mid","treble"]},"value":{"type":"integer","minimum":0,"maximum":255}}),
                 &["control", "value"],
+            ),
+            false,
+        ),
+        nano_spec(
+            "set_nano_gate_reduction",
+            "Set Nano Gate reduction to 0-100%. Changes heard working state, saves nothing, and succeeds only after a fresh state read confirms the percentage. Requires a Nano-owned held session and takes about six seconds.",
+            object_schema(
+                &json!({"percent":{"type":"integer","minimum":0,"maximum":100}}),
+                &["percent"],
             ),
             false,
         ),

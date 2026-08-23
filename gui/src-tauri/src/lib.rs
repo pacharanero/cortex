@@ -202,6 +202,11 @@ trait DashboardSource: Send + Sync {
             "this dashboard source does not support Nano amp writes",
         ))
     }
+    fn set_nano_gate_reduction(&self, _percent: u8) -> Result<(), CommandError> {
+        Err(CommandError::daemon(
+            "this dashboard source does not support Nano Gate-reduction writes",
+        ))
+    }
     fn set_nano_bypass(
         &self,
         _target: cortex_rs::nano::NanoBypassTarget,
@@ -418,6 +423,15 @@ impl DashboardSource for DaemonDashboardSource {
     ) -> Result<(), CommandError> {
         self.client
             .request::<cortex_rs::nano::NanoCurrentState>(&Request::NanoSetAmp { control, value })
+            .map(|_| ())
+            .map_err(|error| CommandError::daemon(error.to_string()))
+    }
+
+    fn set_nano_gate_reduction(&self, percent: u8) -> Result<(), CommandError> {
+        self.client
+            .request::<cortex_rs::nano::NanoCurrentState>(&Request::NanoSetGateReduction {
+                percent,
+            })
             .map(|_| ())
             .map_err(|error| CommandError::daemon(error.to_string()))
     }
@@ -1052,6 +1066,19 @@ async fn set_nano_amp(
 }
 
 #[tauri::command]
+async fn set_nano_gate_reduction(
+    state: tauri::State<'_, AppState>,
+    percent: u8,
+) -> Result<(), CommandError> {
+    let source = Arc::clone(&state.source);
+    tauri::async_runtime::spawn_blocking(move || source.set_nano_gate_reduction(percent))
+        .await
+        .map_err(|error| {
+            CommandError::daemon(format!("Nano Gate-reduction write task failed: {error}"))
+        })?
+}
+
+#[tauri::command]
 async fn set_nano_bypass(
     state: tauri::State<'_, AppState>,
     target: cortex_rs::nano::NanoBypassTarget,
@@ -1188,6 +1215,7 @@ pub fn run() {
             set_scene_color,
             set_bypass,
             set_nano_amp,
+            set_nano_gate_reduction,
             set_nano_bypass,
             set_device,
             read_nano_fx_params,
@@ -1271,6 +1299,42 @@ mod tests {
             .expect("restore gain");
         assert_eq!(
             source.dashboard().unwrap().nano.unwrap().amp.gain,
+            Some(original)
+        );
+        exercise.unwrap();
+    }
+
+    #[test]
+    #[ignore = "requires a running Nano Cortex held session and a readable original Gate reduction; transiently changes it by one percentage point"]
+    fn nano_gate_reduction_reaches_the_daemon_reads_back_and_restores() {
+        let source = DaemonDashboardSource::default();
+        let original = source
+            .dashboard()
+            .unwrap()
+            .nano
+            .unwrap()
+            .gate_reduction
+            .expect("Gate reduction");
+        let changed = if original == 100 {
+            original - 1
+        } else {
+            original + 1
+        };
+        let exercise = (|| {
+            source.set_nano_gate_reduction(changed)?;
+            let actual = source.dashboard()?.nano.unwrap().gate_reduction;
+            if actual != Some(changed) {
+                return Err(CommandError::daemon(format!(
+                    "Gate reduction did not read back: expected {changed}, got {actual:?}"
+                )));
+            }
+            Ok::<_, CommandError>(())
+        })();
+        source
+            .set_nano_gate_reduction(original)
+            .expect("restore Gate reduction");
+        assert_eq!(
+            source.dashboard().unwrap().nano.unwrap().gate_reduction,
             Some(original)
         );
         exercise.unwrap();
