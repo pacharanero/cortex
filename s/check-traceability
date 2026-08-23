@@ -16,6 +16,8 @@
 #       a bold roadmap/completed item marker  **ID**
 #       a bracketed design-doc heading        ## [ID] ...
 #       an FR/NFR requirements-table row      | ID | ...
+#   - each file with an `@see` header must name at least one living spec.md or
+#     design.md target, as required by spec/001-overview/spec.md
 #
 # This deliberately does not check for a back-reference from the spec back to
 # the source file: only 8 of 13 zone spec.md files currently name an "Owned
@@ -33,44 +35,108 @@ fail() {
 	echo "  $1" >&2
 }
 
+trim() {
+	local value="$1"
+	value="${value#"${value%%[![:space:]]*}"}"
+	value="${value%"${value##*[![:space:]]}"}"
+	printf '%s' "$value"
+}
+
+node_exists() {
+	local target="$1"
+	local id="$2"
+	local line stripped heading rest cell
+
+	while IFS= read -r line || [[ -n "$line" ]]; do
+		stripped="$(trim "$line")"
+
+		case "$stripped" in
+			"- [ ] **${id}**:"* | "- [x] **${id}**:"* | "- [~] **${id}**:"*)
+				return 0
+				;;
+		esac
+
+		heading="${stripped%% *}"
+		if [[ "$heading" == \#* && "$heading" != *[!#]* ]]; then
+			rest="$(trim "${stripped#"$heading"}")"
+			[[ "$rest" == "[$id]" || "$rest" == "[$id] "* ]] && return 0
+		fi
+
+		if [[ "$stripped" == \|* ]]; then
+			cell="${stripped#|}"
+			cell="$(trim "${cell%%|*}")"
+			[[ "$cell" == "$id" ]] && return 0
+		fi
+	done < "$target"
+
+	return 1
+}
+
+tracked_files="$(git ls-files -- '*.rs')" || {
+	echo "ERROR: could not enumerate tracked Rust files." >&2
+	exit 1
+}
+
 while IFS= read -r file; do
+	[[ -n "$file" ]] || continue
 	[[ -f "$file" ]] || continue
+	has_header=false
+	has_living_target=false
+	lineno=0
 
-	while IFS= read -r matched; do
-		lineno="${matched%%:*}"
-		content="${matched#*:}"
-
+	while IFS= read -r content || [[ -n "$content" ]]; do
+		lineno=$((lineno + 1))
+		[[ "$content" == *"@see"* ]] || continue
+		has_header=true
 		after="${content#*@see}"
-		after="${after# }"
-		[[ -z "$after" ]] && continue
-
-		target=$(awk '{print $1}' <<<"$after")
-		ids_raw=$(awk '{$1=""; print $0}' <<<"$after" | sed -E 's/^ +| +$//g')
-
-		checked=$((checked + 1))
-
-		if [[ ! -f "$target" ]]; then
-			fail "$file:$lineno: @see target '$target' does not exist"
+		after="$(trim "$after")"
+		if [[ -z "$after" ]]; then
+			fail "$file:$lineno: @see is missing a target"
 			continue
 		fi
 
+		read -r -a tokens <<< "$after"
+		target="${tokens[0]}"
+
+		checked=$((checked + 1))
+
+		if [[ ! -r "$target" ]]; then
+			fail "$file:$lineno: @see target '$target' does not exist"
+			continue
+		fi
+		case "$target" in
+			spec/*/spec.md | spec/*/design.md) has_living_target=true ;;
+		esac
+
 		ids=()
-		if [[ "$ids_raw" == *"["* ]]; then
-			while IFS= read -r id; do
-				[[ -n "$id" ]] && ids+=("$id")
-			done < <(grep -oE '\[[^][]+\]' <<<"$ids_raw" | sed -E 's/^\[|\]$//g')
-		elif [[ -n "$ids_raw" ]]; then
-			ids+=("$ids_raw")
+		if [[ "${#tokens[@]}" -eq 2 && "${tokens[1]}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
+			ids+=("${tokens[1]}")
+		elif [[ "${#tokens[@]}" -gt 1 ]]; then
+			valid_ids=true
+			for token in "${tokens[@]:1}"; do
+				if [[ "$token" =~ ^\[([A-Za-z0-9][A-Za-z0-9._-]*)\]$ ]]; then
+					ids+=("${BASH_REMATCH[1]}")
+				else
+					valid_ids=false
+					break
+				fi
+			done
+			if [[ "$valid_ids" == false ]]; then
+				fail "$file:$lineno: malformed @see; use <path>, <path> ID, or <path> [ID] [ID2]"
+				continue
+			fi
 		fi
 
 		for id in "${ids[@]}"; do
-			grep -qF "**${id}**" "$target" && continue
-			grep -qE "^#+ \[${id}\]" "$target" && continue
-			grep -qE "^\| ${id} \|" "$target" && continue
+			node_exists "$target" "$id" && continue
 			fail "$file:$lineno: @see $target [$id] - node id not found in $target"
 		done
-	done < <(grep -n '@see ' "$file" || true)
-done < <(git ls-files -- '*.rs')
+	done < "$file"
+
+	if [[ "$has_header" == true && "$has_living_target" == false ]]; then
+		fail "$file: @see headers must include at least one spec/*/spec.md or spec/*/design.md target"
+	fi
+done <<< "$tracked_files"
 
 if [[ "$findings" -gt 0 ]]; then
 	{

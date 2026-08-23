@@ -11,7 +11,7 @@ tags: ["dx", "tooling", "lint", "format", "test", "scripts", "editorconfig"]
 
 # 500 DX Tooling - Spec
 
-> The repo scripts and lint/format/test configuration. `s/test` and `s/lint` are the canonical local gates, including no-default workspace clippy/tests and Markdown lint, and are available as an opt-in pre-commit hook; CI additionally runs Windows cross-checks and platform setup that are not duplicated locally.
+> The repo scripts and lint/format/test configuration. `s/test` and `s/lint` are the canonical local gates, including no-default workspace clippy/tests, Markdown lint, and traceability validation, and are available as an opt-in pre-commit hook; CI additionally runs Windows cross-checks and platform setup that are not duplicated locally.
 
 ## References
 
@@ -25,7 +25,7 @@ tags: ["dx", "tooling", "lint", "format", "test", "scripts", "editorconfig"]
 
 ## Problem Statement
 
-A maintainer or agent runs `s/test` for Rust formatting, all-feature clippy, default-feature workspace tests and no-default workspace tests, then `s/lint` for formatting, all-feature and no-default workspace clippy, Markdown lint, REUSE when installed, and real-device-data lint. `s/install-hooks` makes `s/lint` a pre-commit hook for maintainers who want it, without imposing one on every clone. CI remains broader only in the Windows host/MCP cross-checks, which stay CI-only because they need a cross toolchain that is not guaranteed to be present locally. Local green no longer skips the no-default workspace clippy/test paths that used to be remote-only.
+A maintainer or agent runs `s/test` for Rust formatting, all-feature clippy, default-feature and no-default workspace tests, frontend checks, and traceability-checker fixtures, then `s/lint` for formatting, both clippy feature paths, frontend checks, Markdown and REUSE lint, real-device-data protection, version synchronization, and live traceability validation. `s/install-hooks` makes `s/lint` a pre-commit hook for maintainers who want it, without imposing one on every clone. CI remains broader in the Windows host/MCP cross-checks and Tauri integration build, which need platform setup not guaranteed locally. Local green no longer skips the no-default workspace clippy/test paths that used to be remote-only.
 
 This zone owns the scripts, the `.editorconfig`, and the lint/format config. The CI workflow itself is owned by zone 600; this zone mirrors it locally. `s/gui-dev` and `s/version++` exist. The version script synchronizes the Rust workspace, npm lock/package metadata and Tauri configuration in one release commit.
 
@@ -33,14 +33,15 @@ This zone owns the scripts, the `.editorconfig`, and the lint/format config. The
 
 | Claim | Status | Evidence |
 | --- | --- | --- |
-| `s/test` runs fmt + clippy + tests | Implemented | `s/test` runs `cargo fmt --all --check`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test --all`, `cargo test --all --no-default-features` |
-| `s/lint` runs fmt + clippy + no-HID check + REUSE + device-data lint | Implemented | `s/lint` runs `cargo fmt --all --check`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo clippy --all-targets --no-default-features -- -D warnings`, `reuse lint` when available, `s/lint-no-device-data` |
+| `s/test` runs fmt + clippy + tests | Implemented | `s/test` runs `cargo fmt --all --check`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test --all`, `cargo test --all --no-default-features`, frontend checks, and `tests/check-traceability.sh` |
+| `s/lint` runs fmt + clippy + no-HID check + REUSE + repository policy lints | Implemented | `s/lint` runs `cargo fmt --all --check`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo clippy --all-targets --no-default-features -- -D warnings`, `reuse lint` when available, `s/lint-no-device-data`, `s/check-versions`, and `s/check-traceability` |
 | `.editorconfig` enforces UTF-8, LF, 4-space indent (2 for md/yaml/json), final newline | Implemented | `.editorconfig` at repo root |
 | `cargo fmt` and `cargo clippy` run in CI | Implemented | `.github/workflows/ci.yml` (owned by zone 600) |
 | `s/gui-dev` | Implemented | Runs the Tauri dev server from the repository-independent entry point |
 | `s/version++` | Implemented | Release script synchronizes Cargo, npm and Tauri versions, runs the Rust and frontend gates, then lands one release commit |
 | No-default workspace clippy/tests run locally, not only in CI | Implemented | `s/lint` runs `cargo clippy --all-targets --no-default-features -- -D warnings`; `s/test` runs `cargo test --all --no-default-features` |
 | Markdown lint | Implemented | `s/markdownlint` runs `markdownlint-cli2@0.23.2` against `.markdownlint.jsonc`, from `s/lint` and a dedicated CI step |
+| Traceability lint | Implemented | `s/check-traceability` resolves existing Rust `@see` paths and node IDs, requires a living spec/design target, and has isolated fixture coverage in `tests/check-traceability.sh` |
 | Tracked Git hooks | Implemented | `s/install-hooks` sets `core.hooksPath=.githooks`; `.githooks/pre-commit` runs `s/lint` |
 
 ## User Stories
@@ -76,7 +77,7 @@ Maintainers and AI coding agents running the local gate before a commit.
 | ID | Requirement | Priority |
 | --- | --- | --- |
 | FR-1 | `s/test` runs `cargo fmt --all --check`, all-feature clippy, `cargo test --all` and `cargo test --all --no-default-features`. | Must Have |
-| FR-2 | `s/lint` runs formatting, all-feature clippy, no-default-features workspace clippy, `s/markdownlint`, `reuse lint` when available, and `s/lint-no-device-data`. | Must Have |
+| FR-2 | `s/lint` runs formatting, all-feature clippy, no-default-features workspace clippy, `s/markdownlint`, `reuse lint` when available, `s/lint-no-device-data`, `s/check-versions`, and `s/check-traceability`. | Must Have |
 | FR-3 | `.editorconfig` enforces UTF-8 charset, LF line endings, 4-space indent (2 for `*.md`/`*.yaml`/`*.yml`/`*.json`/`*.toml`, 4 for `*.rs`), final newline, and trailing-whitespace trim. | Must Have |
 | FR-4 | The `s/` scripts carry an SPDX header (`SPDX-FileCopyrightText` / `SPDX-License-Identifier`) and a one-line description of what they do. | Must Have |
 | FR-5 | The `s/` scripts `set -euo pipefail` and `cd` to the repo root via `git rev-parse --show-toplevel`, so they run from any working directory. | Must Have |
@@ -84,6 +85,7 @@ Maintainers and AI coding agents running the local gate before a commit.
 | FR-12 | `s/markdownlint` runs `markdownlint-cli2` (pinned, via `npx`) against `.markdownlint.jsonc` in both `s/lint` and CI. The config is not purely stylistic: `MD056` and `MD040` catch defects that silently degrade the rendered docs. | Should Have |
 | FR-13 | `s/install-hooks` sets `core.hooksPath` to the tracked `.githooks/` directory, and reverses that with `-u`. | Should Have |
 | FR-14 | `.githooks/pre-commit` runs `s/lint` and refuses the commit on failure. | Should Have |
+| FR-15 | `s/check-traceability` validates complete `@see` syntax, target existence, literal structural node resolution, and at least one living spec/design target for every Rust file that already carries a header. Its parser behavior is covered in isolated temporary Git repositories. | Should Have |
 
 #### Planned
 
@@ -112,6 +114,7 @@ Maintainers and AI coding agents running the local gate before a commit.
 - [x] `s/version++` bumps the version across all current surfaces in one commit.
 - [x] `s/test` and `s/lint` run no-default-features workspace clippy and tests locally, matching CI's no-default job.
 - [x] Markdown lint runs in `s/lint` and CI.
+- [x] Traceability lint runs in `s/lint` and CI, with its parser behavior exercised by `s/test` and CI.
 - [x] `s/install-hooks` and `.githooks/pre-commit` are wired.
 
 ## Non-Goals
@@ -138,7 +141,7 @@ Maintainers and AI coding agents running the local gate before a commit.
 
 | Term | Definition |
 | --- | --- |
-| `s/` scripts | Repo scripts (`s/test`, `s/lint`, `s/gui-dev`, `s/version++`) that are the canonical entry points for the local workflow |
+| `s/` scripts | Repo scripts (`s/test`, `s/lint`, `s/check-traceability`, `s/gui-dev`, `s/version++`) that are the canonical entry points for the local workflow |
 | Local gate | `s/test` + `s/lint`; a documented local subset of CI with additional device-data lint |
 | REUSE lint | The FSFE REUSE tool that checks SPDX headers are present and correct on every file |
 | `.editorconfig` | Editor-agnostic config enforcing charset, line endings, indent style, and final newline |

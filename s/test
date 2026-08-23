@@ -2,9 +2,8 @@
 # SPDX-FileCopyrightText: 2026 Dr Marcus Baw
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
-# The full local gate: fmt + clippy + tests. Mirrors .github/workflows/ci.yml
-# so a green run here means a green run there. Run during development and
-# before every commit.
+# Run the Rust and frontend build/test gate. Use it with s/lint before every
+# commit; CI additionally checks Windows host compilation and Tauri integration.
 
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
@@ -16,3 +15,4 @@ cargo test --all
 # cortex-rs without linking hidapi, so that path needs its own test run.
 cargo test --all --no-default-features
 (cd gui && npm run check)
+tests/check-traceability.sh

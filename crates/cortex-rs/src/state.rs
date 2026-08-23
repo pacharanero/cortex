@@ -14,8 +14,9 @@
 //! wait on a revision number rather than queueing every message in a knob
 //! sweep.
 //!
-//! @see spec/140-session/spec.md
-//! @see spec/completed.md PROT-008.6
+//! @see spec/140-session/spec.md [FR-21] [FR-22] [FR-23] [FR-24]
+//! @see spec/140-session/spec.md [FR-25] [FR-26] [FR-27]
+//! @see spec/140-session/design.md [DES-SES-DISPATCH]
 
 #![allow(clippy::missing_panics_doc)]
 

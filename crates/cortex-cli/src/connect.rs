@@ -6,7 +6,9 @@
 //! The protocol requires one effective HID owner, so exactly one process
 //! can own it. This is that process. Everything else talks to it.
 //!
-//! @see spec/completed.md PROT-008.6
+//! @see spec/200-cli/spec.md [FR-18] [FR-19] [FR-20] [FR-21]
+//! @see spec/200-cli/spec.md [FR-22] [FR-26] [FR-27] [FR-28]
+//! @see spec/200-cli/design.md [DES-CLI]
 //! @see spec/140-session/spec.md
 
 use std::collections::HashMap;

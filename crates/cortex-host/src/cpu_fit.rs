@@ -4,6 +4,7 @@
 //! Read-only interpretation of the Quad Cortex CPU-load push.
 //!
 //! @see spec/roadmap.md [MCP-003.2]
+//! @see spec/300-mcp/spec.md
 
 use cortex_rs::view::{CpuLoad, Preset};
 
