@@ -1,8 +1,9 @@
 // SPDX-FileCopyrightText: 2026 Dr Marcus Baw
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-//! Process tests proving a protocol-version-mismatched daemon refuses
-//! ordinary work while cross-version `Shutdown` remains compatible.
+//! Process tests proving client-side protocol gating rejects ordinary work
+//! against older and newer daemons while cross-version `Shutdown` remains
+//! compatible.
 //!
 //! @see spec/200-cli/spec.md [FR-28]
 //! @see spec/200-cli/design.md [DES-CLI]

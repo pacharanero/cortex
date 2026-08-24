@@ -5,7 +5,8 @@
 //! persistent daemons: idle timeout, timeout reset on completion,
 //! in-flight protection, and typed failures surviving the process boundary.
 //!
-//! @see spec/200-cli/spec.md [FR-18] [FR-26]
+//! @see spec/200-cli/spec.md [FR-18] [FR-26] [FR-27]
+//! @see spec/300-mcp/spec.md [FR-45]
 
 #![cfg(unix)]
 

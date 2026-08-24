@@ -5,9 +5,8 @@
 //! MCP SDK client: daemon discovery/startup, concurrent sibling races,
 //! auto-managed idle recovery, and the hardware-smoke tool calls.
 //!
-//! @see spec/300-mcp/spec.md
-//! @see spec/300-mcp/design.md [DES-FRAMEWORK]
-//! @see spec/roadmap.md [MCP-003.1] [MCP-003.2]
+//! @see spec/300-mcp/spec.md [FR-42] [FR-44] [FR-45]
+//! @see spec/300-mcp/design.md [DES-OWNER] [DES-TOOLS] [DES-FRAMEWORK]
 
 #![cfg(unix)]
 
