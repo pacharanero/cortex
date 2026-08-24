@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 //! Hardware checks for wider client reads and explicitly reversible mutations.
+//!
+//! @see spec/150-client/spec.md
 
 use std::sync::{Arc, Barrier};
 use std::time::Duration;

@@ -11,6 +11,8 @@
 //! definitions needed for interoperability - no Cortex Control binaries,
 //! firmware, or artwork are redistributed. See `NOTICE` and
 //! `THIRD-PARTY-NOTICES.md` at the repo root for attribution.
+//!
+//! @see spec/120-proto-schema/spec.md [FR-2] [FR-8] [FR-10]
 
 use std::path::PathBuf;
 
