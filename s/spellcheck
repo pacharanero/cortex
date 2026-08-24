@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Dr Marcus Baw
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# Spell-check docs/ with codespell. `s/lint` and CI run this on every
+# change, alongside `s/markdownlint` for prose formatting and
+# `s/check-docs-nav` / `s/linkcheck` for nav and link integrity.
+#
+# codespell targets real typos (its default "clear,rare" dictionaries), not
+# a general English wordlist, so it does not flag project vocabulary,
+# product names, or code identifiers the way a full spellchecker would.
+# IGNORE_WORDS below is for the rare case that changes.
+#
+#   s/spellcheck                lint every file under docs/
+#   s/spellcheck -w              also apply codespell's own fixes in place
+#
+# Pinned deliberately, the same reasoning as s/markdownlint's npx pin: an
+# unpinned checker turns an upstream dictionary change into a surprise CI
+# failure on an unrelated pull request. Installed on demand via pip and
+# cached by pip's own mechanism, the closest local equivalent to npx's
+# fetch-once-then-cache behaviour.
+CODESPELL_VERSION="2.4.1"
+
+# Comma-separated, lowercase - codespell's own -L flag format.
+IGNORE_WORDS=""
+
+set -euo pipefail
+cd "$(git rev-parse --show-toplevel)"
+
+command -v python3 > /dev/null 2>&1 ||
+	{ echo "python3 is missing; install Python 3 to run the spell checker." >&2; exit 1; }
+
+installed_version="$(python3 -m codespell_lib --version 2> /dev/null || true)"
+if [[ "$installed_version" != "$CODESPELL_VERSION" ]]; then
+	echo "s/spellcheck: installing codespell==${CODESPELL_VERSION}" >&2
+	python3 -m pip install --quiet --user "codespell==${CODESPELL_VERSION}"
+fi
+
+args=(docs --count)
+[[ -n "$IGNORE_WORDS" ]] && args+=(-L "$IGNORE_WORDS")
+
+exec python3 -m codespell_lib "${args[@]}" "$@"

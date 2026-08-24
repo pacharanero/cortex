@@ -54,6 +54,21 @@ jobs:
       - name: Markdown lint
         run: s/markdownlint
 
+      - name: Docs nav has no orphans
+        run: |
+          tests/check-docs-nav.sh
+          s/check-docs-nav
+
+      - name: Docs internal links resolve
+        run: |
+          tests/linkcheck.sh
+          s/linkcheck
+
+      - name: Docs spell check
+        run: |
+          tests/spellcheck.sh
+          s/spellcheck
+
       - name: Workspace and GUI manifest versions match
         run: s/check-versions
 

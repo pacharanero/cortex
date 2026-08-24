@@ -1,0 +1,137 @@
+#!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Dr Marcus Baw
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# Check that every internal Markdown link under docs/ resolves: the target
+# file exists, and if the link carries a `#fragment`, that fragment matches
+# a heading in the target file. `s/lint` and CI run this on every change.
+#
+# External links (http(s)://, mailto:, tel:) are deliberately not checked -
+# that needs network access, is inherently flaky, and is a different failure
+# mode from the one this guards: a renamed or deleted page inside this repo,
+# which the site build itself never reports because Zensical does not
+# validate `[text](target)` targets.
+#
+# Dependency-free: plain text extraction and a heading slugifier that
+# approximates Python-Markdown's `toc` extension (lowercase, strip markup,
+# spaces to hyphens), the same slugger Zensical/MkDocs uses to generate
+# heading anchors. An explicit `{#custom-id}` attr_list suffix on a heading
+# overrides the computed slug, matching how the site itself resolves it.
+
+set -euo pipefail
+cd "$(git rev-parse --show-toplevel)"
+
+docs_dir="docs"
+findings=0
+checked=0
+
+fail() {
+	findings=$((findings + 1))
+	echo "  $1" >&2
+}
+
+slugify() {
+	local text="$1"
+	text="${text,,}"
+	text="$(printf '%s' "$text" | sed -E 's/[^a-z0-9 -]//g; s/[[:space:]]+/-/g; s/-+/-/g')"
+	text="${text#-}"
+	text="${text%-}"
+	printf '%s' "$text"
+}
+
+# Cache of "\n"-joined valid slugs per target file, so a heavily-linked file
+# (e.g. protocol.md) is only scanned once.
+declare -A HEADING_SLUGS=()
+
+heading_slugs_for() {
+	local target="$1"
+	if [[ -n "${HEADING_SLUGS[$target]+x}" ]]; then
+		printf '%s' "${HEADING_SLUGS[$target]}"
+		return
+	fi
+	local slugs=""
+	local line heading explicit_id
+	while IFS= read -r line || [[ -n "$line" ]]; do
+		[[ "$line" =~ ^#{1,6}[[:space:]]+(.*)$ ]] || continue
+		heading="${BASH_REMATCH[1]}"
+		if [[ "$heading" =~ \{#([A-Za-z0-9_-]+)\}[[:space:]]*$ ]]; then
+			explicit_id="${BASH_REMATCH[1]}"
+			slugs+="$explicit_id"$'\n'
+		else
+			slugs+="$(slugify "$heading")"$'\n'
+		fi
+	done < "$target"
+	HEADING_SLUGS[$target]="$slugs"
+	printf '%s' "$slugs"
+}
+
+check_link() {
+	local file="$1" lineno="$2" target="$3"
+
+	case "$target" in
+		http://* | https://* | mailto:* | tel:*) return ;;
+	esac
+
+	checked=$((checked + 1))
+
+	local path="$target" frag=""
+	if [[ "$target" == *"#"* ]]; then
+		path="${target%%#*}"
+		frag="${target#*#}"
+	fi
+
+	local resolved
+	if [[ -z "$path" ]]; then
+		resolved="$file"
+	else
+		resolved="$(cd "$(dirname "$file")" && realpath -m "$path" 2> /dev/null)" || resolved=""
+		if [[ -z "$resolved" || ! -f "$resolved" ]]; then
+			fail "$file:$lineno: link target '$target' does not resolve to a file (looked for ${resolved:-$path})"
+			return
+		fi
+	fi
+
+	if [[ -n "$frag" ]]; then
+		local slugs
+		slugs="$(heading_slugs_for "$resolved")"
+		if ! grep -qxF "$frag" <<< "$slugs"; then
+			fail "$file:$lineno: link target '$target' - no heading in $resolved produces anchor '#$frag'"
+		fi
+	fi
+}
+
+while IFS= read -r file; do
+	lineno=0
+	in_fence=false
+	while IFS= read -r line || [[ -n "$line" ]]; do
+		lineno=$((lineno + 1))
+
+		if [[ "$line" =~ ^([[:space:]]*)(\`\`\`|~~~) ]]; then
+			if [[ "$in_fence" == true ]]; then
+				in_fence=false
+			else
+				in_fence=true
+			fi
+			continue
+		fi
+		[[ "$in_fence" == true ]] && continue
+
+		rest="$line"
+		while [[ "$rest" == *"]("* ]]; do
+			rest="${rest#*](}"
+			target="${rest%%)*}"
+			rest="${rest#*)}"
+			[[ -n "$target" ]] && check_link "$file" "$lineno" "$target"
+		done
+	done < "$file"
+done < <(find "$docs_dir" -name '*.md' -type f | sort)
+
+if [[ "$findings" -gt 0 ]]; then
+	{
+		echo
+		echo "ERROR: $findings broken internal link(s) among $checked checked."
+	} >&2
+	exit 1
+fi
+
+echo "linkcheck ok: $checked internal link(s) resolved cleanly"

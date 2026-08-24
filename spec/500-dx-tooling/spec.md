@@ -33,8 +33,9 @@ This zone owns the scripts, the `.editorconfig`, and the lint/format config. The
 
 | Claim | Status | Evidence |
 | --- | --- | --- |
-| `s/test` runs fmt + clippy + tests | Implemented | `s/test` runs `cargo fmt --all --check`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test --all`, `cargo test --all --no-default-features`, frontend checks, and `tests/check-traceability.sh` |
+| `s/test` runs fmt + clippy + tests | Implemented | `s/test` runs `cargo fmt --all --check`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test --all`, `cargo test --all --no-default-features`, frontend checks, `tests/check-traceability.sh`, `tests/check-docs-nav.sh`, `tests/linkcheck.sh` and `tests/spellcheck.sh` |
 | `s/lint` runs fmt + clippy + no-HID check + REUSE + repository policy lints | Implemented | `s/lint` runs `cargo fmt --all --check`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo clippy --all-targets --no-default-features -- -D warnings`, `reuse lint` when available, `s/lint-no-device-data`, `s/check-versions`, and `s/check-traceability` |
+| Docs-site quality lints (nav orphans, internal links, spelling) | Implemented | `s/check-docs-nav` and `s/linkcheck` are dependency-free and resolve `mkdocs.yml`'s nav and every `docs/` internal link/anchor against the file tree; `s/spellcheck` runs pinned `codespell==2.4.1`. All three run from `s/lint` and dedicated CI steps, with fixture coverage in `tests/check-docs-nav.sh`, `tests/linkcheck.sh` and `tests/spellcheck.sh` |
 | `.editorconfig` enforces UTF-8, LF, 4-space indent (2 for md/yaml/json), final newline | Implemented | `.editorconfig` at repo root |
 | `cargo fmt` and `cargo clippy` run in CI | Implemented | `.github/workflows/ci.yml` (owned by zone 600) |
 | `s/gui-dev` | Implemented | Runs the Tauri dev server from the repository-independent entry point |
@@ -77,7 +78,7 @@ Maintainers and AI coding agents running the local gate before a commit.
 | ID | Requirement | Priority |
 | --- | --- | --- |
 | FR-1 | `s/test` runs `cargo fmt --all --check`, all-feature clippy, `cargo test --all` and `cargo test --all --no-default-features`. | Must Have |
-| FR-2 | `s/lint` runs formatting, all-feature clippy, no-default-features workspace clippy, `s/markdownlint`, `reuse lint` when available, `s/lint-no-device-data`, `s/check-versions`, and `s/check-traceability`. | Must Have |
+| FR-2 | `s/lint` runs formatting, all-feature clippy, no-default-features workspace clippy, `s/markdownlint`, `s/check-docs-nav`, `s/linkcheck`, `s/spellcheck`, `reuse lint` when available, `s/lint-no-device-data`, `s/check-versions`, and `s/check-traceability`. | Must Have |
 | FR-3 | `.editorconfig` enforces UTF-8 charset, LF line endings, 4-space indent (2 for `*.md`/`*.yaml`/`*.yml`/`*.json`/`*.toml`, 4 for `*.rs`), final newline, and trailing-whitespace trim. | Must Have |
 | FR-4 | The `s/` scripts carry an SPDX header (`SPDX-FileCopyrightText` / `SPDX-License-Identifier`) and a one-line description of what they do. | Must Have |
 | FR-5 | The `s/` scripts `set -euo pipefail` and `cd` to the repo root via `git rev-parse --show-toplevel`, so they run from any working directory. | Must Have |
@@ -86,6 +87,9 @@ Maintainers and AI coding agents running the local gate before a commit.
 | FR-13 | `s/install-hooks` sets `core.hooksPath` to the tracked `.githooks/` directory, and reverses that with `-u`. | Should Have |
 | FR-14 | `.githooks/pre-commit` runs `s/lint` and refuses the commit on failure. | Should Have |
 | FR-15 | `s/check-traceability` validates complete `@see` syntax, target existence, literal structural node resolution, and at least one living spec/design target for every Rust file that already carries a header. Its parser behavior is covered in isolated temporary Git repositories. | Should Have |
+| FR-16 | `s/check-docs-nav` fails if a `docs/` page is not reachable from `mkdocs.yml`'s nav and is not a named exception (with a reason) in `.nav-exceptions`; it also fails if a named exception no longer exists. | Should Have |
+| FR-17 | `s/linkcheck` fails if a `docs/` internal Markdown link does not resolve to a file, or if a `#fragment` does not match a target heading's computed or explicit (`{#id}`) slug. External links are not checked. | Should Have |
+| FR-18 | `s/spellcheck` runs pinned `codespell` against `docs/`, installing that pinned version on demand. | Should Have |
 
 #### Planned
 
@@ -114,6 +118,7 @@ Maintainers and AI coding agents running the local gate before a commit.
 - [x] `s/version++` bumps the version across all current surfaces in one commit.
 - [x] `s/test` and `s/lint` run no-default-features workspace clippy and tests locally, matching CI's no-default job.
 - [x] Markdown lint runs in `s/lint` and CI.
+- [x] Docs nav-orphan, internal-link and spell checks run in `s/lint` and CI, with fixture coverage in `tests/check-docs-nav.sh`, `tests/linkcheck.sh` and `tests/spellcheck.sh`.
 - [x] Traceability lint runs in `s/lint` and CI, with its parser behavior exercised by `s/test` and CI.
 - [x] `s/install-hooks` and `.githooks/pre-commit` are wired.
 
@@ -135,13 +140,13 @@ Maintainers and AI coding agents running the local gate before a commit.
 ## Future
 
 - **`s/version++` GUI synchronization.** Implemented for `gui/package.json`, `gui/package-lock.json` and `gui/src-tauri/tauri.conf.json`; a future CI drift check can verify they match outside release runs.
-- **Markdown lint in the docs build.** `s/markdownlint` covers style and structure, but not whether links resolve or the nav is complete. House style also describes `s/linkcheck`, `s/spellcheck` and a nav-orphan check for docs-heavy repos; this repo has the docs site to justify them and does not have them yet.
 
 ## Glossary
 
 | Term | Definition |
 | --- | --- |
-| `s/` scripts | Repo scripts (`s/test`, `s/lint`, `s/check-traceability`, `s/gui-dev`, `s/version++`) that are the canonical entry points for the local workflow |
+| `s/` scripts | Repo scripts (`s/test`, `s/lint`, `s/check-traceability`, `s/check-docs-nav`, `s/linkcheck`, `s/spellcheck`, `s/gui-dev`, `s/version++`) that are the canonical entry points for the local workflow |
+| `.nav-exceptions` | Optional repo-root file naming `docs/` pages deliberately excluded from `mkdocs.yml`'s nav, one `<path><TAB><reason>` per line; read by `s/check-docs-nav` |
 | Local gate | `s/test` + `s/lint`; a documented local subset of CI with additional device-data lint |
 | REUSE lint | The FSFE REUSE tool that checks SPDX headers are present and correct on every file |
 | `.editorconfig` | Editor-agnostic config enforcing charset, line endings, indent style, and final newline |
