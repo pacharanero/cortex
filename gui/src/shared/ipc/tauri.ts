@@ -31,6 +31,6 @@ export const tauriApi: CortexApi = {
   setNanoGateReduction(percent) { return invokeCommand<void>("set_nano_gate_reduction", { percent }); },
   setNanoBypass(target, bypassed) { return invokeCommand<void>("set_nano_bypass", { target, bypassed }); },
   readNanoFxParams(slot) { return invokeCommand<number[]>("read_nano_fx_params", { slot }); },
-  setNanoFxParam(slot, paramIndex, value) { return invokeCommand<void>("set_nano_fx_param", { slot, paramIndex, value }); },
+  setNanoFxParam(slot, paramIndex, value) { return invokeCommand<number[]>("set_nano_fx_param", { slot, paramIndex, value }); },
   setDevice(device) { return invokeCommand<void>("set_device", { device }); },
 };

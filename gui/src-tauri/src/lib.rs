@@ -234,7 +234,7 @@ trait DashboardSource: Send + Sync {
         _slot: cortex_rs::nano::NanoFxSlot,
         _param_index: u8,
         _value: f32,
-    ) -> Result<(), CommandError> {
+    ) -> Result<Vec<f32>, CommandError> {
         Err(CommandError::daemon(
             "this dashboard source does not support Nano FX parameter writes",
         ))
@@ -313,16 +313,29 @@ impl DashboardSource for DaemonDashboardSource {
             .require_compatible()
             .map_err(|error| CommandError::daemon(error.to_string()))?;
         if before.device_kind == cortex_rs::DeviceKind::NanoCortex {
-            let nano = self
+            let nano = self.client.request(&Request::NanoState);
+            let after = self
                 .client
-                .request(&Request::NanoState)
+                .require_compatible()
                 .map_err(|error| CommandError::daemon(error.to_string()))?;
+            let nano = match nano {
+                Ok(nano)
+                    if status_is_live(&after)
+                        && after.cache.generation == before.cache.generation
+                        && after.device_kind == before.device_kind =>
+                {
+                    Some(nano)
+                }
+                Ok(_) => None,
+                Err(_) if !status_is_live(&after) => None,
+                Err(error) => return Err(CommandError::daemon(error.to_string())),
+            };
             return Ok(DashboardSnapshot {
                 source: DashboardSnapshotSource::Daemon,
-                status: before,
+                nano,
+                status: after,
                 live: None,
                 directory: Vec::new(),
-                nano: Some(nano),
             });
         }
         if !status_is_live(&before) {
@@ -468,14 +481,13 @@ impl DashboardSource for DaemonDashboardSource {
         slot: cortex_rs::nano::NanoFxSlot,
         param_index: u8,
         value: f32,
-    ) -> Result<(), CommandError> {
+    ) -> Result<Vec<f32>, CommandError> {
         self.client
             .request::<Vec<f32>>(&Request::NanoSetFxParam {
                 slot,
                 param_index,
                 value,
             })
-            .map(|_| ())
             .map_err(|error| CommandError::daemon(error.to_string()))
     }
 
@@ -1118,7 +1130,7 @@ async fn set_nano_fx_param(
     slot: cortex_rs::nano::NanoFxSlot,
     param_index: u8,
     value: f32,
-) -> Result<(), CommandError> {
+) -> Result<Vec<f32>, CommandError> {
     let source = Arc::clone(&state.source);
     tauri::async_runtime::spawn_blocking(move || source.set_nano_fx_param(slot, param_index, value))
         .await
@@ -1368,9 +1380,10 @@ mod tests {
         }
 
         let original = first_value.expect("Pre FX 1 returned no parameters");
-        source
+        let write_confirmed = source
             .set_nano_fx_param(cortex_rs::nano::NanoFxSlot::PreFx1, 0, original)
             .unwrap();
+        assert!((write_confirmed[0] - original).abs() <= 0.001);
         let confirmed = source
             .read_nano_fx_params(cortex_rs::nano::NanoFxSlot::PreFx1)
             .unwrap();

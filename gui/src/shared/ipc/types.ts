@@ -59,6 +59,6 @@ export interface CortexApi {
   setNanoGateReduction(percent: number): Promise<void>;
   setNanoBypass(target: NanoBypassTarget, bypassed: boolean): Promise<void>;
   readNanoFxParams(slot: NanoFxSlot): Promise<number[]>;
-  setNanoFxParam(slot: NanoFxSlot, paramIndex: number, value: number): Promise<void>;
+  setNanoFxParam(slot: NanoFxSlot, paramIndex: number, value: number): Promise<number[]>;
   setDevice(device: DeviceKind | null): Promise<void>;
 }

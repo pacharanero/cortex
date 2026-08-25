@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Dr Marcus Baw
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-import type { CortexApi, DashboardSnapshot, DeviceKind, LiveBlock, NanoCurrentState, ParameterInput, ParameterView, SceneSnapshot } from "./types";
+import type { CortexApi, DashboardSnapshot, DeviceKind, LiveBlock, NanoCurrentState, NanoFxSlot, ParameterInput, ParameterView, SceneSnapshot } from "./types";
 
 /**
  * Parameters per block cell, keyed "row,column".
@@ -148,6 +148,14 @@ const nanoState: NanoCurrentState = {
   ],
 };
 
+const nanoFxParameters: Record<NanoFxSlot, number[]> = {
+  pre_fx1: [0.5, 0.25, 0.75, 0.0, 1.0],
+  pre_fx2: [0.5, 0.25, 0.75, 0.0, 1.0],
+  post_fx1: [0.5, 0.25, 0.75, 0.0, 1.0],
+  post_fx2: [0.5, 0.25, 0.75, 0.0, 1.0],
+  post_fx3: [0.5, 0.25, 0.75, 0.0, 1.0],
+};
+
 /** The device answers an edit with a new revision; the header shows it. */
 function bumpRevision() {
   if (!dashboard.live) return;
@@ -232,8 +240,14 @@ export const fixtureApi: CortexApi = {
     const slot = nanoState.slots.find((s) => s.role === target);
     if (slot) slot.bypassed = bypassed;
   },
-  async readNanoFxParams(_slot) { return [0.5, 0.25, 0.75, 0.0, 1.0]; },
-  async setNanoFxParam(_slot, _paramIndex, _value) {},
+  async readNanoFxParams(slot) { return [...nanoFxParameters[slot]]; },
+  async setNanoFxParam(slot, paramIndex, value) {
+    const values = nanoFxParameters[slot];
+    if (!Number.isInteger(paramIndex) || paramIndex < 0 || paramIndex >= values.length) throw new Error(`Nano FX parameter index ${paramIndex} is out of range`);
+    if (!Number.isFinite(value) || value < 0 || value > 1) throw new Error("Nano FX parameter value must be normalized from 0 to 1");
+    values[paramIndex] = value;
+    return [...values];
+  },
   async setDevice(_device) {},
   async blockParameters(row: number, column: number) {
     if (row < 0 || row > 3 || column < 0 || column > 7) throw new Error(`row ${row}, column ${column} is outside the grid`);

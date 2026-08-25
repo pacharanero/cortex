@@ -23,7 +23,7 @@ Protocol implementers can start with the separate [Quad Cortex HID transport](ht
 ## What it is
 
 - `gui/` - the Tauri 2 + React + Mantine desktop editor, intended for both Cortex devices on Linux, Windows and macOS. It starts or reuses the held session itself, provides non-persistent Quad editing, and provides a Nano fixed-chain view with raw amp, bypass and FX parameter controls in explicit fixture and daemon-backed modes; the native Nano FX control is hardware-verified, while automated native DOM/IPC checks, dual-device inspection and cross-platform packaging remain outstanding.
-- `cortex-cli` - a thin CLI over the crate, including a persistent daemon that owns the one device connection. Quad sessions reconnect without serving stale state; Nano sessions currently report transport failure and require restart.
+- `cortex-cli` - a thin CLI over the crate, including a persistent daemon that owns the one device connection. Quad sessions reconnect without serving stale state; Nano sessions discard and reopen a failed transport, invalidate the old generation, and require a fresh state read before serving live data again.
 - `cortex-mcp` - an MCP server for agentic patch editing through `cortex session`. Its read, recall, scene and working-copy tools are hardware-verified; persistent writes remain deliberately unavailable.
 - `cortex-rs` - a leaf Rust crate providing the USB HID transport, Cortex Control framing and protobuf envelope, session/correlation, typed domain and client APIs, subscribed state reduction, and shared prepared-save safety.
 - `cortex-host` - the shared synchronous daemon contract and local IPC facade used by host surfaces; it has no HID feature and cannot open the device. Unix sockets are the current adapter, with Windows named pipes planned behind the same API.
@@ -56,7 +56,7 @@ sudo udevadm control --reload-rules
 sudo udevadm trigger --action=add --subsystem-match=hidraw
 ```
 
-Re-plug the device, then `ls -l /dev/hidraw*` should show `crw-rw----+` on the interface-5 node. This prepares access to both products; the installed CLI remains Quad-only until the Nano codec/session work is complete.
+Re-plug the device, then `ls -l /dev/hidraw*` should show `crw-rw----+` on the interface-5 node. The installed CLI can hold either product explicitly: Quad uses the full grid/session surface, while Nano currently exposes typed state plus non-persistent amp, bypass and raw FX parameter operations. Gate-reduction writing remains hardware-provisional.
 
 ### 2. Build
 
@@ -83,7 +83,7 @@ crates/
   cortex-cli/   The `cortex` CLI - a thin surface over the crate.
   cortex-mcp/   Non-persistent MCP read, recall, scene and live-grid tools.
 gui/           Cross-platform Tauri 2 + React + Mantine desktop editor
-               (read-only fixture and daemon-backed modes).
+               (interactive fixture and daemon-backed modes; no persistent save).
 docs/          Protocol notes, runbooks, GUI docs.
 spec/          Living spec/design per zone; roadmap and completed work ledgers.
 s/             Repo scripts: s/test, s/lint, s/gui-dev, s/version++ ...

@@ -36,10 +36,10 @@ use cortex_rs::{DeviceKind, RecallConsent};
 /// The daemon protocol version, checked by clients to detect skew
 /// after an upgrade leaves an old daemon running.
 ///
-/// Bump this whenever a `Request` variant changes shape or a new variant is
-/// added. A client that sees a mismatch refuses with an actionable message
-/// rather than sending a request the daemon will misparse.
-pub const DAEMON_PROTOCOL_VERSION: u32 = 18;
+/// Bump this whenever a request or response changes shape. A client that sees
+/// a mismatch refuses with an actionable message rather than exchanging data
+/// either side will misinterpret.
+pub const DAEMON_PROTOCOL_VERSION: u32 = 19;
 
 /// A request from a client to the daemon.
 ///

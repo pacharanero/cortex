@@ -43,7 +43,7 @@ This zone owns the `Transport` struct that wraps `hidapi::HidDevice` and encodes
 | The benign write STALL (`hid_write` returns `-1` on success) | Hardware-verified | Observed on this machine; documented in `pyquadcortex` |
 | Swallow Quad write errors, detect its dead device via read timeout | Hardware-verified | `cortex device version` succeeds despite `-1` writes; a powered-off Quad surfaces as `Error::ReadTimeout` |
 | `Transport::request` gzip-decompresses frame-level payloads starting `1f 8b` | Hardware-verified | Observed on RecallPreset pushes from `pyquadcortex`; the `version` round-trip does not compress |
-| Nano Cortex transport | Partly hardware-verified and partly implemented | Real Nano on Linux confirmed VID:PID `152A:88E7`, interface 5, 65-byte reports, shared length/flag framing, multi-report state transfer, and cross-transport BLE ownership. Low-level discovery/geometry are implemented; application requests remain unavailable until the Nano codec/session exists |
+| Nano Cortex transport | Partly hardware-verified and partly implemented | Real Nano on Linux confirmed VID:PID `152A:88E7`, interface 5, 65-byte reports, shared length/flag framing, multi-report state transfer, cross-transport BLE ownership, typed state, amp, bypass and raw FX parameter operations through a separate Nano codec and held daemon. Gate reduction and wider application operations remain provisional |
 
 The `pyquadcortex` offline test suite is a conformance reference but not a substitute for a hardware smoke run. Agent-generated tests must not be the sole basis for accepting transport behaviour.
 
@@ -86,7 +86,7 @@ CLI users, the MCP server, the future Tauri GUI backend, and downstream crate co
 | FR-7 | `Transport::open` returns `Error::DeviceNotFound` when no matching device is enumerated; permission/backend failures may surface as HID errors. User-facing diagnostics belong to the host surfaces. | Must Have |
 | FR-8 | `Transport::request` returns the first reassembled message, not one correlated by `request_id` (READ replies carry none). Correlation is a later concern owned by the session layer (140). | Should Have |
 | FR-9 | Framing owns the currently implemented Quad constants `HID_BODY_LEN = 128` and `HID_REPORT_LEN = 129`; transport re-exports them for compatibility. Device-dependent geometry must preserve those values for Quad and use 64/65 for Nano. `DEFAULT_READ_TIMEOUT = 2s` remains transport-owned. | Must Have |
-| FR-10 | `Transport::open(DeviceKind::NanoCortex)` uses hardware-verified PID `0x88E7`, retains Nano geometry, and provides only raw framed read/write. Quad-envelope `request` and `Session::open` reject Nano before device I/O until its codec/session exists. | Should Have |
+| FR-10 | `Transport::open(DeviceKind::NanoCortex)` uses hardware-verified PID `0x88E7`, retains Nano geometry, and provides only raw framed read/write. Quad-envelope `request` and `Session::open` reject Nano before device I/O; Nano application operations use their separate codec and held-daemon path. | Should Have |
 | FR-11 | Quad write errors remain swallowed because its status-stage STALL is hardware-verified. Nano successful writes return normally and Nano write errors propagate; neither path retries a report. | Must Have |
 
 ### Non-Functional Requirements
@@ -118,7 +118,7 @@ CLI users, the MCP server, the future Tauri GUI backend, and downstream crate co
 - **`request_id` correlation and broadcast waiting.** Owned by the session layer (`140-session`). `Transport::request` returns the first reassembled message, full stop.
 - **The paced connect handshake (ResetCommsBuffers; Version READ/cache and UPDATE; ModelRepo READ/wait; Connection; 22 subscribe READs; CPULoad CREATE; adaptive settle).** Owned by `140-session`.
 - **Background RX thread.** Owned by the session layer (`140`); the raw transport remains synchronous and blocking.
-- **Nano Cortex application behaviour.** Hardware established a shared HID framing substrate and a Nano state exchange, but not the Quad message envelope, handshake, registry, or domain semantics. Those remain separate implementation work under NANO-001.
+- **Nano Cortex application behaviour.** The Nano codec and held-daemon operations are separate from this raw transport zone; Nano does not use the Quad message envelope, handshake, registry, or grid domain.
 - **On-device / ioctl access.** The `qc-stomp-tools` route is out of scope; this project uses the USB HID route exclusively.
 
 ## Dependencies

@@ -201,8 +201,8 @@ pub fn build_set_amp(control: NanoAmpControl, value: u8) -> Vec<u8> {
 ///
 /// # Errors
 ///
-/// Returns a transport error, or rejects a transport opened for another
-/// device before any write.
+/// Returns a transport error or rejects a transport opened for another device
+/// before any write.
 #[cfg(feature = "hid")]
 pub fn write_amp(transport: &Transport, control: NanoAmpControl, value: u8) -> Result<()> {
     if transport.device_kind() != crate::DeviceKind::NanoCortex {
@@ -275,8 +275,9 @@ pub fn build_set_bypass(target: NanoBypassTarget, bypassed: bool) -> [u8; 10] {
 ///
 /// # Errors
 ///
-/// Returns a transport error, or rejects a transport opened for another
-/// device before any write.
+/// Returns [`Error::InvalidParameter`] for a non-finite or out-of-range value,
+/// a transport error, or rejects a transport opened for another device before
+/// any write.
 #[cfg(feature = "hid")]
 pub fn write_bypass(transport: &Transport, target: NanoBypassTarget, bypassed: bool) -> Result<()> {
     if transport.device_kind() != crate::DeviceKind::NanoCortex {
@@ -343,18 +344,21 @@ pub fn build_fx_param_refresh(slot: NanoFxSlot) -> [u8; 8] {
 }
 
 /// Build the Nano application body that sets one FX parameter to a normalized
-/// 0.0-1.0 value. The value is clamped before encoding.
-#[must_use]
-pub fn build_fx_param_write(slot: NanoFxSlot, param_index: u8, normalized: f32) -> Vec<u8> {
-    let value = if normalized.is_finite() {
-        normalized.clamp(0.0, 1.0)
-    } else {
-        0.0
-    };
+/// 0.0-1.0 value.
+///
+/// # Errors
+///
+/// Returns [`Error::InvalidParameter`] for a non-finite or out-of-range value.
+pub fn build_fx_param_write(slot: NanoFxSlot, param_index: u8, normalized: f32) -> Result<Vec<u8>> {
+    if !normalized.is_finite() || !(0.0..=1.0).contains(&normalized) {
+        return Err(Error::InvalidParameter(format!(
+            "Nano FX parameter value must be finite and normalized to 0-1, got {normalized}"
+        )));
+    }
     let mut body = vec![0x08, 0x01, 0x18, slot.wire_id(), 0x20, param_index, 0x2d];
-    body.extend(value.to_le_bytes());
+    body.extend(normalized.to_le_bytes());
     body.extend([0x63, 0x00, 0x00, 0x00]);
-    body
+    Ok(body)
 }
 
 /// Read and decode FX parameter values for one editable slot from an open
@@ -434,38 +438,59 @@ fn write_nano_message(link: &impl HidLink, message: &[u8]) -> Result<()> {
 /// wire-indistinguishable from the requested slot's reply.
 #[cfg(any(feature = "hid", test))]
 fn decode_fx_param_refresh_response(message: &[u8]) -> Result<Option<Vec<f32>>> {
-    // The refresh reply shape: 08 06 22 <length> <f32 values...> 8a 00 00 00.
-    if message.len() < 3 || message[..3] != [0x08, 0x06, 0x22] {
+    if message.len() < 4 {
         return Ok(None);
     }
-    if message.len() < 4 {
+    let (body, footer) = split_envelope(message)?;
+    if footer == CONFIRMATION_FOOTER {
+        return Err(decode_confirmation(body)?);
+    }
+    let is_fx_refresh = body.len() >= 3 && body[..3] == [0x08, 0x06, 0x22];
+    if footer != FX_PARAM_REFRESH_FOOTER {
+        return if is_fx_refresh {
+            Err(Error::Decode(
+                "Nano FX parameter refresh has an unexpected footer".into(),
+            ))
+        } else {
+            Ok(None)
+        };
+    }
+    // The refresh reply shape: 08 06 22 <length> <f32 values...> 8a 00 00 00.
+    if !is_fx_refresh {
+        return Err(Error::Decode(
+            "Nano FX parameter refresh has an unexpected body".into(),
+        ));
+    }
+    if body.len() < 4 {
         return Err(Error::Decode(
             "Nano FX parameter refresh is missing its length".into(),
         ));
     }
-    let value_len = message[3] as usize;
+    let value_len = body[3] as usize;
     if value_len % 4 != 0 {
         return Err(Error::Decode(
             "Nano FX parameter refresh has a non-float value length".into(),
         ));
     }
-    let expected_len = 4 + value_len + FX_PARAM_REFRESH_FOOTER.0.len();
-    if message.len() != expected_len {
+    let expected_len = 4 + value_len;
+    if body.len() != expected_len {
         return Err(Error::Decode(
             "Nano FX parameter refresh has an unexpected message length".into(),
         ));
     }
-    if message[4 + value_len..] != FX_PARAM_REFRESH_FOOTER.0 {
+    let values = body[4..]
+        .chunks_exact(4)
+        .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+        .collect::<Vec<_>>();
+    if values
+        .iter()
+        .any(|value| !value.is_finite() || !(0.0..=1.0).contains(value))
+    {
         return Err(Error::Decode(
-            "Nano FX parameter refresh has an unexpected footer".into(),
+            "Nano FX parameter refresh contains a non-normalized value".into(),
         ));
     }
-    Ok(Some(
-        message[4..4 + value_len]
-            .chunks_exact(4)
-            .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
-            .collect(),
-    ))
+    Ok(Some(values))
 }
 
 /// Send one Nano FX parameter write. The device does not acknowledge; callers
@@ -489,7 +514,7 @@ pub fn write_fx_param(
             operation: "Nano FX parameter write",
         });
     }
-    transport.write(&build_fx_param_write(slot, param_index, normalized))
+    transport.write(&build_fx_param_write(slot, param_index, normalized)?)
 }
 
 fn push_varint(output: &mut Vec<u8>, mut value: u64) {
@@ -1056,6 +1081,34 @@ mod tests {
     }
 
     #[test]
+    fn fx_param_refresh_preserves_the_measured_busy_confirmation() {
+        let mut response = Vec::new();
+        field_varint(&mut response, 1, 3);
+        field_bytes(&mut response, 4, b"Device is busy!");
+        response.extend(CONFIRMATION_FOOTER.0);
+
+        assert!(matches!(
+            decode_fx_param_refresh_response(&response),
+            Err(Error::DeviceBusy {
+                device: crate::DeviceKind::NanoCortex
+            })
+        ));
+    }
+
+    #[test]
+    fn fx_param_refresh_rejects_non_normalized_values() {
+        for value in [1.5, f32::NAN] {
+            let mut response = vec![0x08, 0x06, 0x22, 4];
+            response.extend(value.to_le_bytes());
+            response.extend(FX_PARAM_REFRESH_FOOTER.0);
+            assert!(matches!(
+                decode_fx_param_refresh_response(&response),
+                Err(Error::Decode(_))
+            ));
+        }
+    }
+
+    #[test]
     fn fx_param_refresh_uses_the_hid_link_and_skips_unrelated_messages() {
         let link = FakeLink::new();
         let unrelated = encode_reports(HidReportGeometry::NANO_CORTEX, &[0x08, 0x01, 0, 0, 0, 0]);
@@ -1087,7 +1140,7 @@ mod tests {
 
     #[test]
     fn fx_param_write_builder_encodes_little_endian_float_with_footer_63() {
-        let body = build_fx_param_write(NanoFxSlot::PostFx1, 0, 0.5);
+        let body = build_fx_param_write(NanoFxSlot::PostFx1, 0, 0.5).unwrap();
         assert_eq!(
             body,
             vec![
@@ -1097,11 +1150,13 @@ mod tests {
     }
 
     #[test]
-    fn fx_param_write_clamps_out_of_range_values() {
-        let high = build_fx_param_write(NanoFxSlot::PreFx1, 1, 2.0);
-        assert_eq!(&high[7..11], &1.0f32.to_le_bytes());
-        let low = build_fx_param_write(NanoFxSlot::PreFx1, 1, -1.0);
-        assert_eq!(&low[7..11], &0.0f32.to_le_bytes());
+    fn fx_param_write_rejects_invalid_values_instead_of_mutating_the_device() {
+        for value in [-1.0, 2.0, f32::NAN, f32::INFINITY] {
+            assert!(matches!(
+                build_fx_param_write(NanoFxSlot::PreFx1, 1, value),
+                Err(Error::InvalidParameter(_))
+            ));
+        }
     }
 
     #[test]

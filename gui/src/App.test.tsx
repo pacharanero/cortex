@@ -132,4 +132,32 @@ describe("device switching", () => {
 
     expect(screen.getByRole("button", { name: "Select device, current Nano Cortex" })).toBeTruthy();
   });
+
+  it("keeps Nano identity and exposes its failure when state is unavailable", async () => {
+    const unavailable = snapshot("nano_cortex");
+    unavailable.nano = null;
+    unavailable.status.device = { state: "failed", error: "Nano Cortex editor channel is owned by another transport" };
+    api.dashboard.mockResolvedValue(unavailable);
+
+    renderApp();
+
+    expect(await screen.findByRole("button", { name: "Select device, current Nano Cortex" })).toBeTruthy();
+    expect(screen.getByText("Nano Cortex editor channel is owned by another transport")).toBeTruthy();
+  });
+
+  it("keeps a Nano write failure visible across a generation remount", async () => {
+    const initial = snapshot("nano_cortex");
+    initial.nano!.amp.gain = 10;
+    const recovered = snapshot("nano_cortex");
+    recovered.status.cache.generation = 3;
+    recovered.nano!.amp.gain = 10;
+    api.dashboard.mockResolvedValue(recovered).mockResolvedValueOnce(initial);
+    api.setNanoAmp.mockRejectedValue(new Error("write outcome was not confirmed"));
+    renderApp();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Apply gain" }));
+    await screen.findAllByText("write outcome was not confirmed");
+    await waitFor(() => expect(api.dashboard.mock.calls.length).toBeGreaterThan(1), { timeout: 2_000 });
+    await waitFor(() => expect(screen.getAllByText("write outcome was not confirmed")).toHaveLength(1));
+  });
 });
