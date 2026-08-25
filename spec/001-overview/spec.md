@@ -60,13 +60,13 @@ Maintainers, AI coding agents, and downstream crate consumers.
 
 | ID | Requirement | Priority |
 | --- | --- | --- |
-| FR-1 | All non-trivial source files should carry a top-level `@see` doc-comment linking to their governing zone. Coverage is incomplete and tracked under ENG-004. | Should Have |
+| FR-1 | Every owned Rust source file (`crates/**/*.rs`, `gui/src-tauri/**/*.rs`) carries a top-level `@see` doc-comment linking to its governing zone. Settled under ENG-004.1: the TypeScript frontend (`gui/src/`), the `s/` scripts, and configuration files (manifests, CI workflows, build/lint config) are explicitly out of scope for `@see` - they are governed instead by the SPDX header requirement (zone 900, FR-2) and each zone's `spec.md` "Owned source" line, which already names them without an `@see` link. | Must Have |
 | FR-2 | Spec folders use 3-digit ranged numbering by category (see Appendix), spaced to allow insertion without renumbering. | Must Have |
 | FR-3 | Each source surface has one primary owning zone; the routing index below is the authoritative owner map. Cross-cutting files may be consumed by several zones. | Must Have |
 | FR-4 | Node IDs are zone-local: `[FR-x]`/`[NFR-x]` restart per `spec.md`, `[DES-*]` anchors are unique within a `design.md`. | Must Have |
 | FR-5 | Project progress is tracked only in `spec/roadmap.md` and `spec/completed.md`; zone folders contain no `tasks.md`. | Must Have |
 | FR-6 | Cross-cutting living behaviour uses numbered `900-999` specs; one-off decisions use `docs/adr/` (none yet). | Should Have |
-| FR-7 | Code/spec alignment is bidirectional: existing code `@see` links resolve, and zone specs list their owned files. Complete source coverage remains planned under ENG-004. | Should Have |
+| FR-7 | Code/spec alignment is bidirectional: existing Rust `@see` links resolve (`s/check-traceability`, ENG-004.2), and every zone `spec.md` lists its owned files - Rust source via `@see`, non-Rust surfaces via the "Owned source" line alone (FR-1). | Must Have |
 | FR-8 | Provisional surfaces (Nano Cortex specifics, MCP safety surface, unverified message types) are labelled as such in code, spec, UI, and release notes. | Must Have |
 | FR-9 | The crate is a leaf: `default-features = false` builds only the protocol/domain surface (no hidapi, no async runtime). | Must Have |
 | FR-10 | The same crate drives the CLI, MCP server, and Tauri backend; none reimplements protocol or domain logic. | Must Have |
@@ -82,7 +82,7 @@ Maintainers, AI coding agents, and downstream crate consumers.
 
 ## Acceptance Criteria
 
-- [ ] Every owned `.rs` file resolves to exactly one primary zone and carries a valid `@see`; ENG-004 tracks the remaining coverage and CI gate.
+- [x] Every owned `.rs` file resolves to exactly one primary zone and carries a valid `@see`, CI-gated by `s/check-traceability` (ENG-004.1, ENG-004.2). Non-Rust surfaces are explicitly out of scope for `@see` (FR-1).
 - [x] Inserting a zone between `100` and `110` uses `105`, never renumbers.
 - [x] `001-overview` is the singleton routing/rules doc.
 - [x] Provisional surfaces are flagged by capability in code and spec without labelling hardware-verified device support provisional as a whole.
@@ -94,6 +94,7 @@ Maintainers, AI coding agents, and downstream crate consumers.
 - GUI interaction and presentation requirements (owned by zone `400-gui`).
 - Full Nano Cortex support. Hardware verification covers shared USB HID framing, the Nano-specific envelope/domain, held-daemon runtime, typed state, raw amp, bypass and raw FX parameter operations, but wider operations and untested host surfaces remain active work under NANO-001.
 - On-device builds (the `qc-stomp-tools` ioctl route; not in scope for this USB-first project).
+- Extending `@see` traceability to the TypeScript frontend, `s/` scripts, or configuration files. Settled under ENG-004.1: those surfaces are SPDX-headered (zone 900, FR-2) and named in their zone's "Owned source" line, which is judged sufficient for glue/tooling and UI code that does not carry protocol or safety behaviour. A future change proposing `@see` for one of those surfaces needs its own roadmap item with the full contract (NFR-1 resolution, `s/check-traceability` coverage) rather than a narrower one grafted onto FR-1.
 
 ## Dependencies
 
@@ -187,6 +188,8 @@ All spec-driven source files carry a top-level doc-comment:
 ```
 
 At least one `@see` MUST point at a `spec.md` or `design.md` under `spec/`.
+
+**Scope (settled under ENG-004.1):** this contract covers owned Rust source under `crates/` and `gui/src-tauri/`. It deliberately excludes the TypeScript frontend (`gui/src/`), the `s/` scripts, and configuration files (manifests, CI workflows, build/lint config) - see Non-Goals.
 
 ### Glossary
 
