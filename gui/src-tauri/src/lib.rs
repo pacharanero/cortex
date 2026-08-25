@@ -10,9 +10,13 @@
 //! @see spec/400-gui/spec.md
 //! @see spec/400-gui/design.md [DES-BOUNDARY] [DES-SNAPSHOT] [DES-CAPABILITY]
 
+use std::io::Read as _;
+use std::path::PathBuf;
+use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
-use cortex_host::{DaemonClient, DaemonSupervisor, DeviceHealth, DevicePolicy, Request, Status};
+use cortex_host::{DAEMON_PROTOCOL_VERSION, DaemonClient, DeviceHealth, Request, Status};
 use cortex_rs::client::{USER_SETLIST, is_factory_setlist};
 use cortex_rs::view::{CpuLoad, ParamValue, Preset, PresetSlot};
 
@@ -241,51 +245,221 @@ trait DashboardSource: Send + Sync {
     }
 }
 
+const AUTO_MANAGED_IDLE_SECONDS: &str = "60";
+const STARTUP_TIMEOUT: Duration = Duration::from_secs(120);
+const STARTUP_POLL: Duration = Duration::from_millis(200);
+const KEEPALIVE_TIMEOUT: Duration = Duration::from_millis(500);
+
+#[derive(Default)]
 struct GuiDaemonSupervisor {
-    daemon: DaemonSupervisor,
-    /// User's device preference. `None` means "try Quad then Nano" (the
-    /// original auto-detect behaviour). `Some(Quad)` or `Some(Nano)` means
-    /// the user explicitly chose a device; if the running session owns the
-    /// wrong one, stop it and start the preferred one.
+    quad_startup: Mutex<()>,
+    nano_startup: Mutex<()>,
+    /// User's device preference. `None` means "try Quad then Nano".
     preferred_device: Mutex<Option<cortex_rs::DeviceKind>>,
 }
 
-impl Default for GuiDaemonSupervisor {
-    fn default() -> Self {
-        Self {
-            daemon: DaemonSupervisor::default(),
-            preferred_device: Mutex::new(None),
-        }
-    }
-}
-
 impl GuiDaemonSupervisor {
-    fn ensure(&self) -> Result<(), CommandError> {
-        let preference = self
+    fn ensure(
+        &self,
+        quad_client: &DaemonClient,
+        nano_client: &DaemonClient,
+    ) -> Result<cortex_rs::DeviceKind, CommandError> {
+        let preference = *self
             .preferred_device
             .lock()
             .map_err(|_| CommandError::daemon("device preference lock is unavailable"))?;
-        let policy = (*preference).map_or(DevicePolicy::Detect, DevicePolicy::Replace);
-        self.daemon
-            .ensure(policy)
-            .map_err(|error| CommandError::daemon(error.to_string()))
+
+        match preference {
+            Some(device) => {
+                let client = client_for(device, quad_client, nano_client);
+                self.ensure_device_session(client, device)?;
+                Ok(device)
+            }
+            None => {
+                let quad_error = match self
+                    .ensure_device_session(quad_client, cortex_rs::DeviceKind::QuadCortex)
+                {
+                    Ok(()) => return Ok(cortex_rs::DeviceKind::QuadCortex),
+                    Err(error) => error,
+                };
+                match self.ensure_device_session(nano_client, cortex_rs::DeviceKind::NanoCortex) {
+                    Ok(()) => Ok(cortex_rs::DeviceKind::NanoCortex),
+                    Err(nano_error) => Err(CommandError::daemon(format!(
+                        "could not start a session for a connected Cortex device. Quad Cortex: {}; Nano Cortex: {}",
+                        quad_error.message, nano_error.message
+                    ))),
+                }
+            }
+        }
     }
 
-    fn set_device(&self, device: Option<cortex_rs::DeviceKind>) -> Result<(), CommandError> {
+    fn ensure_device_session(
+        &self,
+        client: &DaemonClient,
+        device: cortex_rs::DeviceKind,
+    ) -> Result<(), CommandError> {
+        let startup = match device {
+            cortex_rs::DeviceKind::QuadCortex => &self.quad_startup,
+            cortex_rs::DeviceKind::NanoCortex => &self.nano_startup,
+        };
+        let _startup = startup
+            .lock()
+            .map_err(|_| CommandError::daemon("session startup gate is unavailable"))?;
+        ensure_device_session(client, device)
+    }
+
+    fn set_device(
+        &self,
+        device: Option<cortex_rs::DeviceKind>,
+        quad_client: &DaemonClient,
+        nano_client: &DaemonClient,
+    ) -> Result<(), CommandError> {
         let mut preference = self
             .preferred_device
             .lock()
             .map_err(|_| CommandError::daemon("device preference lock is unavailable"))?;
         *preference = device;
-        let policy = device.map_or(DevicePolicy::Detect, DevicePolicy::Replace);
-        self.daemon
-            .ensure(policy)
-            .map_err(|error| CommandError::daemon(error.to_string()))
+        drop(preference);
+        self.ensure(quad_client, nano_client).map(|_| ())
     }
 }
 
+fn client_for<'a>(
+    device: cortex_rs::DeviceKind,
+    quad_client: &'a DaemonClient,
+    nano_client: &'a DaemonClient,
+) -> &'a DaemonClient {
+    match device {
+        cortex_rs::DeviceKind::QuadCortex => quad_client,
+        cortex_rs::DeviceKind::NanoCortex => nano_client,
+    }
+}
+
+fn ensure_device_session(
+    client: &DaemonClient,
+    device: cortex_rs::DeviceKind,
+) -> Result<(), CommandError> {
+    if let Ok(status) = client.status() {
+        ensure_daemon_compatible(&status)?;
+        if status.device_kind != device {
+            return Err(CommandError::daemon(format!(
+                "the {} endpoint reports {:?}; stop that legacy session manually before retrying",
+                match device {
+                    cortex_rs::DeviceKind::QuadCortex => "Quad Cortex",
+                    cortex_rs::DeviceKind::NanoCortex => "Nano Cortex",
+                },
+                status.device_kind
+            )));
+        }
+        return Ok(());
+    }
+    let sibling = sibling_cortex_binary()?;
+    start_auto_managed_session(client, &sibling, device)
+}
+
+fn ensure_daemon_compatible(status: &Status) -> Result<(), CommandError> {
+    let version = status.daemon_version.parse::<u32>().unwrap_or(0);
+    if version != DAEMON_PROTOCOL_VERSION {
+        return Err(CommandError::daemon(format!(
+            "session protocol mismatch: GUI expects {DAEMON_PROTOCOL_VERSION}, daemon reports {version}"
+        )));
+    }
+    Ok(())
+}
+
+fn start_auto_managed_session(
+    client: &DaemonClient,
+    sibling: &std::path::Path,
+    device_kind: cortex_rs::DeviceKind,
+) -> Result<(), CommandError> {
+    let mut command = Command::new(sibling);
+    command.args([
+        "session",
+        "start",
+        "--auto-managed",
+        "--idle-timeout-seconds",
+        AUTO_MANAGED_IDLE_SECONDS,
+    ]);
+    if device_kind == cortex_rs::DeviceKind::NanoCortex {
+        command.args(["--device", "nano"]);
+    }
+    let mut child = command
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| {
+            CommandError::daemon(format!(
+                "could not launch the session helper at {}: {error}",
+                sibling.display()
+            ))
+        })?;
+    let deadline = Instant::now() + STARTUP_TIMEOUT;
+    while Instant::now() < deadline {
+        if let Ok(status) = client.status() {
+            ensure_daemon_compatible(&status)?;
+            if status.device_kind != device_kind {
+                return Err(CommandError::daemon(format!(
+                    "the {:?} endpoint started a {:?} session",
+                    device_kind, status.device_kind
+                )));
+            }
+            let _ = child.wait();
+            return Ok(());
+        }
+        if let Some(status) = child
+            .try_wait()
+            .map_err(|error| CommandError::daemon(format!("waiting for session helper: {error}")))?
+        {
+            let stderr = read_child_stderr(&mut child);
+            if !status.success() {
+                return Err(CommandError::daemon(if stderr.trim().is_empty() {
+                    format!("session helper exited with {status}")
+                } else {
+                    stderr.trim().to_string()
+                }));
+            }
+        }
+        std::thread::sleep(STARTUP_POLL);
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+    Err(CommandError::daemon(format!(
+        "session startup did not complete within {} seconds",
+        STARTUP_TIMEOUT.as_secs()
+    )))
+}
+
+fn read_child_stderr(child: &mut std::process::Child) -> String {
+    let mut stderr = String::new();
+    if let Some(mut pipe) = child.stderr.take() {
+        let _ = pipe.read_to_string(&mut stderr);
+    }
+    stderr
+}
+
+fn sibling_cortex_binary() -> Result<PathBuf, CommandError> {
+    let path = if let Some(path) = std::env::var_os("CORTEX_CLI_PATH") {
+        PathBuf::from(path)
+    } else {
+        std::env::current_exe()
+            .map_err(|error| {
+                CommandError::daemon(format!("could not locate the GUI executable: {error}"))
+            })?
+            .with_file_name(format!("cortex{}", std::env::consts::EXE_SUFFIX))
+    };
+    if !path.is_file() {
+        return Err(CommandError::daemon(format!(
+            "the session helper is missing at {}; reinstall the complete Cortex application",
+            path.display()
+        )));
+    }
+    Ok(path)
+}
 struct DaemonDashboardSource {
-    client: DaemonClient,
+    quad_client: DaemonClient,
+    nano_client: DaemonClient,
+    quad_probe: DaemonClient,
+    nano_probe: DaemonClient,
     supervisor: GuiDaemonSupervisor,
     directory_cache: std::sync::Mutex<Option<(u64, u64, Vec<SetlistSnapshot>)>>,
     /// The parsed model catalog. Fetched once and kept: it is a 46 KB transfer
@@ -297,7 +471,12 @@ struct DaemonDashboardSource {
 impl Default for DaemonDashboardSource {
     fn default() -> Self {
         Self {
-            client: DaemonClient::default(),
+            quad_client: DaemonClient::for_device(cortex_rs::DeviceKind::QuadCortex),
+            nano_client: DaemonClient::for_device(cortex_rs::DeviceKind::NanoCortex),
+            quad_probe: DaemonClient::for_device(cortex_rs::DeviceKind::QuadCortex)
+                .with_timeout(KEEPALIVE_TIMEOUT),
+            nano_probe: DaemonClient::for_device(cortex_rs::DeviceKind::NanoCortex)
+                .with_timeout(KEEPALIVE_TIMEOUT),
             supervisor: GuiDaemonSupervisor::default(),
             directory_cache: std::sync::Mutex::new(None),
             catalog_cache: std::sync::Mutex::new(None),
@@ -307,15 +486,27 @@ impl Default for DaemonDashboardSource {
 
 impl DashboardSource for DaemonDashboardSource {
     fn dashboard(&self) -> Result<DashboardSnapshot, CommandError> {
-        self.supervisor.ensure()?;
-        let before = self
-            .client
+        let device = self
+            .supervisor
+            .ensure(&self.quad_client, &self.nano_client)?;
+        let client = client_for(device, &self.quad_client, &self.nano_client);
+        // A status request keeps an already-warm inactive auto-managed session
+        // alive without starting hardware the user has not selected.
+        let inactive = client_for(
+            match device {
+                cortex_rs::DeviceKind::QuadCortex => cortex_rs::DeviceKind::NanoCortex,
+                cortex_rs::DeviceKind::NanoCortex => cortex_rs::DeviceKind::QuadCortex,
+            },
+            &self.quad_probe,
+            &self.nano_probe,
+        );
+        let _ = inactive.status();
+        let before = client
             .require_compatible()
             .map_err(|error| CommandError::daemon(error.to_string()))?;
         if before.device_kind == cortex_rs::DeviceKind::NanoCortex {
-            let nano = self.client.request(&Request::NanoState);
-            let after = self
-                .client
+            let nano = client.request(&Request::NanoState);
+            let after = client
                 .require_compatible()
                 .map_err(|error| CommandError::daemon(error.to_string()))?;
             let nano = match nano {
@@ -348,25 +539,25 @@ impl DashboardSource for DaemonDashboardSource {
             });
         }
 
-        let preset: Preset = self
-            .client
+        let preset: Preset = client
             .request(&Request::CurrentPreset {
                 with_params: true,
                 timeout_seconds: 15,
             })
             .map_err(|error| CommandError::daemon(error.to_string()))?;
-        let active_scene: u32 = self
-            .client
+        let active_scene: u32 = client
             .request(&Request::ActiveScene)
             .map_err(|error| CommandError::daemon(error.to_string()))?;
-        let cpu_load = self.client.request::<CpuLoad>(&Request::CpuLoad).ok();
+        let cpu_load = client.request::<CpuLoad>(&Request::CpuLoad).ok();
         let directory = self.directory(&before);
 
-        let after = self
-            .client
+        let after = client
             .require_compatible()
             .map_err(|error| CommandError::daemon(error.to_string()))?;
-        if !status_is_live(&after) || after.cache.generation != before.cache.generation {
+        if !status_is_live(&after)
+            || after.cache.generation != before.cache.generation
+            || after.device_kind != before.device_kind
+        {
             return Ok(DashboardSnapshot {
                 source: DashboardSnapshotSource::Daemon,
                 status: after,
@@ -434,14 +625,14 @@ impl DashboardSource for DaemonDashboardSource {
         control: cortex_rs::nano::NanoAmpControl,
         value: u8,
     ) -> Result<(), CommandError> {
-        self.client
+        self.nano_client
             .request::<cortex_rs::nano::NanoCurrentState>(&Request::NanoSetAmp { control, value })
             .map(|_| ())
             .map_err(|error| CommandError::daemon(error.to_string()))
     }
 
     fn set_nano_gate_reduction(&self, percent: u8) -> Result<(), CommandError> {
-        self.client
+        self.nano_client
             .request::<cortex_rs::nano::NanoCurrentState>(&Request::NanoSetGateReduction {
                 percent,
             })
@@ -454,7 +645,7 @@ impl DashboardSource for DaemonDashboardSource {
         target: cortex_rs::nano::NanoBypassTarget,
         bypassed: bool,
     ) -> Result<(), CommandError> {
-        self.client
+        self.nano_client
             .request::<cortex_rs::nano::NanoCurrentState>(&Request::NanoSetBypass {
                 target,
                 bypassed,
@@ -464,14 +655,15 @@ impl DashboardSource for DaemonDashboardSource {
     }
 
     fn set_device(&self, device: Option<cortex_rs::DeviceKind>) -> Result<(), CommandError> {
-        self.supervisor.set_device(device)
+        self.supervisor
+            .set_device(device, &self.quad_client, &self.nano_client)
     }
 
     fn read_nano_fx_params(
         &self,
         slot: cortex_rs::nano::NanoFxSlot,
     ) -> Result<Vec<f32>, CommandError> {
-        self.client
+        self.nano_client
             .request::<Vec<f32>>(&Request::NanoReadFxParams { slot })
             .map_err(|error| CommandError::daemon(error.to_string()))
     }
@@ -482,7 +674,7 @@ impl DashboardSource for DaemonDashboardSource {
         param_index: u8,
         value: f32,
     ) -> Result<Vec<f32>, CommandError> {
-        self.client
+        self.nano_client
             .request::<Vec<f32>>(&Request::NanoSetFxParam {
                 slot,
                 param_index,
@@ -492,7 +684,10 @@ impl DashboardSource for DaemonDashboardSource {
     }
 
     fn reconnect_now(&self) -> Result<(), CommandError> {
-        self.client
+        let device = self
+            .supervisor
+            .ensure(&self.quad_client, &self.nano_client)?;
+        client_for(device, &self.quad_client, &self.nano_client)
             .request::<bool>(&Request::ReconnectNow)
             .map(|_| ())
             .map_err(|error| CommandError::daemon(error.to_string()))
@@ -504,7 +699,7 @@ impl DashboardSource for DaemonDashboardSource {
         // means a daemon that switched to a *different* scene is an error here
         // instead of a GUI that quietly displays the wrong thing.
         let acknowledged: SceneAck = self
-            .client
+            .quad_client
             .request(&Request::SwitchScene { scene })
             .map_err(|error| CommandError::daemon(error.to_string()))?;
         if acknowledged.scene != scene {
@@ -521,7 +716,7 @@ impl DashboardSource for DaemonDashboardSource {
         // from the path, not taken from the caller: the frontend must not be
         // able to describe a factory setlist as a user one.
         let acknowledged: RecallAck = self
-            .client
+            .quad_client
             .request(&Request::RecallPreset {
                 setlist: setlist.to_string(),
                 slot: slot.to_string(),
@@ -543,7 +738,7 @@ impl DashboardSource for DaemonDashboardSource {
         // silent no-op: a bypass that reports success while the block still
         // sounds is exactly the fault this project keeps finding.
         let acknowledged: BypassAck = self
-            .client
+            .quad_client
             .request(&Request::SetBypass {
                 row,
                 column,
@@ -562,7 +757,7 @@ impl DashboardSource for DaemonDashboardSource {
 
     fn set_scene_label(&self, scene: u32, label: Option<String>) -> Result<(), CommandError> {
         let acknowledged: SceneAck = self
-            .client
+            .quad_client
             .request(&Request::SetSceneLabel { scene, label })
             .map_err(|error| CommandError::daemon(error.to_string()))?;
         if acknowledged.scene != scene {
@@ -576,7 +771,7 @@ impl DashboardSource for DaemonDashboardSource {
 
     fn set_scene_color(&self, scene: u32, color: u32) -> Result<(), CommandError> {
         let acknowledged: SceneAck = self
-            .client
+            .quad_client
             .request(&Request::SetSceneColor { scene, color })
             .map_err(|error| CommandError::daemon(error.to_string()))?;
         if acknowledged.scene != scene {
@@ -591,7 +786,7 @@ impl DashboardSource for DaemonDashboardSource {
     fn block_parameters(&self, row: u32, column: u32) -> Result<Vec<ParameterView>, CommandError> {
         let catalog = self.catalog()?;
         let preset: Preset = self
-            .client
+            .quad_client
             .request(&Request::CurrentPreset {
                 with_params: true,
                 timeout_seconds: 15,
@@ -630,7 +825,7 @@ impl DashboardSource for DaemonDashboardSource {
         // for turns "wrote a different parameter" into an error rather than a
         // control that appears to work while moving something else.
         let applied: cortex_rs::client::ParameterWrite = self
-            .client
+            .quad_client
             .request(&Request::SetParam {
                 row,
                 column,
@@ -741,7 +936,7 @@ impl DaemonDashboardSource {
             return Ok(Arc::clone(catalog));
         }
         let payload: CatalogPayload = self
-            .client
+            .quad_client
             .request(&Request::Catalog {
                 timeout_seconds: 30,
             })
@@ -773,7 +968,7 @@ impl DaemonDashboardSource {
             .into_iter()
             .filter_map(|key| {
                 let slots = self
-                    .client
+                    .quad_client
                     .request::<Vec<PresetSlot>>(&Request::ListPresets {
                         setlist: key.clone(),
                         include_empty: false,

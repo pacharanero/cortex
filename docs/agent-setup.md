@@ -67,5 +67,5 @@ Configuration filenames and top-level keys differ between harnesses, so use that
 
 - `could not find the sibling cortex binary`: install `cortex` and `cortex-mcp` together in the same directory. `CORTEX_CLI_PATH` can identify an explicit binary when a development harness separates them.
 - `device not found`: install the udev rule, replug the unit, and make sure Cortex Control or a VM is not holding it.
-- `daemon protocol version mismatch`: run `cortex session stop`, then retry the MCP connection. The server refuses to kill or replace an incompatible owner automatically.
+- `daemon protocol version mismatch`: run `cortex session stop --device quad` or `cortex session stop --device nano` for the product named by the error, then retry the MCP connection. The server refuses to kill or replace an incompatible owner automatically.
 - MCP connects but a tool reports `reconnecting`: wait for `cortex session status` to return `connected`; operations fail closed while the daemon rebuilds live state.

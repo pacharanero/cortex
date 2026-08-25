@@ -167,6 +167,12 @@ Report whether a session is running, and whether the device answers
 Usage: cortex session status [OPTIONS]
 
 Options:
+      --device <DEVICE>
+          Product whose held session to inspect
+
+          [default: quad]
+          [possible values: quad, nano]
+
       --format <FORMAT>
           Output format. `text` is for humans; `json` is for scripts and agents, and is stable enough to parse.
 
@@ -209,6 +215,12 @@ Ask a running session to shut down, announcing the disconnect first
 Usage: cortex session stop [OPTIONS]
 
 Options:
+      --device <DEVICE>
+          Product whose held session to stop
+
+          [default: quad]
+          [possible values: quad, nano]
+
       --format <FORMAT>
           Output format. `text` is for humans; `json` is for scripts and agents, and is stable enough to parse.
 

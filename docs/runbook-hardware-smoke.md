@@ -293,6 +293,25 @@ s/gui-dev
 - [ ] After reconnect, the generation advances and the first rendered live snapshot agrees with `cortex grid show`
 - [ ] A daemon failure remains visible and never switches to fixture data
 
+### GUI dual-device switching (GUI-001.8)
+
+Connect both products by USB and disconnect Nano Bluetooth. Start a fresh `s/gui-dev`; Auto-detect should select Quad. Do not run persistent save/delete operations or Nano FX writes during this smoke.
+
+- [ ] Select Nano and confirm only the fixed eight-role chain appears
+- [ ] Select Quad and confirm only the routed 4x8 grid appears
+- [ ] Both transitions after initial startup complete in under one second
+- [ ] Both product daemons remain connected concurrently:
+
+```sh
+cortex session status --device quad --format json | jq '.device_kind, .device.state'
+cortex session status --device nano --format json | jq '.device_kind, .device.state'
+```
+
+- [ ] Leave the GUI open on one product for more than 60 seconds, then confirm both status commands still report connected and switching remains under one second
+- [ ] Closing the GUI allows both auto-managed daemons to expire; explicitly started daemons remain running
+
+**Measured 2026-08-25 on Linux with both devices connected:** both auto-managed daemons reported connected concurrently. Quad to Nano and Nano back to the warm Quad each rendered in under one second. After the GUI closed, both product endpoints reported `running: false` after the 60-second idle window. The previous single-endpoint teardown design took 5-8 seconds to return to Quad because it repeated the mandatory subscribed handshake. Explicit-daemon survival still requires a separate smoke.
+
 ### GUI scene switching (GUI-003.4)
 
 Still in `s/gui-dev` against the held session. Scene switching is non-persistent - it changes what the unit plays and saves nothing - so no preset is at risk, but it *is* audible. Mute or disconnect outputs if that matters.

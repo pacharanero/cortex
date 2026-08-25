@@ -4,144 +4,145 @@
 import { MantineProvider } from "@mantine/core";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import { NanoChain } from "./NanoChain";
 import type { NanoCurrentState } from "../../shared/ipc/types";
+import { NanoChain } from "./NanoChain";
 
 const state: NanoCurrentState = {
-  firmware: null,
-  amp: { gain: 100, level: 101, bass: 102, mid: 103, treble: 104 },
-  capture_slot: null,
-  capture_volume: null,
+  firmware: "4.0.1",
+  amp: { gain: 100, level: 110, bass: 120, mid: 130, treble: 140 },
+  capture_slot: 1,
+  capture_volume: 100,
   gate_reduction: null,
   footswitch_assignments: null,
-  slots: [],
+  slots: [
+    { role: "gate", loaded_name: null, model_id: null, bypassed: false },
+    { role: "pre_fx1", loaded_name: "Fictional Drive", model_id: 1, bypassed: false },
+    { role: "pre_fx2", loaded_name: "Fictional Chorus", model_id: 2, bypassed: true },
+    { role: "capture", loaded_name: "Fictional Capture", model_id: null, bypassed: false },
+    { role: "ir_cab", loaded_name: "Fictional IR", model_id: null, bypassed: false },
+    { role: "post_fx1", loaded_name: "Fictional Delay", model_id: 3, bypassed: false },
+    { role: "post_fx2", loaded_name: "Fictional Reverb", model_id: 4, bypassed: false },
+    { role: "post_fx3", loaded_name: "Fictional EQ", model_id: 5, bypassed: false },
+  ],
 };
 
-function renderNano(current: NanoCurrentState) {
-  return render(
-    <MantineProvider>
-      <NanoChain
-        onReadFxParams={vi.fn(async () => [])}
-        onSetAmp={vi.fn(async () => {})}
-        onSetGateReduction={vi.fn(async () => {})}
-        onSetBypass={vi.fn(async () => {})}
-        onSetFxParam={vi.fn(async () => [])}
-        state={current}
-      />
-    </MantineProvider>,
-  );
+function props(overrides: Record<string, unknown> = {}) {
+  return {
+    onReadFxParams: vi.fn(async () => []),
+    onSetAmp: vi.fn(async () => {}),
+    onSetGateReduction: vi.fn(async () => {}),
+    onSetBypass: vi.fn(async () => {}),
+    onSetFxParam: vi.fn(async () => []),
+    ...overrides,
+  };
+}
+
+function renderNano(current: NanoCurrentState = state, overrides: Record<string, unknown> = {}) {
+  return render(<MantineProvider><NanoChain {...props(overrides)} state={current} /></MantineProvider>);
 }
 
 describe("NanoChain", () => {
+  it("uses the shared editor canvas and gives every control a target-specific name", async () => {
+    renderNano(state, { onReadFxParams: vi.fn(async () => [0.25]) });
+
+    expect(screen.getByLabelText("Nano Cortex fixed signal chain").getAttribute("data-topology")).toBe("nano-chain");
+    fireEvent.click(screen.getByRole("button", { name: /Position 2: Fictional Drive/ }));
+
+    expect(await screen.findByRole("button", { name: "Apply Pre FX 1 parameter 0" })).toBeDefined();
+    expect(screen.getByRole("button", { name: "Apply gain" })).toBeDefined();
+    expect(screen.getByRole("switch", { name: "Gate bypass, on" })).toBeDefined();
+  });
+
+  it("keeps focus on the control that started an operation", async () => {
+    let finishWrite: () => void = () => undefined;
+    const onSetAmp = vi.fn(() => new Promise<void>((resolve) => { finishWrite = resolve; }));
+    renderNano(state, { onSetAmp });
+
+    const applyGain = screen.getByRole("button", { name: "Apply gain" });
+    applyGain.focus();
+    fireEvent.click(applyGain);
+    expect(onSetAmp).toHaveBeenCalledWith("gain", 100);
+    expect(document.activeElement).toBe(applyGain);
+    expect(applyGain.hasAttribute("disabled")).toBe(false);
+    expect(applyGain.getAttribute("aria-busy")).toBe("true");
+
+    await act(async () => finishWrite());
+    expect(document.activeElement).toBe(applyGain);
+  });
+
+  it("disables block selection while a write is pending", async () => {
+    let finishWrite: () => void = () => undefined;
+    const onSetAmp = vi.fn(() => new Promise<void>((resolve) => { finishWrite = resolve; }));
+    renderNano(state, { onSetAmp });
+
+    fireEvent.click(screen.getByRole("button", { name: "Apply gain" }));
+    const drive = screen.getByRole("button", { name: /Position 2: Fictional Drive/ });
+    expect(drive.hasAttribute("disabled")).toBe(true);
+    expect(drive.getAttribute("aria-busy")).toBe("true");
+
+    await act(async () => finishWrite());
+    expect(drive.hasAttribute("disabled")).toBe(false);
+  });
+
   it("preserves an unsubmitted amp draft across a dashboard refresh", () => {
-    const view = renderNano(state);
+    const nanoProps = props();
+    const view = render(<MantineProvider><NanoChain {...nanoProps} state={state} /></MantineProvider>);
     const gain = screen.getByLabelText("Gain") as HTMLInputElement;
 
     fireEvent.change(gain, { target: { value: "121" } });
     expect(gain.value).toBe("121");
 
-    view.rerender(
-      <MantineProvider>
-        <NanoChain
-          onReadFxParams={vi.fn(async () => [])}
-          onSetAmp={vi.fn(async () => {})}
-          onSetGateReduction={vi.fn(async () => {})}
-          onSetBypass={vi.fn(async () => {})}
-          onSetFxParam={vi.fn(async () => [])}
-          state={{ ...state, amp: { ...state.amp, gain: 99 } }}
-        />
-      </MantineProvider>,
-    );
-
+    view.rerender(<MantineProvider><NanoChain {...nanoProps} state={{ ...state, amp: { ...state.amp, gain: 99 } }} /></MantineProvider>);
     expect((screen.getByLabelText("Gain") as HTMLInputElement).value).toBe("121");
   });
 
-  it("opens an FX parameter inspector from the keyboard", async () => {
+  it("exposes FX cards as keyboard-operable native buttons", async () => {
     const onReadFxParams = vi.fn(async () => [0.5]);
-    render(
-      <MantineProvider>
-        <NanoChain
-          onReadFxParams={onReadFxParams}
-          onSetAmp={vi.fn(async () => {})}
-          onSetGateReduction={vi.fn(async () => {})}
-          onSetBypass={vi.fn(async () => {})}
-          onSetFxParam={vi.fn(async () => [])}
-          state={{
-            ...state,
-            slots: [{ role: "pre_fx1", loaded_name: null, model_id: 1001, bypassed: false }],
-          }}
-        />
-      </MantineProvider>,
-    );
+    renderNano(state, { onReadFxParams });
+    const card = screen.getByRole("button", { name: /Position 2: Fictional Drive/ });
 
-    fireEvent.keyDown(screen.getByRole("button", { name: /Pre FX 1/i }), { key: "Enter" });
+    expect(card.tagName).toBe("BUTTON");
+    expect(card.tabIndex).toBe(0);
+    card.focus();
+    fireEvent.click(card);
 
     expect(onReadFxParams).toHaveBeenCalledWith("pre_fx1");
-    expect(await screen.findByText("Param 0")).toBeTruthy();
-    expect(screen.getByRole("slider", { name: "FX parameter 0 normalized value" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Apply FX parameter 0" })).toBeTruthy();
+    expect(await screen.findByRole("slider", { name: "Pre FX 1 parameter 0 normalized value" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Apply Pre FX 1 parameter 0" })).toBeTruthy();
   });
 
   it("serializes uncorrelated FX reads and applies only the latest selection", async () => {
     const finishReads: ((values: number[]) => void)[] = [];
     const onReadFxParams = vi.fn(() => new Promise<number[]>((resolve) => { finishReads.push(resolve); }));
-    render(
-      <MantineProvider>
-        <NanoChain
-          onReadFxParams={onReadFxParams}
-          onSetAmp={vi.fn(async () => {})}
-          onSetGateReduction={vi.fn(async () => {})}
-          onSetBypass={vi.fn(async () => {})}
-          onSetFxParam={vi.fn(async () => [])}
-          state={{
-            ...state,
-            slots: [
-              { role: "pre_fx1", loaded_name: "Fictional Drive", model_id: 1001, bypassed: false },
-              { role: "pre_fx2", loaded_name: "Fictional Chorus", model_id: 1002, bypassed: false },
-            ],
-          }}
-        />
-      </MantineProvider>,
-    );
+    renderNano(state, { onReadFxParams });
 
-    fireEvent.click(screen.getByRole("button", { name: /Pre FX 1/i }));
-    fireEvent.click(screen.getByRole("button", { name: /Pre FX 2/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Position 2: Fictional Drive/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Position 3: Fictional Chorus/ }));
     expect(onReadFxParams).toHaveBeenCalledOnce();
     expect(onReadFxParams).toHaveBeenCalledWith("pre_fx1");
 
     await act(async () => finishReads[0]([0.25]));
     await waitFor(() => expect(onReadFxParams).toHaveBeenCalledTimes(2));
     expect(onReadFxParams).toHaveBeenLastCalledWith("pre_fx2");
-    expect(screen.queryByText("FX parameters: Pre FX 1")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Apply Pre FX 1 parameter 0" })).toBeNull();
 
     await act(async () => finishReads[1]([0.75]));
-    expect(await screen.findByText("FX parameters: Pre FX 2")).toBeTruthy();
+    expect(await screen.findByRole("button", { name: "Apply Pre FX 2 parameter 0" })).toBeTruthy();
   });
 
   it("reports an FX write failure even if the inspector closes", async () => {
     let rejectWrite: (reason: Error) => void = () => undefined;
     const onSetFxParam = vi.fn(() => new Promise<number[]>((_resolve, reject) => { rejectWrite = reject; }));
-    render(
-      <MantineProvider>
-        <NanoChain
-          onReadFxParams={vi.fn(async () => [0.5])}
-          onSetAmp={vi.fn(async () => {})}
-          onSetGateReduction={vi.fn(async () => {})}
-          onSetBypass={vi.fn(async () => {})}
-          onSetFxParam={onSetFxParam}
-          state={{
-            ...state,
-            slots: [{ role: "pre_fx1", loaded_name: "Fictional Drive", model_id: 1001, bypassed: false }],
-          }}
-        />
-      </MantineProvider>,
-    );
+    renderNano(state, {
+      onReadFxParams: vi.fn(async () => [0.5]),
+      onSetFxParam,
+    });
 
-    fireEvent.click(screen.getByRole("button", { name: /Pre FX 1/i }));
-    const slider = await screen.findByRole("slider", { name: "FX parameter 0 normalized value" });
+    fireEvent.click(screen.getByRole("button", { name: /Position 2: Fictional Drive/ }));
+    const slider = await screen.findByRole("slider", { name: "Pre FX 1 parameter 0 normalized value" });
     fireEvent.keyDown(slider, { key: "ArrowRight" });
-    fireEvent.click(screen.getByRole("button", { name: "Apply FX parameter 0" }));
-    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    fireEvent.click(screen.getByRole("button", { name: "Apply Pre FX 1 parameter 0" }));
+    fireEvent.click(screen.getByRole("button", { name: "Clear selection" }));
 
     await act(async () => rejectWrite(new Error("confirmation failed")));
     expect(await screen.findByText("confirmation failed")).toBeTruthy();
@@ -152,26 +153,15 @@ describe("NanoChain", () => {
     const onReadFxParams = vi.fn()
       .mockResolvedValueOnce([0.5])
       .mockResolvedValueOnce([0.6]);
-    render(
-      <MantineProvider>
-        <NanoChain
-          onReadFxParams={onReadFxParams}
-          onSetAmp={vi.fn(async () => {})}
-          onSetGateReduction={vi.fn(async () => {})}
-          onSetBypass={vi.fn(async () => {})}
-          onSetFxParam={vi.fn(async () => { throw new Error("confirmation failed"); })}
-          state={{
-            ...state,
-            slots: [{ role: "pre_fx1", loaded_name: "Fictional Drive", model_id: 1001, bypassed: false }],
-          }}
-        />
-      </MantineProvider>,
-    );
+    renderNano(state, {
+      onReadFxParams,
+      onSetFxParam: vi.fn(async () => { throw new Error("confirmation failed"); }),
+    });
 
-    fireEvent.click(screen.getByRole("button", { name: /Pre FX 1/i }));
-    const slider = await screen.findByRole("slider", { name: "FX parameter 0 normalized value" });
+    fireEvent.click(screen.getByRole("button", { name: /Position 2: Fictional Drive/ }));
+    const slider = await screen.findByRole("slider", { name: "Pre FX 1 parameter 0 normalized value" });
     fireEvent.keyDown(slider, { key: "ArrowRight" });
-    fireEvent.click(screen.getByRole("button", { name: "Apply FX parameter 0" }));
+    fireEvent.click(screen.getByRole("button", { name: "Apply Pre FX 1 parameter 0" }));
 
     expect(await screen.findByText("confirmation failed")).toBeTruthy();
     expect(onReadFxParams).toHaveBeenCalledTimes(2);
@@ -181,14 +171,8 @@ describe("NanoChain", () => {
   it("preserves a newer amp edit made while the submitted value is pending", async () => {
     let finishWrite: () => void = () => undefined;
     const onSetAmp = vi.fn(() => new Promise<void>((resolve) => { finishWrite = resolve; }));
-    const props = {
-      onReadFxParams: vi.fn(async () => []),
-      onSetAmp,
-      onSetGateReduction: vi.fn(async () => {}),
-      onSetBypass: vi.fn(async () => {}),
-      onSetFxParam: vi.fn(async () => []),
-    };
-    const view = render(<MantineProvider><NanoChain {...props} state={state} /></MantineProvider>);
+    const nanoProps = props({ onSetAmp });
+    const view = render(<MantineProvider><NanoChain {...nanoProps} state={state} /></MantineProvider>);
     const gain = screen.getByLabelText("Gain") as HTMLInputElement;
 
     fireEvent.change(gain, { target: { value: "121" } });
@@ -200,15 +184,31 @@ describe("NanoChain", () => {
     fireEvent.change(gain, { target: { value: "122" } });
     await act(async () => finishWrite());
 
-    view.rerender(<MantineProvider><NanoChain {...props} state={{ ...state, amp: { ...state.amp, gain: 121 } }} /></MantineProvider>);
+    view.rerender(<MantineProvider><NanoChain {...nanoProps} state={{ ...state, amp: { ...state.amp, gain: 121 } }} /></MantineProvider>);
     expect((screen.getByLabelText("Gain") as HTMLInputElement).value).toBe("122");
   });
 
-  it("names each amp action for its control", () => {
-    renderNano({
-      ...state,
-      slots: [{ role: "pre_fx1", loaded_name: null, model_id: 1001, bypassed: false }],
+  it("preserves a newer FX edit while the submitted value is pending", async () => {
+    let finishWrite: (values: number[]) => void = () => undefined;
+    const onSetFxParam = vi.fn(() => new Promise<number[]>((resolve) => { finishWrite = resolve; }));
+    renderNano(state, {
+      onReadFxParams: vi.fn(async () => [0.5]),
+      onSetFxParam,
     });
+
+    fireEvent.click(screen.getByRole("button", { name: /Position 2: Fictional Drive/ }));
+    const slider = await screen.findByRole("slider", { name: "Pre FX 1 parameter 0 normalized value" });
+    fireEvent.keyDown(slider, { key: "ArrowRight" });
+    fireEvent.click(screen.getByRole("button", { name: "Apply Pre FX 1 parameter 0" }));
+    fireEvent.keyDown(slider, { key: "ArrowRight" });
+    await act(async () => finishWrite([0.501]));
+
+    expect(screen.getByText(/device: 0\.501/)).toBeTruthy();
+    expect(screen.getByText(/draft: 0\.502/)).toBeTruthy();
+  });
+
+  it("names each amp and bypass action for its control", () => {
+    renderNano();
 
     expect(screen.getByRole("button", { name: "Apply gain" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Apply treble" })).toBeTruthy();
@@ -217,22 +217,20 @@ describe("NanoChain", () => {
 
   it("submits Gate reduction as an explicit percentage", () => {
     const onSetGateReduction = vi.fn(async () => {});
-    render(
-      <MantineProvider>
-        <NanoChain
-          onReadFxParams={vi.fn(async () => [])}
-          onSetAmp={vi.fn(async () => {})}
-          onSetGateReduction={onSetGateReduction}
-          onSetBypass={vi.fn(async () => {})}
-          onSetFxParam={vi.fn(async () => [])}
-          state={{ ...state, gate_reduction: 42 }}
-        />
-      </MantineProvider>,
-    );
+    renderNano({ ...state, gate_reduction: 42 }, { onSetGateReduction });
 
     fireEvent.change(screen.getByLabelText("Gate reduction"), { target: { value: "43" } });
     fireEvent.click(screen.getByRole("button", { name: "Apply Gate reduction" }));
 
     expect(onSetGateReduction).toHaveBeenCalledWith(43);
+  });
+
+  it("announces operation progress and completion", async () => {
+    renderNano();
+
+    fireEvent.click(screen.getByRole("button", { name: "Apply gain" }));
+
+    expect((await screen.findByRole("status")).textContent).toBe("gain applied.");
+    expect(screen.getByRole("status").getAttribute("aria-live")).toBe("polite");
   });
 });

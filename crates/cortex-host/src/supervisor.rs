@@ -16,30 +16,46 @@ use crate::{DaemonClient, Request, Status, client::ensure_compatible};
 // The CLI launcher owns a 120-second startup timeout and cleans up its detached
 // child. Leave it time to do that before this outer supervisor gives up.
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(125);
+const NANO_STARTUP_TIMEOUT: Duration = Duration::from_secs(250);
 const STARTUP_POLL: Duration = Duration::from_millis(200);
 const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// How a client should handle the device owned by a held session.
+/// How a client should select or replace a product-scoped held session.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DevicePolicy {
     /// Reuse any compatible session, or start a Quad Cortex session.
     Any,
-    /// Require a compatible session for this device, without replacing another.
+    /// Require a compatible session for this device.
     Require(cortex_rs::DeviceKind),
-    /// Start this device and replace a compatible session for another device.
+    /// Replace an unexpected owner of this device's endpoint, then start it.
     Replace(cortex_rs::DeviceKind),
     /// Reuse any compatible session, or try Quad Cortex then Nano Cortex.
     Detect,
 }
 
-/// Starts and reuses the one local daemon that owns a Cortex HID interface.
+struct ProductDaemon {
+    client: Arc<DaemonClient>,
+    probe: DaemonClient,
+    startup: Mutex<()>,
+}
+
+impl ProductDaemon {
+    fn new(device: cortex_rs::DeviceKind) -> Self {
+        Self {
+            client: Arc::new(DaemonClient::for_device(device)),
+            probe: DaemonClient::for_device(device).with_timeout(Duration::from_secs(2)),
+            startup: Mutex::new(()),
+        }
+    }
+}
+
+/// Starts and reuses product-scoped daemons that each own one Cortex HID interface.
 ///
 /// The sibling `cortex` executable is launched detached with an idle timeout;
 /// this object retains no child handle after the session has become ready.
 pub struct DaemonSupervisor {
-    client: Arc<DaemonClient>,
-    probe: DaemonClient,
-    startup: Mutex<()>,
+    quad: ProductDaemon,
+    nano: ProductDaemon,
     idle_timeout: Duration,
 }
 
@@ -54,100 +70,139 @@ impl DaemonSupervisor {
     #[must_use]
     pub fn new(idle_timeout: Duration) -> Self {
         Self {
-            client: Arc::new(DaemonClient::default()),
-            probe: DaemonClient::default().with_timeout(Duration::from_secs(2)),
-            startup: Mutex::new(()),
+            quad: ProductDaemon::new(cortex_rs::DeviceKind::QuadCortex),
+            nano: ProductDaemon::new(cortex_rs::DeviceKind::NanoCortex),
             idle_timeout,
         }
     }
 
-    /// Return the reusable client for requests after [`Self::ensure`].
-    #[must_use]
-    pub fn client(&self) -> Arc<DaemonClient> {
-        Arc::clone(&self.client)
-    }
-
-    /// Ensure a compatible daemon satisfying `policy` is ready.
+    /// Ensure a compatible daemon satisfying `policy` is ready and return its client.
     ///
     /// # Errors
     ///
     /// Returns an actionable error when the sibling binary is unavailable, a
     /// daemon cannot start, a running daemon uses an incompatible protocol, or
     /// a required device is owned by another session.
-    pub fn ensure(&self, policy: DevicePolicy) -> Result<()> {
-        let _startup = self
+    pub fn ensure(&self, policy: DevicePolicy) -> Result<Arc<DaemonClient>> {
+        match policy {
+            DevicePolicy::Any => self.ensure_any(false),
+            DevicePolicy::Detect => self.ensure_any(true),
+            DevicePolicy::Require(device) => self.ensure_device(device, false),
+            DevicePolicy::Replace(device) => self.ensure_device(device, true),
+        }
+    }
+
+    fn product(&self, device: cortex_rs::DeviceKind) -> &ProductDaemon {
+        match device {
+            cortex_rs::DeviceKind::QuadCortex => &self.quad,
+            cortex_rs::DeviceKind::NanoCortex => &self.nano,
+        }
+    }
+
+    fn ensure_any(&self, detect: bool) -> Result<Arc<DaemonClient>> {
+        for device in [
+            cortex_rs::DeviceKind::QuadCortex,
+            cortex_rs::DeviceKind::NanoCortex,
+        ] {
+            let product = self.product(device);
+            if let Ok(status) = product.probe.status() {
+                ensure_compatible(&status, &Request::Status, Some(device), None)?;
+                if status.device_kind == device {
+                    return Ok(Arc::clone(&product.client));
+                }
+            }
+        }
+
+        match self.ensure_device(cortex_rs::DeviceKind::QuadCortex, false) {
+            Ok(client) => Ok(client),
+            Err(quad_error) if detect => self
+                .ensure_device(cortex_rs::DeviceKind::NanoCortex, false)
+                .map_err(|nano_error| {
+                    anyhow::anyhow!(
+                        "could not start a session for a connected Cortex device. Quad Cortex: {quad_error}; Nano Cortex: {nano_error}"
+                    )
+                }),
+            Err(error) => Err(error),
+        }
+    }
+
+    fn ensure_device(
+        &self,
+        device: cortex_rs::DeviceKind,
+        replace_mismatch: bool,
+    ) -> Result<Arc<DaemonClient>> {
+        let product = self.product(device);
+        let _startup = product
             .startup
             .lock()
             .map_err(|_| anyhow::anyhow!("daemon startup gate is unavailable"))?;
 
-        if let Ok(status) = self.probe.status() {
-            ensure_compatible(&status, &Request::Status)?;
-            return self.handle_running(&status, policy);
+        if let Ok(status) = product.probe.status() {
+            ensure_compatible(&status, &Request::Status, Some(device), None)?;
+            return self.handle_running(device, product, &status, replace_mismatch);
         }
-        if self.probe.is_running() {
-            return self.wait_for_existing_session(policy);
+        if product.probe.is_running() {
+            return self.wait_for_existing_session(device, product, replace_mismatch);
         }
-
-        match policy {
-            DevicePolicy::Detect => {
-                match self.start(cortex_rs::DeviceKind::QuadCortex) {
-                    Ok(()) => Ok(()),
-                    Err(quad_error) => self
-                        .start(cortex_rs::DeviceKind::NanoCortex)
-                        .map_err(|nano_error| {
-                            anyhow::anyhow!(
-                                "could not start a session for a connected Cortex device. Quad Cortex: {quad_error}; Nano Cortex: {nano_error}"
-                            )
-                        }),
-                }
-            }
-            DevicePolicy::Any => self.start(cortex_rs::DeviceKind::QuadCortex),
-            DevicePolicy::Require(device) | DevicePolicy::Replace(device) => self.start(device),
-        }
+        self.start(device, product)?;
+        Ok(Arc::clone(&product.client))
     }
 
-    fn handle_running(&self, status: &Status, policy: DevicePolicy) -> Result<()> {
-        match policy {
-            DevicePolicy::Require(device) if status.device_kind != device => anyhow::bail!(
-                "the held session owns {:?}; this operation requires {:?}. Run `cortex session stop`, then retry.",
+    fn handle_running(
+        &self,
+        device: cortex_rs::DeviceKind,
+        product: &ProductDaemon,
+        status: &Status,
+        replace_mismatch: bool,
+    ) -> Result<Arc<DaemonClient>> {
+        if status.device_kind == device {
+            return Ok(Arc::clone(&product.client));
+        }
+        if !replace_mismatch {
+            anyhow::bail!(
+                "the {:?} endpoint reports {:?}; this operation requires {:?}. Run `cortex session stop --device {}`, then retry.",
+                device,
                 status.device_kind,
-                device
-            ),
-            DevicePolicy::Replace(device) if status.device_kind != device => {
-                self.client
-                    .request::<serde_json::Value>(&Request::Shutdown)?;
-                self.wait_for_session_stop()?;
-                self.start(device)
-            }
-            DevicePolicy::Any
-            | DevicePolicy::Detect
-            | DevicePolicy::Require(_)
-            | DevicePolicy::Replace(_) => Ok(()),
+                device,
+                device_arg(device),
+            );
         }
+        product
+            .client
+            .request::<serde_json::Value>(&Request::Shutdown)?;
+        Self::wait_for_session_stop(product)?;
+        self.start(device, product)?;
+        Ok(Arc::clone(&product.client))
     }
 
-    fn wait_for_existing_session(&self, policy: DevicePolicy) -> Result<()> {
-        let deadline = Instant::now() + STARTUP_TIMEOUT;
+    fn wait_for_existing_session(
+        &self,
+        device: cortex_rs::DeviceKind,
+        product: &ProductDaemon,
+        replace_mismatch: bool,
+    ) -> Result<Arc<DaemonClient>> {
+        let timeout = startup_timeout(device);
+        let deadline = Instant::now() + timeout;
         while Instant::now() < deadline {
-            if let Ok(status) = self.probe.status() {
-                ensure_compatible(&status, &Request::Status)?;
-                return self.handle_running(&status, policy);
+            if let Ok(status) = product.probe.status() {
+                ensure_compatible(&status, &Request::Status, Some(device), None)?;
+                return self.handle_running(device, product, &status, replace_mismatch);
             }
-            if !self.probe.is_running() {
+            if !product.probe.is_running() {
                 anyhow::bail!("the held cortex session stopped before it became ready");
             }
             std::thread::sleep(STARTUP_POLL);
         }
         anyhow::bail!(
             "the held cortex session did not become ready within {}s",
-            STARTUP_TIMEOUT.as_secs()
+            timeout.as_secs()
         )
     }
 
-    fn wait_for_session_stop(&self) -> Result<()> {
+    fn wait_for_session_stop(product: &ProductDaemon) -> Result<()> {
         let deadline = Instant::now() + SHUTDOWN_TIMEOUT;
         while Instant::now() < deadline {
-            if !self.probe.is_running() {
+            if !product.probe.is_running() {
                 return Ok(());
             }
             std::thread::sleep(STARTUP_POLL);
@@ -158,7 +213,7 @@ impl DaemonSupervisor {
         )
     }
 
-    fn start(&self, device: cortex_rs::DeviceKind) -> Result<()> {
+    fn start(&self, device: cortex_rs::DeviceKind, product: &ProductDaemon) -> Result<()> {
         let sibling = sibling_cortex_binary()?;
         let idle_seconds = self.idle_timeout.as_secs().to_string();
         let mut command = Command::new(&sibling);
@@ -168,11 +223,12 @@ impl DaemonSupervisor {
             .stderr(Stdio::piped())
             .spawn()
             .with_context(|| format!("starting sibling cortex binary at {}", sibling.display()))?;
-        let deadline = Instant::now() + STARTUP_TIMEOUT;
+        let timeout = startup_timeout(device);
+        let deadline = Instant::now() + timeout;
 
         while Instant::now() < deadline {
-            if let Ok(status) = self.probe.status() {
-                ensure_compatible(&status, &Request::Status)?;
+            if let Ok(status) = product.probe.status() {
+                ensure_compatible(&status, &Request::Status, Some(device), None)?;
                 if status.device_kind != device {
                     let _ = child.kill();
                     let _ = child.wait();
@@ -205,9 +261,25 @@ impl DaemonSupervisor {
         let _ = child.wait();
         anyhow::bail!(
             "sibling cortex did not finish startup within {}s: {}",
-            STARTUP_TIMEOUT.as_secs(),
+            timeout.as_secs(),
             read_child_stderr(&mut child).trim()
         )
+    }
+}
+
+fn device_arg(device: cortex_rs::DeviceKind) -> &'static str {
+    match device {
+        cortex_rs::DeviceKind::QuadCortex => "quad",
+        cortex_rs::DeviceKind::NanoCortex => "nano",
+    }
+}
+
+fn startup_timeout(device: cortex_rs::DeviceKind) -> Duration {
+    match device {
+        cortex_rs::DeviceKind::QuadCortex => STARTUP_TIMEOUT,
+        // A new Nano daemon may first wait for a legacy endpoint owner to
+        // identify itself, then perform its own hardware handshake.
+        cortex_rs::DeviceKind::NanoCortex => NANO_STARTUP_TIMEOUT,
     }
 }
 
@@ -256,6 +328,20 @@ fn read_child_stderr(child: &mut std::process::Child) -> String {
 mod tests {
     use super::*;
 
+    fn status(device_kind: cortex_rs::DeviceKind) -> Status {
+        Status {
+            daemon_version: crate::DAEMON_PROTOCOL_VERSION.to_string(),
+            uptime_seconds: 0,
+            auto_managed: false,
+            idle_timeout_seconds: None,
+            device_kind,
+            device: crate::DeviceHealth::Failed {
+                error: "fixture".into(),
+            },
+            cache: crate::CacheStatus::default(),
+        }
+    }
+
     #[test]
     fn nano_start_selects_the_nano_device() {
         assert_eq!(
@@ -275,6 +361,44 @@ mod tests {
                 .iter()
                 .any(|argument| argument == "--device")
         );
+    }
+
+    #[test]
+    fn nano_startup_allows_for_legacy_owner_identification() {
+        assert_eq!(
+            startup_timeout(cortex_rs::DeviceKind::QuadCortex),
+            Duration::from_secs(125)
+        );
+        assert_eq!(
+            startup_timeout(cortex_rs::DeviceKind::NanoCortex),
+            Duration::from_secs(250)
+        );
+    }
+
+    #[test]
+    fn running_products_return_their_product_scoped_clients() {
+        let supervisor = DaemonSupervisor::default();
+
+        let quad = supervisor
+            .handle_running(
+                cortex_rs::DeviceKind::QuadCortex,
+                &supervisor.quad,
+                &status(cortex_rs::DeviceKind::QuadCortex),
+                false,
+            )
+            .unwrap();
+        let nano = supervisor
+            .handle_running(
+                cortex_rs::DeviceKind::NanoCortex,
+                &supervisor.nano,
+                &status(cortex_rs::DeviceKind::NanoCortex),
+                false,
+            )
+            .unwrap();
+
+        assert!(Arc::ptr_eq(&quad, &supervisor.quad.client));
+        assert!(Arc::ptr_eq(&nano, &supervisor.nano.client));
+        assert!(!Arc::ptr_eq(&quad, &nano));
     }
 
     #[test]

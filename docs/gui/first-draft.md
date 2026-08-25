@@ -12,7 +12,7 @@ It adapts the mockable IPC-boundary architecture of `rixrix/deskop-nano-cortex` 
 
 Install the platform's [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/), then install frontend dependencies in `gui/`.
 
-- **Daemon-backed mode**, the real thing: run `s/gui-dev` from anywhere in the repository. The GUI reuses an existing compatible held session or starts an auto-managed one itself, trying Quad and then Nano when no session exists. The header device selector can explicitly choose Quad, Nano, or Auto-detect; choosing a different device replaces the existing held session.
+- **Daemon-backed mode**, the real thing: run `s/gui-dev` from anywhere in the repository. The GUI reuses existing compatible product-scoped held sessions or starts missing auto-managed sessions itself, trying Quad and then Nano when no session exists. The header device selector can explicitly choose Quad, Nano, or Auto-detect; if both products are connected, Auto-detect selects Quad, and switching products leaves the other product's held session live.
 - **Browser fixture mode**, for frontend development without hardware: run `npm run dev` or `npm run dev:fixture` inside `gui/`. This serves fictional development data in an ordinary browser tab, with no Tauri backend and no daemon. Add `?device=nano` to the browser URL for the fictional Nano fixture.
 - Run `npm run check` inside `gui/` to type-check and build both adapters.
 
@@ -22,7 +22,7 @@ Daemon snapshots carry physical-session generation and cache revisions. Reconnec
 
 ## What the GUI does today
 
-Everything below is non-persistent: it changes the working copy the unit is currently playing, exactly as pressing a footswitch or turning a knob on the device does, and saves nothing to storage. **There is no save control in the GUI.** Preset saving remains a CLI/MCP operation until its own confirmation UX, restoration semantics and hardware-tested safety contract are implemented here (tracked as GUI-004.1).
+Everything below is non-persistent: it changes the working copy the unit is currently playing, exactly as pressing a footswitch or turning a knob on the device does, and saves nothing to storage. **There is no save control in the GUI.** Preset saving remains a CLI operation until its own confirmation UX, restoration semantics and hardware-tested safety contract are implemented here (tracked as GUI-004.1).
 
 ### Preset directory and recall
 
@@ -48,9 +48,9 @@ Parameter and bypass edits are hardware-verified for the read/write/read-back cy
 
 ### Nano Cortex surface
 
-When the held daemon owns a Nano Cortex, the GUI renders the fixed eight-role signal chain (Gate, Pre FX 1-2, Capture, IR/Cab, Post FX 1-3) as one responsive row of panels, each showing its loaded model name and bypass state. Below that, the five hardware-verified raw amp controls (Gain, Level, Bass, Mid, Treble) each get a 0-255 number input and an explicit **Apply** button. The Nano's roles are never forced into the Quad's grid, scenes or presets.
+When the selected daemon owns a Nano Cortex, the GUI renders the fixed eight-role signal chain (Gate, Pre FX 1-2, Capture, IR/Cab, Post FX 1-3) as one ordered row of semantic block buttons, each showing its loaded model name and bypass state. Quad and Nano share block-card, selected-state and inspector presentation, but the Nano's roles are never forced into the Quad's grid, scenes or presets. Every role can be selected with pointer or keyboard; editable FX roles expose normalized parameter controls, while the other roles explain that no editable parameters are available yet. Below the inspector, the five hardware-verified raw amp controls (Gain, Level, Bass, Mid, Treble) each get a 0-255 number input and an explicit **Apply** button.
 
-Each Apply sends the typed amp write to the daemon, which paces a fresh state read after the device's measured six-second settle and confirms the value read back exactly before returning. The control stays disabled during that round-trip, so a second Apply cannot race the first, and the panel re-reads device state rather than displaying an optimistic value. The whole cycle changes heard working state and saves nothing.
+Each Apply sends the typed amp write to the daemon, which paces a fresh state read after the device's measured six-second settle and confirms the value read back exactly before returning. The initiating control stays focusable, reports `aria-busy`, and guards re-entry during that round-trip; the panel re-reads device state rather than displaying an optimistic value. The whole cycle changes heard working state and saves nothing.
 
 Gate reduction has its own 0-100% number input and explicit **Apply** action. The Rust boundary rejects larger values and uses the same paced state read-back before reporting success. This control is labelled provisional: on 2026-08-22 the connected unit omitted Gate-reduction field 53, which means unknown rather than 0%, so the reversible hardware smoke correctly stopped before writing because it could not retain and restore a trustworthy original value. The control and all host boundaries are offline-tested, but the write has not yet been independently hardware-verified.
 
@@ -60,7 +60,7 @@ Selecting an FX panel opens its parameter inspector. Editable panels are named b
 
 One decoder caveat: the Gate's "on" state is represented by the absence of field 54 in the state protobuf, so the decoder reports `bypassed = None` (unknown) when the gate is on rather than `Some(false)`. The bypass toggle for the Gate is therefore disabled in the UI when the state reads as unknown; this is a decoder limitation, not a write failure, and the write itself still works.
 
-The header badge identifies which product is connected (Nano Cortex or Quad Cortex) and is also the device selector: click it to switch between Quad Cortex, Nano Cortex, or Auto-detect when both products are connected. Switching stops the current daemon session and starts one for the preferred device, so the dashboard re-reads from the new device on the next refresh.
+The header device button identifies which product is selected and opens the selector for Quad Cortex, Nano Cortex, or Auto-detect. Quad and Nano use separate local endpoints, so both product sessions can remain live concurrently without giving either physical HID interface a second owner. Switching never shuts down the other product or replaces an explicitly started daemon. With both devices connected on 2026-08-25, a fresh app paid the Quad handshake once; Quad to Nano and the warm return to Quad then each rendered in under one second, compared with 5-8 seconds when every return rebuilt the Quad session.
 
 ### Health, reconnect and fault isolation
 

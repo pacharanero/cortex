@@ -27,11 +27,11 @@ tags: ["mcp", "cortex-mcp", "safety-surface", "agentic", "provisional"]
 
 ## Problem Statement
 
-The MCP server exposes structured device reads, recall, scene switching and unsaved live-grid editing to an agent. Persistent save/delete tools are deliberately absent. The implemented surface lets an agent inspect the actual grid, perform typed edits and read the result back without becoming a second HID owner.
+The MCP server exposes structured device reads, recall, scene switching and unsaved live-grid editing to an agent. Persistent save/delete tools are deliberately absent. The implemented surface lets an agent inspect the actual Quad grid or Nano fixed chain, perform typed non-persistent edits and read the result back without becoming a second HID owner.
 
 The hard part is not the tool list. It is the **safety surface**. An agent with a `save_preset` tool can overwrite a factory preset or clobber a slot the user cared about, and the device will not stop it - a wrong-row edit succeeds silently. The MCP server must be the boundary that refuses the dangerous case, backs up the target before overwriting, and surfaces the traps an agent would not notice.
 
-This zone owns the thin MCP tool wrappers and enforces the shared safety surface. The first milestone reuses the held daemon through a host boundary extracted from `cortex-cli`; it does not open HID itself. This preserves one owning process while allowing CLI, MCP and the future GUI backend to share the same session and typed request contract.
+This zone owns the thin MCP tool wrappers and enforces the shared safety surface. The first milestone reuses product-scoped held daemons through a host boundary extracted from `cortex-cli`; it does not open HID itself. This preserves one owning process per physical device while allowing CLI, MCP and the GUI backend to share the same typed session contract.
 
 ## Verification Basis
 
@@ -48,7 +48,7 @@ The non-persistent MCP host, including typed routing and mandatory per-call read
 
 ## Current Boundary
 
-The non-persistent milestone is complete and hardware-verified through an official SDK client. The installed MCP server starts and lazily restarts an auto-managed sibling daemon when needed; an explicit compatible daemon is reused, typed failures survive both host boundaries, routing uses closed names, and affected working-copy writes require complete live-grid read-back. Destructive save is a later independent milestone.
+The non-persistent milestone is complete and hardware-verified through an official SDK client. The installed MCP server starts and lazily restarts the selected product's auto-managed sibling daemon when needed; an explicit compatible daemon is reused, typed failures survive both host boundaries, routing uses closed names, and affected working-copy writes require fresh read-back. Destructive save is a later independent milestone.
 
 ## User Stories
 
@@ -91,7 +91,7 @@ AI coding agents editing patches via MCP, and the maintainers who gate what an a
 | FR-3 | **Name the exact USER target.** A persistent tool accepts one explicit 1A-32H slot and authorises only that target for the prepared operation. | Must Have |
 | FR-4 | **Prepare every target before editing, and retain its backup.** `read_preset` recalls the target, so doing this immediately before save would destroy the unsaved working grid. A listing can be stale even when it reports an empty slot, so preparation always recalls/reads the target before edits begin. The preparation is bound to the physical-session generation, stored-preset mutation epoch, and exact listing entry; reconnects or target changes make it stale. | Must Have |
 | FR-5 | **Surface the row-numbering trap in tool descriptions.** Rows are 0-based in the API, 1-4 on screen; a wrong-row edit succeeds silently. Every row-accepting tool (`set_param`, `set_block`, `set_bypass`, `set_chain_input`) notes this in its `inputSchema` description. | Must Have |
-| FR-6 | **Single owning process for the USB interface.** The first MCP milestone uses the held daemon through the shared host boundary and never opens HID. Every tool call reuses that owner. | Must Have |
+| FR-6 | **Single owning process for each USB interface.** The first MCP milestone uses product-scoped held daemons through the shared host boundary and never opens HID. Every tool call reuses the selected product's owner. | Must Have |
 | FR-7 | **Surface the `read_preset` side-effect trap in the tool description.** `read_preset` RECALLS the slot (loads it onto the grid, discarding unsaved edits, resetting the active scene). `read_current_preset` does not. The tool descriptions make this distinction explicit. | Must Have |
 | FR-8 | **Surface the `set_block` DSP-capacity trap.** A block that exceeds the preset's processing budget is accepted on the wire and silently absent afterwards. The `set_block` tool description and the `verify` parameter (default `true`) surface this. | Must Have |
 | FR-9 | **Surface the `set_param(scene=)` 3-message trap.** The scene-following flag and a value cannot travel in the same message. The `set_param` tool description notes that a scene-targeted write issues 3 messages and leaves the unit on the target scene (visible side effect). | Should Have |
@@ -117,16 +117,18 @@ AI coding agents editing patches via MCP, and the maintainers who gate what an a
 | FR-34 | `copy_scene(from_scene, to_scene)` copies parameter, bypass, label and colour state, then refreshes the live preset before returning. | Must Have |
 | FR-35 | `swap_scenes(first_scene, second_scene)` exchanges complete scene state and refreshes the live preset before returning. | Must Have |
 | FR-36 | `list_captures()` and `list_irs(folder?)` return one correlated device library listing. `set_capture(row, column, capture, model?)` and `set_ir(row, column, ir, slot, model?, folder?)` accept only an exact `{key,name}` entry from a fresh re-list, edit only the unsaved working grid, and return success only after a fresh live-grid read proves the selected strings. Capture selection passed the official-client MCP hardware smoke on CorOS 4.0.1 with USER `6A` recalled for cleanup; IR selection awaits an available imported IR and on-unit warning-icon inspection. Capture/IR creation, transfer, backup, and cloud processing remain native-device workflows. | Must Have |
+| FR-37 | `read_nano_state`, `set_nano_amp`, `set_nano_bypass`, `read_nano_fx_params` and `set_nano_fx_param` route only through the Nano product endpoint. Writes affect heard working state, save nothing, and require fresh read-back where the device exposes the changed field. | Must Have |
+| FR-38 | `get_status(device?)` selects `quad` or `nano` and defaults to `quad` for compatibility. | Must Have |
 
 #### Server lifecycle
 
 | ID | Requirement | Priority |
 | --- | --- | --- |
 | FR-40 | The server connects once to the reusable host/daemon client and never opens HID directly. | Must Have |
-| FR-41 | Every tool delegates through the typed daemon request contract to the sole held `QuadCortex` session. | Must Have |
+| FR-41 | Every tool delegates through the typed daemon request contract to the selected product-scoped held session. | Must Have |
 | FR-42 | The server runs on stdio (the MCP transport) via `rmcp`. | Must Have |
 | FR-43 | The server logs safety-relevant events (refused save, prepared target, and slot backup) to stderr. | Should Have |
-| FR-44 | When no daemon endpoint exists, the installed MCP server starts the sibling `cortex session` owner before serving stdio. It never silently replaces a running incompatible daemon, and concurrent starts converge on the local IPC claim. | Should Have |
+| FR-44 | When no product endpoint exists, the installed MCP server starts the sibling `cortex session` owner before dispatching that product's tool. It never silently replaces a running incompatible daemon, concurrent same-product starts converge on the local IPC claim, and one product's startup does not block tools for the other. | Should Have |
 | FR-45 | Daemon failures retain a stable machine-readable code across local IPC and MCP structured tool results while preserving a human-readable diagnostic. Model-correctable failures and retryable session states never require message parsing. | Must Have |
 
 ### Non-Functional Requirements
@@ -153,7 +155,8 @@ AI coding agents editing patches via MCP, and the maintainers who gate what an a
 - [x] `set_block` notes the DSP-capacity refusal trap and exposes `verify` (default `true`).
 - [x] The server uses the held daemon and opens no HID transport itself.
 - [x] The server runs on bounded stdio via `rmcp` and answers a real official-SDK MCP client.
-- [x] All tools delegate through the daemon to `QuadCortex`; none reimplement protocol or domain logic.
+- [x] All tools delegate through the selected product-scoped daemon; none reimplement protocol or domain logic.
+- [x] Nano tools route only to the Nano endpoint, while `get_status` accepts a bounded Quad/Nano selector that defaults to Quad.
 - [x] The non-persistent tool surface passed hardware smoke on 2026-08-06 against CorOS 4.0.1.
 - [x] A normally installed `cortex-mcp` resolves the sibling `cortex`, starts an auto-managed owner without a separate manual session, and writes no non-MCP data to stdout. Process tests cover two concurrent missing-daemon launches converging on one endpoint and a long-lived MCP process restarting after request-idle release.
 - [x] Typed daemon error codes survive the process boundary and appear in MCP structured tool errors. Tests cover leaf-error classification, a downcastable host error from a real daemon process, daemon reconnect/validation categories, and an official-SDK MCP call receiving `dsp_refused`.

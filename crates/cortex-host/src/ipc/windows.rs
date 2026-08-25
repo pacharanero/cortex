@@ -33,15 +33,30 @@ impl LocalEndpoint {
     /// The current user's future Cortex named-pipe endpoint.
     #[must_use]
     pub fn daemon() -> Self {
+        Self::for_device(cortex_rs::DeviceKind::QuadCortex)
+    }
+
+    /// The current user's future named-pipe endpoint for one Cortex product.
+    #[must_use]
+    pub fn for_device(device: cortex_rs::DeviceKind) -> Self {
         Self {
-            name: r"\\.\pipe\cortex".into(),
+            name: match device {
+                cortex_rs::DeviceKind::QuadCortex => r"\\.\pipe\cortex",
+                cortex_rs::DeviceKind::NanoCortex => r"\\.\pipe\cortex-nano",
+            }
+            .into(),
         }
     }
 
     /// Place for logs from the detached daemon process.
     #[must_use]
     pub fn log_path(&self) -> PathBuf {
-        std::env::temp_dir().join("cortex.log")
+        let name = if self.name.ends_with("cortex-nano") {
+            "cortex-nano.log"
+        } else {
+            "cortex.log"
+        };
+        std::env::temp_dir().join(name)
     }
 
     pub(crate) fn has_active_claim(&self) -> bool {

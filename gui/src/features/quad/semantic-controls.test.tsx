@@ -66,8 +66,8 @@ describe("Quad semantic controls", () => {
     );
 
     expect(screen.getByRole("group", { name: "Quad Cortex signal grid" })).toBeTruthy();
-    expect(screen.getAllByRole("button")).toHaveLength(32);
-    expect(screen.getByRole("button", { name: "Brit 2203, Amplifier, row 1, column 2, bypassed" }).getAttribute("aria-pressed")).toBe("true");
-    expect((screen.getByRole("button", { name: "Empty, row 1, column 0" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getAllByRole("button")).toHaveLength(1);
+    expect(screen.getByRole("button", { name: "Row 1, column 2: Brit 2203, Amplifier, bypassed" }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByRole("group", { name: "Row 1, column 0: Empty cell, Available position, empty" })).toBeTruthy();
   });
 });

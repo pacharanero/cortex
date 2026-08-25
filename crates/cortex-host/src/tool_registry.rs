@@ -51,8 +51,11 @@ fn reads() -> Vec<ToolSpec> {
     vec![
         any_spec(
             "get_status",
-            "Read held-session health and cache status.",
-            empty_schema(),
+            "Read held-session health and cache status for one Cortex product.",
+            object_schema(
+                &json!({"device":{"type":"string","enum":["quad","nano"],"default":"quad"}}),
+                &[],
+            ),
             true,
         ),
         nano_spec(

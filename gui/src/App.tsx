@@ -1,13 +1,14 @@
 // SPDX-FileCopyrightText: 2026 Dr Marcus Baw
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-import { Alert, AppShell, Badge, Button, Divider, Group, Menu, NavLink, Paper, ScrollArea, Stack, Switch, Text, Title } from "@mantine/core";
+import { Alert, AppShell, Badge, Burger, Button, Divider, Group, Menu, NavLink, Paper, ScrollArea, Stack, Switch, Text, Title } from "@mantine/core";
 import { useEffect, useRef, useState } from "react";
 import { Grid } from "./features/quad/Grid";
 import { ParameterEditor } from "./features/quad/ParameterEditor";
 import { SceneSelector } from "./features/quad/SceneSelector";
 import { ErrorBoundary } from "./shared/ErrorBoundary";
 import { NanoChain } from "./features/nano/NanoChain";
+import { InspectorPanel } from "./shared/editor/EditorCanvas";
 import { cortexApi } from "./shared/ipc/api";
 import type { DashboardSnapshot, DeviceKind, LiveBlock, NanoAmpControl, NanoBypassTarget, NanoFxSlot, ParameterInput, ParameterView } from "./shared/ipc/types";
 
@@ -50,6 +51,8 @@ export function App() {
   // itself takes ~6 seconds and returns updated state, so the manual
   // refresh after it completes is sufficient.
   const [nanoOperationInProgress, setNanoOperationInProgress] = useState(false);
+  const nanoOperationsInProgress = useRef(0);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -64,7 +67,7 @@ export function App() {
         setSnapshot(next);
         setError(null);
       } catch (reason) {
-        if (!cancelled) setError(reason instanceof Error ? reason.message : String(reason));
+        if (!cancelled && requestEpoch === dashboardEpoch.current) setError(reason instanceof Error ? reason.message : String(reason));
       } finally {
         if (!cancelled) timer = window.setTimeout(refresh, 1000);
       }
@@ -199,76 +202,39 @@ export function App() {
     generation.current = next.status.cache.generation;
     setSnapshot(next);
   };
-  const setNanoAmp = async (control: NanoAmpControl, value: number) => {
+  const runNanoOperation = async <T,>(operation: () => Promise<T>, clearError = true): Promise<T> => {
     const epoch = dashboardEpoch.current;
-    setNanoOperationError(null);
+    if (clearError) setNanoOperationError(null);
+    nanoOperationsInProgress.current += 1;
     setNanoOperationInProgress(true);
     try {
-      await cortexApi.setNanoAmp(control, value);
+      const result = await operation();
       await refreshAfterNanoOperation(epoch);
+      return result;
     } catch (reason) {
-      setNanoOperationError(reason instanceof Error ? reason.message : String(reason));
+      if (epoch === dashboardEpoch.current) setNanoOperationError(reason instanceof Error ? reason.message : String(reason));
       throw reason;
     } finally {
-      setNanoOperationInProgress(false);
+      nanoOperationsInProgress.current -= 1;
+      setNanoOperationInProgress(nanoOperationsInProgress.current > 0);
     }
+  };
+  const setNanoAmp = async (control: NanoAmpControl, value: number) => {
+    await runNanoOperation(() => cortexApi.setNanoAmp(control, value));
   };
   const setNanoGateReduction = async (percent: number) => {
-    const epoch = dashboardEpoch.current;
-    setNanoOperationError(null);
-    setNanoOperationInProgress(true);
-    try {
-      await cortexApi.setNanoGateReduction(percent);
-      await refreshAfterNanoOperation(epoch);
-    } catch (reason) {
-      setNanoOperationError(reason instanceof Error ? reason.message : String(reason));
-      throw reason;
-    } finally {
-      setNanoOperationInProgress(false);
-    }
+    await runNanoOperation(() => cortexApi.setNanoGateReduction(percent));
   };
   const setNanoBypass = async (target: NanoBypassTarget, bypassed: boolean) => {
-    const epoch = dashboardEpoch.current;
-    setNanoOperationError(null);
-    setNanoOperationInProgress(true);
-    try {
-      await cortexApi.setNanoBypass(target, bypassed);
-      await refreshAfterNanoOperation(epoch);
-    } catch (reason) {
-      setNanoOperationError(reason instanceof Error ? reason.message : String(reason));
-      throw reason;
-    } finally {
-      setNanoOperationInProgress(false);
-    }
-  };
-  const setNanoFxParam = async (slot: NanoFxSlot, paramIndex: number, value: number) => {
-    const epoch = dashboardEpoch.current;
-    setNanoOperationError(null);
-    setNanoOperationInProgress(true);
-    try {
-      const values = await cortexApi.setNanoFxParam(slot, paramIndex, value);
-      await refreshAfterNanoOperation(epoch);
-      return values;
-    } catch (reason) {
-      setNanoOperationError(reason instanceof Error ? reason.message : String(reason));
-      throw reason;
-    } finally {
-      setNanoOperationInProgress(false);
-    }
+    await runNanoOperation(() => cortexApi.setNanoBypass(target, bypassed));
   };
   const readNanoFxParams = async (slot: NanoFxSlot) => {
-    const epoch = dashboardEpoch.current;
-    setNanoOperationInProgress(true);
-    try {
-      const values = await cortexApi.readNanoFxParams(slot);
-      await refreshAfterNanoOperation(epoch);
-      return values;
-    } catch (reason) {
-      setNanoOperationError(reason instanceof Error ? reason.message : String(reason));
-      throw reason;
-    } finally {
-      setNanoOperationInProgress(false);
-    }
+    // A reconciliation read after an unconfirmed write must not erase the
+    // parent-level write error while the generation-keyed editor remounts.
+    return runNanoOperation(() => cortexApi.readNanoFxParams(slot), false);
+  };
+  const setNanoFxParam = async (slot: NanoFxSlot, paramIndex: number, value: number) => {
+    return runNanoOperation(() => cortexApi.setNanoFxParam(slot, paramIndex, value));
   };
   const switchDevice = async (device: "quad_cortex" | "nano_cortex" | "auto") => {
     const epoch = dashboardEpoch.current + 1;
@@ -290,6 +256,7 @@ export function App() {
           generation.current = next.status.cache.generation;
           setSnapshot(next);
           setSelectedCell(null);
+          setParameters(null);
           setError(null);
           setNanoOperationError(null);
         } catch (reason) {
@@ -308,14 +275,15 @@ export function App() {
   const currentDeviceLabel = currentDeviceKind === "nano_cortex" ? "Nano Cortex" : "Quad Cortex";
 
   return (
-    <AppShell header={{ height: 64 }} navbar={{ width: 250, breakpoint: "sm" }} padding="md">
+    <AppShell header={{ height: 64 }} navbar={{ width: 250, breakpoint: "sm", collapsed: { mobile: !mobileNavOpen } }} padding="md">
       <AppShell.Header p="md">
         <Group justify="space-between">
           <Group gap="xs">
+            <Burger aria-label="Toggle preset directory" hiddenFrom="sm" onClick={() => setMobileNavOpen((open) => !open)} opened={mobileNavOpen} size="sm" />
             <Title order={2}>cortex</Title>
             <Menu shadow="md" position="bottom-start" width={200}>
               <Menu.Target>
-                <Button aria-label={`Select device, current ${currentDeviceLabel}`} color="orange" size="compact-xs" tt="uppercase" variant="filled">{currentDeviceLabel}</Button>
+                <Button aria-label={`Select device, current ${currentDeviceLabel}`} color="orange" size="compact-sm" variant="filled">{deviceSwitchInProgress ? "Switching..." : currentDeviceLabel}</Button>
               </Menu.Target>
               <Menu.Dropdown>
                 <Menu.Label>Device</Menu.Label>
@@ -332,7 +300,7 @@ export function App() {
               </Menu.Dropdown>
             </Menu>
           </Group>
-          <Group gap="xs"><Badge color={snapshot.source === "fixture" ? "yellow" : connected ? "green" : "orange"}>{health}</Badge><Badge variant="outline">gen {snapshot.status.cache.generation} / rev {snapshot.status.cache.revision}</Badge></Group>
+          <Group gap="xs" visibleFrom="sm"><Badge color={snapshot.source === "fixture" ? "yellow" : connected ? "green" : "orange"}>{health}</Badge><Badge variant="outline">gen {snapshot.status.cache.generation} / rev {snapshot.status.cache.revision}</Badge></Group>
         </Group>
       </AppShell.Header>
       <AppShell.Navbar p="sm">
@@ -351,7 +319,7 @@ export function App() {
                   disabled={recalling !== null || !connected}
                   key={`${setlist.key}-${slot.index}`}
                   label={`${slot.slot}  ${slot.name}`}
-                  onClick={() => void recall(setlist.key, slot.slot)}
+                  onClick={() => { setMobileNavOpen(false); void recall(setlist.key, slot.slot); }}
                 />
               ))}
             </NavLink>
@@ -377,7 +345,7 @@ export function App() {
               </>}
             </Stack>
           </Alert>}
-          {nano && <NanoChain
+          {nano && <ErrorBoundary name="Nano editor"><NanoChain
             key={`nano:${snapshot.status.cache.generation}`}
             onReadFxParams={readNanoFxParams}
             onSetAmp={setNanoAmp}
@@ -385,7 +353,7 @@ export function App() {
             onSetBypass={setNanoBypass}
             onSetFxParam={setNanoFxParam}
             state={nano}
-          />}
+          /></ErrorBoundary>}
           {live && <>
             <Group justify="space-between"><div><Text c="dimmed" size="sm">Working grid</Text><Title order={3}>{live.preset_name}{live.preset_dirty ? " *" : ""}</Title></div><Text>Scene {activeSceneName(live)}</Text></Group>
             <Paper p="md" withBorder>
@@ -409,34 +377,9 @@ export function App() {
                 <Grid blocks={live.blocks} selected={selected} onSelect={(block) => setSelectedCell({ row: block.row, column: block.column })} />
               </ErrorBoundary>
             </Paper>
-            <Paper p="md" withBorder>
-              <ErrorBoundary name="Inspector">
-                <Group align="flex-start" justify="space-between" wrap="wrap">
-                  <div>
-                    <Text c="dimmed" size="sm">Inspector</Text>
-                    <Title order={4}>{selected?.name ?? "Select a block"}</Title>
-                    <Text mt="sm">
-                      {selected
-                        ? `${selected.category} at row ${selected.screen_row}, column ${selected.column}.`
-                        : "Block details will appear here."}
-                    </Text>
-                    {selected?.based_on && <Text c="dimmed" mt="xs" size="sm">{selected.based_on}</Text>}
-                    {selected && (
-                      <Switch
-                        aria-label={`${selected.name} bypass, ${selected.bypassed ? "bypassed" : "engaged"}`}
-                        // Not disabled while writing: a disabled control cannot
-                        // hold focus, which is the fault recorded in
-                        // SceneSelector and ParameterEditor.
-                        checked={selected.bypassed}
-                        description="Applies to the active scene only, as the device stores it"
-                        disabled={!connected}
-                        label={selected.bypassed ? "Bypassed" : "Engaged"}
-                        mt="md"
-                        onChange={(event) => void toggleBypass(event.currentTarget.checked)}
-                      />
-                    )}
-                  </div>
-                  <div>
+            <ErrorBoundary name="Inspector">
+              <InspectorPanel
+                aside={<div>
                     <Text c="dimmed" size="sm">DSP load</Text>
                     <Text>{live.cpu_load?.total == null ? "awaiting device push" : `${live.cpu_load.total.toFixed(1)}%`}</Text>
                     {live.cpu_load?.chains.map((chain, row) => (
@@ -444,9 +387,23 @@ export function App() {
                         Row {row + 1}: {chain.map((column) => `${column.load.toFixed(1)}${column.on_core2 ? "*" : ""}`).join("  ")}
                       </Text>
                     ))}
-                  </div>
-                </Group>
-
+                  </div>}
+                id="quad-block-inspector"
+                onClose={selected ? () => setSelectedCell(null) : undefined}
+                summary={<>
+                  <Text mt="sm">{selected ? `${selected.category} at row ${selected.screen_row}, column ${selected.column}.` : "Block details will appear here."}</Text>
+                  {selected?.based_on && <Text c="dimmed" mt="xs" size="sm">{selected.based_on}</Text>}
+                </>}
+                title={selected?.name ?? "Select a block"}
+              >
+                {selected && <Switch
+                  aria-label={`${selected.name} bypass, ${selected.bypassed ? "bypassed" : "engaged"}`}
+                  checked={selected.bypassed}
+                  description="Applies to the active scene only, as the device stores it"
+                  disabled={!connected}
+                  label={selected.bypassed ? "Bypassed" : "Engaged"}
+                  onChange={(event) => void toggleBypass(event.currentTarget.checked)}
+                />}
                 {selected && (
                   <>
                     <Divider label="Parameters" labelPosition="left" my="md" />
@@ -461,8 +418,8 @@ export function App() {
                     )}
                   </>
                 )}
-              </ErrorBoundary>
-            </Paper>
+              </InspectorPanel>
+            </ErrorBoundary>
           </>}
         </Stack>
       </AppShell.Main>

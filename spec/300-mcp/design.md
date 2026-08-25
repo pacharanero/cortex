@@ -100,15 +100,15 @@ The traps are not errors - the device does not refuse a wrong-row edit or a too-
 
 ### Behaviour
 
-The MCP process opens no `Transport`. It connects to the held `cortex session` daemon through the reusable host boundary. Every tool call uses that typed request client, so the daemon remains the one process holding HID. A missing socket makes the MCP process locate the installed sibling `cortex` binary and invoke the auto-managed `cortex session start` contract before opening stdio. An existing incompatible daemon remains an explicit refusal rather than being killed behind another user's back.
+The MCP process opens no `Transport`. It connects to the product-scoped held `cortex session` daemon through the reusable host boundary. Every tool call uses that typed request client, so each daemon remains the one process holding its physical device's HID interface. A missing endpoint makes the MCP process locate the installed sibling `cortex` binary and invoke the auto-managed `cortex session start` contract before dispatch. An existing incompatible daemon remains an explicit refusal rather than being killed behind another user's back.
 
 ### Design choice: reuse the daemon, do not become another owner
 
-`cortex-host` owns the extracted host-facing request boundary; `cortex-rs` remains free of host IPC and async-runtime dependencies. The MCP process constructs one supervised host client at startup and serves stdio through `rmcp`. The supervisor probes status without bypassing the daemon protocol-version gate, starts only when no owner exists, and rechecks before every tool so a long-lived MCP process recovers after request-idle release.
+`cortex-host` owns the extracted host-facing request boundary; `cortex-rs` remains free of host IPC and async-runtime dependencies. The MCP process constructs supervised Quad and Nano host clients at startup and serves stdio through `rmcp`. The supervisor probes product-scoped status without bypassing the daemon protocol-version gate, starts only when no owner exists, and rechecks before every tool so a long-lived MCP process recovers after request-idle release. Independent startup gates prevent a stalled product handshake from blocking tools for the other product.
 
 ### Design choice: agent-triggered daemon lifecycle, not systemd
 
-The installed stdio lifecycle starts a missing daemon on demand. `cortex-mcp` resolves `cortex` beside its own executable, invokes `cortex session start --auto-managed --idle-timeout-seconds 60`, and waits for a compatible status response before serving or dispatching a tool. Concurrent MCP processes may both reach the start command, but only one daemon wins the endpoint claim; losing callers accept that race only after the winner serves the expected protocol. Every completed request resets the idle timeout, in-flight requests prevent exit, and a later tool call restarts an owner that has already released the device. This avoids a systemd user-service dependency and does not tie ownership to one MCP process.
+The installed stdio lifecycle starts a missing product daemon on demand. `cortex-mcp` resolves `cortex` beside its own executable, invokes `cortex session start --auto-managed --idle-timeout-seconds 60` with the selected product when needed, and waits for a compatible status response before dispatching the tool. Concurrent MCP processes may both reach the start command, but only one daemon wins each endpoint claim; losing callers accept that race only after the winner serves the expected protocol. Every completed request resets the relevant idle timeout, in-flight requests prevent exit, and a later tool call restarts an owner that has already released the device. This avoids a systemd user-service dependency and does not tie ownership to one MCP process.
 
 ### Design choice: no per-tool-call reconnect
 
@@ -140,7 +140,8 @@ The tool list mirrors the client API (zone 150), grouped by the destructive tier
 | `list_blocks` | (derived from `read_current_preset`) | Read |
 | `list_folders` | `QuadCortex::list_folders` | Read |
 | `get_device_version` | `QuadCortex::version` | Read |
-| `get_status`, `get_active_scene`, `get_cpu_load`, `search_catalog` | daemon/cache/client reads | Read |
+| `get_status` | selected Quad/Nano daemon status (`device` defaults to `quad`) | Read |
+| `get_active_scene`, `get_cpu_load`, `search_catalog` | Quad daemon/cache/client reads | Read |
 | `recall_preset` | `QuadCortex::recall_preset` | Transient write |
 | `switch_scene` | `QuadCortex::switch_scene` | Transient write |
 | `set_scene_label`, `unlabel_scene`, `set_scene_color` | typed daemon scene requests | Working-copy write |

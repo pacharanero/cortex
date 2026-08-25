@@ -90,6 +90,8 @@ The first draft establishes the stack, mockable frontend API boundary, typed Tau
 - **Live state comes from the reducer.** The Rust backend owns one subscribed session and exposes typed cache snapshots plus generation/revision changes. The frontend does not pollute its interaction state with optimistic device state and never renders a pre-reconnect generation as current.
 - **Reconnect is truthful and actionable.** Reconnecting state shows the daemon's real attempt count and last error. A manual retry interrupts automatic backoff but does not mark the device live before a complete replacement handshake.
 - **Bounded host-use release.** The GUI holds only short-lived request sockets, so window/process close releases its host use without stopping a shared daemon. A request already accepted remains daemon-side in flight through completion; the GUI never sends global `Shutdown` merely because its window closed.
+- **Fast dual-device selection.** Quad and Nano use product-scoped local endpoints and may remain warm concurrently when both physical devices are connected. Switching views never kills an explicit daemon or gives either physical HID interface a second owner.
+- **Shared editor language, honest topology.** Quad's routed 4x8 grid and Nano's fixed eight-role chain use the same semantic block cards, selection states and inspector framing without coercing either product into the other's domain model.
 - **Safety surface reuse.** The GUI reuses the same rules as the MCP server: absolute factory refusal, one exact target, pre-edit preparation/backup for that target, explicit confirmation, and trap-surfacing. If a target was not prepared before the grid became dirty, the GUI requires another target rather than recalling the original target and destroying the edits.
 - **`s/gui-dev`** runs the Tauri dev server from any working directory (house-style tauri-gui.md).
 - **Versioning with the repo.** `gui/package.json` and `tauri.conf.json` versions move with the canonical version via `s/version++`.
@@ -104,6 +106,8 @@ The first draft establishes the stack, mockable frontend API boundary, typed Tau
 - [x] One managed Rust backend exposes generation/revision-tagged daemon snapshots; reconnecting/failed status is visible and old generations are never rendered as live.
 - [x] The production dashboard boundary returns one live generation with populated blocks and preset directory against a real CorOS 4.0.1 held session on Linux.
 - [x] Physical unplug/reconnect hides the old grid and directory within one refresh, then restores the same live preset only under a newer generation.
+- [x] With both products connected, the native selector preserves one live owner per device and switches Quad to Nano and back in under one second after initial startup.
+- [x] Quad and Nano use one semantic editor-canvas component set while preserving their distinct fixed topologies and keyboard-selectable blocks.
 - [ ] The default view is a hardware-faithful rendering of the Quad Cortex front panel (10 footswitch/encoders, OLED grid, scene LEDs, context strip).
 - [ ] Footswitch/encoders are interactive: click-to-press (toggle/recall/navigate), drag-to-turn (adjust parameter), with keyboard equivalents.
 - [ ] The virtual panel reflects the current device mode and labels footswitches accordingly.

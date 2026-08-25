@@ -24,7 +24,7 @@ use cortex_host::LocalConnection;
 use cortex_host::{
     CacheStatus, DAEMON_PROTOCOL_VERSION, DaemonClient, DaemonErrorCode, DaemonLifecycle,
     DeviceHealth, LocalEndpoint, LocalListener, PrepareSaveResult, Request, Response, Status,
-    log_path, serve_listener,
+    serve_listener,
 };
 use cortex_rs::{DeviceKind, QuadCortex, Session, Transport};
 
@@ -32,6 +32,8 @@ use cortex_rs::{DeviceKind, QuadCortex, Session, Transport};
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 const COPY_DEVICE_STEP_TIMEOUT: Duration = Duration::from_secs(40);
 const SETLIST_DEVICE_TIMEOUT: Duration = Duration::from_secs(60);
+const SESSION_STARTUP_TIMEOUT: Duration = Duration::from_secs(120);
+const NANO_SESSION_STARTUP_TIMEOUT: Duration = Duration::from_secs(245);
 pub const COPY_IPC_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 pub const SETLIST_IPC_TIMEOUT: Duration = Duration::from_secs(3 * 60);
 pub const SAVE_IPC_TIMEOUT: Duration = Duration::from_secs(3 * 60);
@@ -1888,7 +1890,7 @@ impl DeviceDaemon {
 
 /// Run the daemon until explicitly stopped or its host-managed idle bound expires.
 pub fn run(device: DeviceKind, lifecycle: DaemonLifecycle) -> Result<()> {
-    let endpoint = LocalEndpoint::daemon();
+    let endpoint = LocalEndpoint::for_device(device);
 
     // Claim local IPC BEFORE the handshake, not after.
     //
@@ -1907,7 +1909,11 @@ pub fn run(device: DeviceKind, lifecycle: DaemonLifecycle) -> Result<()> {
         if error.kind() == std::io::ErrorKind::AddrInUse {
             anyhow::anyhow!(
                 "a cortex daemon is already running on {endpoint}. Stop it with \
-                 `cortex session stop`, or use the existing one."
+                 `cortex session stop --device {}`, or use the existing one.",
+                match device {
+                    DeviceKind::QuadCortex => "quad",
+                    DeviceKind::NanoCortex => "nano",
+                }
             )
         } else {
             anyhow::Error::new(error).context(format!("claiming local endpoint {endpoint}"))
@@ -1917,6 +1923,11 @@ pub fn run(device: DeviceKind, lifecycle: DaemonLifecycle) -> Result<()> {
         eprintln!("cortex session: removed a stale endpoint at {endpoint} (nothing was listening)");
     }
     let listener = claim.listener;
+
+    if let Err(error) = refuse_legacy_nano_owner(device) {
+        let _ = listener.cleanup_endpoint();
+        return Err(error);
+    }
 
     // The endpoint now exists, so a failed handshake must clear it on the way
     // out; otherwise the next start finds a file it has to treat as stale.
@@ -1934,7 +1945,13 @@ pub fn run(device: DeviceKind, lifecycle: DaemonLifecycle) -> Result<()> {
     eprintln!("cortex session: listening on {endpoint}");
     match lifecycle {
         DaemonLifecycle::Explicit => {
-            eprintln!("cortex session: stop with `cortex session stop`, or Ctrl-C if attached");
+            eprintln!(
+                "cortex session: stop with `cortex session stop --device {}`, or Ctrl-C if attached",
+                match device {
+                    DeviceKind::QuadCortex => "quad",
+                    DeviceKind::NanoCortex => "nano",
+                }
+            );
         }
         DaemonLifecycle::AutoManaged { idle_timeout } => eprintln!(
             "cortex session: auto-managed; exits after {}s without a completed request",
@@ -1958,6 +1975,35 @@ pub fn run(device: DeviceKind, lifecycle: DaemonLifecycle) -> Result<()> {
     let _ = listener.cleanup_endpoint();
     serving?;
     Ok(())
+}
+
+fn refuse_legacy_nano_owner(device: DeviceKind) -> Result<()> {
+    if device != DeviceKind::NanoCortex {
+        return Ok(());
+    }
+
+    // Nano sessions used the Quad endpoint before product-scoped endpoints
+    // landed. Refuse an already-running legacy owner; concurrently launching
+    // mixed binary versions is unsupported because the older process cannot
+    // participate in the new product-scoped ownership contract.
+    let legacy = DaemonClient::default().with_timeout(Duration::from_secs(2));
+    if !legacy.is_running() {
+        return Ok(());
+    }
+    let deadline = Instant::now() + SESSION_STARTUP_TIMEOUT;
+    loop {
+        match legacy.status() {
+            Ok(status) if status.device_kind == DeviceKind::NanoCortex => anyhow::bail!(
+                "a Nano Cortex session is still running on the legacy endpoint. Stop it with `cortex session stop --device quad`, then retry."
+            ),
+            Ok(_) => return Ok(()),
+            Err(_) if !legacy.is_running() => return Ok(()),
+            Err(error) if Instant::now() >= deadline => anyhow::bail!(
+                "could not verify the owner of the legacy Cortex endpoint while starting Nano: {error}. Wait for the other session to finish starting, then retry."
+            ),
+            Err(_) => std::thread::sleep(Duration::from_millis(200)),
+        }
+    }
 }
 
 /// Whether the accept loop should continue.
@@ -2042,6 +2088,12 @@ pub fn is_running() -> bool {
     cortex_host::is_running()
 }
 
+/// Whether one product's daemon is listening or starting.
+#[must_use]
+pub fn is_running_for(device: DeviceKind) -> bool {
+    DaemonClient::for_device(device).is_running()
+}
+
 // `setsid`, used to detach from the terminal so closing it does not kill the
 // session. Declared rather than pulled in with a `libc` dependency, matching
 // how the CLI already handles `SIGPIPE`.
@@ -2067,15 +2119,24 @@ unsafe extern "C" {
 /// Returns an error if a session is already running, if the child cannot be
 /// spawned, or if it exits or goes quiet before it starts serving.
 pub fn start_detached(device: DeviceKind, lifecycle: DaemonLifecycle) -> Result<()> {
-    if is_running() {
+    if is_running_for(device) {
         anyhow::bail!(
-            "a cortex session is already running. \
-             Check it with `cortex session status`, or replace it with \
-             `cortex session stop` first."
+            "a cortex session is already running for {:?}. \
+             Check it with `cortex session status --device {}`, or replace it with \
+             `cortex session stop --device {}` first.",
+            device,
+            match device {
+                DeviceKind::QuadCortex => "quad",
+                DeviceKind::NanoCortex => "nano",
+            },
+            match device {
+                DeviceKind::QuadCortex => "quad",
+                DeviceKind::NanoCortex => "nano",
+            }
         );
     }
 
-    let log = log_path();
+    let log = LocalEndpoint::for_device(device).log_path();
     let file = std::fs::File::create(&log)?;
     let exe = std::env::current_exe()?;
 
@@ -2116,7 +2177,13 @@ pub fn start_detached(device: DeviceKind, lifecycle: DaemonLifecycle) -> Result<
     // Poll until it serves. The handshake is seconds, and slower on a unit
     // that is busy, so this is generous - but bounded, because a wait with no
     // end is indistinguishable from a hang.
-    let deadline = Instant::now() + Duration::from_secs(120);
+    let timeout = match device {
+        DeviceKind::QuadCortex => SESSION_STARTUP_TIMEOUT,
+        // Nano startup may spend one full startup interval identifying a
+        // process that claimed the legacy endpoint before its own handshake.
+        DeviceKind::NanoCortex => NANO_SESSION_STARTUP_TIMEOUT,
+    };
+    let deadline = Instant::now() + timeout;
     while Instant::now() < deadline {
         // Ask it something, rather than merely checking the socket accepts.
         //
@@ -2125,8 +2192,14 @@ pub fn start_detached(device: DeviceKind, lifecycle: DaemonLifecycle) -> Result<
         // accepting socket says nothing about whether the session is serving
         // yet. Only a served reply does. A client arriving early waits in the
         // listen backlog, so this both tests and waits.
-        if answers_status(Duration::from_secs(2)) {
-            eprintln!("cortex session: ready. Stop it with `cortex session stop`.");
+        if answers_status(device, Duration::from_secs(2)) {
+            eprintln!(
+                "cortex session: ready. Stop it with `cortex session stop --device {}`.",
+                match device {
+                    DeviceKind::QuadCortex => "quad",
+                    DeviceKind::NanoCortex => "nano",
+                }
+            );
             return Ok(());
         }
         if let Some(status) = child.try_wait()? {
@@ -2142,7 +2215,8 @@ pub fn start_detached(device: DeviceKind, lifecycle: DaemonLifecycle) -> Result<
     let _ = child.kill();
     let _ = child.wait();
     anyhow::bail!(
-        "the session did not start within 120s; see {}",
+        "the session did not start within {}s; see {}",
+        timeout.as_secs(),
         log.display()
     )
 }
@@ -2152,8 +2226,8 @@ pub fn start_detached(device: DeviceKind, lifecycle: DaemonLifecycle) -> Result<
 /// Distinct from [`is_running`], which only asks whether the socket accepts.
 /// During startup those differ for several seconds, which is exactly the
 /// window this has to tell apart.
-fn answers_status(timeout: Duration) -> bool {
-    DaemonClient::default()
+fn answers_status(device: DeviceKind, timeout: Duration) -> bool {
+    DaemonClient::for_device(device)
         .with_timeout(timeout)
         .require_compatible()
         .is_ok()

@@ -16,7 +16,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use cortex_host::{
-    DaemonError, DaemonErrorCode, DaemonSupervisor, DevicePolicy, Request,
+    DaemonClient, DaemonError, DaemonErrorCode, DaemonSupervisor, DevicePolicy, Request,
     tool_registry::DeviceRequirement,
 };
 use rmcp::model::{
@@ -31,13 +31,7 @@ use serde_json::{Value, json};
 use crate::transport::BoundedStdioTransport;
 
 const CATALOG_TTL_MS: u64 = 60_000;
-fn device_policy(requirement: DeviceRequirement) -> DevicePolicy {
-    match requirement {
-        DeviceRequirement::Any => DevicePolicy::Any,
-        DeviceRequirement::Quad => DevicePolicy::Require(cortex_rs::DeviceKind::QuadCortex),
-        DeviceRequirement::Nano => DevicePolicy::Require(cortex_rs::DeviceKind::NanoCortex),
-    }
-}
+const AUTO_MANAGED_IDLE: Duration = Duration::from_secs(60);
 
 #[derive(Clone)]
 struct CortexMcp {
@@ -46,7 +40,7 @@ struct CortexMcp {
 }
 
 pub async fn serve() -> Result<()> {
-    let daemon = Arc::new(DaemonSupervisor::default());
+    let daemon = Arc::new(DaemonSupervisor::new(AUTO_MANAGED_IDLE));
     let server = CortexMcp {
         daemon,
         tools: Arc::new(tools()),
@@ -130,18 +124,22 @@ impl ServerHandler for CortexMcp {
 
 impl CortexMcp {
     fn call_sync(&self, request: CallToolRequestParams) -> Result<CallToolResult, ErrorData> {
-        let Some(requirement) = tool_requirement(request.name.as_ref()) else {
-            return Ok(tool_error(format!("unknown tool: {}", request.name)));
-        };
-        if let Err(error) = self.daemon.ensure(device_policy(requirement)) {
-            return Ok(tool_error_code(
-                DaemonErrorCode::DeviceUnavailable,
-                error.to_string(),
-            ));
-        }
         let name = request.name.as_ref();
         let args = Value::Object(request.arguments.unwrap_or_default());
-        let result = self.dispatch(name, &args);
+        let device_kind = match tool_device_kind(name, &args) {
+            Ok(device_kind) => device_kind,
+            Err(error) => return Ok(tool_error(error.to_string())),
+        };
+        let client = match self.daemon.ensure(DevicePolicy::Require(device_kind)) {
+            Ok(client) => client,
+            Err(error) => {
+                return Ok(tool_error_code(
+                    DaemonErrorCode::DeviceUnavailable,
+                    error.to_string(),
+                ));
+            }
+        };
+        let result = self.dispatch(name, &args, client.as_ref());
         Ok(match result {
             Ok(value) => CallToolResult::structured(value),
             Err(error) => match error.downcast_ref::<DaemonError>() {
@@ -151,7 +149,7 @@ impl CortexMcp {
         })
     }
 
-    fn dispatch(&self, name: &str, args: &Value) -> Result<Value> {
+    fn dispatch(&self, name: &str, args: &Value, base_client: &DaemonClient) -> Result<Value> {
         let request = match name {
             "get_status" => Request::Status,
             "read_nano_state" => Request::NanoState,
@@ -302,7 +300,7 @@ impl CortexMcp {
             },
             "search_catalog" => {
                 let query = string_arg(args, "query")?;
-                let payload = self.daemon.client().request_value(&Request::Catalog {
+                let payload = base_client.request_value(&Request::Catalog {
                     timeout_seconds: 15,
                 })?;
                 let bytes: Vec<u8> =
@@ -315,13 +313,10 @@ impl CortexMcp {
         let client = match &request {
             Request::SetParam {
                 timeout_seconds, ..
-            } => self
-                .daemon
-                .client()
-                .as_ref()
+            } => base_client
                 .clone()
                 .with_timeout(Duration::from_secs(timeout_seconds.saturating_mul(3) + 5)),
-            _ => self.daemon.client().as_ref().clone(),
+            _ => base_client.clone(),
         };
         let value = client.request_value(&request)?;
         if name == "list_blocks" {
@@ -329,6 +324,22 @@ impl CortexMcp {
             return Ok(serde_json::to_value(preset.blocks)?);
         }
         Ok(value)
+    }
+}
+
+fn tool_device_kind(name: &str, args: &Value) -> Result<cortex_rs::DeviceKind> {
+    let requirement = tool_requirement(name).with_context(|| format!("unknown tool: {name}"))?;
+    match requirement {
+        DeviceRequirement::Quad => Ok(cortex_rs::DeviceKind::QuadCortex),
+        DeviceRequirement::Nano => Ok(cortex_rs::DeviceKind::NanoCortex),
+        DeviceRequirement::Any => match optional_string_arg(args, "device")?
+            .as_deref()
+            .unwrap_or("quad")
+        {
+            "quad" => Ok(cortex_rs::DeviceKind::QuadCortex),
+            "nano" => Ok(cortex_rs::DeviceKind::NanoCortex),
+            value => anyhow::bail!("device must be `quad` or `nano`, got `{value}`"),
+        },
     }
 }
 
@@ -487,6 +498,19 @@ mod tests {
             tool_requirement("read_current_preset"),
             Some(DeviceRequirement::Quad)
         );
+    }
+
+    #[test]
+    fn status_routes_to_the_requested_product() {
+        assert_eq!(
+            tool_device_kind("get_status", &json!({})).unwrap(),
+            cortex_rs::DeviceKind::QuadCortex
+        );
+        assert_eq!(
+            tool_device_kind("get_status", &json!({"device": "nano"})).unwrap(),
+            cortex_rs::DeviceKind::NanoCortex
+        );
+        assert!(tool_device_kind("get_status", &json!({"device": "other"})).is_err());
     }
 
     #[test]
