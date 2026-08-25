@@ -16,7 +16,7 @@ spec: spec.md
 
 A Rust workspace with a leaf crate (`cortex-rs`) owning the Cortex Control USB HID protocol and typed device-specific domain models, a shared daemon IPC crate (`cortex-host`), and three host surfaces: the usable `cortex-cli`, the hardware-verified non-persistent `cortex-mcp`, and an interactive non-persistent Tauri GUI with explicit fixture and daemon-backed modes. The Quad implementation ports protocol behaviour established by the MIT-licensed `stokes-audio/pyquadcortex` Python library and re-verifies it against real hardware on Linux. The GUI target is cross-platform; Linux is the only verified host today.
 
-State honesty is the central invariant: verification is attached to each operation and host path. The implemented core Quad Cortex paths are hardware-verified. Nano Cortex HID framing, fixed-chain state, held-daemon integration, and bounded amp/bypass operations are hardware-verified, while wider Nano operations, untested edge cases, and new host platforms remain provisional.
+State honesty is the central invariant: verification is attached to each operation and host path. The implemented core Quad Cortex paths are hardware-verified. Nano Cortex HID framing, typed state, Bluetooth ownership, held-daemon runtime, raw amp, bypass and raw FX parameter operations are hardware-verified on Linux; wider Nano operations, untested host integrations, edge cases and new host platforms remain provisional.
 
 ## [DES-ARCH] System Context and Flow Map
 

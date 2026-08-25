@@ -64,7 +64,7 @@ Maintainers, AI coding agents, and the CLI/MCP/GUI surfaces that consume the cra
 | --- | --- | --- |
 | FR-1 | `crates/cortex-rs/src/device.rs` exposes `DeviceKind::{QuadCortex, NanoCortex}` with a `vid_pid()` method returning `(u16, u16)`. | Must Have |
 | FR-2 | `DeviceKind::QuadCortex` returns `(0x152A, 0x880A)` and `DeviceKind::NanoCortex` returns hardware-verified `(0x152A, 0x88E7)`. | Must Have |
-| FR-3 | `DeviceKind::NanoCortex` is labelled provisional in its doc-comment: framing and a state read are hardware-verified, but runtime integration and other Nano operations are not. | Must Have |
+| FR-3 | `DeviceKind::NanoCortex` documents the hardware-verified framing, typed state, amp, bypass and raw FX parameter boundary without implying that wider Nano operations are implemented. | Must Have |
 | FR-4 | `crates/cortex-rs/src/message.rs` exposes `Message { message_type: u16, body: Bytes }` and a `Message::parse(&[u8])` constructor that splits a reassembled buffer into body + 8-byte trailer. | Must Have |
 | FR-5 | `message.rs` exposes `TRAILER_LEN = 8` as a public constant. | Must Have |
 | FR-6 | `Message::parse` reads the message-type tag as a little-endian `u16` from the first two bytes of the trailer; the remaining 6 bytes are currently unused and undocumented. | Must Have |
@@ -90,11 +90,11 @@ Maintainers, AI coding agents, and the CLI/MCP/GUI surfaces that consume the cra
 | NFR-2 | No `async` runtime dependency in this layer; the domain model is synchronous. | Review-enforced |
 | NFR-3 | The row-numbering trap is documented in every helper that takes or returns a row, not just one place. | Review-enforced |
 | NFR-4 | Catalog parsing bounds compressed and expanded input, then eagerly parses the runtime XML once; no real catalog fixture is committed. | Review-enforced |
-| NFR-5 | Provisional surfaces (`NanoCortex`, unverified message types and untested helpers) are labelled by capability; the hardware-verified catalog shape is not described as provisional. | Review-enforced |
+| NFR-5 | Provisional operations, unverified message types and untested helpers are labelled by capability; hardware-verified device and catalog shapes are not described as provisional. | Review-enforced |
 
 ## Acceptance Criteria
 
-- [x] `DeviceKind` exists with `vid_pid()` and the provisional `NanoCortex` label.
+- [x] `DeviceKind` exists with `vid_pid()` and capability-specific Nano verification documentation.
 - [x] `Message::parse` splits body and trailer, reads the LE `u16` type, and rejects short buffers.
 - [x] `TRAILER_LEN = 8` is public.
 - [x] `device.rs` and `message.rs` carry `@see` links to this spec.

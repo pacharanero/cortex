@@ -151,7 +151,7 @@ enum Command {
         #[command(subcommand)]
         command: SessionCmd,
     },
-    /// Nano Cortex state and non-persistent amp operations.
+    /// Nano Cortex state and non-persistent working-state operations.
     Nano {
         #[command(subcommand)]
         command: NanoCmd,
@@ -362,6 +362,11 @@ enum NanoCmd {
         control: NanoAmpControlArg,
         /// Raw device value from 0 to 255.
         value: u8,
+    },
+    /// Set Gate reduction as 0-100% and verify through fresh read-back.
+    SetGateReduction {
+        /// Gate reduction percentage from 0 to 100.
+        percent: u8,
     },
     /// Bypass or engage one Gate/FX role and verify through fresh read-back.
     SetBypass {
@@ -1028,6 +1033,7 @@ fn run(cli: Cli) -> Result<()> {
                     "description": tool.description,
                     "input_schema": tool.input_schema,
                     "read_only": tool.read_only,
+                    "device_requirement": tool.device_requirement,
                 })
             })
             .collect::<Vec<_>>();
@@ -1080,6 +1086,9 @@ fn run(cli: Cli) -> Result<()> {
         Some(Command::Nano {
             command: NanoCmd::SetAmp { control, value },
         }) => cmd_nano_set_amp(control.into(), value, fmt),
+        Some(Command::Nano {
+            command: NanoCmd::SetGateReduction { percent },
+        }) => cmd_nano_set_gate_reduction(percent, fmt),
         Some(Command::Nano {
             command: NanoCmd::SetBypass { target, bypassed },
         }) => cmd_nano_set_bypass(target.into(), bypassed, fmt),
@@ -1393,6 +1402,19 @@ fn dry_run_plan(command: Option<&Command>) -> Result<Option<DryRunPlan>> {
                     "read the state back and require an exact match",
                 ],
             )),
+            NanoCmd::SetGateReduction { percent } => {
+                cortex_rs::nano::build_set_gate_reduction(*percent)?;
+                Some(plan(
+                    "nano set-gate-reduction",
+                    "Nano working state and heard audio",
+                    serde_json::json!({ "percent": percent }),
+                    &[
+                        "write the Gate reduction percentage",
+                        "wait six seconds",
+                        "read the state back and require an exact match",
+                    ],
+                ))
+            }
             NanoCmd::SetBypass { target, bypassed } => Some(plan(
                 "nano set-bypass",
                 "Nano working state and heard audio",
@@ -3553,6 +3575,12 @@ fn cmd_nano_state(fmt: Format) -> Result<()> {
         client.request(&cortex_host::Request::NanoState)?;
     emit(&state, fmt, |state| {
         println!("Nano Cortex fixed chain:");
+        println!(
+            "  Gate reduction: {}",
+            state
+                .gate_reduction
+                .map_or_else(|| "unknown".into(), |percent| format!("{percent}%"))
+        );
         for slot in &state.slots {
             let name = slot.loaded_name.as_deref().unwrap_or("-");
             let model = slot
@@ -3576,6 +3604,15 @@ fn cmd_nano_set_amp(
             .request(&cortex_host::Request::NanoSetAmp { control, value })?;
     emit(&state, fmt, |_| {
         println!("set {control:?} to {value}; verified by fresh read-back");
+    })
+}
+
+fn cmd_nano_set_gate_reduction(percent: u8, fmt: Format) -> Result<()> {
+    let state: cortex_rs::nano::NanoCurrentState =
+        cortex_host::DaemonClient::for_device(DeviceKind::NanoCortex)
+            .request(&cortex_host::Request::NanoSetGateReduction { percent })?;
+    emit(&state, fmt, |_| {
+        println!("set Gate reduction to {percent}%; verified by fresh read-back");
     })
 }
 
@@ -3975,6 +4012,25 @@ mod tests {
         let cases: &[&[&str]] = &[
             &["cortex", "session", "start", "--dry-run"],
             &["cortex", "session", "stop", "--dry-run"],
+            &["cortex", "nano", "set-amp", "gain", "127", "--dry-run"],
+            &["cortex", "nano", "set-gate-reduction", "42", "--dry-run"],
+            &[
+                "cortex",
+                "nano",
+                "set-bypass",
+                "post-fx3",
+                "true",
+                "--dry-run",
+            ],
+            &[
+                "cortex",
+                "nano",
+                "set-fx-param",
+                "pre-fx1",
+                "3",
+                "0.5",
+                "--dry-run",
+            ],
             &[
                 "cortex",
                 "preset",

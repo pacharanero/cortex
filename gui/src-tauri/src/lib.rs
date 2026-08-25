@@ -10,7 +10,7 @@
 //! @see spec/400-gui/spec.md
 //! @see spec/400-gui/design.md [DES-BOUNDARY] [DES-SNAPSHOT] [DES-CAPABILITY]
 
-use std::io::Read;
+use std::io::Read as _;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
@@ -22,9 +22,16 @@ use cortex_rs::view::{CpuLoad, ParamValue, Preset, PresetSlot};
 
 pub mod capability;
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize, ts_rs::TS)]
+#[serde(rename_all = "snake_case")]
+pub enum DashboardSnapshotSource {
+    Daemon,
+    Fixture,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, ts_rs::TS)]
 pub struct DashboardSnapshot {
-    pub source: &'static str,
+    pub source: DashboardSnapshotSource,
     pub status: Status,
     pub live: Option<LiveSnapshot>,
     pub directory: Vec<SetlistSnapshot>,
@@ -32,10 +39,13 @@ pub struct DashboardSnapshot {
     pub nano: Option<cortex_rs::nano::NanoCurrentState>,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, ts_rs::TS)]
 pub struct LiveSnapshot {
+    #[ts(type = "number")]
     pub generation: u64,
+    #[ts(type = "number")]
     pub revision: u64,
+    #[ts(type = "number")]
     pub storage_revision: u64,
     pub preset_name: String,
     pub active_scene: u32,
@@ -53,7 +63,7 @@ pub struct LiveSnapshot {
 /// the displayed letter, or displays the wire index, is the row-numbering trap
 /// in a different costume. The letter is rendered here rather than in the
 /// webview so there is one implementation of that mapping.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, ts_rs::TS)]
 pub struct SceneSnapshot {
     pub index: u32,
     pub letter: String,
@@ -61,7 +71,7 @@ pub struct SceneSnapshot {
     pub color: Option<u32>,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, ts_rs::TS)]
 pub struct LiveBlock {
     pub row: usize,
     pub screen_row: usize,
@@ -122,7 +132,7 @@ fn block_family(category: &str) -> &'static str {
     }
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, ts_rs::TS)]
 pub struct SetlistSnapshot {
     pub key: String,
     pub name: String,
@@ -196,6 +206,11 @@ trait DashboardSource: Send + Sync {
             "this dashboard source does not support Nano amp writes",
         ))
     }
+    fn set_nano_gate_reduction(&self, _percent: u8) -> Result<(), CommandError> {
+        Err(CommandError::daemon(
+            "this dashboard source does not support Nano Gate-reduction writes",
+        ))
+    }
     fn set_nano_bypass(
         &self,
         _target: cortex_rs::nano::NanoBypassTarget,
@@ -223,7 +238,7 @@ trait DashboardSource: Send + Sync {
         _slot: cortex_rs::nano::NanoFxSlot,
         _param_index: u8,
         _value: f32,
-    ) -> Result<(), CommandError> {
+    ) -> Result<Vec<f32>, CommandError> {
         Err(CommandError::daemon(
             "this dashboard source does not support Nano FX parameter writes",
         ))
@@ -293,10 +308,19 @@ impl GuiDaemonSupervisor {
         ensure_device_session(client, device)
     }
 
-    fn set_device(&self, device: Option<cortex_rs::DeviceKind>) {
-        if let Ok(mut pref) = self.preferred_device.lock() {
-            *pref = device;
-        }
+    fn set_device(
+        &self,
+        device: Option<cortex_rs::DeviceKind>,
+        quad_client: &DaemonClient,
+        nano_client: &DaemonClient,
+    ) -> Result<(), CommandError> {
+        let mut preference = self
+            .preferred_device
+            .lock()
+            .map_err(|_| CommandError::daemon("device preference lock is unavailable"))?;
+        *preference = device;
+        drop(preference);
+        self.ensure(quad_client, nano_client).map(|_| ())
     }
 }
 
@@ -431,7 +455,6 @@ fn sibling_cortex_binary() -> Result<PathBuf, CommandError> {
     }
     Ok(path)
 }
-
 struct DaemonDashboardSource {
     quad_client: DaemonClient,
     nano_client: DaemonClient,
@@ -482,20 +505,33 @@ impl DashboardSource for DaemonDashboardSource {
             .require_compatible()
             .map_err(|error| CommandError::daemon(error.to_string()))?;
         if before.device_kind == cortex_rs::DeviceKind::NanoCortex {
-            let nano = client
-                .request(&Request::NanoState)
+            let nano = client.request(&Request::NanoState);
+            let after = client
+                .require_compatible()
                 .map_err(|error| CommandError::daemon(error.to_string()))?;
+            let nano = match nano {
+                Ok(nano)
+                    if status_is_live(&after)
+                        && after.cache.generation == before.cache.generation
+                        && after.device_kind == before.device_kind =>
+                {
+                    Some(nano)
+                }
+                Ok(_) => None,
+                Err(_) if !status_is_live(&after) => None,
+                Err(error) => return Err(CommandError::daemon(error.to_string())),
+            };
             return Ok(DashboardSnapshot {
-                source: "daemon",
-                status: before,
+                source: DashboardSnapshotSource::Daemon,
+                nano,
+                status: after,
                 live: None,
                 directory: Vec::new(),
-                nano: Some(nano),
             });
         }
         if !status_is_live(&before) {
             return Ok(DashboardSnapshot {
-                source: "daemon",
+                source: DashboardSnapshotSource::Daemon,
                 status: before,
                 live: None,
                 directory: Vec::new(),
@@ -518,9 +554,12 @@ impl DashboardSource for DaemonDashboardSource {
         let after = client
             .require_compatible()
             .map_err(|error| CommandError::daemon(error.to_string()))?;
-        if !status_is_live(&after) || after.cache.generation != before.cache.generation {
+        if !status_is_live(&after)
+            || after.cache.generation != before.cache.generation
+            || after.device_kind != before.device_kind
+        {
             return Ok(DashboardSnapshot {
-                source: "daemon",
+                source: DashboardSnapshotSource::Daemon,
                 status: after,
                 live: None,
                 directory: Vec::new(),
@@ -562,7 +601,7 @@ impl DashboardSource for DaemonDashboardSource {
             })
             .collect();
         Ok(DashboardSnapshot {
-            source: "daemon",
+            source: DashboardSnapshotSource::Daemon,
             live: Some(LiveSnapshot {
                 generation: after.cache.generation,
                 revision: after.cache.revision,
@@ -592,6 +631,15 @@ impl DashboardSource for DaemonDashboardSource {
             .map_err(|error| CommandError::daemon(error.to_string()))
     }
 
+    fn set_nano_gate_reduction(&self, percent: u8) -> Result<(), CommandError> {
+        self.nano_client
+            .request::<cortex_rs::nano::NanoCurrentState>(&Request::NanoSetGateReduction {
+                percent,
+            })
+            .map(|_| ())
+            .map_err(|error| CommandError::daemon(error.to_string()))
+    }
+
     fn set_nano_bypass(
         &self,
         target: cortex_rs::nano::NanoBypassTarget,
@@ -607,8 +655,8 @@ impl DashboardSource for DaemonDashboardSource {
     }
 
     fn set_device(&self, device: Option<cortex_rs::DeviceKind>) -> Result<(), CommandError> {
-        self.supervisor.set_device(device);
-        Ok(())
+        self.supervisor
+            .set_device(device, &self.quad_client, &self.nano_client)
     }
 
     fn read_nano_fx_params(
@@ -625,14 +673,13 @@ impl DashboardSource for DaemonDashboardSource {
         slot: cortex_rs::nano::NanoFxSlot,
         param_index: u8,
         value: f32,
-    ) -> Result<(), CommandError> {
+    ) -> Result<Vec<f32>, CommandError> {
         self.nano_client
             .request::<Vec<f32>>(&Request::NanoSetFxParam {
                 slot,
                 param_index,
                 value,
             })
-            .map(|_| ())
             .map_err(|error| CommandError::daemon(error.to_string()))
     }
 
@@ -838,7 +885,19 @@ struct RecallAck {
 /// **Measured on CorOS 4.0.1:** stored float values are normalised - a
 /// compressor's `THRESHOLD` reads `0.1458`, not a dB figure - so `real` is the
 /// converted value and `normalised` is what the device actually holds.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize, ts_rs::TS)]
+#[serde(rename_all = "snake_case")]
+pub enum ParameterViewKind {
+    Float,
+    Int,
+    Switch,
+    Str,
+    Fader,
+    Meter,
+    Unknown,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, ts_rs::TS)]
 pub struct ParameterView {
     /// Positional wire index, which is what a write addresses.
     pub index: u32,
@@ -846,7 +905,7 @@ pub struct ParameterView {
     pub name: String,
     /// Control kind: `float`, `int`, `switch`, `str`, `fader`, `meter`, or
     /// `unknown`. `empty` slots are not returned at all.
-    pub kind: String,
+    pub kind: ParameterViewKind,
     /// Units string from the catalog, often empty.
     pub units: String,
     /// Range in the parameter's own units.
@@ -970,7 +1029,7 @@ fn parameter_views(model: &cortex_rs::catalog::Model, stored: &[ParamValue]) -> 
             ParameterView {
                 index,
                 name: parameter.name.clone(),
-                kind: parameter_kind_name(parameter.kind).into(),
+                kind: parameter_kind_name(parameter.kind),
                 units: parameter.units.clone(),
                 min: parameter.min,
                 max: parameter.max,
@@ -987,17 +1046,16 @@ fn parameter_views(model: &cortex_rs::catalog::Model, stored: &[ParamValue]) -> 
         .collect()
 }
 
-fn parameter_kind_name(kind: cortex_rs::catalog::ParameterKind) -> &'static str {
+fn parameter_kind_name(kind: cortex_rs::catalog::ParameterKind) -> ParameterViewKind {
     use cortex_rs::catalog::ParameterKind;
     match kind {
-        ParameterKind::Float => "float",
-        ParameterKind::Int => "int",
-        ParameterKind::Switch => "switch",
-        ParameterKind::Str => "str",
-        ParameterKind::Fader => "fader",
-        ParameterKind::Meter => "meter",
-        ParameterKind::Empty => "empty",
-        ParameterKind::Unknown => "unknown",
+        ParameterKind::Float => ParameterViewKind::Float,
+        ParameterKind::Int => ParameterViewKind::Int,
+        ParameterKind::Switch => ParameterViewKind::Switch,
+        ParameterKind::Str => ParameterViewKind::Str,
+        ParameterKind::Fader => ParameterViewKind::Fader,
+        ParameterKind::Meter => ParameterViewKind::Meter,
+        ParameterKind::Empty | ParameterKind::Unknown => ParameterViewKind::Unknown,
     }
 }
 
@@ -1215,6 +1273,19 @@ async fn set_nano_amp(
 }
 
 #[tauri::command]
+async fn set_nano_gate_reduction(
+    state: tauri::State<'_, AppState>,
+    percent: u8,
+) -> Result<(), CommandError> {
+    let source = Arc::clone(&state.source);
+    tauri::async_runtime::spawn_blocking(move || source.set_nano_gate_reduction(percent))
+        .await
+        .map_err(|error| {
+            CommandError::daemon(format!("Nano Gate-reduction write task failed: {error}"))
+        })?
+}
+
+#[tauri::command]
 async fn set_nano_bypass(
     state: tauri::State<'_, AppState>,
     target: cortex_rs::nano::NanoBypassTarget,
@@ -1254,7 +1325,7 @@ async fn set_nano_fx_param(
     slot: cortex_rs::nano::NanoFxSlot,
     param_index: u8,
     value: f32,
-) -> Result<(), CommandError> {
+) -> Result<Vec<f32>, CommandError> {
     let source = Arc::clone(&state.source);
     tauri::async_runtime::spawn_blocking(move || source.set_nano_fx_param(slot, param_index, value))
         .await
@@ -1351,6 +1422,7 @@ pub fn run() {
             set_scene_color,
             set_bypass,
             set_nano_amp,
+            set_nano_gate_reduction,
             set_nano_bypass,
             set_device,
             read_nano_fx_params,
@@ -1437,6 +1509,80 @@ mod tests {
             Some(original)
         );
         exercise.unwrap();
+    }
+
+    #[test]
+    #[ignore = "requires a running Nano Cortex held session and a readable original Gate reduction; transiently changes it by one percentage point"]
+    fn nano_gate_reduction_reaches_the_daemon_reads_back_and_restores() {
+        let source = DaemonDashboardSource::default();
+        let original = source
+            .dashboard()
+            .unwrap()
+            .nano
+            .unwrap()
+            .gate_reduction
+            .expect("Gate reduction");
+        let changed = if original == 100 {
+            original - 1
+        } else {
+            original + 1
+        };
+        let exercise = (|| {
+            source.set_nano_gate_reduction(changed)?;
+            let actual = source.dashboard()?.nano.unwrap().gate_reduction;
+            if actual != Some(changed) {
+                return Err(CommandError::daemon(format!(
+                    "Gate reduction did not read back: expected {changed}, got {actual:?}"
+                )));
+            }
+            Ok::<_, CommandError>(())
+        })();
+        source
+            .set_nano_gate_reduction(original)
+            .expect("restore Gate reduction");
+        assert_eq!(
+            source.dashboard().unwrap().nano.unwrap().gate_reduction,
+            Some(original)
+        );
+        exercise.unwrap();
+    }
+
+    #[test]
+    #[ignore = "requires a running Nano Cortex held session; sends a same-value FX parameter write"]
+    fn nano_fx_parameters_reach_the_daemon_and_read_back() {
+        let source = DaemonDashboardSource::default();
+        let slots = [
+            cortex_rs::nano::NanoFxSlot::PreFx1,
+            cortex_rs::nano::NanoFxSlot::PreFx2,
+            cortex_rs::nano::NanoFxSlot::PostFx1,
+            cortex_rs::nano::NanoFxSlot::PostFx2,
+            cortex_rs::nano::NanoFxSlot::PostFx3,
+        ];
+
+        let mut first_value = None;
+        for slot in slots {
+            let values = source.read_nano_fx_params(slot).unwrap();
+            assert!(!values.is_empty(), "{slot:?} returned no parameters");
+            assert!(
+                values
+                    .iter()
+                    .all(|value| value.is_finite() && (0.0..=1.0).contains(value)),
+                "{slot:?} returned a non-normalized parameter"
+            );
+            if slot == cortex_rs::nano::NanoFxSlot::PreFx1 {
+                first_value = values.first().copied();
+            }
+        }
+
+        let original = first_value.expect("Pre FX 1 returned no parameters");
+        let write_confirmed = source
+            .set_nano_fx_param(cortex_rs::nano::NanoFxSlot::PreFx1, 0, original)
+            .unwrap();
+        assert!((write_confirmed[0] - original).abs() <= 0.001);
+        let confirmed = source
+            .read_nano_fx_params(cortex_rs::nano::NanoFxSlot::PreFx1)
+            .unwrap();
+        assert!((confirmed[0] - original).abs() <= 0.001);
     }
 
     struct FailingSource;
@@ -2175,7 +2321,12 @@ mod tests {
                 !parameter.read_only
                     && parameter.normalised.is_some()
                     && parameter.max != parameter.min
-                    && matches!(parameter.kind.as_str(), "float" | "int" | "fader")
+                    && matches!(
+                        parameter.kind,
+                        ParameterViewKind::Float
+                            | ParameterViewKind::Int
+                            | ParameterViewKind::Fader
+                    )
             })
             .expect("the block should have at least one writable numeric parameter")
             .clone();

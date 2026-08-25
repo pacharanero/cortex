@@ -86,6 +86,12 @@ impl Transport {
         self.kind
     }
 
+    /// The raw HID link for Nano's distinct application-envelope codec.
+    #[cfg(feature = "hid")]
+    pub(crate) fn raw_device(&self) -> &hidapi::HidDevice {
+        &self.device
+    }
+
     /// Send an already-formed host-to-device body using this device's report
     /// geometry and the shared FIRST/LAST/COMPLETE/MIDDLE flags.
     ///
@@ -178,45 +184,12 @@ impl Transport {
             )?;
         }
 
-        // Read and reassemble. A FIRST frame starts a new message; middle
-        // frames append; a LAST or COMPLETE frame closes it. A new FIRST
-        // arriving mid-partial drops the stale buffer (the device interleaves
-        // pushes, so this is routine).
-        let mut reassembler = crate::framing::FrameReassembler::new();
-        let deadline = std::time::Instant::now() + timeout;
-
-        loop {
-            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
-            if remaining.is_zero() {
-                return Err(crate::Error::ReadTimeout(timeout));
-            }
-
-            let report = self.read(remaining)?;
-            let frame = crate::framing::Frame::parse(&report)?;
-
-            if frame.flags.is_first() {
-                reassembler.reset();
-            }
-
-            if let Some(body) = reassembler.feed(&frame)? {
-                let mut msg = crate::message::Message::parse(&body)?;
-
-                // Frame-level gzip: the device compresses some payloads
-                // (e.g. RecallPreset pushes carrying a full BinaryPreset).
-                // The decompressed bytes are the ordinary protobuf message.
-                if msg.body.starts_with(&[0x1f, 0x8b]) {
-                    use std::io::Read;
-                    let mut decoder = flate2::read::GzDecoder::new(&msg.body[..]);
-                    let mut decompressed = Vec::new();
-                    decoder
-                        .read_to_end(&mut decompressed)
-                        .map_err(|e| crate::Error::Decode(format!("gzip: {e}")))?;
-                    msg.body = bytes::Bytes::from(decompressed);
-                }
-
-                return Ok(msg);
-            }
-        }
+        let body = crate::link::read_message(
+            &self.device,
+            crate::framing::HidReportGeometry::QUAD_CORTEX,
+            timeout,
+        )?;
+        crate::message::Message::decode(&body).map(|(message, _)| message)
     }
 }
 

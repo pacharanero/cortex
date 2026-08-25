@@ -1,0 +1,93 @@
+#!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Dr Marcus Baw
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# Check both directions of the explicit documentation navigation: every page
+# must be listed or named as an exception, and every nav entry must exist.
+
+set -euo pipefail
+cd "$(git rev-parse --show-toplevel)"
+
+docs_dir="docs"
+mkdocs_file="mkdocs.yml"
+exceptions_file=".nav-exceptions"
+findings=0
+nav_entries=""
+exception_pages=""
+
+fail() {
+	findings=$((findings + 1))
+	echo "  $1" >&2
+}
+
+# Read only the top-level nav block and strip YAML comments before extracting
+# Markdown paths. Nav values in this repository are unquoted relative paths.
+in_nav=false
+while IFS= read -r line || [[ -n "$line" ]]; do
+	if [[ "$line" == nav:* ]]; then
+		in_nav=true
+		continue
+	fi
+	[[ "$in_nav" == true ]] || continue
+	if [[ -n "$line" && "$line" != [[:space:]]* && "$line" != \#* ]]; then
+		break
+	fi
+	line="${line%%#*}"
+	while [[ "$line" =~ ([A-Za-z0-9_./-]+\.md) ]]; do
+		nav_entries+="${BASH_REMATCH[1]}"$'\n'
+		line="${line#*"${BASH_REMATCH[1]}"}"
+	done
+done < "$mkdocs_file"
+
+if [[ "$in_nav" != true ]]; then
+	fail "$mkdocs_file: no top-level nav section found"
+fi
+nav_entries="$(printf '%s' "$nav_entries" | sort -u)"
+
+if [[ -f "$exceptions_file" ]]; then
+	while IFS=$'\t' read -r path reason || [[ -n "$path" ]]; do
+		[[ -z "$path" || "$path" == \#* ]] && continue
+		if [[ -z "$reason" ]]; then
+			fail "$exceptions_file: '$path' has no reason (expected '<path><TAB><reason>')"
+			continue
+		fi
+		if [[ "$path" != docs/* ]]; then
+			fail "$exceptions_file: '$path' must start with 'docs/'"
+			continue
+		fi
+		exception_pages+="$path"$'\n'
+		if [[ ! -f "$path" ]]; then
+			fail "$exceptions_file: '$path' (\"$reason\") no longer exists - remove the exception"
+		fi
+	done < "$exceptions_file"
+fi
+
+actual_pages="$(cd "$docs_dir" && find . -name '*.md' -type f | sed 's#^\./##' | sort -u)"
+
+while IFS= read -r page; do
+	[[ -n "$page" ]] || continue
+	if grep -qxF "$page" <<< "$nav_entries"; then
+		continue
+	fi
+	if grep -qxF "$docs_dir/$page" <<< "$exception_pages"; then
+		continue
+	fi
+	fail "$docs_dir/$page: not referenced in $mkdocs_file's nav and not a named exception in $exceptions_file"
+done <<< "$actual_pages"
+
+while IFS= read -r entry; do
+	[[ -n "$entry" ]] || continue
+	if ! grep -qxF "$entry" <<< "$actual_pages"; then
+		fail "$mkdocs_file: nav entry '$entry' does not exist under $docs_dir/"
+	fi
+done <<< "$nav_entries"
+
+if [[ "$findings" -gt 0 ]]; then
+	echo >&2
+	echo "ERROR: $findings documentation navigation finding(s)." >&2
+	exit 1
+fi
+
+page_count="$(wc -l <<< "$actual_pages")"
+exception_count="$(grep -c . <<< "$exception_pages" || true)"
+echo "nav ok: $page_count docs page(s), 0 orphan(s), $exception_count named exception(s)"

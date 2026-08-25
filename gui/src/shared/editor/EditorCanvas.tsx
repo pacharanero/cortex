@@ -14,7 +14,7 @@ interface EditorCanvasProps {
 }
 
 export function EditorCanvas({ topology, label, children }: EditorCanvasProps) {
-  return <div className="editor-canvas" aria-label={label} data-topology={topology}>
+  return <div className="editor-canvas" aria-label={label} data-topology={topology} role="group">
     <div className="editor-canvas__items">{children}</div>
   </div>;
 }
@@ -28,6 +28,8 @@ interface EditorBlockCardProps {
   family?: string;
   selected: boolean;
   inspectorId: string;
+  disabled?: boolean;
+  busy?: boolean;
   onSelect?: () => void;
 }
 
@@ -38,7 +40,7 @@ const stateLabels: Record<BlockOperationalState, string> = {
   empty: "empty",
 };
 
-export function EditorBlockCard({ positionLabel, eyebrow, title, detail, state, family, selected, inspectorId, onSelect }: EditorBlockCardProps) {
+export function EditorBlockCard({ positionLabel, eyebrow, title, detail, state, family, selected, inspectorId, disabled = false, busy = false, onSelect }: EditorBlockCardProps) {
   const accessibleName = `${positionLabel}: ${title}, ${eyebrow}, ${stateLabels[state]}`;
   const content = <>
     <Text className="editor-block-card__position" size="xs">{positionLabel}</Text>
@@ -58,8 +60,10 @@ export function EditorBlockCard({ positionLabel, eyebrow, title, detail, state, 
   return <button
     {...common}
     aria-controls={inspectorId}
+    aria-busy={busy || undefined}
     aria-label={accessibleName}
     aria-pressed={selected}
+    disabled={disabled}
     onClick={onSelect}
     type="button"
   >{content}</button>;

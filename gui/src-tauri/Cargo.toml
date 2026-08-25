@@ -17,8 +17,9 @@ tauri-build = { version = "2.6.3", features = [] }
 [dependencies]
 serde = { workspace = true, features = ["derive"] }
 tauri = { version = "2.11.5", features = [] }
-cortex-rs = { path = "../../crates/cortex-rs", default-features = false }
-cortex-host = { path = "../../crates/cortex-host" }
+cortex-rs = { path = "../../crates/cortex-rs", default-features = false, features = ["typescript"] }
+cortex-host = { path = "../../crates/cortex-host", features = ["typescript"] }
+ts-rs = { workspace = true }
 
 [dev-dependencies]
 serde_json = { workspace = true }

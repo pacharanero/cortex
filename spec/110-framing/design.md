@@ -167,7 +167,7 @@ The message-type tag lives in the *trailer*, not a header. This is the `pyquadco
 
 ### `encode_reports` and `encode_message`
 
-`encode_reports(geometry, body)` owns only HID framing: it chunks an already-formed application body at `geometry.data_capacity()`, assigns flags, and pads reports to `geometry.report_len()`. `encode_message` remains the Quad compatibility wrapper that forms `protobuf ++ 8-byte trailer` and delegates to `encode_reports(HidReportGeometry::QUAD_CORTEX, body)`. A future Nano codec will form its four-byte-footer body separately and call the same raw encoder.
+`encode_reports(geometry, body)` owns only HID framing: it chunks an already-formed application body at `geometry.data_capacity()`, assigns flags, and pads reports to `geometry.report_len()`. `encode_message` remains the Quad compatibility wrapper that forms `protobuf ++ 8-byte trailer` and delegates to `encode_reports(HidReportGeometry::QUAD_CORTEX, body)`. The separate Nano codec forms its four-byte-footer bodies and calls the same raw encoder.
 
 ### `encode_message` algorithm
 
@@ -270,4 +270,4 @@ These run in `cargo test -p cortex-rs` with no hardware. They are the CI gate fo
 - **The pure reassembler is uncapped.** The live session enforces a 1 MiB body cap and invalidates continuity on breach; offline callers must provide their own input bound.
 - **No streaming encode.** `encode_message` returns a `Vec<Vec<u8>>` holding all reports. For the CLI's short commands this is fine; a streaming encoder for very large writes is a future concern for the session layer (`140`).
 - **`Frame::parse` does not validate the report ID.** The caller (transport) is responsible for classifying the report direction. A test feeding a report with an arbitrary report ID byte to `Frame::parse` will succeed; this is deliberate.
-- **Nano Cortex application-envelope coverage is partial.** Geometry and raw framing are shared, but the Nano body uses a four-byte footer rather than `Message::parse`'s Quad-specific eight-byte trailer. The separate Nano codec covers current-state reads, verified amp/bypass writes, and provisional FX parameter writes; Quad request/session entry points reject Nano before USB I/O so the envelopes cannot be conflated.
+- **Nano Cortex application coverage remains partial.** Geometry and raw framing are shared, while the implemented Nano codec parses its four-byte footer separately from `Message::parse`'s Quad-specific eight-byte trailer. Typed state plus hardware-verified amp, bypass and raw FX parameter operations are implemented; Gate reduction and wider application operations remain provisional. A timeout or malformed response causes the held path to discard and reopen the transport before another request, invalidate the old generation, and require a fresh state read before serving live data. Quad request/session entry points reject Nano before USB I/O so the envelopes cannot be conflated.

@@ -634,6 +634,129 @@ async fn hardware_smoke_analyzes_cpu_fit_without_editing() -> anyhow::Result<()>
     Ok(())
 }
 
+#[tokio::test]
+#[ignore = "requires a real Nano Cortex with Bluetooth disconnected, readable Gate reduction, and a held Nano session; sends same-value amp, Gate reduction, bypass, and FX writes"]
+async fn hardware_smoke_reads_and_confirms_nano_tools_through_official_client() -> anyhow::Result<()>
+{
+    let transport = TokioChildProcess::new(tokio::process::Command::new(env!(
+        "CARGO_BIN_EXE_cortex-mcp"
+    )))?;
+    let client = ().serve(transport).await?;
+    let slots = ["pre_fx1", "pre_fx2", "post_fx1", "post_fx2", "post_fx3"];
+
+    let tools = client.list_all_tools().await?;
+    for expected in [
+        "read_nano_state",
+        "set_nano_amp",
+        "set_nano_gate_reduction",
+        "set_nano_bypass",
+        "read_nano_fx_params",
+        "set_nano_fx_param",
+    ] {
+        anyhow::ensure!(
+            tools.iter().any(|tool| tool.name == expected),
+            "official MCP discovery omitted {expected}"
+        );
+    }
+
+    let state = call(&client, "read_nano_state", serde_json::json!({})).await?;
+    let state: cortex_rs::nano::NanoCurrentState = serde_json::from_value(
+        state
+            .structured_content
+            .context("Nano state read returned no structured content")?,
+    )?;
+    anyhow::ensure!(
+        state.slots.len() == 8,
+        "Nano state omitted fixed-chain roles"
+    );
+
+    let gain = state.amp.gain.context("Nano state omitted amp gain")?;
+    call(
+        &client,
+        "set_nano_amp",
+        serde_json::json!({"control":"gain","value":gain}),
+    )
+    .await?;
+
+    let gate_reduction = state
+        .gate_reduction
+        .context("Nano state omitted Gate reduction")?;
+    call(
+        &client,
+        "set_nano_gate_reduction",
+        serde_json::json!({"percent":gate_reduction}),
+    )
+    .await?;
+
+    let pre_fx1_bypassed = state
+        .slots
+        .iter()
+        .find(|slot| slot.role == cortex_rs::nano::NanoSlotRole::PreFx1)
+        .and_then(|slot| slot.bypassed)
+        .context("Nano state omitted Pre FX 1 bypass state")?;
+    call(
+        &client,
+        "set_nano_bypass",
+        serde_json::json!({"target":"pre_fx1","bypassed":pre_fx1_bypassed}),
+    )
+    .await?;
+
+    let mut first_value = None;
+    for slot in slots {
+        let result = call(
+            &client,
+            "read_nano_fx_params",
+            serde_json::json!({"slot":slot}),
+        )
+        .await?;
+        let values = result
+            .structured_content
+            .as_ref()
+            .and_then(serde_json::Value::as_array)
+            .context("Nano FX read returned no parameter array")?;
+        anyhow::ensure!(!values.is_empty(), "{slot} returned no parameters");
+        anyhow::ensure!(
+            values.iter().all(|value| {
+                value
+                    .as_f64()
+                    .is_some_and(|value| value.is_finite() && (0.0..=1.0).contains(&value))
+            }),
+            "{slot} returned a non-normalized parameter"
+        );
+        if slot == "pre_fx1" {
+            first_value = values.first().and_then(serde_json::Value::as_f64);
+        }
+    }
+
+    let original = first_value.context("Pre FX 1 returned no numeric first parameter")?;
+    call(
+        &client,
+        "set_nano_fx_param",
+        serde_json::json!({"slot":"pre_fx1","param_index":0,"value":original}),
+    )
+    .await?;
+    let confirmed = call(
+        &client,
+        "read_nano_fx_params",
+        serde_json::json!({"slot":"pre_fx1"}),
+    )
+    .await?;
+    let actual = confirmed
+        .structured_content
+        .as_ref()
+        .and_then(serde_json::Value::as_array)
+        .and_then(|values| values.first())
+        .and_then(serde_json::Value::as_f64)
+        .context("Nano FX confirmation returned no first parameter")?;
+    anyhow::ensure!(
+        (actual - original).abs() <= 0.001,
+        "Nano FX same-value write did not read back through MCP"
+    );
+
+    client.cancel().await?;
+    Ok(())
+}
+
 async fn call(
     client: &rmcp::service::RunningService<rmcp::RoleClient, ()>,
     name: &str,

@@ -10,7 +10,7 @@ import { ErrorBoundary } from "./shared/ErrorBoundary";
 import { NanoChain } from "./features/nano/NanoChain";
 import { InspectorPanel } from "./shared/editor/EditorCanvas";
 import { cortexApi } from "./shared/ipc/api";
-import type { DashboardSnapshot, LiveBlock, NanoAmpControl, NanoBypassTarget, NanoFxSlot, ParameterInput, ParameterView } from "./shared/ipc/types";
+import type { DashboardSnapshot, DeviceKind, LiveBlock, NanoAmpControl, NanoBypassTarget, NanoFxSlot, ParameterInput, ParameterView } from "./shared/ipc/types";
 
 interface Cell { row: number; column: number }
 
@@ -41,36 +41,40 @@ export function App() {
   const [recalling, setRecalling] = useState<string | null>(null);
   const [parameters, setParameters] = useState<ParameterView[] | null>(null);
   const [parameterError, setParameterError] = useState<string | null>(null);
+  const [nanoOperationError, setNanoOperationError] = useState<string | null>(null);
   const generation = useRef<number | null>(null);
+  const dashboardEpoch = useRef(0);
+  const pendingDeviceSwitch = useRef<{ device: DeviceKind | null; epoch: number } | null>(null);
+  const deviceSwitchRunning = useRef(false);
+  const [deviceSwitchInProgress, setDeviceSwitchInProgress] = useState(false);
   // Pauses the auto-refresh while a Nano write is in progress. The write
   // itself takes ~6 seconds and returns updated state, so the manual
   // refresh after it completes is sufficient.
-  const [nanoWriteInProgress, setNanoWriteInProgress] = useState(false);
+  const [nanoOperationInProgress, setNanoOperationInProgress] = useState(false);
   const nanoOperationsInProgress = useRef(0);
-  const [switchingDevice, setSwitchingDevice] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
-  const deviceSwitchEpoch = useRef(0);
 
   useEffect(() => {
     let cancelled = false;
     let timer: number | undefined;
     const refresh = async () => {
+      const requestEpoch = dashboardEpoch.current;
       try {
         const next = await cortexApi.dashboard();
-        if (cancelled) return;
+        if (cancelled || requestEpoch !== dashboardEpoch.current) return;
         if (generation.current !== null && generation.current !== next.status.cache.generation) setSelectedCell(null);
         generation.current = next.status.cache.generation;
         setSnapshot(next);
         setError(null);
       } catch (reason) {
-        if (!cancelled) setError(reason instanceof Error ? reason.message : String(reason));
+        if (!cancelled && requestEpoch === dashboardEpoch.current) setError(reason instanceof Error ? reason.message : String(reason));
       } finally {
         if (!cancelled) timer = window.setTimeout(refresh, 1000);
       }
     };
-    if (!nanoWriteInProgress && !switchingDevice) void refresh();
+    if (!nanoOperationInProgress && !deviceSwitchInProgress) void refresh();
     return () => { cancelled = true; if (timer !== undefined) window.clearTimeout(timer); };
-  }, [nanoWriteInProgress, switchingDevice]);
+  }, [deviceSwitchInProgress, nanoOperationInProgress]);
 
   // Parameters are fetched for the selected cell only, not carried in the
   // one-second dashboard poll: they need the model catalog joined in, and
@@ -112,6 +116,7 @@ export function App() {
   const health = healthLabel(snapshot);
   const connected = live !== null || nano !== null;
   const reconnectState = snapshot.source === "daemon" && snapshot.status.device.state === "reconnecting" ? snapshot.status.device : null;
+  const failedState = snapshot.source === "daemon" && snapshot.status.device.state === "failed" ? snapshot.status.device : null;
   // Switch, then re-read. The device is the authority on which scene is
   // active, so nothing is updated optimistically: if the unit refuses or
   // lands somewhere else, that is what appears. A failed re-read is left to
@@ -183,71 +188,91 @@ export function App() {
     try {
       await cortexApi.reconnectNow();
       setError(null);
+      setNanoOperationError(null);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
     } finally {
       setRetrying(false);
     }
   };
-  const runNanoOperation = async <T,>(operation: () => Promise<T>): Promise<T> => {
+  const refreshAfterNanoOperation = async (epoch: number) => {
+    if (epoch !== dashboardEpoch.current) return;
+    const next = await cortexApi.dashboard();
+    if (epoch !== dashboardEpoch.current) return;
+    generation.current = next.status.cache.generation;
+    setSnapshot(next);
+  };
+  const runNanoOperation = async <T,>(operation: () => Promise<T>, clearError = true): Promise<T> => {
+    const epoch = dashboardEpoch.current;
+    if (clearError) setNanoOperationError(null);
     nanoOperationsInProgress.current += 1;
-    setNanoWriteInProgress(true);
+    setNanoOperationInProgress(true);
     try {
-      return await operation();
+      const result = await operation();
+      await refreshAfterNanoOperation(epoch);
+      return result;
+    } catch (reason) {
+      if (epoch === dashboardEpoch.current) setNanoOperationError(reason instanceof Error ? reason.message : String(reason));
+      throw reason;
     } finally {
       nanoOperationsInProgress.current -= 1;
-      setNanoWriteInProgress(nanoOperationsInProgress.current > 0);
+      setNanoOperationInProgress(nanoOperationsInProgress.current > 0);
     }
   };
   const setNanoAmp = async (control: NanoAmpControl, value: number) => {
-    await runNanoOperation(async () => {
-      await cortexApi.setNanoAmp(control, value);
-      const next = await cortexApi.dashboard();
-      generation.current = next.status.cache.generation;
-      setSnapshot(next);
-    });
+    await runNanoOperation(() => cortexApi.setNanoAmp(control, value));
+  };
+  const setNanoGateReduction = async (percent: number) => {
+    await runNanoOperation(() => cortexApi.setNanoGateReduction(percent));
   };
   const setNanoBypass = async (target: NanoBypassTarget, bypassed: boolean) => {
-    await runNanoOperation(async () => {
-      await cortexApi.setNanoBypass(target, bypassed);
-      const next = await cortexApi.dashboard();
-      generation.current = next.status.cache.generation;
-      setSnapshot(next);
-    });
+    await runNanoOperation(() => cortexApi.setNanoBypass(target, bypassed));
   };
-  const readNanoFxParameters = async (slot: NanoFxSlot) => runNanoOperation(() => cortexApi.readNanoFxParams(slot));
-  const setNanoFxParameter = async (slot: NanoFxSlot, paramIndex: number, value: number) => {
-    return runNanoOperation(async () => {
-      await cortexApi.setNanoFxParam(slot, paramIndex, value);
-      const values = await cortexApi.readNanoFxParams(slot);
-      const next = await cortexApi.dashboard();
-      generation.current = next.status.cache.generation;
-      setSnapshot(next);
-      return values;
-    });
+  const readNanoFxParams = async (slot: NanoFxSlot) => {
+    // A reconciliation read after an unconfirmed write must not erase the
+    // parent-level write error while the generation-keyed editor remounts.
+    return runNanoOperation(() => cortexApi.readNanoFxParams(slot), false);
+  };
+  const setNanoFxParam = async (slot: NanoFxSlot, paramIndex: number, value: number) => {
+    return runNanoOperation(() => cortexApi.setNanoFxParam(slot, paramIndex, value));
   };
   const switchDevice = async (device: "quad_cortex" | "nano_cortex" | "auto") => {
-    const epoch = ++deviceSwitchEpoch.current;
-    setSwitchingDevice(true);
-    setError(null);
+    const epoch = dashboardEpoch.current + 1;
+    dashboardEpoch.current = epoch;
+    pendingDeviceSwitch.current = { device: device === "auto" ? null : device, epoch };
+    if (deviceSwitchRunning.current) return;
+
+    deviceSwitchRunning.current = true;
+    setDeviceSwitchInProgress(true);
     try {
-      if (device === "auto") await cortexApi.setDevice(null);
-      else await cortexApi.setDevice(device);
-      const next = await cortexApi.dashboard();
-      if (deviceSwitchEpoch.current !== epoch) return;
-      generation.current = next.status.cache.generation;
-      setSelectedCell(null);
-      setParameters(null);
-      setSnapshot(next);
-    } catch (reason) {
-      if (deviceSwitchEpoch.current === epoch) setError(reason instanceof Error ? reason.message : String(reason));
+      while (pendingDeviceSwitch.current) {
+        const selection = pendingDeviceSwitch.current;
+        pendingDeviceSwitch.current = null;
+        try {
+          await cortexApi.setDevice(selection.device);
+          if (selection.epoch !== dashboardEpoch.current) continue;
+          const next = await cortexApi.dashboard();
+          if (selection.epoch !== dashboardEpoch.current) continue;
+          generation.current = next.status.cache.generation;
+          setSnapshot(next);
+          setSelectedCell(null);
+          setParameters(null);
+          setError(null);
+          setNanoOperationError(null);
+        } catch (reason) {
+          if (selection.epoch === dashboardEpoch.current) {
+            setError(reason instanceof Error ? reason.message : String(reason));
+          }
+        }
+      }
     } finally {
-      if (deviceSwitchEpoch.current === epoch) setSwitchingDevice(false);
+      deviceSwitchRunning.current = false;
+      setDeviceSwitchInProgress(false);
     }
   };
 
-  const currentDeviceLabel = nano ? "Nano Cortex" : "Quad Cortex";
-  const currentDeviceKind = nano ? "nano_cortex" : "quad_cortex";
+  const currentDeviceKind = snapshot.status.device_kind;
+  const currentDeviceLabel = currentDeviceKind === "nano_cortex" ? "Nano Cortex" : "Quad Cortex";
 
   return (
     <AppShell header={{ height: 64 }} navbar={{ width: 250, breakpoint: "sm", collapsed: { mobile: !mobileNavOpen } }} padding="md">
@@ -258,7 +283,7 @@ export function App() {
             <Title order={2}>cortex</Title>
             <Menu shadow="md" position="bottom-start" width={200}>
               <Menu.Target>
-                <Button color="orange" size="compact-sm" variant="filled">{switchingDevice ? "Switching..." : currentDeviceLabel}</Button>
+                <Button aria-label={`Select device, current ${currentDeviceLabel}`} color="orange" size="compact-sm" variant="filled">{deviceSwitchInProgress ? "Switching..." : currentDeviceLabel}</Button>
               </Menu.Target>
               <Menu.Dropdown>
                 <Menu.Label>Device</Menu.Label>
@@ -306,6 +331,7 @@ export function App() {
         <Stack gap="md">
           {snapshot.source === "fixture" && <Alert color="yellow" title="Fixture mode">Browser development data is active. Fixture mode never falls back from a daemon error.</Alert>}
           {error && <Alert color="red" title="Refresh failed">{error}</Alert>}
+          {nanoOperationError && <Alert color="red" title="Nano operation failed">{nanoOperationError}</Alert>}
           {!live && !nano && <Alert color="orange" title={`Device ${snapshot.status.device.state}`}>
             <Stack gap="xs">
               <Text>Live state is hidden until the daemon reports a connected, complete generation.</Text>
@@ -313,13 +339,19 @@ export function App() {
                 <Text size="sm">Attempt {reconnectState.attempts}: {reconnectState.last_error}</Text>
                 <Group gap="sm"><Button color="orange" loading={retrying} onClick={() => void reconnectNow()} size="xs">Reconnect now</Button><Text c="dimmed" size="sm">Automatic retries continue in the background.</Text></Group>
               </>}
+              {failedState && <>
+                <Text size="sm">{failedState.error}</Text>
+                <Button color="orange" loading={retrying} onClick={() => void reconnectNow()} size="xs">Reconnect now</Button>
+              </>}
             </Stack>
           </Alert>}
           {nano && <ErrorBoundary name="Nano editor"><NanoChain
-            onReadFxParameters={readNanoFxParameters}
+            key={`nano:${snapshot.status.cache.generation}`}
+            onReadFxParams={readNanoFxParams}
             onSetAmp={setNanoAmp}
+            onSetGateReduction={setNanoGateReduction}
             onSetBypass={setNanoBypass}
-            onSetFxParameter={setNanoFxParameter}
+            onSetFxParam={setNanoFxParam}
             state={nano}
           /></ErrorBoundary>}
           {live && <>
@@ -365,6 +397,7 @@ export function App() {
                 title={selected?.name ?? "Select a block"}
               >
                 {selected && <Switch
+                  aria-label={`${selected.name} bypass, ${selected.bypassed ? "bypassed" : "engaged"}`}
                   checked={selected.bypassed}
                   description="Applies to the active scene only, as the device stores it"
                   disabled={!connected}

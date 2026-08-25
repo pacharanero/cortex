@@ -3109,6 +3109,52 @@ fn every_nano_amp_control_writes_and_reads_back() -> cortex_rs::Result<()> {
     Ok(())
 }
 
+/// NANO-001.6 hardware smoke: change Gate reduction by one percentage point,
+/// verify through a separate state request, then unconditionally restore and
+/// verify the original value on a fresh transport.
+#[test]
+#[ignore = "requires a Nano Cortex with Bluetooth disconnected and a readable original Gate reduction; transiently changes it by one percentage point"]
+fn nano_gate_reduction_reads_back_and_restores() -> cortex_rs::Result<()> {
+    use std::time::Duration;
+
+    use cortex_rs::nano::{read_current_state, write_gate_reduction};
+    use cortex_rs::{DeviceKind, Error, Transport};
+
+    let transport = Transport::open(DeviceKind::NanoCortex)?;
+    let original = read_current_state(&transport, Duration::from_secs(5))?
+        .gate_reduction
+        .ok_or_else(|| Error::Decode("Nano state omitted Gate reduction".into()))?;
+    let changed = if original == 100 {
+        original - 1
+    } else {
+        original + 1
+    };
+
+    let exercise = (|| {
+        write_gate_reduction(&transport, changed)?;
+        std::thread::sleep(Duration::from_secs(6));
+        let actual = read_current_state(&transport, Duration::from_secs(5))?.gate_reduction;
+        if actual != Some(changed) {
+            return Err(Error::Decode(format!(
+                "Nano Gate reduction did not read back: expected {changed}, got {actual:?}"
+            )));
+        }
+        Ok(())
+    })();
+
+    drop(transport);
+    let restore_transport = Transport::open(DeviceKind::NanoCortex)?;
+    write_gate_reduction(&restore_transport, original)?;
+    std::thread::sleep(Duration::from_secs(6));
+    let restored = read_current_state(&restore_transport, Duration::from_secs(5))?.gate_reduction;
+    if restored != Some(original) {
+        return Err(Error::Decode(format!(
+            "Nano Gate-reduction restoration failed: expected {original}, got {restored:?}"
+        )));
+    }
+    exercise
+}
+
 /// NANO-001.6 hardware smoke: invert one FX bypass, verify independently,
 /// then unconditionally restore and verify the original state.
 #[test]
@@ -3143,8 +3189,8 @@ fn nano_fx_bypass_reads_back_and_restores() -> cortex_rs::Result<()> {
         Ok(())
     })();
 
-    // A second bypass write on the same HID connection is ignored even after
-    // pacing. Reopen for cleanup until that device behavior is understood.
+    // Restore on a fresh transport so cleanup does not depend on any queued
+    // reply or state retained by the connection used for the exercise.
     drop(transport);
     let restore_transport = Transport::open(DeviceKind::NanoCortex)?;
     write_bypass(&restore_transport, NanoBypassTarget::PreFx1, original)?;
@@ -3158,6 +3204,95 @@ fn nano_fx_bypass_reads_back_and_restores() -> cortex_rs::Result<()> {
             "Nano bypass restoration failed: expected {original}, got {restored:?}"
         )));
     }
+    exercise
+}
+
+/// NANO-001.7 hardware smoke: read every FX slot, change one interior
+/// normalized parameter, verify it independently, then unconditionally restore
+/// and verify the original value on a fresh transport.
+#[test]
+#[ignore = "requires a Nano Cortex with Bluetooth disconnected; transiently changes one Pre FX 1 parameter"]
+fn nano_fx_parameters_read_write_and_restore() -> cortex_rs::Result<()> {
+    use std::time::Duration;
+
+    use cortex_rs::nano::{NanoFxSlot, read_fx_params, write_fx_param};
+    use cortex_rs::{DeviceKind, Error, Transport};
+
+    const TOLERANCE: f32 = 0.001;
+    let slots = [
+        NanoFxSlot::PreFx1,
+        NanoFxSlot::PreFx2,
+        NanoFxSlot::PostFx1,
+        NanoFxSlot::PostFx2,
+        NanoFxSlot::PostFx3,
+    ];
+    let transport = Transport::open(DeviceKind::NanoCortex)?;
+    let mut pre_fx1 = None;
+    for slot in slots {
+        let values = read_fx_params(&transport, slot, Duration::from_secs(5))?;
+        if values.is_empty() {
+            return Err(Error::Decode(format!(
+                "Nano {slot:?} returned no FX parameters"
+            )));
+        }
+        if values
+            .iter()
+            .any(|value| !value.is_finite() || !(0.0..=1.0).contains(value))
+        {
+            return Err(Error::Decode(format!(
+                "Nano {slot:?} returned a non-normalized FX parameter"
+            )));
+        }
+        if slot == NanoFxSlot::PreFx1 {
+            pre_fx1 = Some(values);
+        }
+    }
+
+    let pre_fx1 = pre_fx1.ok_or_else(|| Error::Decode("Nano omitted Pre FX 1".into()))?;
+    let (index, original) = pre_fx1
+        .iter()
+        .copied()
+        .enumerate()
+        .find(|(_, value)| (0.05..=0.95).contains(value))
+        .ok_or_else(|| Error::Decode("Nano Pre FX 1 has no safely movable parameter".into()))?;
+    let index = u8::try_from(index)
+        .map_err(|_| Error::Decode("Nano FX parameter index exceeds one byte".into()))?;
+    let changed = if original <= 0.5 {
+        original + 0.01
+    } else {
+        original - 0.01
+    };
+
+    let exercise = (|| {
+        write_fx_param(&transport, NanoFxSlot::PreFx1, index, changed)?;
+        std::thread::sleep(Duration::from_secs(2));
+        let values = read_fx_params(&transport, NanoFxSlot::PreFx1, Duration::from_secs(5))?;
+        let actual = values.get(usize::from(index)).copied();
+        if actual.is_none_or(|actual| (actual - changed).abs() >= TOLERANCE) {
+            return Err(Error::Decode(format!(
+                "Nano FX parameter write did not read back: expected {changed}, got {actual:?}"
+            )));
+        }
+        Ok(())
+    })();
+
+    drop(transport);
+    let restore_transport = Transport::open(DeviceKind::NanoCortex)?;
+    write_fx_param(&restore_transport, NanoFxSlot::PreFx1, index, original)?;
+    std::thread::sleep(Duration::from_secs(2));
+    let restored = read_fx_params(
+        &restore_transport,
+        NanoFxSlot::PreFx1,
+        Duration::from_secs(5),
+    )?
+    .get(usize::from(index))
+    .copied();
+    if restored.is_none_or(|restored| (restored - original).abs() >= TOLERANCE) {
+        return Err(Error::Decode(format!(
+            "Nano FX parameter restoration failed: expected {original}, got {restored:?}"
+        )));
+    }
+
     exercise
 }
 

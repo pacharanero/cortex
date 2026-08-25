@@ -11,15 +11,13 @@
 //! @see spec/300-mcp/design.md [DES-SAFETY] [DES-OWNER] [DES-TOOLS]
 
 use std::borrow::Cow;
-use std::io::{Read as _, Write as _};
-use std::path::PathBuf;
-use std::process::{Command, Stdio};
-use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 use cortex_host::{
-    DAEMON_PROTOCOL_VERSION, DaemonClient, DaemonError, DaemonErrorCode, Request, Status,
+    DaemonClient, DaemonError, DaemonErrorCode, DaemonSupervisor, DevicePolicy, Request,
+    tool_registry::DeviceRequirement,
 };
 use rmcp::model::{
     CacheScope, CallToolRequestParams, CallToolResponse, CallToolResult, DiscoverResult,
@@ -34,181 +32,6 @@ use crate::transport::BoundedStdioTransport;
 
 const CATALOG_TTL_MS: u64 = 60_000;
 const AUTO_MANAGED_IDLE: Duration = Duration::from_secs(60);
-const STARTUP_TIMEOUT: Duration = Duration::from_secs(120);
-const STARTUP_POLL: Duration = Duration::from_millis(200);
-
-struct DaemonSupervisor {
-    quad_client: Arc<DaemonClient>,
-    nano_client: Arc<DaemonClient>,
-    quad_probe: DaemonClient,
-    nano_probe: DaemonClient,
-    quad_startup: Mutex<()>,
-    nano_startup: Mutex<()>,
-}
-
-impl DaemonSupervisor {
-    fn new() -> Self {
-        Self {
-            quad_client: Arc::new(DaemonClient::for_device(cortex_rs::DeviceKind::QuadCortex)),
-            nano_client: Arc::new(DaemonClient::for_device(cortex_rs::DeviceKind::NanoCortex)),
-            quad_probe: DaemonClient::for_device(cortex_rs::DeviceKind::QuadCortex)
-                .with_timeout(Duration::from_secs(2)),
-            nano_probe: DaemonClient::for_device(cortex_rs::DeviceKind::NanoCortex)
-                .with_timeout(Duration::from_secs(2)),
-            quad_startup: Mutex::new(()),
-            nano_startup: Mutex::new(()),
-        }
-    }
-
-    fn client(&self, device_kind: cortex_rs::DeviceKind) -> Arc<DaemonClient> {
-        match device_kind {
-            cortex_rs::DeviceKind::QuadCortex => Arc::clone(&self.quad_client),
-            cortex_rs::DeviceKind::NanoCortex => Arc::clone(&self.nano_client),
-        }
-    }
-
-    fn probe(&self, device_kind: cortex_rs::DeviceKind) -> &DaemonClient {
-        match device_kind {
-            cortex_rs::DeviceKind::QuadCortex => &self.quad_probe,
-            cortex_rs::DeviceKind::NanoCortex => &self.nano_probe,
-        }
-    }
-
-    fn ensure(&self, device_kind: cortex_rs::DeviceKind) -> Result<()> {
-        let startup = match device_kind {
-            cortex_rs::DeviceKind::QuadCortex => &self.quad_startup,
-            cortex_rs::DeviceKind::NanoCortex => &self.nano_startup,
-        };
-        let _startup = startup
-            .lock()
-            .map_err(|_| anyhow::anyhow!("daemon startup gate is unavailable"))?;
-        let deadline = Instant::now() + STARTUP_TIMEOUT;
-        while Instant::now() < deadline {
-            if let Some(status) = self.ready_status(device_kind) {
-                ensure_status_compatible(&status)?;
-                if status.device_kind != device_kind {
-                    anyhow::bail!(
-                        "the {:?} endpoint reports {:?}; this tool requires {:?}. Run `cortex session stop --device {}`, then retry.",
-                        device_kind,
-                        status.device_kind,
-                        device_kind,
-                        device_arg(device_kind),
-                    );
-                }
-                return Ok(());
-            }
-            if !self.probe(device_kind).is_running() {
-                self.start_sibling(deadline, device_kind)?;
-            }
-            std::thread::sleep(STARTUP_POLL);
-        }
-        anyhow::bail!(
-            "the auto-managed cortex session did not become ready within {}s",
-            STARTUP_TIMEOUT.as_secs()
-        )
-    }
-
-    fn ready_status(&self, device_kind: cortex_rs::DeviceKind) -> Option<Status> {
-        self.probe(device_kind).status().ok()
-    }
-
-    fn start_sibling(&self, deadline: Instant, device_kind: cortex_rs::DeviceKind) -> Result<()> {
-        let sibling = sibling_cortex_binary()?;
-        let _ = writeln!(
-            std::io::stderr(),
-            "cortex-mcp: starting auto-managed session with {}",
-            sibling.display()
-        );
-        let idle_seconds = AUTO_MANAGED_IDLE.as_secs().to_string();
-        let mut command = Command::new(&sibling);
-        command.args(sibling_start_args(device_kind, &idle_seconds));
-        let mut child = command
-            .stdout(Stdio::null())
-            .stderr(Stdio::piped())
-            .spawn()
-            .with_context(|| format!("starting sibling cortex binary at {}", sibling.display()))?;
-        while Instant::now() < deadline {
-            if let Some(status) = child.try_wait().context("waiting for sibling cortex")? {
-                let stderr = read_child_stderr(&mut child);
-                if status.success() || self.probe(device_kind).is_running() {
-                    return Ok(());
-                }
-                anyhow::bail!(
-                    "sibling cortex could not start an auto-managed session ({status}): {}",
-                    stderr.trim()
-                );
-            }
-            std::thread::sleep(STARTUP_POLL);
-        }
-        let _ = child.kill();
-        let _ = child.wait();
-        let stderr = read_child_stderr(&mut child);
-        anyhow::bail!(
-            "sibling cortex did not finish startup within {}s: {}",
-            STARTUP_TIMEOUT.as_secs(),
-            stderr.trim()
-        )
-    }
-}
-
-fn device_arg(device_kind: cortex_rs::DeviceKind) -> &'static str {
-    match device_kind {
-        cortex_rs::DeviceKind::QuadCortex => "quad",
-        cortex_rs::DeviceKind::NanoCortex => "nano",
-    }
-}
-
-fn sibling_start_args(device_kind: cortex_rs::DeviceKind, idle_seconds: &str) -> Vec<String> {
-    let mut args = vec![
-        "session".into(),
-        "start".into(),
-        "--auto-managed".into(),
-        "--idle-timeout-seconds".into(),
-        idle_seconds.into(),
-    ];
-    if device_kind == cortex_rs::DeviceKind::NanoCortex {
-        args.extend(["--device".into(), "nano".into()]);
-    }
-    args
-}
-
-fn read_child_stderr(child: &mut std::process::Child) -> String {
-    let mut stderr = String::new();
-    if let Some(mut pipe) = child.stderr.take() {
-        let _ = pipe.read_to_string(&mut stderr);
-    }
-    stderr
-}
-
-fn ensure_status_compatible(status: &Status) -> Result<()> {
-    let version = status.daemon_version.parse::<u32>().unwrap_or(0);
-    if version != DAEMON_PROTOCOL_VERSION {
-        anyhow::bail!(
-            "daemon protocol version mismatch: cortex-mcp expects {DAEMON_PROTOCOL_VERSION}, daemon reports {version}. Run `cortex session stop` to stop the old daemon, then retry."
-        );
-    }
-    Ok(())
-}
-
-fn sibling_cortex_binary() -> Result<PathBuf> {
-    let path = if let Some(path) = std::env::var_os("CORTEX_CLI_PATH") {
-        PathBuf::from(path)
-    } else {
-        let current = std::env::current_exe().context("locating cortex-mcp executable")?;
-        sibling_path(&current)
-    };
-    if !path.is_file() {
-        anyhow::bail!(
-            "could not find the sibling cortex binary at {}; install cortex and cortex-mcp together, or set CORTEX_CLI_PATH",
-            path.display()
-        );
-    }
-    Ok(path)
-}
-
-fn sibling_path(current_executable: &std::path::Path) -> PathBuf {
-    current_executable.with_file_name(format!("cortex{}", std::env::consts::EXE_SUFFIX))
-}
 
 #[derive(Clone)]
 struct CortexMcp {
@@ -217,7 +40,7 @@ struct CortexMcp {
 }
 
 pub async fn serve() -> Result<()> {
-    let daemon = Arc::new(DaemonSupervisor::new());
+    let daemon = Arc::new(DaemonSupervisor::new(AUTO_MANAGED_IDLE));
     let server = CortexMcp {
         daemon,
         tools: Arc::new(tools()),
@@ -307,13 +130,16 @@ impl CortexMcp {
             Ok(device_kind) => device_kind,
             Err(error) => return Ok(tool_error(error.to_string())),
         };
-        if let Err(error) = self.daemon.ensure(device_kind) {
-            return Ok(tool_error_code(
-                DaemonErrorCode::DeviceUnavailable,
-                error.to_string(),
-            ));
-        }
-        let result = self.dispatch(name, &args, device_kind);
+        let client = match self.daemon.ensure(DevicePolicy::Require(device_kind)) {
+            Ok(client) => client,
+            Err(error) => {
+                return Ok(tool_error_code(
+                    DaemonErrorCode::DeviceUnavailable,
+                    error.to_string(),
+                ));
+            }
+        };
+        let result = self.dispatch(name, &args, client.as_ref());
         Ok(match result {
             Ok(value) => CallToolResult::structured(value),
             Err(error) => match error.downcast_ref::<DaemonError>() {
@@ -323,12 +149,7 @@ impl CortexMcp {
         })
     }
 
-    fn dispatch(
-        &self,
-        name: &str,
-        args: &Value,
-        device_kind: cortex_rs::DeviceKind,
-    ) -> Result<Value> {
+    fn dispatch(&self, name: &str, args: &Value, base_client: &DaemonClient) -> Result<Value> {
         let request = match name {
             "get_status" => Request::Status,
             "read_nano_state" => Request::NanoState,
@@ -393,9 +214,13 @@ impl CortexMcp {
                 value: u8::try_from(bounded_u32(args, "value", 0, 255)?)
                     .context("Nano amp value must be 0-255")?,
             },
+            "set_nano_gate_reduction" => Request::NanoSetGateReduction {
+                percent: u8::try_from(bounded_u32(args, "percent", 0, 100)?)
+                    .context("Nano Gate reduction must be 0-100%")?,
+            },
             "set_nano_bypass" => Request::NanoSetBypass {
                 target: serde_json::from_value(required(args, "target")?.clone())?,
-                bypassed: bool_arg(args, "bypassed", false)?,
+                bypassed: required_bool_arg(args, "bypassed")?,
             },
             "read_nano_fx_params" => Request::NanoReadFxParams {
                 slot: serde_json::from_value(required(args, "slot")?.clone())?,
@@ -475,12 +300,9 @@ impl CortexMcp {
             },
             "search_catalog" => {
                 let query = string_arg(args, "query")?;
-                let payload = self
-                    .daemon
-                    .client(device_kind)
-                    .request_value(&Request::Catalog {
-                        timeout_seconds: 15,
-                    })?;
+                let payload = base_client.request_value(&Request::Catalog {
+                    timeout_seconds: 15,
+                })?;
                 let bytes: Vec<u8> =
                     serde_json::from_value(required(&payload, "payload")?.clone())?;
                 let catalog = cortex_rs::Catalog::parse(&bytes)?;
@@ -488,15 +310,13 @@ impl CortexMcp {
             }
             _ => anyhow::bail!("unknown tool: {name}"),
         };
-        let base_client = self.daemon.client(device_kind);
         let client = match &request {
             Request::SetParam {
                 timeout_seconds, ..
             } => base_client
-                .as_ref()
                 .clone()
                 .with_timeout(Duration::from_secs(timeout_seconds.saturating_mul(3) + 5)),
-            _ => base_client.as_ref().clone(),
+            _ => base_client.clone(),
         };
         let value = client.request_value(&request)?;
         if name == "list_blocks" {
@@ -508,20 +328,26 @@ impl CortexMcp {
 }
 
 fn tool_device_kind(name: &str, args: &Value) -> Result<cortex_rs::DeviceKind> {
-    if name.starts_with("read_nano_") || name.starts_with("set_nano_") {
-        return Ok(cortex_rs::DeviceKind::NanoCortex);
+    let requirement = tool_requirement(name).with_context(|| format!("unknown tool: {name}"))?;
+    match requirement {
+        DeviceRequirement::Quad => Ok(cortex_rs::DeviceKind::QuadCortex),
+        DeviceRequirement::Nano => Ok(cortex_rs::DeviceKind::NanoCortex),
+        DeviceRequirement::Any => match optional_string_arg(args, "device")?
+            .as_deref()
+            .unwrap_or("quad")
+        {
+            "quad" => Ok(cortex_rs::DeviceKind::QuadCortex),
+            "nano" => Ok(cortex_rs::DeviceKind::NanoCortex),
+            value => anyhow::bail!("device must be `quad` or `nano`, got `{value}`"),
+        },
     }
-    if name != "get_status" {
-        return Ok(cortex_rs::DeviceKind::QuadCortex);
-    }
-    match optional_string_arg(args, "device")?
-        .as_deref()
-        .unwrap_or("quad")
-    {
-        "quad" => Ok(cortex_rs::DeviceKind::QuadCortex),
-        "nano" => Ok(cortex_rs::DeviceKind::NanoCortex),
-        value => anyhow::bail!("device must be `quad` or `nano`, got `{value}`"),
-    }
+}
+
+fn tool_requirement(name: &str) -> Option<DeviceRequirement> {
+    cortex_host::tool_registry::tools()
+        .into_iter()
+        .find(|tool| tool.name == name)
+        .map(|tool| tool.device_requirement)
 }
 
 fn tool_error(message: impl Into<String>) -> CallToolResult {
@@ -593,6 +419,11 @@ fn bool_arg(args: &Value, name: &str, default: bool) -> Result<bool> {
             .with_context(|| format!("{name} must be a boolean"))
     })
 }
+fn required_bool_arg(args: &Value, name: &str) -> Result<bool> {
+    required(args, name)?
+        .as_bool()
+        .with_context(|| format!("{name} must be a boolean"))
+}
 fn u64_arg(args: &Value, name: &str, default: u64) -> Result<u64> {
     args.get(name).map_or(Ok(default), |v| {
         v.as_u64()
@@ -657,23 +488,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn auto_managed_nano_session_selects_the_nano_device() {
+    fn tool_routing_uses_registry_device_metadata() {
+        assert_eq!(tool_requirement("get_status"), Some(DeviceRequirement::Any));
         assert_eq!(
-            sibling_start_args(cortex_rs::DeviceKind::NanoCortex, "60"),
-            [
-                "session",
-                "start",
-                "--auto-managed",
-                "--idle-timeout-seconds",
-                "60",
-                "--device",
-                "nano",
-            ]
+            tool_requirement("read_nano_state"),
+            Some(DeviceRequirement::Nano)
         );
-        assert!(
-            !sibling_start_args(cortex_rs::DeviceKind::QuadCortex, "60")
-                .iter()
-                .any(|argument| argument == "--device")
+        assert_eq!(
+            tool_requirement("read_current_preset"),
+            Some(DeviceRequirement::Quad)
         );
     }
 
@@ -688,6 +511,12 @@ mod tests {
             cortex_rs::DeviceKind::NanoCortex
         );
         assert!(tool_device_kind("get_status", &json!({"device": "other"})).is_err());
+    }
+
+    #[test]
+    fn nano_bypass_requires_an_explicit_boolean_intent() {
+        assert!(required_bool_arg(&json!({}), "bypassed").is_err());
+        assert!(required_bool_arg(&json!({ "bypassed": true }), "bypassed").unwrap());
     }
 
     #[test]
@@ -752,55 +581,5 @@ mod tests {
 
         assert!(serde_json::from_value::<cortex_rs::GridInputPort>(json!(1)).is_err());
         assert!(serde_json::from_value::<cortex_rs::GridOutputPort>(json!("not_a_port")).is_err());
-    }
-
-    #[test]
-    fn installed_mcp_finds_cortex_in_the_same_directory() {
-        let current = PathBuf::from(format!(
-            "/opt/cortex/bin/cortex-mcp{}",
-            std::env::consts::EXE_SUFFIX
-        ));
-        assert_eq!(
-            sibling_path(&current),
-            PathBuf::from(format!(
-                "/opt/cortex/bin/cortex{}",
-                std::env::consts::EXE_SUFFIX
-            ))
-        );
-    }
-
-    #[test]
-    fn incompatible_daemons_are_refused_not_replaced() {
-        let status = Status {
-            daemon_version: DAEMON_PROTOCOL_VERSION.saturating_sub(1).to_string(),
-            uptime_seconds: 0,
-            auto_managed: false,
-            idle_timeout_seconds: None,
-            device_kind: cortex_rs::DeviceKind::QuadCortex,
-            device: cortex_host::DeviceHealth::Failed {
-                error: "fixture".into(),
-            },
-            cache: cortex_host::CacheStatus::default(),
-        };
-        let error = ensure_status_compatible(&status).unwrap_err();
-        assert!(error.to_string().contains("cortex session stop"));
-    }
-
-    #[test]
-    fn a_nano_daemon_is_compatible_with_the_read_only_nano_tool() {
-        let status = Status {
-            daemon_version: DAEMON_PROTOCOL_VERSION.to_string(),
-            uptime_seconds: 0,
-            auto_managed: false,
-            idle_timeout_seconds: None,
-            device_kind: cortex_rs::DeviceKind::NanoCortex,
-            device: cortex_host::DeviceHealth::Connected {
-                serial: None,
-                coros_version: None,
-                last_message_seconds: 0,
-            },
-            cache: cortex_host::CacheStatus::default(),
-        };
-        assert!(ensure_status_compatible(&status).is_ok());
     }
 }

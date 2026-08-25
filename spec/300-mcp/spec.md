@@ -11,7 +11,7 @@ tags: ["mcp", "cortex-mcp", "safety-surface", "agentic", "provisional"]
 
 # 300 MCP - Spec
 
-> The `cortex-mcp` MCP server is a hardware-verified agentic surface over the Quad Cortex for reading, recall, scene switching and unsaved live-grid editing, plus typed Nano Cortex state, hardware-verified amp/bypass edits, and provisional FX parameter edits. Destructive saving remains deferred.
+> The `cortex-mcp` MCP server is a hardware-verified agentic surface over the Quad Cortex for reading, recall, scene switching and unsaved live-grid editing, plus typed Nano Cortex state and non-persistent amp, bypass and raw FX parameter operations. Nano Gate reduction remains hardware-provisional. Destructive saving remains deferred.
 
 ## References
 

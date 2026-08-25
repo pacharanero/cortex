@@ -40,12 +40,13 @@ impl std::error::Error for DaemonError {}
 #[derive(Debug, Clone)]
 pub struct DaemonClient {
     endpoint: LocalEndpoint,
+    device: Option<cortex_rs::DeviceKind>,
     timeout: Duration,
 }
 
 impl Default for DaemonClient {
     fn default() -> Self {
-        Self::new(LocalEndpoint::daemon())
+        Self::for_device(cortex_rs::DeviceKind::QuadCortex)
     }
 }
 
@@ -53,7 +54,11 @@ impl DaemonClient {
     /// Create a client for one Cortex product's standard local endpoint.
     #[must_use]
     pub fn for_device(device: cortex_rs::DeviceKind) -> Self {
-        Self::new(LocalEndpoint::for_device(device))
+        Self {
+            endpoint: LocalEndpoint::for_device(device),
+            device: Some(device),
+            timeout: DEFAULT_REQUEST_TIMEOUT,
+        }
     }
 
     /// Create a client for an explicit local IPC endpoint.
@@ -61,6 +66,7 @@ impl DaemonClient {
     pub fn new(endpoint: LocalEndpoint) -> Self {
         Self {
             endpoint,
+            device: None,
             timeout: DEFAULT_REQUEST_TIMEOUT,
         }
     }
@@ -86,7 +92,7 @@ impl DaemonClient {
     /// response is malformed, or the daemon protocol version is incompatible.
     pub fn require_compatible(&self) -> Result<Status> {
         let status = self.status()?;
-        ensure_compatible(&status, &Request::Status)?;
+        ensure_compatible(&status, &Request::Status, self.device, Some(&self.endpoint))?;
         Ok(status)
     }
 
@@ -123,7 +129,7 @@ impl DaemonClient {
             .with_context(|| format!("connecting to cortex session at {}", self.endpoint))?;
         let (mut writer, mut reader) = self.prepare(stream)?;
         let status = Self::read_status(&mut writer, &mut reader)?;
-        ensure_compatible(&status, request)?;
+        ensure_compatible(&status, request, self.device, Some(&self.endpoint))?;
         write_request(&mut writer, request)?;
         read_response(&mut reader)
     }
@@ -160,11 +166,33 @@ impl DaemonClient {
     }
 }
 
-fn ensure_compatible(status: &Status, request: &Request) -> Result<()> {
+pub(crate) fn ensure_compatible(
+    status: &Status,
+    request: &Request,
+    endpoint_device: Option<cortex_rs::DeviceKind>,
+    endpoint: Option<&LocalEndpoint>,
+) -> Result<()> {
     let daemon_version = status.daemon_version.parse::<u32>().unwrap_or(0);
     if daemon_version != DAEMON_PROTOCOL_VERSION && !matches!(request, Request::Shutdown) {
+        let guidance = match endpoint_device {
+            Some(device) => {
+                let device = match device {
+                    cortex_rs::DeviceKind::QuadCortex => "quad",
+                    cortex_rs::DeviceKind::NanoCortex => "nano",
+                };
+                format!(
+                    "Run `cortex session stop --device {device}` to stop the old daemon, then retry."
+                )
+            }
+            None => match endpoint {
+                Some(endpoint) => format!(
+                    "Stop the incompatible daemon listening at {endpoint} manually, then retry."
+                ),
+                None => "Stop the incompatible daemon manually, then retry.".into(),
+            },
+        };
         anyhow::bail!(
-            "daemon protocol version mismatch: client expects {DAEMON_PROTOCOL_VERSION}, daemon reports {daemon_version}. Run `cortex session stop` to stop the old daemon, then retry."
+            "daemon protocol version mismatch: client expects {DAEMON_PROTOCOL_VERSION}, daemon reports {daemon_version}. {guidance}"
         );
     }
     Ok(())
@@ -241,7 +269,23 @@ mod tests {
     #[test]
     fn shutdown_remains_available_across_protocol_versions() {
         let old = status(DAEMON_PROTOCOL_VERSION.saturating_sub(1));
-        assert!(ensure_compatible(&old, &Request::Shutdown).is_ok());
-        assert!(ensure_compatible(&old, &Request::Status).is_err());
+        assert!(ensure_compatible(&old, &Request::Shutdown, None, None).is_ok());
+        assert!(ensure_compatible(&old, &Request::Status, None, None).is_err());
+    }
+
+    #[test]
+    fn protocol_mismatch_uses_the_endpoint_for_a_legacy_nano_owner() {
+        let mut old = status(DAEMON_PROTOCOL_VERSION.saturating_sub(1));
+        old.device_kind = cortex_rs::DeviceKind::NanoCortex;
+
+        let error = ensure_compatible(
+            &old,
+            &Request::Status,
+            Some(cortex_rs::DeviceKind::QuadCortex),
+            None,
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("session stop --device quad"));
     }
 }

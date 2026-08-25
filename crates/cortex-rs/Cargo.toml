@@ -32,6 +32,9 @@ hid = ["dep:hidapi"]
 # built on them can be exercised without a device. Enabled by dev-dependencies
 # of downstream crates that test against a fake session.
 test-support = []
+# TypeScript declaration generation for host boundaries. Optional so ordinary
+# leaf-crate consumers do not compile a procedural macro they do not need.
+typescript = ["dep:ts-rs"]
 
 [dependencies]
 serde = { workspace = true }
@@ -44,6 +47,7 @@ once_cell = { workspace = true }
 prost = { workspace = true }
 uuid = { workspace = true }
 hidapi = { workspace = true, optional = true }
+ts-rs = { workspace = true, optional = true }
 
 [dev-dependencies]
 # Keep dev-deps minimal so the leaf stays light to build.

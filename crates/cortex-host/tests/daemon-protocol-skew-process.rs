@@ -86,7 +86,11 @@ fn spawned_older_daemon_is_refused_but_shutdown_remains_compatible() {
         error.contains("daemon reports"),
         "unexpected error: {error}"
     );
-    assert!(error.contains("session stop"), "unexpected error: {error}");
+    assert!(
+        error.contains(&endpoint.to_string()),
+        "unexpected error: {error}"
+    );
+    assert!(!error.contains("session stop"), "unexpected error: {error}");
     client.request_value(&Request::Shutdown).unwrap();
     wait(child, &endpoint);
 }
@@ -107,7 +111,11 @@ fn spawned_newer_daemon_is_refused_but_shutdown_remains_compatible() {
         error.contains("daemon reports"),
         "unexpected error: {error}"
     );
-    assert!(error.contains("session stop"), "unexpected error: {error}");
+    assert!(
+        error.contains(&endpoint.to_string()),
+        "unexpected error: {error}"
+    );
+    assert!(!error.contains("session stop"), "unexpected error: {error}");
     client.request_value(&Request::Shutdown).unwrap();
     wait(child, &endpoint);
 }

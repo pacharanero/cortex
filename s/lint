@@ -20,6 +20,13 @@ cargo clippy --all-targets --no-default-features -- -D warnings
 # so it gets the same gate as the code.
 s/markdownlint
 
+# Fail if a docs/ page is unreachable from mkdocs.yml's nav (Zensical builds
+# an orphan cleanly, so nothing else catches this), or if a docs/ internal
+# link or heading anchor is broken.
+s/check-docs-nav
+s/linkcheck
+s/spellcheck
+
 if command -v reuse >/dev/null 2>&1; then
     reuse lint
 else
