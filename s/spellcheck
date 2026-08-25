@@ -14,13 +14,6 @@
 #   s/spellcheck                lint every file under docs/
 #   s/spellcheck -w              also apply codespell's own fixes in place
 #
-# Pinned deliberately, the same reasoning as s/markdownlint's npx pin: an
-# unpinned checker turns an upstream dictionary change into a surprise CI
-# failure on an unrelated pull request. Installed on demand via pip and
-# cached by pip's own mechanism, the closest local equivalent to npx's
-# fetch-once-then-cache behaviour.
-CODESPELL_VERSION="2.4.1"
-
 # Comma-separated, lowercase - codespell's own -L flag format.
 IGNORE_WORDS=""
 
@@ -30,10 +23,11 @@ cd "$(git rev-parse --show-toplevel)"
 command -v python3 > /dev/null 2>&1 ||
 	{ echo "python3 is missing; install Python 3 to run the spell checker." >&2; exit 1; }
 
-installed_version="$(python3 -m codespell_lib --version 2> /dev/null || true)"
-if [[ "$installed_version" != "$CODESPELL_VERSION" ]]; then
-	echo "s/spellcheck: installing codespell==${CODESPELL_VERSION}" >&2
-	python3 -m pip install --quiet --user "codespell==${CODESPELL_VERSION}"
+expected_version="$(sed -nE 's/^codespell==([^[:space:]]+)$/\1/p' requirements.txt)"
+installed_version="$(python3 -m codespell_lib --version 2>/dev/null || true)"
+if [[ -z "$expected_version" || "$installed_version" != "$expected_version" ]]; then
+    echo "codespell ${expected_version:-<missing pin>} is required; install the documentation requirements with 'python3 -m pip install -r requirements.txt'." >&2
+    exit 1
 fi
 
 args=(docs --count)

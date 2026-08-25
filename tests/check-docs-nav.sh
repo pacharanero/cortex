@@ -70,16 +70,31 @@ write_page install.md
 expect_success "every page referenced in nav"
 
 reset_case
+write_mkdocs $'site_description: mention.md outside nav\nnav:\n  - Home: index.md'
+write_page index.md
+expect_success "Markdown-like config text outside nav is ignored"
+
+reset_case
 write_mkdocs $'nav:\n  - Home: index.md'
 write_page index.md
 write_page orphan.md
 expect_failure "unreferenced page is an orphan" "orphan.md: not referenced"
 
 reset_case
+write_mkdocs $'nav:\n  - Home: index.md\n  - Missing: missing.md'
+write_page index.md
+expect_failure "nav entry naming a missing page fails" "nav entry 'missing.md' does not exist"
+
+reset_case
 write_mkdocs $'nav:\n  - Home: index.md\n  - Sub:\n      - Overview: sub/overview.md'
 write_page index.md
 write_page sub/overview.md
 expect_success "nested nav section is still discovered"
+
+reset_case
+write_mkdocs $'nav:\n  - Home: index.md\n  # - Removed: missing.md'
+write_page index.md
+expect_success "commented nav entry is ignored"
 
 reset_case
 write_mkdocs $'nav:\n  - Home: index.md'
@@ -98,7 +113,7 @@ reset_case
 write_mkdocs $'nav:\n  - Home: index.md'
 write_page index.md
 write_exceptions "docs/nowhere.md"
-expect_failure "exception line with no reason is malformed" "has no reason"
+expect_failure "exception line with no reason is malformed" "expected '<path><TAB><reason>'"
 
 if [[ "$failures" -gt 0 ]]; then
 	echo "ERROR: $failures of $checks nav-orphan checker tests failed." >&2

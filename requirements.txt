@@ -3,3 +3,8 @@
 # dependency of the cortex crate or CLI. Pinned for reproducible builds; bump
 # deliberately.
 zensical==0.0.57
+
+# Documentation typo checker (https://github.com/codespell-project/codespell).
+# Kept here so Dependabot can update the reviewed pin and CI/local setup share
+# one dependency declaration. GPL-2.0-only tooling; not linked or distributed.
+codespell==2.4.3

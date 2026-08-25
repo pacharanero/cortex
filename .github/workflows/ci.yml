@@ -54,6 +54,9 @@ jobs:
       - name: Markdown lint
         run: s/markdownlint
 
+      - name: Install documentation tooling
+        run: python3 -m pip install -r requirements.txt
+
       - name: Docs nav has no orphans
         run: |
           tests/check-docs-nav.sh

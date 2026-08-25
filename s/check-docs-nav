@@ -2,22 +2,8 @@
 # SPDX-FileCopyrightText: 2026 Dr Marcus Baw
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
-# Fail if a page under docs/ is not reachable from mkdocs.yml's `nav:` tree.
-# Zensical renders every file under docs_dir whether or not the nav
-# references it, so an orphaned page builds cleanly, reports no issues, and
-# is reachable only by guessing its URL - the opposite of a documentation
-# site's job. `s/lint` and CI run this on every change; `s/markdownlint`
-# does the equivalent job for prose quality.
-#
-# Deliberately dependency-free: nav entries are the only `*.md` paths in
-# mkdocs.yml, so this is plain text extraction, not a YAML parser.
-#
-# A page that is meant to stay unlisted (a redirect stub, a work-in-progress
-# draft) is a named exception in .nav-exceptions, not a silent gap - each
-# line there is "docs/relative/path.md<TAB>reason it is deliberately not in
-# the nav". An exception naming a page that no longer exists is itself a
-# failure, so the list cannot rot unnoticed. Blank lines and lines starting
-# with `#` are ignored; the file itself is optional.
+# Check both directions of the explicit documentation navigation: every page
+# must be listed or named as an exception, and every nav entry must exist.
 
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
@@ -25,15 +11,39 @@ cd "$(git rev-parse --show-toplevel)"
 docs_dir="docs"
 mkdocs_file="mkdocs.yml"
 exceptions_file=".nav-exceptions"
-
 findings=0
+nav_entries=""
+exception_pages=""
 
 fail() {
 	findings=$((findings + 1))
 	echo "  $1" >&2
 }
 
-declare -A NAV_EXCEPTIONS=()
+# Read only the top-level nav block and strip YAML comments before extracting
+# Markdown paths. Nav values in this repository are unquoted relative paths.
+in_nav=false
+while IFS= read -r line || [[ -n "$line" ]]; do
+	if [[ "$line" == nav:* ]]; then
+		in_nav=true
+		continue
+	fi
+	[[ "$in_nav" == true ]] || continue
+	if [[ -n "$line" && "$line" != [[:space:]]* && "$line" != \#* ]]; then
+		break
+	fi
+	line="${line%%#*}"
+	while [[ "$line" =~ ([A-Za-z0-9_./-]+\.md) ]]; do
+		nav_entries+="${BASH_REMATCH[1]}"$'\n'
+		line="${line#*"${BASH_REMATCH[1]}"}"
+	done
+done < "$mkdocs_file"
+
+if [[ "$in_nav" != true ]]; then
+	fail "$mkdocs_file: no top-level nav section found"
+fi
+nav_entries="$(printf '%s' "$nav_entries" | sort -u)"
+
 if [[ -f "$exceptions_file" ]]; then
 	while IFS=$'\t' read -r path reason || [[ -n "$path" ]]; do
 		[[ -z "$path" || "$path" == \#* ]] && continue
@@ -41,49 +51,43 @@ if [[ -f "$exceptions_file" ]]; then
 			fail "$exceptions_file: '$path' has no reason (expected '<path><TAB><reason>')"
 			continue
 		fi
-		NAV_EXCEPTIONS["$path"]="$reason"
+		if [[ "$path" != docs/* ]]; then
+			fail "$exceptions_file: '$path' must start with 'docs/'"
+			continue
+		fi
+		exception_pages+="$path"$'\n'
+		if [[ ! -f "$path" ]]; then
+			fail "$exceptions_file: '$path' (\"$reason\") no longer exists - remove the exception"
+		fi
 	done < "$exceptions_file"
 fi
-
-# Every `*.md` value anywhere in mkdocs.yml is a nav entry - as a bare list
-# item ("- foo.md"), or as the value half of "Key: foo.md". Both forms are
-# `*.md` tokens on their own line once whitespace and list/key syntax are
-# stripped, so a single extraction covers them.
-nav_entries="$(
-	grep -oE '[A-Za-z0-9_./-]+\.md' "$mkdocs_file" | sort -u
-)"
 
 actual_pages="$(cd "$docs_dir" && find . -name '*.md' -type f | sed 's#^\./##' | sort -u)"
 
 while IFS= read -r page; do
 	[[ -n "$page" ]] || continue
-	rel="$docs_dir/$page"
-
 	if grep -qxF "$page" <<< "$nav_entries"; then
 		continue
 	fi
-
-	if [[ -n "${NAV_EXCEPTIONS[$rel]+x}" ]]; then
+	if grep -qxF "$docs_dir/$page" <<< "$exception_pages"; then
 		continue
 	fi
-
-	fail "$rel: not referenced anywhere in $mkdocs_file's nav, and not a named exception in $exceptions_file"
+	fail "$docs_dir/$page: not referenced in $mkdocs_file's nav and not a named exception in $exceptions_file"
 done <<< "$actual_pages"
 
-for exception in "${!NAV_EXCEPTIONS[@]}"; do
-	if [[ ! -f "$exception" ]]; then
-		fail "$exceptions_file: '$exception' (\"${NAV_EXCEPTIONS[$exception]}\") no longer exists - remove the exception"
+while IFS= read -r entry; do
+	[[ -n "$entry" ]] || continue
+	if ! grep -qxF "$entry" <<< "$actual_pages"; then
+		fail "$mkdocs_file: nav entry '$entry' does not exist under $docs_dir/"
 	fi
-done
+done <<< "$nav_entries"
 
 if [[ "$findings" -gt 0 ]]; then
-	{
-		echo
-		echo "ERROR: $findings nav-orphan finding(s)."
-		echo "Add the page to mkdocs.yml's nav, or name it in $exceptions_file with a reason."
-	} >&2
+	echo >&2
+	echo "ERROR: $findings documentation navigation finding(s)." >&2
 	exit 1
 fi
 
-page_count=$(wc -l <<< "$actual_pages")
-echo "nav ok: $page_count docs page(s), 0 orphan(s), ${#NAV_EXCEPTIONS[@]} named exception(s)"
+page_count="$(wc -l <<< "$actual_pages")"
+exception_count="$(grep -c . <<< "$exception_pages" || true)"
+echo "nav ok: $page_count docs page(s), 0 orphan(s), $exception_count named exception(s)"

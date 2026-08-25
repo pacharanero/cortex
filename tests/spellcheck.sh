@@ -2,10 +2,8 @@
 # SPDX-FileCopyrightText: 2026 Dr Marcus Baw
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
-# Exercise s/spellcheck in isolated temporary Git repositories. Runs the
-# real codespell (installing the pinned version on first use, same as a
-# normal invocation), so this needs network access the first time it runs
-# in a fresh environment - exactly like the script it is testing.
+# Exercise s/spellcheck in isolated temporary Git repositories. The caller
+# installs the updater-visible codespell pin from requirements.txt first.
 
 set -euo pipefail
 root="$(git rev-parse --show-toplevel)"
@@ -20,7 +18,8 @@ checks=0
 reset_case() {
 	rm -rf "$repo"
 	mkdir -p "$repo/docs"
-	git -C "$repo" init -q
+    git -C "$repo" init -q
+    cp "$root/requirements.txt" "$repo/requirements.txt"
 }
 
 write_page() {

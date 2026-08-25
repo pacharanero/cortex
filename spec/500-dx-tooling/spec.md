@@ -35,7 +35,7 @@ This zone owns the scripts, the `.editorconfig`, and the lint/format config. The
 | --- | --- | --- |
 | `s/test` runs fmt + clippy + tests | Implemented | `s/test` runs `cargo fmt --all --check`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test --all`, `cargo test --all --no-default-features`, frontend checks, `tests/check-traceability.sh`, `tests/check-docs-nav.sh`, `tests/linkcheck.sh` and `tests/spellcheck.sh` |
 | `s/lint` runs fmt + clippy + no-HID check + REUSE + repository policy lints | Implemented | `s/lint` runs `cargo fmt --all --check`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo clippy --all-targets --no-default-features -- -D warnings`, `reuse lint` when available, `s/lint-no-device-data`, `s/check-versions`, and `s/check-traceability` |
-| Docs-site quality lints (nav orphans, internal links, spelling) | Implemented | `s/check-docs-nav` and `s/linkcheck` are dependency-free and resolve `mkdocs.yml`'s nav and every `docs/` internal link/anchor against the file tree; `s/spellcheck` runs pinned `codespell==2.4.1`. All three run from `s/lint` and dedicated CI steps, with fixture coverage in `tests/check-docs-nav.sh`, `tests/linkcheck.sh` and `tests/spellcheck.sh` |
+| Docs-site quality lints (nav orphans, internal links, spelling) | Implemented | The dependency-free `s/check-docs-nav` validates pages, nav entries and named exceptions in both directions; `s/linkcheck` builds with Zensical and validates rendered HTML links, image resources and anchors within the deployment prefix; `s/spellcheck` runs the updater-visible codespell pin in `requirements.txt`. All three run from `s/lint` and dedicated CI steps, with fixture coverage in `tests/check-docs-nav.sh`, `tests/linkcheck.sh` and `tests/spellcheck.sh` |
 | `.editorconfig` enforces UTF-8, LF, 4-space indent (2 for md/yaml/json), final newline | Implemented | `.editorconfig` at repo root |
 | `cargo fmt` and `cargo clippy` run in CI | Implemented | `.github/workflows/ci.yml` (owned by zone 600) |
 | `s/gui-dev` | Implemented | Runs the Tauri dev server from the repository-independent entry point |
@@ -87,9 +87,9 @@ Maintainers and AI coding agents running the local gate before a commit.
 | FR-13 | `s/install-hooks` sets `core.hooksPath` to the tracked `.githooks/` directory, and reverses that with `-u`. | Should Have |
 | FR-14 | `.githooks/pre-commit` runs `s/lint` and refuses the commit on failure. | Should Have |
 | FR-15 | `s/check-traceability` validates complete `@see` syntax, target existence, literal structural node resolution, and at least one living spec/design target for every Rust file that already carries a header. Its parser behavior is covered in isolated temporary Git repositories. | Should Have |
-| FR-16 | `s/check-docs-nav` fails if a `docs/` page is not reachable from `mkdocs.yml`'s nav and is not a named exception (with a reason) in `.nav-exceptions`; it also fails if a named exception no longer exists. | Should Have |
-| FR-17 | `s/linkcheck` fails if a `docs/` internal Markdown link does not resolve to a file, or if a `#fragment` does not match a target heading's computed or explicit (`{#id}`) slug. External links are not checked. | Should Have |
-| FR-18 | `s/spellcheck` runs pinned `codespell` against `docs/`, installing that pinned version on demand. | Should Have |
+| FR-16 | `s/check-docs-nav` fails if a `docs/` page is not reachable from `mkdocs.yml`'s nav and is not a named exception (with a reason) in `.nav-exceptions`; it also fails if a nav entry or named exception no longer exists. | Should Have |
+| FR-17 | `s/linkcheck` builds the Zensical site and fails if a rendered internal link or image resource does not resolve within the configured deployment prefix, or if a fragment does not match a rendered target ID. External links are not checked. | Should Have |
+| FR-18 | `s/spellcheck` runs the updater-visible codespell version pinned in `requirements.txt` against `docs/` and never installs or downgrades packages during lint. | Should Have |
 
 #### Planned
 
@@ -134,6 +134,7 @@ Maintainers and AI coding agents running the local gate before a commit.
 - **`cargo`** (fmt, clippy, test) - the Rust toolchain.
 - **`reuse`** (FSFE REUSE tool) - required by the maintainer pre-commit gate; `s/lint` degrades for contributors but CI always enforces it.
 - **`git`** - the `s/` scripts use `git rev-parse --show-toplevel` to find the repo root.
+- **Python 3 and `requirements.txt`** - provide Zensical for rendered-site link checking and the pinned codespell typo checker; local setup uses the documented virtual environment and CI installs the same declaration explicitly.
 - **Zone 600 (CI)** - the workflow this zone mirrors locally.
 - **Zone 400 (GUI)** - supplies the manifests `s/gui-dev` runs and `s/version++` must keep in sync.
 
