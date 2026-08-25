@@ -26,7 +26,7 @@ tags: ["ci", "release", "github-actions", "dependabot", "cargo-dist", "crates-io
 
 ## Problem Statement
 
-CI runs formatting, clippy on all-feature and no-default workspace configurations, default-feature and no-default workspace tests, real-device-data lint, Windows host/MCP cross-checks, and REUSE. Documentation has a separate path-filtered Zensical Pages workflow. Actions are SHA-pinned with version comments and use minimal permissions.
+CI runs formatting, clippy on all-feature and no-default workspace configurations, default-feature and no-default workspace tests, real-device-data lint, version and traceability checks, Windows host/MCP cross-checks, and REUSE. Documentation has a separate path-filtered Zensical Pages workflow. Actions are SHA-pinned with version comments and use minimal permissions.
 
 Release is only partly wired. `s/version++` and the auto-tag workflow exist; crates.io publishing, `cargo-dist`, GitHub Release generation and GUI bundles do not. The first binary release is deliberately Linux x86_64 and installs the `cortex` and `cortex-mcp` pair; other host platforms remain unsupported until their daemon boundary and hardware behaviour are verified. All release actions are externally visible and require explicit approval before first use.
 
@@ -42,6 +42,7 @@ Release is only partly wired. `s/version++` and the auto-tag workflow exist; cra
 | CI runs the REUSE license lint | Implemented | `.github/workflows/ci.yml` `reuse` job via `fsfe/reuse-action` |
 | CI type-checks and builds both GUI frontend modes (`npm run check`: fixture + Tauri) | Implemented | `.github/workflows/ci.yml` "Check fixture and Tauri frontends" step |
 | CI builds the full Tauri backend as a debug, unbundled boundary check | Implemented | `.github/workflows/ci.yml` "Tauri build boundary (debug, no bundle)" step: `npm run tauri --prefix gui -- build --debug --no-bundle --ci` |
+| CI validates Rust `@see` traceability links and the checker itself | Implemented | `.github/workflows/ci.yml` "Traceability links" step runs `tests/check-traceability.sh` and `s/check-traceability` |
 | Actions are pinned to SHA with `# vX.Y.Z` comments | Implemented | `actions/checkout@3d3c42e...# v7.0.1`, `dtolnay/rust-toolchain@e97e2d8...# v1`, `Swatinem/rust-cache@c193711...# v2.9.1`, `fsfe/reuse-action@676e2d5...# v6.0.0` |
 | Dependabot: Cargo, npm, pip and GitHub Actions, weekly, cooldown, grouping | Implemented | `.github/dependabot.yml` |
 | Zensical Pages deployment | Implemented and deployed | `.github/workflows/docs.yml` |
@@ -95,6 +96,7 @@ Maintainers merging PRs, and the downstream consumers who install the crate or t
 | FR-12 | The path-filtered docs workflow builds Zensical and deploys through GitHub Pages artifacts. | Must Have |
 | FR-13 | CI type-checks and builds both explicit GUI frontend modes (`npm run check --prefix gui`: fixture and Tauri). | Must Have |
 | FR-14 | CI builds the full Tauri Rust backend as a debug, unbundled boundary check (`npm run tauri --prefix gui -- build --debug --no-bundle --ci`), catching `tauri.conf.json`/icon/`beforeBuildCommand` integration failures that `cargo test`/`cargo clippy` alone do not exercise. | Must Have |
+| FR-15 | CI runs the traceability checker's isolated fixture suite and then validates every existing Rust `@see` header against its target path, literal node ID, and living-spec requirement. | Should Have |
 | FR-20 | Auto-tag workflow is implemented: a version bump on `main` creates `vX.Y.Z` and directly invokes future release workflows rather than relying on tag-event recursion. Its first live release remains unevidenced. | Must Have |
 
 #### Planned
@@ -128,6 +130,7 @@ Maintainers merging PRs, and the downstream consumers who install the crate or t
 - [x] Auto-tag workflow is implemented for a `vX.Y.Z` tag on a version bump; no first live tag is claimed.
 - [x] Documentation builds and deploys through the artifact-based Pages workflow.
 - [x] CI type-checks/builds both GUI frontend modes and builds the full Tauri backend as a debug, unbundled boundary check.
+- [x] CI tests and runs the Rust `@see` traceability gate.
 - [ ] crates.io publish workflow publishes on the release tag (requires approval before first use).
 - [ ] `cargo-dist` produces distributable Linux x86_64 `cortex` and `cortex-mcp` binaries on the release tag.
 - [ ] The release tag produces a GitHub Release with changelog notes.

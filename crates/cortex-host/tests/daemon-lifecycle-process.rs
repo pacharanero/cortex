@@ -1,6 +1,13 @@
 // SPDX-FileCopyrightText: 2026 Dr Marcus Baw
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+//! Process tests for the auto-managed idle-exit contract and explicit
+//! persistent daemons: idle timeout, timeout reset on completion,
+//! in-flight protection, and typed failures surviving the process boundary.
+//!
+//! @see spec/200-cli/spec.md [FR-18] [FR-26] [FR-27]
+//! @see spec/300-mcp/spec.md [FR-45]
+
 #![cfg(unix)]
 
 use std::io::{BufRead, BufReader, Write};

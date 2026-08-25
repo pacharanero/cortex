@@ -12,7 +12,7 @@
 //! wire its own way could disagree with the client and would then be worse
 //! than useless, because it would be trusted while wrong.
 //!
-//! @see spec/roadmap.md ENG-005.2
+//! @see spec/200-cli/design.md [DES-CLI]
 
 use std::io::BufRead;
 

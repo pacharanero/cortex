@@ -14,7 +14,7 @@
 //! it owns the transport and the background threads.
 //!
 //! @see spec/140-session/spec.md [FR-1]
-//! @see spec/140-session/design.md [DES-SESSION]
+//! @see spec/140-session/design.md [DES-SES-OVR]
 
 #![allow(clippy::missing_panics_doc, clippy::needless_pass_by_value)]
 

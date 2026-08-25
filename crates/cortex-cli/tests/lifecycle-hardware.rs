@@ -1,6 +1,11 @@
 // SPDX-FileCopyrightText: 2026 Dr Marcus Baw
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+//! Hardware-gated lifecycle check: an auto-managed daemon releases the
+//! device on idle exit so a direct session can immediately reclaim it.
+//!
+//! @see spec/200-cli/spec.md [FR-26]
+
 #![cfg(unix)]
 
 use std::process::{Command, Stdio};

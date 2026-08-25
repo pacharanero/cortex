@@ -28,7 +28,7 @@
 //! - `remove_block` uses action DELETE, not UPDATE with `hash: 0`.
 //!
 //! @see spec/150-client/spec.md [FR-1]
-//! @see spec/150-client/design.md [DES-CLIENT]
+//! @see spec/150-client/design.md [DES-CLIENT-OVR]
 
 #![allow(clippy::missing_panics_doc, clippy::needless_pass_by_value)]
 

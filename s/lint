@@ -34,3 +34,7 @@ s/lint-no-device-data
 # Fail if the workspace version and the GUI's synchronized manifests have
 # drifted apart outside an `s/version++` run.
 s/check-versions
+
+# Fail if an `@see` traceability header points at a document or node id that
+# no longer exists - the header rots silently otherwise.
+s/check-traceability
