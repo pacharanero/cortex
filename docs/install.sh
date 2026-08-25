@@ -54,6 +54,9 @@ main() {
         x86_64|amd64) ;;
         *) err "unsupported Linux architecture: $(uname -m); only x86_64 is released" ;;
     esac
+    command -v tar >/dev/null 2>&1 || err 'install tar first'
+    command -v xz >/dev/null 2>&1 || err 'install xz first (the package is usually named xz-utils or xz)'
+    command -v install >/dev/null 2>&1 || err 'install the coreutils install command first'
 
     tmpdir="$(mktemp -d)"
     trap 'rm -rf "$tmpdir"' EXIT HUP INT TERM
