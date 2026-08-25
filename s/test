@@ -16,3 +16,6 @@ cargo test --all
 cargo test --all --no-default-features
 (cd gui && npm run check)
 tests/check-traceability.sh
+tests/check-docs-nav.sh
+tests/linkcheck.sh
+tests/spellcheck.sh

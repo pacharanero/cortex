@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Dr Marcus Baw
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# Spell-check docs/ with codespell. `s/lint` and CI run this on every
+# change, alongside `s/markdownlint` for prose formatting and
+# `s/check-docs-nav` / `s/linkcheck` for nav and link integrity.
+#
+# codespell targets real typos (its default "clear,rare" dictionaries), not
+# a general English wordlist, so it does not flag project vocabulary,
+# product names, or code identifiers the way a full spellchecker would.
+# IGNORE_WORDS below is for the rare case that changes.
+#
+#   s/spellcheck                lint every file under docs/
+#   s/spellcheck -w              also apply codespell's own fixes in place
+#
+# Comma-separated, lowercase - codespell's own -L flag format.
+IGNORE_WORDS=""
+
+set -euo pipefail
+cd "$(git rev-parse --show-toplevel)"
+
+command -v python3 > /dev/null 2>&1 ||
+	{ echo "python3 is missing; install Python 3 to run the spell checker." >&2; exit 1; }
+
+expected_version="$(sed -nE 's/^codespell==([^[:space:]]+)$/\1/p' requirements.txt)"
+installed_version="$(python3 -m codespell_lib --version 2>/dev/null || true)"
+if [[ -z "$expected_version" || "$installed_version" != "$expected_version" ]]; then
+    echo "codespell ${expected_version:-<missing pin>} is required; install the documentation requirements with 'python3 -m pip install -r requirements.txt'." >&2
+    exit 1
+fi
+
+args=(docs --count)
+[[ -n "$IGNORE_WORDS" ]] && args+=(-L "$IGNORE_WORDS")
+
+exec python3 -m codespell_lib "${args[@]}" "$@"

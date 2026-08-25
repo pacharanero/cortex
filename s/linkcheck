@@ -1,0 +1,138 @@
+#!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Dr Marcus Baw
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# Build the Zensical site and validate its rendered internal links and anchors.
+# Rendering first means Markdown titles, references, inline code, Unicode and
+# duplicate-heading IDs are interpreted by Zensical rather than approximated.
+
+set -euo pipefail
+cd "$(git rev-parse --show-toplevel)"
+
+command -v python3 >/dev/null 2>&1 || {
+    echo "python3 is missing; install the documentation requirements to check links." >&2
+    exit 1
+}
+
+site_dir="${CORTEX_LINKCHECK_SITE:-site}"
+if [[ -z "${CORTEX_LINKCHECK_SITE:-}" ]]; then
+    command -v zensical >/dev/null 2>&1 || {
+        echo "zensical is missing; install the documentation requirements with 'python3 -m pip install -r requirements.txt'." >&2
+        exit 1
+    }
+    zensical build --clean
+fi
+
+exec python3 - "$site_dir" <<'PY'
+# SPDX-FileCopyrightText: 2026 Dr Marcus Baw
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+from html.parser import HTMLParser
+from pathlib import Path
+from urllib.parse import unquote, urlsplit
+import os
+import re
+import sys
+
+root = Path.cwd()
+site = (root / sys.argv[1]).resolve()
+config = (root / "mkdocs.yml").read_text(encoding="utf-8") if (root / "mkdocs.yml").is_file() else ""
+site_url = re.search(r"(?m)^site_url:\s*['\"]?([^'\"\s]+)", config)
+site_prefix = urlsplit(site_url.group(1)).path.rstrip("/") if site_url else ""
+
+if not site.is_dir():
+    print(f"ERROR: rendered site directory does not exist: {site}", file=sys.stderr)
+    sys.exit(1)
+
+
+class DocumentParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.ids: set[str] = set()
+        self.links: list[tuple[int, str]] = []
+        self.article_depth = 0
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        values = dict(attrs)
+        if tag == "article":
+            self.article_depth += 1
+        if values.get("id"):
+            self.ids.add(values["id"] or "")
+        if tag == "a" and values.get("name"):
+            self.ids.add(values["name"] or "")
+        if self.article_depth and tag == "a" and values.get("href"):
+            self.links.append((self.getpos()[0], values["href"] or ""))
+        if self.article_depth and tag == "img" and values.get("src"):
+            self.links.append((self.getpos()[0], values["src"] or ""))
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag == "article" and self.article_depth:
+            self.article_depth -= 1
+
+
+documents: dict[Path, DocumentParser] = {}
+for html_file in site.rglob("*.html"):
+    parser = DocumentParser()
+    parser.feed(html_file.read_text(encoding="utf-8"))
+    documents[html_file.resolve()] = parser
+
+if not documents:
+    print(f"ERROR: rendered site contains no HTML documents: {site}", file=sys.stderr)
+    sys.exit(1)
+
+findings: list[str] = []
+checked = 0
+
+
+def resolve_target(source: Path, raw_path: str) -> Path:
+    path = unquote(raw_path)
+    if path.startswith("/"):
+        if site_prefix:
+            if path != site_prefix and not path.startswith(f"{site_prefix}/"):
+                raise ValueError(f"root-relative target omits deployed site prefix '{site_prefix}'")
+            path = path[len(site_prefix):]
+        target = site / path.lstrip("/")
+    else:
+        target = source.parent / path
+    target = Path(os.path.normpath(target)).resolve()
+    try:
+        target.relative_to(site)
+    except ValueError as error:
+        raise ValueError("target escapes the built documentation site") from error
+    if target.is_dir() or path.endswith("/") or not Path(path).suffix:
+        target /= "index.html"
+    return target
+
+
+for source, document in sorted(documents.items()):
+    for line_number, href in document.links:
+        parsed = urlsplit(href)
+        if parsed.scheme or parsed.netloc or href.startswith("//"):
+            continue
+        checked += 1
+        try:
+            target = resolve_target(source, parsed.path) if parsed.path else source
+        except ValueError as error:
+            findings.append(f"{source.relative_to(site)}:{line_number}: {href!r}: {error}")
+            continue
+        if not target.is_file():
+            findings.append(
+                f"{source.relative_to(site)}:{line_number}: {href!r} does not resolve inside the built site"
+            )
+            continue
+        if parsed.fragment:
+            target_document = documents.get(target)
+            fragment = unquote(parsed.fragment)
+            if target_document is None or fragment not in target_document.ids:
+                findings.append(
+                    f"{source.relative_to(site)}:{line_number}: {href!r} has no rendered target anchor"
+                )
+
+if findings:
+    for finding in findings:
+        print(f"  {finding}", file=sys.stderr)
+    print(f"\nERROR: {len(findings)} broken rendered internal link(s).", file=sys.stderr)
+    sys.exit(1)
+
+print(f"linkcheck ok: {checked} rendered internal target(s) resolved cleanly")
+PY
