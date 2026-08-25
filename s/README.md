@@ -6,13 +6,13 @@ Run them from anywhere in the repo.
 
 ## `s/test`
 
-Run the Rust and frontend build/test gate, including the traceability checker's isolated fixture suite. Run it with `s/lint` before committing; CI additionally checks the Windows host boundary and Tauri integration build.
+Run the Rust and frontend build/test gate, including the traceability and documentation-quality fixture suites. Run it with `s/lint` before committing; CI additionally checks the Windows host boundary and Tauri integration build.
 
 - `s/test` - everything
 
 ## `s/lint`
 
-Run the lint half of the local gate: Rust formatting and clippy on both feature paths, frontend checks, Markdown and REUSE lint, device-data protection, version synchronization, and traceability validation. Run it with `s/test` before committing.
+Run the lint half of the local gate: Rust formatting and clippy on both feature paths, frontend checks, Markdown and REUSE lint, rendered documentation links, nav completeness, spelling, device-data protection, version synchronization, and traceability validation. Run it with `s/test` before committing.
 
 - `s/lint`
 
@@ -27,6 +27,22 @@ The linter runs through `npx` at a pinned version, so a local run and CI check t
 - `s/markdownlint` - lint every tracked Markdown file
 - `s/markdownlint --fix` - apply the auto-fixable findings
 - `s/markdownlint docs/*.md` - lint a subset
+
+## Documentation Quality
+
+These checks run from `s/lint`, with their isolated fixtures run by `s/test` and CI:
+
+- `s/check-docs-nav` - require every `docs/*.md` page to appear in `mkdocs.yml` or `.nav-exceptions`, and reject nav entries or exceptions naming missing pages
+- `s/linkcheck` - build with Zensical, then validate the rendered site's internal links, image resources and anchors
+- `s/spellcheck` - run the codespell version pinned in `requirements.txt` against `docs/`
+
+Install and activate the documentation environment first:
+
+```sh
+python3 -m venv .venv
+./.venv/bin/pip install -r requirements.txt
+source .venv/bin/activate
+```
 
 ## `s/check-traceability`
 
