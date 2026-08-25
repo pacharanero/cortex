@@ -230,7 +230,7 @@ describe("NanoChain", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Apply gain" }));
 
-    expect((await screen.findByRole("status")).textContent).toBe("gain applied.");
+    await waitFor(() => expect(screen.getByRole("status").textContent).toBe("gain applied."));
     expect(screen.getByRole("status").getAttribute("aria-live")).toBe("polite");
   });
 });

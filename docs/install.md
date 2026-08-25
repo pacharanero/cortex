@@ -9,7 +9,7 @@
 curl -LsSf https://pacharanero.github.io/cortex/install.sh | sh
 ```
 
-The script downloads the latest GitHub Release archive, verifies its entry in the release's `SHA256SUMS`, then installs both `cortex` and `cortex-mcp` to `~/.local/bin` by default. It does not require Rust, a compiler, `protoc`, or development headers.
+The script requires `curl` or `wget`, a SHA-256 tool, `tar`, `xz` (usually the `xz-utils` or `xz` package), and the coreutils `install` command. It downloads the latest GitHub Release archive, verifies its entry in the release's `SHA256SUMS`, then installs both `cortex` and `cortex-mcp` to `~/.local/bin` by default. It does not require Rust, a compiler, `protoc`, or development headers.
 
 Set `CORTEX_VERSION=v0.1.0` to install a specific release, or `CORTEX_INSTALL_DIR=/some/bin` to choose a destination. Re-running it replaces both binaries and refreshes shell completions when the shell can be detected.
 
