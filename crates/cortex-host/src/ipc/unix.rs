@@ -25,11 +25,25 @@ impl LocalEndpoint {
     /// The current user's Cortex daemon endpoint.
     #[must_use]
     pub fn daemon() -> Self {
+        Self::for_device(cortex_rs::DeviceKind::QuadCortex)
+    }
+
+    /// The current user's daemon endpoint for one Cortex product.
+    #[must_use]
+    pub fn for_device(device: cortex_rs::DeviceKind) -> Self {
+        let socket_name = match device {
+            cortex_rs::DeviceKind::QuadCortex => "cortex.sock",
+            cortex_rs::DeviceKind::NanoCortex => "cortex-nano.sock",
+        };
         let path = if let Some(dir) = std::env::var_os("XDG_RUNTIME_DIR") {
-            PathBuf::from(dir).join("cortex.sock")
+            PathBuf::from(dir).join(socket_name)
         } else {
             let uid = std::env::var("UID").unwrap_or_else(|_| "0".into());
-            std::env::temp_dir().join(format!("cortex-{uid}.sock"))
+            let suffix = match device {
+                cortex_rs::DeviceKind::QuadCortex => "",
+                cortex_rs::DeviceKind::NanoCortex => "-nano",
+            };
+            std::env::temp_dir().join(format!("cortex-{uid}{suffix}.sock"))
         };
         Self { path }
     }
@@ -294,6 +308,18 @@ mod tests {
             endpoint.log_path(),
             PathBuf::from("/tmp/fictional-runtime/cortex.log")
         );
+    }
+
+    #[test]
+    fn products_have_distinct_endpoints_and_quad_keeps_the_legacy_name() {
+        let quad = LocalEndpoint::for_device(cortex_rs::DeviceKind::QuadCortex);
+        let nano = LocalEndpoint::for_device(cortex_rs::DeviceKind::NanoCortex);
+
+        assert_eq!(quad, LocalEndpoint::daemon());
+        assert_ne!(quad, nano);
+        assert!(quad.to_string().ends_with("cortex.sock"));
+        assert!(nano.to_string().ends_with("cortex-nano.sock"));
+        assert!(nano.log_path().ends_with("cortex-nano.log"));
     }
 
     #[test]

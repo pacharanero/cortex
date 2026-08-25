@@ -38,39 +38,66 @@ const STARTUP_TIMEOUT: Duration = Duration::from_secs(120);
 const STARTUP_POLL: Duration = Duration::from_millis(200);
 
 struct DaemonSupervisor {
-    client: Arc<DaemonClient>,
-    probe: DaemonClient,
-    startup: Mutex<()>,
+    quad_client: Arc<DaemonClient>,
+    nano_client: Arc<DaemonClient>,
+    quad_probe: DaemonClient,
+    nano_probe: DaemonClient,
+    quad_startup: Mutex<()>,
+    nano_startup: Mutex<()>,
 }
 
 impl DaemonSupervisor {
     fn new() -> Self {
         Self {
-            client: Arc::new(DaemonClient::default()),
-            probe: DaemonClient::default().with_timeout(Duration::from_secs(2)),
-            startup: Mutex::new(()),
+            quad_client: Arc::new(DaemonClient::for_device(cortex_rs::DeviceKind::QuadCortex)),
+            nano_client: Arc::new(DaemonClient::for_device(cortex_rs::DeviceKind::NanoCortex)),
+            quad_probe: DaemonClient::for_device(cortex_rs::DeviceKind::QuadCortex)
+                .with_timeout(Duration::from_secs(2)),
+            nano_probe: DaemonClient::for_device(cortex_rs::DeviceKind::NanoCortex)
+                .with_timeout(Duration::from_secs(2)),
+            quad_startup: Mutex::new(()),
+            nano_startup: Mutex::new(()),
+        }
+    }
+
+    fn client(&self, device_kind: cortex_rs::DeviceKind) -> Arc<DaemonClient> {
+        match device_kind {
+            cortex_rs::DeviceKind::QuadCortex => Arc::clone(&self.quad_client),
+            cortex_rs::DeviceKind::NanoCortex => Arc::clone(&self.nano_client),
+        }
+    }
+
+    fn probe(&self, device_kind: cortex_rs::DeviceKind) -> &DaemonClient {
+        match device_kind {
+            cortex_rs::DeviceKind::QuadCortex => &self.quad_probe,
+            cortex_rs::DeviceKind::NanoCortex => &self.nano_probe,
         }
     }
 
     fn ensure(&self, device_kind: cortex_rs::DeviceKind) -> Result<()> {
-        let _startup = self
-            .startup
+        let startup = match device_kind {
+            cortex_rs::DeviceKind::QuadCortex => &self.quad_startup,
+            cortex_rs::DeviceKind::NanoCortex => &self.nano_startup,
+        };
+        let _startup = startup
             .lock()
             .map_err(|_| anyhow::anyhow!("daemon startup gate is unavailable"))?;
         let deadline = Instant::now() + STARTUP_TIMEOUT;
         while Instant::now() < deadline {
-            if let Some(status) = self.ready_status() {
+            if let Some(status) = self.ready_status(device_kind) {
                 ensure_status_compatible(&status)?;
                 if status.device_kind != device_kind {
                     anyhow::bail!(
-                        "the held session owns {:?}; this tool requires {:?}. Run `cortex session stop`, then retry.",
+                        "the {:?} endpoint reports {:?}; this tool requires {:?}. Run `cortex session stop --device {}`, then retry.",
+                        device_kind,
                         status.device_kind,
-                        device_kind
+                        device_kind,
+                        device_arg(device_kind),
                     );
                 }
                 return Ok(());
             }
-            if !self.probe.is_running() {
+            if !self.probe(device_kind).is_running() {
                 self.start_sibling(deadline, device_kind)?;
             }
             std::thread::sleep(STARTUP_POLL);
@@ -81,8 +108,8 @@ impl DaemonSupervisor {
         )
     }
 
-    fn ready_status(&self) -> Option<Status> {
-        self.probe.status().ok()
+    fn ready_status(&self, device_kind: cortex_rs::DeviceKind) -> Option<Status> {
+        self.probe(device_kind).status().ok()
     }
 
     fn start_sibling(&self, deadline: Instant, device_kind: cortex_rs::DeviceKind) -> Result<()> {
@@ -103,7 +130,7 @@ impl DaemonSupervisor {
         while Instant::now() < deadline {
             if let Some(status) = child.try_wait().context("waiting for sibling cortex")? {
                 let stderr = read_child_stderr(&mut child);
-                if status.success() || self.probe.is_running() {
+                if status.success() || self.probe(device_kind).is_running() {
                     return Ok(());
                 }
                 anyhow::bail!(
@@ -121,6 +148,13 @@ impl DaemonSupervisor {
             STARTUP_TIMEOUT.as_secs(),
             stderr.trim()
         )
+    }
+}
+
+fn device_arg(device_kind: cortex_rs::DeviceKind) -> &'static str {
+    match device_kind {
+        cortex_rs::DeviceKind::QuadCortex => "quad",
+        cortex_rs::DeviceKind::NanoCortex => "nano",
     }
 }
 
@@ -267,21 +301,19 @@ impl ServerHandler for CortexMcp {
 
 impl CortexMcp {
     fn call_sync(&self, request: CallToolRequestParams) -> Result<CallToolResult, ErrorData> {
-        let device_kind =
-            if request.name.starts_with("read_nano_") || request.name.starts_with("set_nano_") {
-                cortex_rs::DeviceKind::NanoCortex
-            } else {
-                cortex_rs::DeviceKind::QuadCortex
-            };
+        let name = request.name.as_ref();
+        let args = Value::Object(request.arguments.unwrap_or_default());
+        let device_kind = match tool_device_kind(name, &args) {
+            Ok(device_kind) => device_kind,
+            Err(error) => return Ok(tool_error(error.to_string())),
+        };
         if let Err(error) = self.daemon.ensure(device_kind) {
             return Ok(tool_error_code(
                 DaemonErrorCode::DeviceUnavailable,
                 error.to_string(),
             ));
         }
-        let name = request.name.as_ref();
-        let args = Value::Object(request.arguments.unwrap_or_default());
-        let result = self.dispatch(name, &args);
+        let result = self.dispatch(name, &args, device_kind);
         Ok(match result {
             Ok(value) => CallToolResult::structured(value),
             Err(error) => match error.downcast_ref::<DaemonError>() {
@@ -291,7 +323,12 @@ impl CortexMcp {
         })
     }
 
-    fn dispatch(&self, name: &str, args: &Value) -> Result<Value> {
+    fn dispatch(
+        &self,
+        name: &str,
+        args: &Value,
+        device_kind: cortex_rs::DeviceKind,
+    ) -> Result<Value> {
         let request = match name {
             "get_status" => Request::Status,
             "read_nano_state" => Request::NanoState,
@@ -438,9 +475,12 @@ impl CortexMcp {
             },
             "search_catalog" => {
                 let query = string_arg(args, "query")?;
-                let payload = self.daemon.client.request_value(&Request::Catalog {
-                    timeout_seconds: 15,
-                })?;
+                let payload = self
+                    .daemon
+                    .client(device_kind)
+                    .request_value(&Request::Catalog {
+                        timeout_seconds: 15,
+                    })?;
                 let bytes: Vec<u8> =
                     serde_json::from_value(required(&payload, "payload")?.clone())?;
                 let catalog = cortex_rs::Catalog::parse(&bytes)?;
@@ -448,16 +488,15 @@ impl CortexMcp {
             }
             _ => anyhow::bail!("unknown tool: {name}"),
         };
+        let base_client = self.daemon.client(device_kind);
         let client = match &request {
             Request::SetParam {
                 timeout_seconds, ..
-            } => self
-                .daemon
-                .client
+            } => base_client
                 .as_ref()
                 .clone()
                 .with_timeout(Duration::from_secs(timeout_seconds.saturating_mul(3) + 5)),
-            _ => self.daemon.client.as_ref().clone(),
+            _ => base_client.as_ref().clone(),
         };
         let value = client.request_value(&request)?;
         if name == "list_blocks" {
@@ -465,6 +504,23 @@ impl CortexMcp {
             return Ok(serde_json::to_value(preset.blocks)?);
         }
         Ok(value)
+    }
+}
+
+fn tool_device_kind(name: &str, args: &Value) -> Result<cortex_rs::DeviceKind> {
+    if name.starts_with("read_nano_") || name.starts_with("set_nano_") {
+        return Ok(cortex_rs::DeviceKind::NanoCortex);
+    }
+    if name != "get_status" {
+        return Ok(cortex_rs::DeviceKind::QuadCortex);
+    }
+    match optional_string_arg(args, "device")?
+        .as_deref()
+        .unwrap_or("quad")
+    {
+        "quad" => Ok(cortex_rs::DeviceKind::QuadCortex),
+        "nano" => Ok(cortex_rs::DeviceKind::NanoCortex),
+        value => anyhow::bail!("device must be `quad` or `nano`, got `{value}`"),
     }
 }
 
@@ -619,6 +675,19 @@ mod tests {
                 .iter()
                 .any(|argument| argument == "--device")
         );
+    }
+
+    #[test]
+    fn status_routes_to_the_requested_product() {
+        assert_eq!(
+            tool_device_kind("get_status", &json!({})).unwrap(),
+            cortex_rs::DeviceKind::QuadCortex
+        );
+        assert_eq!(
+            tool_device_kind("get_status", &json!({"device": "nano"})).unwrap(),
+            cortex_rs::DeviceKind::NanoCortex
+        );
+        assert!(tool_device_kind("get_status", &json!({"device": "other"})).is_err());
     }
 
     #[test]

@@ -337,10 +337,18 @@ enum SessionCmd {
     },
     /// Report whether a session is running, and whether the device answers.
     #[command(after_help = "Examples:\n  cortex session status")]
-    Status,
+    Status {
+        /// Product whose held session to inspect.
+        #[arg(long, value_enum, default_value = "quad")]
+        device: DeviceSelection,
+    },
     /// Ask a running session to shut down, announcing the disconnect first.
     #[command(after_help = "Examples:\n  cortex session stop")]
-    Stop,
+    Stop {
+        /// Product whose held session to stop.
+        #[arg(long, value_enum, default_value = "quad")]
+        device: DeviceSelection,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -1063,8 +1071,8 @@ fn run(cli: Cli) -> Result<()> {
                     connect::start_detached(device.into(), lifecycle)
                 }
             }
-            SessionCmd::Status => cmd_connect(true, false, fmt),
-            SessionCmd::Stop => cmd_connect(false, true, fmt),
+            SessionCmd::Status { device } => cmd_connect(true, false, device.into(), fmt),
+            SessionCmd::Stop { device } => cmd_connect(false, true, device.into(), fmt),
         },
         Some(Command::Nano {
             command: NanoCmd::State,
@@ -1362,11 +1370,11 @@ fn dry_run_plan(command: Option<&Command>) -> Result<Option<DryRunPlan>> {
                     "open and subscribe to the device",
                 ],
             )),
-            SessionCmd::Status => None,
-            SessionCmd::Stop => Some(plan(
+            SessionCmd::Status { .. } => None,
+            SessionCmd::Stop { device } => Some(plan(
                 "session stop",
                 "local process and device session",
-                serde_json::json!({}),
+                serde_json::json!({ "device": device }),
                 &[
                     "announce disconnect",
                     "stop the daemon and remove its endpoint",
@@ -3540,7 +3548,7 @@ fn cmd_set_split(row: u32, split: i32, mix: i32, fmt: Format) -> Result<()> {
 
 /// Run, query, or stop the persistent connection.
 fn cmd_nano_state(fmt: Format) -> Result<()> {
-    let client = cortex_host::DaemonClient::default();
+    let client = cortex_host::DaemonClient::for_device(DeviceKind::NanoCortex);
     let state: cortex_rs::nano::NanoCurrentState =
         client.request(&cortex_host::Request::NanoState)?;
     emit(&state, fmt, |state| {
@@ -3563,8 +3571,9 @@ fn cmd_nano_set_amp(
     value: u8,
     fmt: Format,
 ) -> Result<()> {
-    let state: cortex_rs::nano::NanoCurrentState = cortex_host::DaemonClient::default()
-        .request(&cortex_host::Request::NanoSetAmp { control, value })?;
+    let state: cortex_rs::nano::NanoCurrentState =
+        cortex_host::DaemonClient::for_device(DeviceKind::NanoCortex)
+            .request(&cortex_host::Request::NanoSetAmp { control, value })?;
     emit(&state, fmt, |_| {
         println!("set {control:?} to {value}; verified by fresh read-back");
     })
@@ -3575,15 +3584,16 @@ fn cmd_nano_set_bypass(
     bypassed: bool,
     fmt: Format,
 ) -> Result<()> {
-    let state: cortex_rs::nano::NanoCurrentState = cortex_host::DaemonClient::default()
-        .request(&cortex_host::Request::NanoSetBypass { target, bypassed })?;
+    let state: cortex_rs::nano::NanoCurrentState =
+        cortex_host::DaemonClient::for_device(DeviceKind::NanoCortex)
+            .request(&cortex_host::Request::NanoSetBypass { target, bypassed })?;
     emit(&state, fmt, |_| {
         println!("set {target:?} bypass to {bypassed}; verified by fresh read-back");
     })
 }
 
 fn cmd_nano_read_fx_params(slot: cortex_rs::nano::NanoFxSlot, fmt: Format) -> Result<()> {
-    let values: Vec<f32> = cortex_host::DaemonClient::default()
+    let values: Vec<f32> = cortex_host::DaemonClient::for_device(DeviceKind::NanoCortex)
         .request(&cortex_host::Request::NanoReadFxParams { slot })?;
     emit(&values, fmt, |values| {
         println!("{slot:?} FX parameters ({}):", values.len());
@@ -3599,27 +3609,29 @@ fn cmd_nano_set_fx_param(
     value: f32,
     fmt: Format,
 ) -> Result<()> {
-    let values: Vec<f32> =
-        cortex_host::DaemonClient::default().request(&cortex_host::Request::NanoSetFxParam {
+    let values: Vec<f32> = cortex_host::DaemonClient::for_device(DeviceKind::NanoCortex).request(
+        &cortex_host::Request::NanoSetFxParam {
             slot,
             param_index,
             value,
-        })?;
+        },
+    )?;
     emit(&values, fmt, |_| {
         println!("set {slot:?} param {param_index} to {value:.6}; verified by fresh read-back");
     })
 }
 
-fn cmd_connect(status: bool, stop: bool, fmt: Format) -> Result<()> {
+fn cmd_connect(status: bool, stop: bool, device: DeviceKind, fmt: Format) -> Result<()> {
+    let client = cortex_host::DaemonClient::for_device(device);
     if status {
-        let Some(result) = connect::request(&cortex_host::Request::Status) else {
+        if !client.is_running() {
             // Not an error: "no connection running" is a legitimate answer to
             // "what is the status", and a caller scripting against this
             // should not have to parse stderr to find out.
             let out = serde_json::json!({ "running": false });
             return emit(&out, fmt, |_| println!("not running"));
-        };
-        let value = result?;
+        }
+        let value = client.request_value(&cortex_host::Request::Status)?;
         return emit(&value, fmt, |v| {
             println!("running: true");
             if let Some(uptime) = v.get("uptime_seconds") {
@@ -3680,10 +3692,10 @@ fn cmd_connect(status: bool, stop: bool, fmt: Format) -> Result<()> {
     }
 
     if stop {
-        let Some(result) = connect::request(&cortex_host::Request::Shutdown) else {
+        if !client.is_running() {
             anyhow::bail!("no connection is running");
-        };
-        result?;
+        }
+        client.request_value(&cortex_host::Request::Shutdown)?;
         return emit(&serde_json::json!({ "stopped": true }), fmt, |_| {
             println!("stopped")
         });
@@ -3799,7 +3811,9 @@ fn cmd_setup(install_udev: bool, claude_code: bool, fmt: Format) -> Result<()> {
     let udev_rule_current = installed_udev_rule_is_current();
     let quad_cortex_present = usb_device_present("152a", "880a");
     let nano_cortex_present = usb_device_present("152a", "88e7");
-    let daemon_running = connect::request(&cortex_host::Request::Status).is_some();
+    let daemon_running = [DeviceKind::QuadCortex, DeviceKind::NanoCortex]
+        .into_iter()
+        .any(connect::is_running_for);
     let mut actions = Vec::new();
     if architecture != "x86_64" {
         actions.push("released host binaries currently support Linux x86_64 only".into());

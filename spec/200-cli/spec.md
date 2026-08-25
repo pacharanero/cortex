@@ -109,7 +109,7 @@ Linux users with a Quad Cortex, script writers, AI coding agents driving the CLI
 
 | ID | Requirement | Priority |
 | --- | --- | --- |
-| FR-18 | Explicit `cortex session start` claims its owner-only local IPC endpoint before opening the exclusive HID interface, performs one subscribed handshake, and serves line-delimited JSON requests until explicitly stopped. It never acquires an idle timeout. Unix uses a domain socket; Windows will use a current-user named pipe behind the same host facade. | Must Have |
+| FR-18 | Explicit `cortex session start` claims its product-scoped owner-only local IPC endpoint before opening the exclusive HID interface, performs one subscribed handshake, and serves line-delimited JSON requests until explicitly stopped. It never acquires an idle timeout. Quad retains `cortex.sock`; Nano uses `cortex-nano.sock`; `session status` and `session stop` select the product with `--device`. A Nano start refuses an older Nano daemon already occupying the legacy Quad endpoint; simultaneously launching mixed binary versions is unsupported, so pre-upgrade daemons must be stopped before starting the new version. Unix uses domain sockets; Windows will use current-user named pipes behind the same host facade. | Must Have |
 | FR-19 | Every ordinary device command uses the daemon when it is running and falls back to one direct session otherwise. Diagnostics that can use held state, including `device probe`, route through it; no command opens a second HID connection while the daemon owns the interface. | Must Have |
 | FR-20 | The daemon serves only responsive `Live` cache entries, falls back to explicit reads for missing state, and reports cache phase/generation/revision and reducer counters in `session status`. | Must Have |
 | FR-21 | A background monitor invalidates state before replacing a silent or continuity-invalidated session, excludes and drains device operations, explicitly releases the old handle before opening another, retries the full subscribed handshake with exponential backoff capped at 30 seconds, and exposes connected/reconnecting/failed status. | Must Have |
@@ -146,6 +146,7 @@ Linux users with a Quad Cortex, script writers, AI coding agents driving the CLI
 - [x] Every command honours `--format text|json`.
 - [x] An exclusivity-aware reconnect test retains an old `Arc<Session>`, proves its lease drops before the first replacement attempt, fails that attempt, succeeds on the second, swaps the session, and advances the retained cache generation even when the old link remained responsive after continuity invalidation.
 - [x] Fake endpoint/process tests prove auto-managed idle exit, timeout reset after a request, in-flight protection, explicit persistence, endpoint cleanup, and a second client completing while another request is slow.
+- [x] Product-scoped endpoint tests preserve Quad's legacy name, separate Nano's socket/lock/log, and allow one owner per distinct physical product without permitting two owners of either endpoint.
 - [x] The ignored real-device lifecycle test passed on CorOS 4.0.1: idle exit released HID and a replacement direct client completed one non-mutating version read.
 
 ## Non-Goals

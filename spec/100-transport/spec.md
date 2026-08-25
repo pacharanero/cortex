@@ -43,7 +43,7 @@ This zone owns the `Transport` struct that wraps `hidapi::HidDevice` and encodes
 | The benign write STALL (`hid_write` returns `-1` on success) | Hardware-verified | Observed on this machine; documented in `pyquadcortex` |
 | Swallow Quad write errors, detect its dead device via read timeout | Hardware-verified | `cortex device version` succeeds despite `-1` writes; a powered-off Quad surfaces as `Error::ReadTimeout` |
 | `Transport::request` gzip-decompresses frame-level payloads starting `1f 8b` | Hardware-verified | Observed on RecallPreset pushes from `pyquadcortex`; the `version` round-trip does not compress |
-| Nano Cortex transport | Partly hardware-verified and partly implemented | Real Nano on Linux confirmed VID:PID `152A:88E7`, interface 5, 65-byte reports, shared length/flag framing, multi-report state transfer, and cross-transport BLE ownership. Low-level discovery/geometry are implemented; application requests remain unavailable until the Nano codec/session exists |
+| Nano Cortex transport | Partly hardware-verified and partly implemented | Real Nano on Linux confirmed VID:PID `152A:88E7`, interface 5, 65-byte reports, shared length/flag framing, multi-report state transfer, and cross-transport BLE ownership. The separate Nano codec and held session implement current-state reads, hardware-verified non-persistent amp/bypass operations, and provisional FX parameter operations; wider application coverage remains provisional |
 
 The `pyquadcortex` offline test suite is a conformance reference but not a substitute for a hardware smoke run. Agent-generated tests must not be the sole basis for accepting transport behaviour.
 

@@ -50,6 +50,12 @@ impl Default for DaemonClient {
 }
 
 impl DaemonClient {
+    /// Create a client for one Cortex product's standard local endpoint.
+    #[must_use]
+    pub fn for_device(device: cortex_rs::DeviceKind) -> Self {
+        Self::new(LocalEndpoint::for_device(device))
+    }
+
     /// Create a client for an explicit local IPC endpoint.
     #[must_use]
     pub fn new(endpoint: LocalEndpoint) -> Self {

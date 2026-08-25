@@ -2,10 +2,58 @@
 /* SPDX-License-Identifier: AGPL-3.0-or-later */
 
 body { margin: 0; background: #101113; }
-/* The grid is full width, so cells get the room the hardware gives them: eight
-   columns across four rows, taller than wide as on the unit's own display. */
-.grid { display: grid; gap: 8px; grid-template-columns: repeat(8, minmax(48px, 1fr)); }
-.grid-cell { height: 88px; min-width: 0; padding: 6px; }
+
+/* Both devices use the same block-card language while retaining honest
+   topologies: a routed 4x8 Quad grid and one fixed eight-role Nano chain. At a
+   narrow window or high zoom they scroll rather than folding into a topology
+   the hardware does not have. */
+.editor-canvas { overflow-x: auto; padding: 2px 2px 8px; }
+.editor-canvas__items { display: grid; gap: 8px; }
+.editor-canvas[data-topology="quad-grid"] .editor-canvas__items {
+  grid-template-columns: repeat(8, minmax(84px, 1fr));
+  min-width: 760px;
+}
+.editor-canvas[data-topology="nano-chain"] .editor-canvas__items {
+  grid-template-columns: repeat(8, minmax(120px, 1fr));
+  min-width: 1016px;
+}
+.editor-block-card {
+  appearance: none;
+  background: var(--mantine-color-dark-7);
+  border: 2px solid var(--mantine-color-dark-4);
+  border-radius: var(--mantine-radius-sm);
+  color: var(--mantine-color-text);
+  display: flex;
+  flex-direction: column;
+  font: inherit;
+  justify-content: flex-start;
+  min-height: 104px;
+  min-width: 0;
+  padding: 8px;
+  text-align: left;
+}
+button.editor-block-card { cursor: pointer; }
+button.editor-block-card:hover { background: var(--mantine-color-dark-6); }
+button.editor-block-card:focus-visible {
+  outline: 3px solid var(--mantine-color-orange-5);
+  outline-offset: 2px;
+}
+.editor-block-card[data-selected="true"] {
+  box-shadow: inset 0 0 0 2px var(--mantine-color-orange-5);
+}
+.editor-block-card__position,
+.editor-block-card__eyebrow,
+.editor-block-card__detail { color: var(--mantine-color-dimmed); }
+.editor-block-card__title {
+  line-height: 1.2;
+  margin: 5px 0;
+  overflow-wrap: anywhere;
+}
+.editor-block-card__state { color: var(--mantine-color-gray-4); margin-top: auto; }
+.editor-block-card[data-state="bypassed"] { border-style: dashed; }
+.editor-block-card[data-state="bypassed"] .editor-block-card__state { color: var(--mantine-color-orange-4); }
+.editor-block-card[data-state="unknown"] .editor-block-card__state { color: var(--mantine-color-yellow-4); }
+.editor-block-card[data-state="empty"] { background: transparent; border-color: var(--mantine-color-dark-5); }
 
 /* Block colours, matched to Cortex Control's own block picker.
  *
@@ -18,25 +66,23 @@ body { margin: 0; background: #101113; }
  * Colour is never the only signal: every cell also carries the block name and
  * its category as text, per the accessibility constraint in GUI-006.1.
  */
-.grid-cell[data-family] { border-width: 2px; border-style: solid; }
-.grid-cell[data-family="amp"] { border-color: #ff4d4d; }
-.grid-cell[data-family="cab"] { border-color: #6c5cff; }
-.grid-cell[data-family="drive"] { border-color: #ff8a1f; }
-.grid-cell[data-family="dynamics"] { border-color: #3ddc84; }
-.grid-cell[data-family="eq"] { border-color: #3b82f6; }
-.grid-cell[data-family="filter"] { border-color: #56b6f7; }
-.grid-cell[data-family="modulation"] { border-color: #8b5cf6; }
-.grid-cell[data-family="delay"] { border-color: #17d1c6; }
-.grid-cell[data-family="reverb"] { border-color: #22d3ee; }
-.grid-cell[data-family="pitch"] { border-color: #ffc93c; }
-.grid-cell[data-family="capture"] { border-color: #e8eaed; }
-.grid-cell[data-family="utility"] { border-color: #9aa0a6; }
-.grid-cell[data-family="other"] { border-color: #5f6368; }
+.editor-block-card[data-family="amp"] { border-color: #ff4d4d; }
+.editor-block-card[data-family="cab"] { border-color: #6c5cff; }
+.editor-block-card[data-family="drive"] { border-color: #ff8a1f; }
+.editor-block-card[data-family="dynamics"] { border-color: #3ddc84; }
+.editor-block-card[data-family="eq"] { border-color: #3b82f6; }
+.editor-block-card[data-family="filter"] { border-color: #56b6f7; }
+.editor-block-card[data-family="modulation"] { border-color: #8b5cf6; }
+.editor-block-card[data-family="delay"] { border-color: #17d1c6; }
+.editor-block-card[data-family="reverb"] { border-color: #22d3ee; }
+.editor-block-card[data-family="pitch"] { border-color: #ffc93c; }
+.editor-block-card[data-family="capture"] { border-color: #e8eaed; }
+.editor-block-card[data-family="utility"] { border-color: #9aa0a6; }
+.editor-block-card[data-family="other"] { border-color: #5f6368; }
 
-/* A bypassed block keeps its family colour but is visibly muted, so bypass is
-   legible without having to compare two cells. */
-.grid-cell[data-bypassed="true"] { opacity: 0.45; border-style: dashed; }
-@media (max-width: 700px) { .grid { grid-template-columns: repeat(4, minmax(64px, 1fr)); } }
+/* Bypass keeps readable text and focus contrast; border shape and explicit
+   state copy carry the difference without depending on opacity or colour. */
+.editor-block-card[data-family][data-state="bypassed"] { border-style: dashed; }
 
 /* Available to screen readers, absent from the visual layout. Used for live
    announcements of device state changes, which have no visual equivalent

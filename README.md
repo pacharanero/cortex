@@ -22,8 +22,8 @@ Protocol implementers can start with the separate [Quad Cortex HID transport](ht
 
 ## What it is
 
-- `gui/` - the Tauri 2 + React + Mantine desktop editor, intended for both Cortex devices on Linux, Windows and macOS. It starts or reuses the held session itself, provides non-persistent Quad editing, and provides a Nano fixed-chain view with hardware-verified raw amp controls in explicit fixture and daemon-backed modes; an in-GUI selector for machines with both products connected, further Nano writes, automated native DOM/IPC checks and cross-platform packaging remain outstanding.
-- `cortex-cli` - a thin CLI over the crate, including a persistent daemon that owns the one device connection. Quad sessions reconnect without serving stale state; Nano sessions currently report transport failure and require restart.
+- `gui/` - the Tauri 2 + React + Mantine desktop editor, intended for both Cortex devices on Linux, Windows and macOS. It starts or reuses product-scoped held sessions, provides non-persistent Quad editing, and provides a Nano fixed-chain view with hardware-verified raw amp controls in explicit fixture and daemon-backed modes. When both products are connected, its selector keeps one live owner per device and switches either direction in under one second after initial startup; further Nano verification, automated native DOM/IPC checks and cross-platform packaging remain outstanding.
+- `cortex-cli` - a thin CLI over the crate, including product-scoped persistent daemons that each own one physical device connection. Quad sessions reconnect without serving stale state; Nano sessions currently report transport failure and require restart.
 - `cortex-mcp` - an MCP server for agentic patch editing through `cortex session`. Its read, recall, scene and working-copy tools are hardware-verified; persistent writes remain deliberately unavailable.
 - `cortex-rs` - a leaf Rust crate providing the USB HID transport, Cortex Control framing and protobuf envelope, session/correlation, typed domain and client APIs, subscribed state reduction, and shared prepared-save safety.
 - `cortex-host` - the shared synchronous daemon contract and local IPC facade used by host surfaces; it has no HID feature and cannot open the device. Unix sockets are the current adapter, with Windows named pipes planned behind the same API.
@@ -56,7 +56,7 @@ sudo udevadm control --reload-rules
 sudo udevadm trigger --action=add --subsystem-match=hidraw
 ```
 
-Re-plug the device, then `ls -l /dev/hidraw*` should show `crw-rw----+` on the interface-5 node. This prepares access to both products; the installed CLI remains Quad-only until the Nano codec/session work is complete.
+Re-plug the device, then `ls -l /dev/hidraw*` should show `crw-rw----+` on the interface-5 node. This prepares access to both products; the installed CLI supports held Nano state reads, hardware-verified non-persistent amp and bypass operations, and provisional FX parameter operations. The wider Nano application surface remains provisional.
 
 ### 2. Build
 

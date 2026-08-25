@@ -1,15 +1,16 @@
 // SPDX-FileCopyrightText: 2026 Dr Marcus Baw
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-import { Alert, AppShell, Badge, Button, Divider, Group, Menu, NavLink, Paper, ScrollArea, Stack, Switch, Text, Title } from "@mantine/core";
+import { Alert, AppShell, Badge, Burger, Button, Divider, Group, Menu, NavLink, Paper, ScrollArea, Stack, Switch, Text, Title } from "@mantine/core";
 import { useEffect, useRef, useState } from "react";
 import { Grid } from "./features/quad/Grid";
 import { ParameterEditor } from "./features/quad/ParameterEditor";
 import { SceneSelector } from "./features/quad/SceneSelector";
 import { ErrorBoundary } from "./shared/ErrorBoundary";
 import { NanoChain } from "./features/nano/NanoChain";
+import { InspectorPanel } from "./shared/editor/EditorCanvas";
 import { cortexApi } from "./shared/ipc/api";
-import type { DashboardSnapshot, LiveBlock, NanoAmpControl, NanoBypassTarget, ParameterInput, ParameterView } from "./shared/ipc/types";
+import type { DashboardSnapshot, LiveBlock, NanoAmpControl, NanoBypassTarget, NanoFxSlot, ParameterInput, ParameterView } from "./shared/ipc/types";
 
 interface Cell { row: number; column: number }
 
@@ -45,6 +46,10 @@ export function App() {
   // itself takes ~6 seconds and returns updated state, so the manual
   // refresh after it completes is sufficient.
   const [nanoWriteInProgress, setNanoWriteInProgress] = useState(false);
+  const nanoOperationsInProgress = useRef(0);
+  const [switchingDevice, setSwitchingDevice] = useState(false);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const deviceSwitchEpoch = useRef(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -63,9 +68,9 @@ export function App() {
         if (!cancelled) timer = window.setTimeout(refresh, 1000);
       }
     };
-    if (!nanoWriteInProgress) void refresh();
+    if (!nanoWriteInProgress && !switchingDevice) void refresh();
     return () => { cancelled = true; if (timer !== undefined) window.clearTimeout(timer); };
-  }, [nanoWriteInProgress]);
+  }, [nanoWriteInProgress, switchingDevice]);
 
   // Parameters are fetched for the selected cell only, not carried in the
   // one-second dashboard poll: they need the model catalog joined in, and
@@ -184,48 +189,76 @@ export function App() {
       setRetrying(false);
     }
   };
-  const setNanoAmp = async (control: NanoAmpControl, value: number) => {
+  const runNanoOperation = async <T,>(operation: () => Promise<T>): Promise<T> => {
+    nanoOperationsInProgress.current += 1;
     setNanoWriteInProgress(true);
     try {
+      return await operation();
+    } finally {
+      nanoOperationsInProgress.current -= 1;
+      setNanoWriteInProgress(nanoOperationsInProgress.current > 0);
+    }
+  };
+  const setNanoAmp = async (control: NanoAmpControl, value: number) => {
+    await runNanoOperation(async () => {
       await cortexApi.setNanoAmp(control, value);
       const next = await cortexApi.dashboard();
+      generation.current = next.status.cache.generation;
       setSnapshot(next);
-    } finally {
-      setNanoWriteInProgress(false);
-    }
+    });
   };
   const setNanoBypass = async (target: NanoBypassTarget, bypassed: boolean) => {
-    setNanoWriteInProgress(true);
-    try {
+    await runNanoOperation(async () => {
       await cortexApi.setNanoBypass(target, bypassed);
       const next = await cortexApi.dashboard();
+      generation.current = next.status.cache.generation;
       setSnapshot(next);
-    } finally {
-      setNanoWriteInProgress(false);
-    }
+    });
+  };
+  const readNanoFxParameters = async (slot: NanoFxSlot) => runNanoOperation(() => cortexApi.readNanoFxParams(slot));
+  const setNanoFxParameter = async (slot: NanoFxSlot, paramIndex: number, value: number) => {
+    return runNanoOperation(async () => {
+      await cortexApi.setNanoFxParam(slot, paramIndex, value);
+      const values = await cortexApi.readNanoFxParams(slot);
+      const next = await cortexApi.dashboard();
+      generation.current = next.status.cache.generation;
+      setSnapshot(next);
+      return values;
+    });
   };
   const switchDevice = async (device: "quad_cortex" | "nano_cortex" | "auto") => {
-    if (device === "auto") {
-      await cortexApi.setDevice(null);
-    } else {
-      await cortexApi.setDevice(device);
+    const epoch = ++deviceSwitchEpoch.current;
+    setSwitchingDevice(true);
+    setError(null);
+    try {
+      if (device === "auto") await cortexApi.setDevice(null);
+      else await cortexApi.setDevice(device);
+      const next = await cortexApi.dashboard();
+      if (deviceSwitchEpoch.current !== epoch) return;
+      generation.current = next.status.cache.generation;
+      setSelectedCell(null);
+      setParameters(null);
+      setSnapshot(next);
+    } catch (reason) {
+      if (deviceSwitchEpoch.current === epoch) setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      if (deviceSwitchEpoch.current === epoch) setSwitchingDevice(false);
     }
-    const next = await cortexApi.dashboard();
-    setSnapshot(next);
   };
 
   const currentDeviceLabel = nano ? "Nano Cortex" : "Quad Cortex";
   const currentDeviceKind = nano ? "nano_cortex" : "quad_cortex";
 
   return (
-    <AppShell header={{ height: 64 }} navbar={{ width: 250, breakpoint: "sm" }} padding="md">
+    <AppShell header={{ height: 64 }} navbar={{ width: 250, breakpoint: "sm", collapsed: { mobile: !mobileNavOpen } }} padding="md">
       <AppShell.Header p="md">
         <Group justify="space-between">
           <Group gap="xs">
+            <Burger aria-label="Toggle preset directory" hiddenFrom="sm" onClick={() => setMobileNavOpen((open) => !open)} opened={mobileNavOpen} size="sm" />
             <Title order={2}>cortex</Title>
             <Menu shadow="md" position="bottom-start" width={200}>
               <Menu.Target>
-                <Badge color="orange" style={{ cursor: "pointer" }} variant="filled">{currentDeviceLabel}</Badge>
+                <Button color="orange" size="compact-sm" variant="filled">{switchingDevice ? "Switching..." : currentDeviceLabel}</Button>
               </Menu.Target>
               <Menu.Dropdown>
                 <Menu.Label>Device</Menu.Label>
@@ -242,7 +275,7 @@ export function App() {
               </Menu.Dropdown>
             </Menu>
           </Group>
-          <Group gap="xs"><Badge color={snapshot.source === "fixture" ? "yellow" : connected ? "green" : "orange"}>{health}</Badge><Badge variant="outline">gen {snapshot.status.cache.generation} / rev {snapshot.status.cache.revision}</Badge></Group>
+          <Group gap="xs" visibleFrom="sm"><Badge color={snapshot.source === "fixture" ? "yellow" : connected ? "green" : "orange"}>{health}</Badge><Badge variant="outline">gen {snapshot.status.cache.generation} / rev {snapshot.status.cache.revision}</Badge></Group>
         </Group>
       </AppShell.Header>
       <AppShell.Navbar p="sm">
@@ -261,7 +294,7 @@ export function App() {
                   disabled={recalling !== null || !connected}
                   key={`${setlist.key}-${slot.index}`}
                   label={`${slot.slot}  ${slot.name}`}
-                  onClick={() => void recall(setlist.key, slot.slot)}
+                  onClick={() => { setMobileNavOpen(false); void recall(setlist.key, slot.slot); }}
                 />
               ))}
             </NavLink>
@@ -282,7 +315,13 @@ export function App() {
               </>}
             </Stack>
           </Alert>}
-          {nano && <NanoChain api={cortexApi} state={nano} />}
+          {nano && <ErrorBoundary name="Nano editor"><NanoChain
+            onReadFxParameters={readNanoFxParameters}
+            onSetAmp={setNanoAmp}
+            onSetBypass={setNanoBypass}
+            onSetFxParameter={setNanoFxParameter}
+            state={nano}
+          /></ErrorBoundary>}
           {live && <>
             <Group justify="space-between"><div><Text c="dimmed" size="sm">Working grid</Text><Title order={3}>{live.preset_name}{live.preset_dirty ? " *" : ""}</Title></div><Text>Scene {activeSceneName(live)}</Text></Group>
             <Paper p="md" withBorder>
@@ -306,33 +345,9 @@ export function App() {
                 <Grid blocks={live.blocks} selected={selected} onSelect={(block) => setSelectedCell({ row: block.row, column: block.column })} />
               </ErrorBoundary>
             </Paper>
-            <Paper p="md" withBorder>
-              <ErrorBoundary name="Inspector">
-                <Group align="flex-start" justify="space-between" wrap="wrap">
-                  <div>
-                    <Text c="dimmed" size="sm">Inspector</Text>
-                    <Title order={4}>{selected?.name ?? "Select a block"}</Title>
-                    <Text mt="sm">
-                      {selected
-                        ? `${selected.category} at row ${selected.screen_row}, column ${selected.column}.`
-                        : "Block details will appear here."}
-                    </Text>
-                    {selected?.based_on && <Text c="dimmed" mt="xs" size="sm">{selected.based_on}</Text>}
-                    {selected && (
-                      <Switch
-                        // Not disabled while writing: a disabled control cannot
-                        // hold focus, which is the fault recorded in
-                        // SceneSelector and ParameterEditor.
-                        checked={selected.bypassed}
-                        description="Applies to the active scene only, as the device stores it"
-                        disabled={!connected}
-                        label={selected.bypassed ? "Bypassed" : "Engaged"}
-                        mt="md"
-                        onChange={(event) => void toggleBypass(event.currentTarget.checked)}
-                      />
-                    )}
-                  </div>
-                  <div>
+            <ErrorBoundary name="Inspector">
+              <InspectorPanel
+                aside={<div>
                     <Text c="dimmed" size="sm">DSP load</Text>
                     <Text>{live.cpu_load?.total == null ? "awaiting device push" : `${live.cpu_load.total.toFixed(1)}%`}</Text>
                     {live.cpu_load?.chains.map((chain, row) => (
@@ -340,9 +355,22 @@ export function App() {
                         Row {row + 1}: {chain.map((column) => `${column.load.toFixed(1)}${column.on_core2 ? "*" : ""}`).join("  ")}
                       </Text>
                     ))}
-                  </div>
-                </Group>
-
+                  </div>}
+                id="quad-block-inspector"
+                onClose={selected ? () => setSelectedCell(null) : undefined}
+                summary={<>
+                  <Text mt="sm">{selected ? `${selected.category} at row ${selected.screen_row}, column ${selected.column}.` : "Block details will appear here."}</Text>
+                  {selected?.based_on && <Text c="dimmed" mt="xs" size="sm">{selected.based_on}</Text>}
+                </>}
+                title={selected?.name ?? "Select a block"}
+              >
+                {selected && <Switch
+                  checked={selected.bypassed}
+                  description="Applies to the active scene only, as the device stores it"
+                  disabled={!connected}
+                  label={selected.bypassed ? "Bypassed" : "Engaged"}
+                  onChange={(event) => void toggleBypass(event.currentTarget.checked)}
+                />}
                 {selected && (
                   <>
                     <Divider label="Parameters" labelPosition="left" my="md" />
@@ -357,8 +385,8 @@ export function App() {
                     )}
                   </>
                 )}
-              </ErrorBoundary>
-            </Paper>
+              </InspectorPanel>
+            </ErrorBoundary>
           </>}
         </Stack>
       </AppShell.Main>

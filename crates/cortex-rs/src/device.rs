@@ -22,9 +22,9 @@ pub enum DeviceKind {
     /// The Neural DSP Quad Cortex. The primary verification target.
     #[default]
     QuadCortex,
-    /// The Neural DSP Nano Cortex (internal codename `ATMA`). Its HID framing
-    /// and read-only state exchange are hardware-verified; runtime support is
-    /// provisional until the Nano-specific codec is implemented.
+    /// The Neural DSP Nano Cortex (internal codename `ATMA`). Its HID framing,
+    /// state exchange and selected non-persistent amp/bypass edits are
+    /// hardware-verified; FX and wider application support remain provisional.
     NanoCortex,
 }
 

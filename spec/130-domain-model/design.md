@@ -43,7 +43,7 @@ pub enum DeviceKind {
 }
 ```
 
-`NanoCortex` is labelled provisional because application runtime support is not implemented. Hardware confirms VID:PID `152A:88E7`, 65-byte HID reports, shared flag framing, and a decoded state exchange. `DeviceKind` now carries that PID and geometry, while the Quad message request and session paths reject Nano before USB I/O so its four-byte footer can never reach the Quad eight-byte parser.
+`NanoCortex` is labelled provisional because application coverage remains partial. Hardware confirms VID:PID `152A:88E7`, 65-byte HID reports, shared flag framing, decoded state exchange, and selected non-persistent amp/bypass operations; FX parameter operations remain provisional. `DeviceKind` carries that PID and geometry, while the Quad message request and session paths reject Nano before USB I/O so its four-byte footer can never reach the Quad eight-byte parser.
 
 The `vid_pid()` method is `const fn` so it can be used in `const` contexts (e.g. a static lookup table in the transport layer).
 
