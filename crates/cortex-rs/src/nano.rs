@@ -3,21 +3,28 @@
 // SPDX-FileCopyrightText: 2026 Nano Cortex Web Editor Contributors
 // SPDX-License-Identifier: AGPL-3.0-or-later AND Apache-2.0 AND MIT
 
-//! Nano Cortex application envelope and read-only current-state model.
+//! Nano Cortex application envelope, current-state model, and bounded
+//! working-state operations.
 //!
 //! The Nano shares the Quad's HID framing, but not its application envelope or
 //! domain model. Its current-state response is a protobuf-style body followed
 //! by a four-byte footer. The field map is adapted from the Apache-2.0-licensed
 //! `rixrix/deskop-nano-cortex` decoder, which credits the MIT-licensed
-//! `choldy/nano-cortex-web-editor`; see `THIRD-PARTY-NOTICES.md`.
+//! `choldy/nano-cortex-web-editor`. The Gate-reduction write layout follows
+//! the same licensed sources; see `THIRD-PARTY-NOTICES.md`.
 //!
 //! @see spec/roadmap.md [NANO-001.3]
 //! @see spec/110-framing/design.md
 
 use crate::{Error, Result};
 
+#[cfg(any(feature = "hid", test))]
+use crate::link::HidLink;
+
 #[cfg(feature = "hid")]
-use crate::{Frame, FrameReassembler, Transport};
+use crate::Transport;
+#[cfg(any(feature = "hid", test))]
+use crate::link::read_message;
 
 /// Hardware-verified read-only request for the complete Nano current state.
 ///
@@ -37,6 +44,7 @@ const CONFIRMATION_FOOTER: NanoFooter = NanoFooter([0x85, 0x00, 0x00, 0x00]);
 pub struct NanoFooter(pub [u8; 4]);
 
 /// Fixed roles in the Nano Cortex signal chain, in signal-flow order.
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum NanoSlotRole {
@@ -59,6 +67,7 @@ pub enum NanoSlotRole {
 }
 
 /// One role in the fixed Nano signal chain.
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct NanoSlotState {
     /// Position and function of this slot.
@@ -66,12 +75,14 @@ pub struct NanoSlotState {
     /// Assigned Capture or IR name when the state message supplies one.
     pub loaded_name: Option<String>,
     /// Numeric model identifier for one of the five variable FX slots.
+    #[cfg_attr(feature = "typescript", ts(type = "number | null"))]
     pub model_id: Option<u64>,
     /// Bypass state when present in the current-state message.
     pub bypassed: Option<bool>,
 }
 
 /// Raw 0-255 values for the Nano's five amplifier controls.
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct NanoAmpState {
     /// Gain control.
@@ -101,6 +112,7 @@ impl NanoAmpState {
 }
 
 /// One of the Nano's five amplifier controls.
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum NanoAmpControl {
@@ -117,6 +129,7 @@ pub enum NanoAmpControl {
 }
 
 /// Nano roles addressable by the measured bypass command.
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum NanoBypassTarget {
@@ -188,8 +201,8 @@ pub fn build_set_amp(control: NanoAmpControl, value: u8) -> Vec<u8> {
 ///
 /// # Errors
 ///
-/// Returns a transport error, or rejects a transport opened for another
-/// device before any write.
+/// Returns a transport error or rejects a transport opened for another device
+/// before any write.
 #[cfg(feature = "hid")]
 pub fn write_amp(transport: &Transport, control: NanoAmpControl, value: u8) -> Result<()> {
     if transport.device_kind() != crate::DeviceKind::NanoCortex {
@@ -199,6 +212,45 @@ pub fn write_amp(transport: &Transport, control: NanoAmpControl, value: u8) -> R
         });
     }
     transport.write(&build_set_amp(control, value))
+}
+
+/// Build the Nano application body that sets Gate reduction as a percentage.
+/// HID framing is added separately by the shared framing layer.
+///
+/// # Errors
+///
+/// Returns [`Error::InvalidParameter`] when `percent` is greater than 100.
+pub fn build_set_gate_reduction(percent: u8) -> Result<Vec<u8>> {
+    if percent > 100 {
+        return Err(Error::InvalidParameter(format!(
+            "Nano Gate reduction must be 0-100%, got {percent}"
+        )));
+    }
+    let mut body = vec![0x18, 0x0b, 0x20];
+    push_varint(&mut body, u64::from(percent) + 108);
+    body.extend([0x28, 0x00, 0x1a, 0x00, 0x00, 0x00]);
+    Ok(body)
+}
+
+/// Send one Nano Gate-reduction write. Callers must not treat the successful
+/// transport write as confirmation: wait for the state-read pacing interval
+/// and verify with a separate [`read_current_state`] request.
+///
+/// # Errors
+///
+/// Returns [`Error::InvalidParameter`] for a percentage greater than 100, a
+/// transport error, or rejects a transport opened for another device before
+/// any write.
+#[cfg(feature = "hid")]
+pub fn write_gate_reduction(transport: &Transport, percent: u8) -> Result<()> {
+    let body = build_set_gate_reduction(percent)?;
+    if transport.device_kind() != crate::DeviceKind::NanoCortex {
+        return Err(Error::UnsupportedDeviceOperation {
+            device: transport.device_kind(),
+            operation: "Nano Gate-reduction write",
+        });
+    }
+    transport.write(&body)
 }
 
 /// Build the Nano application body that bypasses or enables Gate/FX.
@@ -223,8 +275,9 @@ pub fn build_set_bypass(target: NanoBypassTarget, bypassed: bool) -> [u8; 10] {
 ///
 /// # Errors
 ///
-/// Returns a transport error, or rejects a transport opened for another
-/// device before any write.
+/// Returns [`Error::InvalidParameter`] for a non-finite or out-of-range value,
+/// a transport error, or rejects a transport opened for another device before
+/// any write.
 #[cfg(feature = "hid")]
 pub fn write_bypass(transport: &Transport, target: NanoBypassTarget, bypassed: bool) -> Result<()> {
     if transport.device_kind() != crate::DeviceKind::NanoCortex {
@@ -239,6 +292,7 @@ pub fn write_bypass(transport: &Transport, target: NanoBypassTarget, bypassed: b
 /// One of the Nano's five editable FX slots, addressable by the parameter
 /// refresh and write commands. The wire index maps to the fixed chain order:
 /// 0 = Pre FX 1, 1 = Pre FX 2, 2 = Post FX 1, 3 = Post FX 2, 4 = Post FX 3.
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum NanoFxSlot {
@@ -290,18 +344,21 @@ pub fn build_fx_param_refresh(slot: NanoFxSlot) -> [u8; 8] {
 }
 
 /// Build the Nano application body that sets one FX parameter to a normalized
-/// 0.0-1.0 value. The value is clamped before encoding.
-#[must_use]
-pub fn build_fx_param_write(slot: NanoFxSlot, param_index: u8, normalized: f32) -> Vec<u8> {
-    let value = if normalized.is_finite() {
-        normalized.clamp(0.0, 1.0)
-    } else {
-        0.0
-    };
+/// 0.0-1.0 value.
+///
+/// # Errors
+///
+/// Returns [`Error::InvalidParameter`] for a non-finite or out-of-range value.
+pub fn build_fx_param_write(slot: NanoFxSlot, param_index: u8, normalized: f32) -> Result<Vec<u8>> {
+    if !normalized.is_finite() || !(0.0..=1.0).contains(&normalized) {
+        return Err(Error::InvalidParameter(format!(
+            "Nano FX parameter value must be finite and normalized to 0-1, got {normalized}"
+        )));
+    }
     let mut body = vec![0x08, 0x01, 0x18, slot.wire_id(), 0x20, param_index, 0x2d];
-    body.extend(value.to_le_bytes());
+    body.extend(normalized.to_le_bytes());
     body.extend([0x63, 0x00, 0x00, 0x00]);
-    body
+    Ok(body)
 }
 
 /// Read and decode FX parameter values for one editable slot from an open
@@ -324,31 +381,116 @@ pub fn read_fx_params(
             operation: "Nano FX parameter refresh",
         });
     }
-    transport.write(&build_fx_param_refresh(slot))?;
+    read_fx_params_from_link(transport.raw_device(), slot, timeout)
+}
+
+/// Read Nano FX parameters through a raw HID link.
+///
+/// This is deliberately link-based so the Nano-specific envelope can be
+/// regression-tested without a physical device. Callers that own a
+/// [`Transport`] must use [`read_fx_params`], which first verifies the device
+/// family.
+#[cfg(any(feature = "hid", test))]
+fn read_fx_params_from_link(
+    link: &impl HidLink,
+    slot: NanoFxSlot,
+    timeout: std::time::Duration,
+) -> Result<Vec<f32>> {
+    write_nano_message(link, &build_fx_param_refresh(slot))?;
     let deadline = std::time::Instant::now() + timeout;
-    let mut reassembler = FrameReassembler::new();
     loop {
         let remaining = deadline.saturating_duration_since(std::time::Instant::now());
         if remaining.is_zero() {
             return Err(Error::ReadTimeout(timeout));
         }
-        let report = transport.read(remaining)?;
-        let frame = Frame::parse(&report)?;
-        if let Some(message) = reassembler.feed(&frame)? {
-            // The refresh reply shape: 08 06 22 <len> <f32 values...> <footer>
-            if message.len() >= 4 && message[0] == 0x08 && message[1] == 0x06 && message[2] == 0x22
-            {
-                let val_len = message[3] as usize;
-                if val_len > 0 && val_len % 4 == 0 && message.len() >= 4 + val_len {
-                    return Ok(message[4..4 + val_len]
-                        .chunks_exact(4)
-                        .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
-                        .collect());
-                }
-            }
-            // Skip unrelated messages (ack footers, etc.)
+        let message = read_message(
+            link,
+            crate::framing::HidReportGeometry::NANO_CORTEX,
+            remaining,
+        )?;
+        if let Some(values) = decode_fx_param_refresh_response(&message)? {
+            return Ok(values);
+        }
+        // Skip unrelated messages (ack footers, etc.)
+    }
+}
+
+#[cfg(any(feature = "hid", test))]
+fn write_nano_message(link: &impl HidLink, message: &[u8]) -> Result<()> {
+    for report in
+        crate::framing::encode_reports(crate::framing::HidReportGeometry::NANO_CORTEX, message)
+    {
+        let written = link.write(&report)?;
+        if written != report.len() {
+            return Err(Error::Framing(format!(
+                "short HID write: wrote {written} of {} bytes",
+                report.len()
+            )));
         }
     }
+    Ok(())
+}
+
+/// Decode one FX parameter refresh response, ignoring unrelated Nano messages.
+///
+/// The measured response has no slot or request identifier. The held daemon
+/// serializes Nano operations, but an older queued response remains
+/// wire-indistinguishable from the requested slot's reply.
+#[cfg(any(feature = "hid", test))]
+fn decode_fx_param_refresh_response(message: &[u8]) -> Result<Option<Vec<f32>>> {
+    if message.len() < 4 {
+        return Ok(None);
+    }
+    let (body, footer) = split_envelope(message)?;
+    if footer == CONFIRMATION_FOOTER {
+        return Err(decode_confirmation(body)?);
+    }
+    let is_fx_refresh = body.len() >= 3 && body[..3] == [0x08, 0x06, 0x22];
+    if footer != FX_PARAM_REFRESH_FOOTER {
+        return if is_fx_refresh {
+            Err(Error::Decode(
+                "Nano FX parameter refresh has an unexpected footer".into(),
+            ))
+        } else {
+            Ok(None)
+        };
+    }
+    // The refresh reply shape: 08 06 22 <length> <f32 values...> 8a 00 00 00.
+    if !is_fx_refresh {
+        return Err(Error::Decode(
+            "Nano FX parameter refresh has an unexpected body".into(),
+        ));
+    }
+    if body.len() < 4 {
+        return Err(Error::Decode(
+            "Nano FX parameter refresh is missing its length".into(),
+        ));
+    }
+    let value_len = body[3] as usize;
+    if value_len % 4 != 0 {
+        return Err(Error::Decode(
+            "Nano FX parameter refresh has a non-float value length".into(),
+        ));
+    }
+    let expected_len = 4 + value_len;
+    if body.len() != expected_len {
+        return Err(Error::Decode(
+            "Nano FX parameter refresh has an unexpected message length".into(),
+        ));
+    }
+    let values = body[4..]
+        .chunks_exact(4)
+        .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+        .collect::<Vec<_>>();
+    if values
+        .iter()
+        .any(|value| !value.is_finite() || !(0.0..=1.0).contains(value))
+    {
+        return Err(Error::Decode(
+            "Nano FX parameter refresh contains a non-normalized value".into(),
+        ));
+    }
+    Ok(Some(values))
 }
 
 /// Send one Nano FX parameter write. The device does not acknowledge; callers
@@ -372,7 +514,7 @@ pub fn write_fx_param(
             operation: "Nano FX parameter write",
         });
     }
-    transport.write(&build_fx_param_write(slot, param_index, normalized))
+    transport.write(&build_fx_param_write(slot, param_index, normalized)?)
 }
 
 fn push_varint(output: &mut Vec<u8>, mut value: u64) {
@@ -390,6 +532,7 @@ fn push_varint(output: &mut Vec<u8>, mut value: u64) {
 }
 
 /// Assignments of the four Nano footswitch actions.
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct NanoFootswitchAssignments {
     /// Switch I, action A.
@@ -408,6 +551,7 @@ pub struct NanoFootswitchAssignments {
 /// not zero, false, or an empty string. `slots` always contains the eight fixed
 /// roles in signal-flow order so hosts can render one chain without pretending
 /// it is a Quad grid.
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct NanoCurrentState {
     /// Firmware string supplied by the device, if present.
@@ -584,25 +728,25 @@ pub fn read_current_state(
         });
     }
 
-    transport.write(&CURRENT_STATE_REQUEST)?;
+    write_nano_message(transport.raw_device(), &CURRENT_STATE_REQUEST)?;
     let deadline = std::time::Instant::now() + timeout;
-    let mut reassembler = FrameReassembler::new();
     loop {
         let remaining = deadline.saturating_duration_since(std::time::Instant::now());
         if remaining.is_zero() {
             return Err(Error::ReadTimeout(timeout));
         }
-        let report = transport.read(remaining)?;
-        let frame = Frame::parse(&report)?;
-        if let Some(message) = reassembler.feed(&frame)? {
-            let (_, footer) = split_envelope(&message)?;
-            if footer == CURRENT_STATE_RESPONSE_FOOTER || footer == CONFIRMATION_FOOTER {
-                return decode_current_state(&message);
-            }
-            // A write response can remain queued ahead of the requested state
-            // response. It has its own command footer and is not a decode
-            // failure for this request.
+        let message = read_message(
+            transport.raw_device(),
+            crate::framing::HidReportGeometry::NANO_CORTEX,
+            remaining,
+        )?;
+        let (_, footer) = split_envelope(&message)?;
+        if footer == CURRENT_STATE_RESPONSE_FOOTER || footer == CONFIRMATION_FOOTER {
+            return decode_current_state(&message);
         }
+        // A write response can remain queued ahead of the requested state
+        // response. It has its own command footer and is not a decode failure
+        // for this request.
     }
 }
 
@@ -769,7 +913,9 @@ fn gate_reduction_from_dump_value(value: f32) -> Option<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Frame, FrameReassembler, HidReportGeometry, framing::encode_reports};
+    use crate::{
+        Frame, FrameReassembler, HidReportGeometry, framing::encode_reports, link::FakeLink,
+    };
 
     fn varint(mut value: u64) -> Vec<u8> {
         let mut bytes = Vec::new();
@@ -864,6 +1010,34 @@ mod tests {
     }
 
     #[test]
+    fn gate_reduction_builder_encodes_the_offset_and_varint_boundary() {
+        assert_eq!(
+            build_set_gate_reduction(0).unwrap(),
+            [0x18, 0x0b, 0x20, 0x6c, 0x28, 0, 0x1a, 0, 0, 0]
+        );
+        assert_eq!(
+            build_set_gate_reduction(19).unwrap(),
+            [0x18, 0x0b, 0x20, 0x7f, 0x28, 0, 0x1a, 0, 0, 0]
+        );
+        assert_eq!(
+            build_set_gate_reduction(20).unwrap(),
+            [0x18, 0x0b, 0x20, 0x80, 0x01, 0x28, 0, 0x1a, 0, 0, 0]
+        );
+        assert_eq!(
+            build_set_gate_reduction(100).unwrap(),
+            [0x18, 0x0b, 0x20, 0xd0, 0x01, 0x28, 0, 0x1a, 0, 0, 0]
+        );
+    }
+
+    #[test]
+    fn gate_reduction_builder_rejects_values_above_one_hundred() {
+        assert!(matches!(
+            build_set_gate_reduction(101),
+            Err(Error::InvalidParameter(_))
+        ));
+    }
+
+    #[test]
     fn bypass_builder_covers_only_gate_and_the_five_variable_fx_roles() {
         assert_eq!(
             build_set_bypass(NanoBypassTarget::PreFx1, false),
@@ -888,8 +1062,85 @@ mod tests {
     }
 
     #[test]
+    fn fx_param_refresh_reply_requires_its_measured_footer() {
+        let mut response = vec![0x08, 0x06, 0x22, 8];
+        response.extend(0.25_f32.to_le_bytes());
+        response.extend(0.75_f32.to_le_bytes());
+        response.extend(FX_PARAM_REFRESH_FOOTER.0);
+        assert_eq!(
+            decode_fx_param_refresh_response(&response).unwrap(),
+            Some(vec![0.25, 0.75])
+        );
+
+        *response.last_mut().unwrap() = 1;
+        assert!(decode_fx_param_refresh_response(&response).is_err());
+        assert!(matches!(
+            decode_fx_param_refresh_response(&[0x08, 0x01]),
+            Ok(None)
+        ));
+    }
+
+    #[test]
+    fn fx_param_refresh_preserves_the_measured_busy_confirmation() {
+        let mut response = Vec::new();
+        field_varint(&mut response, 1, 3);
+        field_bytes(&mut response, 4, b"Device is busy!");
+        response.extend(CONFIRMATION_FOOTER.0);
+
+        assert!(matches!(
+            decode_fx_param_refresh_response(&response),
+            Err(Error::DeviceBusy {
+                device: crate::DeviceKind::NanoCortex
+            })
+        ));
+    }
+
+    #[test]
+    fn fx_param_refresh_rejects_non_normalized_values() {
+        for value in [1.5, f32::NAN] {
+            let mut response = vec![0x08, 0x06, 0x22, 4];
+            response.extend(value.to_le_bytes());
+            response.extend(FX_PARAM_REFRESH_FOOTER.0);
+            assert!(matches!(
+                decode_fx_param_refresh_response(&response),
+                Err(Error::Decode(_))
+            ));
+        }
+    }
+
+    #[test]
+    fn fx_param_refresh_uses_the_hid_link_and_skips_unrelated_messages() {
+        let link = FakeLink::new();
+        let unrelated = encode_reports(HidReportGeometry::NANO_CORTEX, &[0x08, 0x01, 0, 0, 0, 0]);
+        let mut response = vec![0x08, 0x06, 0x22, 4];
+        response.extend(0.5_f32.to_le_bytes());
+        response.extend(FX_PARAM_REFRESH_FOOTER.0);
+        let response = encode_reports(HidReportGeometry::NANO_CORTEX, &response);
+        for report in unrelated.into_iter().chain(response) {
+            link.push_inbound(report);
+        }
+
+        assert_eq!(
+            read_fx_params_from_link(
+                &link,
+                NanoFxSlot::PostFx1,
+                std::time::Duration::from_millis(20)
+            )
+            .unwrap(),
+            vec![0.5]
+        );
+        assert_eq!(
+            link.written(),
+            encode_reports(
+                HidReportGeometry::NANO_CORTEX,
+                &build_fx_param_refresh(NanoFxSlot::PostFx1)
+            )
+        );
+    }
+
+    #[test]
     fn fx_param_write_builder_encodes_little_endian_float_with_footer_63() {
-        let body = build_fx_param_write(NanoFxSlot::PostFx1, 0, 0.5);
+        let body = build_fx_param_write(NanoFxSlot::PostFx1, 0, 0.5).unwrap();
         assert_eq!(
             body,
             vec![
@@ -899,11 +1150,13 @@ mod tests {
     }
 
     #[test]
-    fn fx_param_write_clamps_out_of_range_values() {
-        let high = build_fx_param_write(NanoFxSlot::PreFx1, 1, 2.0);
-        assert_eq!(&high[7..11], &1.0f32.to_le_bytes());
-        let low = build_fx_param_write(NanoFxSlot::PreFx1, 1, -1.0);
-        assert_eq!(&low[7..11], &0.0f32.to_le_bytes());
+    fn fx_param_write_rejects_invalid_values_instead_of_mutating_the_device() {
+        for value in [-1.0, 2.0, f32::NAN, f32::INFINITY] {
+            assert!(matches!(
+                build_fx_param_write(NanoFxSlot::PreFx1, 1, value),
+                Err(Error::InvalidParameter(_))
+            ));
+        }
     }
 
     #[test]

@@ -11,6 +11,18 @@ use serde_json::{Map, Value, json};
 /// The row numbering warning required on every row-taking operation.
 pub const ROW_TRAP: &str = "Rows are zero-based 0-3 in this API but labelled 1-4 on the unit; the wrong row succeeds silently.";
 
+/// The device family a tool can run against.
+#[derive(Debug, Clone, Copy, Eq, PartialEq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DeviceRequirement {
+    /// The operation reads daemon state and is valid for either device family.
+    Any,
+    /// The operation requires a held Quad Cortex session.
+    Quad,
+    /// The operation requires a held Nano Cortex session.
+    Nano,
+}
+
 /// One bounded agent-facing operation contract.
 #[derive(Debug, Clone)]
 pub struct ToolSpec {
@@ -22,6 +34,8 @@ pub struct ToolSpec {
     pub input_schema: Map<String, Value>,
     /// Whether the operation has no device-visible side effect.
     pub read_only: bool,
+    /// Device family required by the operation, independent of its tool name.
+    pub device_requirement: DeviceRequirement,
 }
 
 /// The canonical operation registry for agent-facing CLI discovery and MCP.
@@ -35,15 +49,15 @@ pub fn tools() -> Vec<ToolSpec> {
 
 fn reads() -> Vec<ToolSpec> {
     vec![
-        spec(
+        any_spec(
             "get_status",
             "Read held-session health and cache status.",
             empty_schema(),
             true,
         ),
-        spec(
+        nano_spec(
             "read_nano_state",
-            "Read the Nano Cortex fixed eight-role chain and raw amp controls. Read-only; requires a Nano-owned held session.",
+            "Read the Nano Cortex fixed eight-role chain, raw amp controls and optional Gate reduction. Read-only; requires a Nano-owned held session.",
             empty_schema(),
             true,
         ),
@@ -175,7 +189,7 @@ fn scenes() -> Vec<ToolSpec> {
 #[allow(clippy::too_many_lines)]
 fn grid_edits() -> Vec<ToolSpec> {
     vec![
-        spec(
+        nano_spec(
             "set_nano_amp",
             "Set one Nano amp control to a raw 0-255 value. Changes heard working state, saves nothing, and succeeds only after a fresh state read confirms the value. Requires a Nano-owned held session and takes about six seconds.",
             object_schema(
@@ -184,7 +198,16 @@ fn grid_edits() -> Vec<ToolSpec> {
             ),
             false,
         ),
-        spec(
+        nano_spec(
+            "set_nano_gate_reduction",
+            "Set Nano Gate reduction to 0-100%. Changes heard working state, saves nothing, and succeeds only after a fresh state read confirms the percentage. Requires a Nano-owned held session and takes about six seconds.",
+            object_schema(
+                &json!({"percent":{"type":"integer","minimum":0,"maximum":100}}),
+                &["percent"],
+            ),
+            false,
+        ),
+        nano_spec(
             "set_nano_bypass",
             "Bypass or engage one Nano Gate/FX role. Changes heard working state, saves nothing, and succeeds only after a fresh state read confirms the value. Requires a Nano-owned held session and takes about six seconds.",
             object_schema(
@@ -193,7 +216,7 @@ fn grid_edits() -> Vec<ToolSpec> {
             ),
             false,
         ),
-        spec(
+        nano_spec(
             "read_nano_fx_params",
             "Read normalized 0.0-1.0 FX parameter values for one editable Nano slot. Read-only; requires a Nano-owned held session.",
             object_schema(
@@ -202,7 +225,7 @@ fn grid_edits() -> Vec<ToolSpec> {
             ),
             true,
         ),
-        spec(
+        nano_spec(
             "set_nano_fx_param",
             "Set one Nano FX parameter to a normalized 0.0-1.0 value. Changes heard working state, saves nothing, and succeeds only after a fresh read confirms the value. Requires a Nano-owned held session.",
             object_schema(
@@ -314,7 +337,28 @@ fn spec(
         description: description.into(),
         input_schema,
         read_only,
+        device_requirement: DeviceRequirement::Quad,
     }
+}
+fn nano_spec(
+    name: &'static str,
+    description: impl Into<String>,
+    input_schema: Map<String, Value>,
+    read_only: bool,
+) -> ToolSpec {
+    let mut tool = spec(name, description, input_schema, read_only);
+    tool.device_requirement = DeviceRequirement::Nano;
+    tool
+}
+fn any_spec(
+    name: &'static str,
+    description: impl Into<String>,
+    input_schema: Map<String, Value>,
+    read_only: bool,
+) -> ToolSpec {
+    let mut tool = spec(name, description, input_schema, read_only);
+    tool.device_requirement = DeviceRequirement::Any;
+    tool
 }
 fn empty_schema() -> Map<String, Value> {
     object_schema(&json!({}), &[])
@@ -444,5 +488,25 @@ mod tests {
                 tool.name
             );
         }
+    }
+
+    #[test]
+    fn device_requirements_are_explicit_not_name_derived() {
+        let requirement = |name| {
+            tools()
+                .into_iter()
+                .find(|tool| tool.name == name)
+                .map(|tool| tool.device_requirement)
+        };
+
+        assert_eq!(requirement("get_status"), Some(DeviceRequirement::Any));
+        assert_eq!(
+            requirement("read_nano_state"),
+            Some(DeviceRequirement::Nano)
+        );
+        assert_eq!(
+            requirement("read_current_preset"),
+            Some(DeviceRequirement::Quad)
+        );
     }
 }

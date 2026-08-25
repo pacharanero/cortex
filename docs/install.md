@@ -3,7 +3,7 @@
 ## Released Linux Install
 
 - **Linux x86_64 only.** The leaf crate is portable, but released CLI/MCP host binaries currently support only Linux x86_64. Windows named pipes and native Windows/macOS lifecycle and hardware paths remain unimplemented or unverified.
-- A **Quad Cortex** for the currently supported runtime, connected by USB and powered on. The udev rule also recognizes Nano Cortex hardware, whose toolkit integration remains in development.
+- A **Quad Cortex or Nano Cortex**, connected by USB and powered on. Quad provides the full grid/session surface; Nano provides typed state plus non-persistent amp, bypass and raw FX parameter operations, while Gate reduction remains hardware-provisional.
 
 ```sh
 curl -LsSf https://pacharanero.github.io/cortex/install.sh | sh

@@ -154,7 +154,7 @@ impl DaemonClient {
     }
 }
 
-fn ensure_compatible(status: &Status, request: &Request) -> Result<()> {
+pub(crate) fn ensure_compatible(status: &Status, request: &Request) -> Result<()> {
     let daemon_version = status.daemon_version.parse::<u32>().unwrap_or(0);
     if daemon_version != DAEMON_PROTOCOL_VERSION && !matches!(request, Request::Shutdown) {
         anyhow::bail!(

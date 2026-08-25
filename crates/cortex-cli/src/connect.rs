@@ -377,6 +377,10 @@ impl Daemon {
                 DaemonErrorCode::Protocol,
                 "the held session owns a Quad Cortex; start it with `--device nano`",
             ),
+            Request::NanoSetGateReduction { .. } => Response::coded_error(
+                DaemonErrorCode::Protocol,
+                "the held session owns a Quad Cortex; start it with `--device nano`",
+            ),
             Request::NanoSetBypass { .. } => Response::coded_error(
                 DaemonErrorCode::Protocol,
                 "the held session owns a Quad Cortex; start it with `--device nano`",
@@ -1284,22 +1288,128 @@ fn reconnect_loop<F>(
     }
 }
 
-struct NanoDaemon {
-    transport: Mutex<Transport>,
+trait NanoOperations: Send {
+    fn read_state(
+        &mut self,
+        timeout: Duration,
+    ) -> cortex_rs::Result<cortex_rs::nano::NanoCurrentState>;
+    fn write_amp(
+        &mut self,
+        control: cortex_rs::nano::NanoAmpControl,
+        value: u8,
+    ) -> cortex_rs::Result<()>;
+    fn write_gate_reduction(&mut self, percent: u8) -> cortex_rs::Result<()>;
+    fn write_bypass(
+        &mut self,
+        target: cortex_rs::nano::NanoBypassTarget,
+        bypassed: bool,
+    ) -> cortex_rs::Result<()>;
+    fn read_fx_params(
+        &mut self,
+        slot: cortex_rs::nano::NanoFxSlot,
+        timeout: Duration,
+    ) -> cortex_rs::Result<Vec<f32>>;
+    fn write_fx_param(
+        &mut self,
+        slot: cortex_rs::nano::NanoFxSlot,
+        param_index: u8,
+        value: f32,
+    ) -> cortex_rs::Result<()>;
+    fn reconnect(&mut self) -> cortex_rs::Result<()>;
+}
+
+struct NanoTransport {
+    inner: Option<Transport>,
+}
+
+impl NanoTransport {
+    fn new(transport: Transport) -> Self {
+        Self {
+            inner: Some(transport),
+        }
+    }
+
+    fn transport(&mut self) -> cortex_rs::Result<&Transport> {
+        if self.inner.is_none() {
+            self.reconnect()?;
+        }
+        Ok(self.inner.as_ref().expect("transport opened above"))
+    }
+}
+
+impl NanoOperations for NanoTransport {
+    fn read_state(
+        &mut self,
+        timeout: Duration,
+    ) -> cortex_rs::Result<cortex_rs::nano::NanoCurrentState> {
+        cortex_rs::nano::read_current_state(self.transport()?, timeout)
+    }
+
+    fn write_amp(
+        &mut self,
+        control: cortex_rs::nano::NanoAmpControl,
+        value: u8,
+    ) -> cortex_rs::Result<()> {
+        cortex_rs::nano::write_amp(self.transport()?, control, value)
+    }
+
+    fn write_gate_reduction(&mut self, percent: u8) -> cortex_rs::Result<()> {
+        cortex_rs::nano::write_gate_reduction(self.transport()?, percent)
+    }
+
+    fn write_bypass(
+        &mut self,
+        target: cortex_rs::nano::NanoBypassTarget,
+        bypassed: bool,
+    ) -> cortex_rs::Result<()> {
+        cortex_rs::nano::write_bypass(self.transport()?, target, bypassed)
+    }
+
+    fn read_fx_params(
+        &mut self,
+        slot: cortex_rs::nano::NanoFxSlot,
+        timeout: Duration,
+    ) -> cortex_rs::Result<Vec<f32>> {
+        cortex_rs::nano::read_fx_params(self.transport()?, slot, timeout)
+    }
+
+    fn write_fx_param(
+        &mut self,
+        slot: cortex_rs::nano::NanoFxSlot,
+        param_index: u8,
+        value: f32,
+    ) -> cortex_rs::Result<()> {
+        cortex_rs::nano::write_fx_param(self.transport()?, slot, param_index, value)
+    }
+
+    fn reconnect(&mut self) -> cortex_rs::Result<()> {
+        self.inner.take();
+        self.inner = Some(Transport::open(DeviceKind::NanoCortex)?);
+        Ok(())
+    }
+}
+
+struct NanoDaemon<T = NanoTransport> {
+    transport: Mutex<T>,
     state: Mutex<NanoCache>,
     health: Mutex<DeviceHealth>,
+    accepting_device_requests: AtomicBool,
     started: Instant,
     lifecycle: DaemonLifecycle,
+    amp_settle: Duration,
+    fx_settle: Duration,
 }
 
 struct NanoCache {
     snapshot: cortex_rs::nano::NanoCurrentState,
+    generation: u64,
     last_attempt: Instant,
     last_received: Instant,
     revision: u64,
+    phase: cortex_rs::CachePhase,
 }
 
-impl NanoDaemon {
+impl NanoDaemon<NanoTransport> {
     fn connect(lifecycle: DaemonLifecycle) -> Result<Self> {
         eprintln!("cortex session: opening Nano Cortex ...");
         let transport = Transport::open(DeviceKind::NanoCortex)?;
@@ -1307,31 +1417,257 @@ impl NanoDaemon {
         let state = cortex_rs::nano::read_current_state(&transport, Duration::from_secs(5))?;
         eprintln!("cortex session: Nano Cortex connected");
         Ok(Self {
-            transport: Mutex::new(transport),
+            transport: Mutex::new(NanoTransport::new(transport)),
             state: Mutex::new(NanoCache {
                 snapshot: state,
+                generation: 1,
                 last_attempt: Instant::now(),
                 last_received: Instant::now(),
                 revision: 1,
+                phase: cortex_rs::CachePhase::Live,
             }),
             health: Mutex::new(DeviceHealth::Connected {
                 serial: None,
                 coros_version: None,
                 last_message_seconds: 0,
             }),
+            accepting_device_requests: AtomicBool::new(true),
             started: Instant::now(),
             lifecycle,
+            amp_settle: Duration::from_secs(6),
+            fx_settle: Duration::from_secs(2),
         })
+    }
+}
+
+impl<T: NanoOperations> NanoDaemon<T> {
+    fn mark_connected(&self) {
+        *self.health.lock().unwrap() = DeviceHealth::Connected {
+            serial: None,
+            coros_version: None,
+            last_message_seconds: 0,
+        };
+    }
+
+    fn mark_failed(&self, error: &cortex_rs::Error) {
+        *self.health.lock().unwrap() = DeviceHealth::Failed {
+            error: error.to_string(),
+        };
+    }
+
+    fn mark_attempted(&self) {
+        self.state.lock().unwrap().last_attempt = Instant::now();
+    }
+
+    fn begin_state_mutation(&self) -> bool {
+        let mut cached = self.state.lock().unwrap();
+        let was_live = cached.phase == cortex_rs::CachePhase::Live;
+        cached.last_attempt = Instant::now();
+        cached.phase = cortex_rs::CachePhase::Invalidated;
+        cached.revision += 1;
+        was_live
+    }
+
+    fn mark_message_received(&self) {
+        let mut cached = self.state.lock().unwrap();
+        cached.last_attempt = Instant::now();
+        cached.last_received = Instant::now();
+        drop(cached);
+        self.mark_connected();
+    }
+
+    fn invalidate_cache(&self) {
+        let mut cached = self.state.lock().unwrap();
+        cached.phase = cortex_rs::CachePhase::Invalidated;
+        cached.revision += 1;
+    }
+
+    fn restore_live_phase(&self) {
+        self.state.lock().unwrap().phase = cortex_rs::CachePhase::Live;
+    }
+
+    fn advance_generation(&self) {
+        let mut cached = self.state.lock().unwrap();
+        cached.generation += 1;
+        cached.revision = 0;
+        cached.phase = cortex_rs::CachePhase::Invalidated;
+    }
+
+    fn replace_snapshot(&self, state: cortex_rs::nano::NanoCurrentState) {
+        let mut cached = self.state.lock().unwrap();
+        cached.snapshot = state;
+        cached.last_attempt = Instant::now();
+        cached.last_received = Instant::now();
+        cached.revision += 1;
+        cached.phase = cortex_rs::CachePhase::Live;
+        drop(cached);
+        self.mark_connected();
+    }
+
+    fn with_operation(&self, operation: impl FnOnce(&mut T) -> Response) -> Response {
+        if !self.accepting_device_requests.load(Ordering::Acquire) {
+            return Response::coded_error(
+                DaemonErrorCode::ShuttingDown,
+                "cortex session is shutting down",
+            );
+        }
+        match self.transport.try_lock() {
+            Ok(mut transport) => {
+                if !self.accepting_device_requests.load(Ordering::Acquire) {
+                    return Response::coded_error(
+                        DaemonErrorCode::ShuttingDown,
+                        "cortex session is shutting down",
+                    );
+                }
+                operation(&mut transport)
+            }
+            Err(TryLockError::WouldBlock) => Response::coded_error(
+                DaemonErrorCode::Busy,
+                "another Nano operation is already in progress",
+            ),
+            Err(TryLockError::Poisoned(_)) => Response::error("Nano transport lock is unavailable"),
+        }
+    }
+
+    fn write_state_and_confirm(
+        &self,
+        transport: &mut T,
+        settle: Duration,
+        write: impl FnOnce(&mut T) -> cortex_rs::Result<()>,
+        mismatch: impl FnOnce(&cortex_rs::nano::NanoCurrentState) -> Option<String>,
+    ) -> Response {
+        self.begin_state_mutation();
+        if let Err(error) = write(transport) {
+            return self.stream_error_response(transport, error);
+        }
+        std::thread::sleep(settle);
+        match transport.read_state(Duration::from_secs(5)) {
+            Ok(state) => {
+                let mismatch = mismatch(&state);
+                self.replace_snapshot(state.clone());
+                mismatch.map_or_else(
+                    || {
+                        Response::ok(&state)
+                            .unwrap_or_else(|error| Response::error(error.to_string()))
+                    },
+                    |message| Response::coded_error(DaemonErrorCode::OutcomeUnconfirmed, message),
+                )
+            }
+            Err(error) => self.stream_error_response(transport, error),
+        }
+    }
+
+    fn write_fx_and_confirm(
+        &self,
+        transport: &mut T,
+        slot: cortex_rs::nano::NanoFxSlot,
+        param_index: u8,
+        value: f32,
+    ) -> Response {
+        self.mark_attempted();
+        let current = match transport.read_fx_params(slot, Duration::from_secs(5)) {
+            Ok(values) => {
+                self.mark_message_received();
+                values
+            }
+            Err(error) => return self.stream_error_response(transport, error),
+        };
+        if usize::from(param_index) >= current.len() {
+            return Response::coded_error(
+                DaemonErrorCode::InvalidParameter,
+                format!(
+                    "Nano FX parameter index {param_index} is outside the loaded model's {} parameters",
+                    current.len()
+                ),
+            );
+        }
+        let restore_live_phase = self.begin_state_mutation();
+        if let Err(error) = transport.write_fx_param(slot, param_index, value) {
+            return self.stream_error_response(transport, error);
+        }
+        std::thread::sleep(self.fx_settle);
+        match transport.read_fx_params(slot, Duration::from_secs(5)) {
+            Ok(values) => {
+                self.mark_message_received();
+                let actual = values.get(param_index as usize).copied();
+                if actual.is_some_and(|actual| (actual - value).abs() < 0.001) {
+                    if restore_live_phase {
+                        self.restore_live_phase();
+                    }
+                    Response::ok(&values).unwrap_or_else(|error| Response::error(error.to_string()))
+                } else {
+                    Response::coded_error(
+                        DaemonErrorCode::OutcomeUnconfirmed,
+                        format!(
+                            "Nano FX param write did not read back: expected {value}, got {actual:?}"
+                        ),
+                    )
+                }
+            }
+            Err(error) => self.stream_error_response(transport, error),
+        }
+    }
+
+    fn stream_error_response(&self, transport: &mut T, error: cortex_rs::Error) -> Response {
+        if matches!(error, cortex_rs::Error::DeviceBusy { .. }) {
+            self.invalidate_cache();
+            self.mark_failed(&error);
+            return Response::cortex_error(&error);
+        }
+        let invalidates_stream = matches!(
+            error,
+            cortex_rs::Error::Hid(_)
+                | cortex_rs::Error::Framing(_)
+                | cortex_rs::Error::Decode(_)
+                | cortex_rs::Error::Trailer(_)
+                | cortex_rs::Error::ReadTimeout(_)
+        );
+        if invalidates_stream {
+            self.invalidate_cache();
+            self.advance_generation();
+            if let Err(reconnect_error) = transport.reconnect() {
+                self.mark_failed(&reconnect_error);
+                return Response::coded_error(
+                    DaemonErrorCode::DeviceUnavailable,
+                    format!(
+                        "{error}; the Nano transport was discarded, but reopening it failed: {reconnect_error}"
+                    ),
+                );
+            }
+        }
+        self.mark_failed(&error);
+        Response::cortex_error(&error)
+    }
+
+    fn begin_shutdown(&self) -> Response {
+        self.accepting_device_requests
+            .store(false, Ordering::Release);
+        match self.transport.lock() {
+            Ok(_transport) => Response::ok(&serde_json::json!({ "stopping": true }))
+                .unwrap_or_else(|error| Response::error(error.to_string())),
+            Err(_) => Response::error("Nano transport lock is unavailable"),
+        }
     }
 
     fn handle(&self, request: Request) -> Response {
+        if matches!(request, Request::Shutdown) {
+            return self.begin_shutdown();
+        }
+        if !matches!(request, Request::Status)
+            && !self.accepting_device_requests.load(Ordering::Acquire)
+        {
+            return Response::coded_error(
+                DaemonErrorCode::ShuttingDown,
+                "cortex session is shutting down",
+            );
+        }
         match request {
             Request::Status => {
                 let cached = self.state.lock().unwrap();
                 let cache = CacheStatus {
-                    generation: 1,
+                    generation: cached.generation,
                     revision: cached.revision,
-                    phase: cortex_rs::CachePhase::Live,
+                    phase: cached.phase,
                     ..CacheStatus::default()
                 };
                 let mut device = self.health.lock().unwrap().clone();
@@ -1356,223 +1692,160 @@ impl NanoDaemon {
                 })
                 .unwrap_or_else(|error| Response::error(error.to_string()))
             }
+            Request::ReconnectNow => self.with_operation(|transport| {
+                self.invalidate_cache();
+                self.advance_generation();
+                if let Err(error) = transport.reconnect() {
+                    self.mark_failed(&error);
+                    return Response::cortex_error(&error);
+                }
+                self.mark_attempted();
+                match transport.read_state(Duration::from_secs(5)) {
+                    Ok(state) => {
+                        self.replace_snapshot(state);
+                        Response::ok(&true)
+                            .unwrap_or_else(|error| Response::error(error.to_string()))
+                    }
+                    Err(error) => self.stream_error_response(transport, error),
+                }
+            }),
             Request::NanoState => match self.transport.try_lock() {
-                Ok(transport) => {
-                    let mut cached = self.state.lock().unwrap();
-                    if cached.last_attempt.elapsed() >= Duration::from_secs(5) {
-                        cached.last_attempt = Instant::now();
-                        match cortex_rs::nano::read_current_state(
-                            &transport,
-                            Duration::from_secs(5),
-                        ) {
+                Ok(mut transport) => {
+                    if !self.accepting_device_requests.load(Ordering::Acquire) {
+                        return Response::coded_error(
+                            DaemonErrorCode::ShuttingDown,
+                            "cortex session is shutting down",
+                        );
+                    }
+                    let should_refresh = {
+                        let mut cached = self.state.lock().unwrap();
+                        let should_refresh = cached.phase != cortex_rs::CachePhase::Live
+                            || cached.last_attempt.elapsed() >= Duration::from_secs(5);
+                        if should_refresh {
+                            cached.last_attempt = Instant::now();
+                        }
+                        should_refresh
+                    };
+                    if should_refresh {
+                        match transport.read_state(Duration::from_secs(5)) {
                             Ok(state) => {
-                                cached.snapshot = state;
-                                cached.last_received = Instant::now();
-                                cached.revision += 1;
-                                *self.health.lock().unwrap() = DeviceHealth::Connected {
-                                    serial: None,
-                                    coros_version: None,
-                                    last_message_seconds: 0,
-                                };
+                                self.replace_snapshot(state.clone());
+                                return Response::ok(&state)
+                                    .unwrap_or_else(|error| Response::error(error.to_string()));
                             }
                             Err(error) => {
-                                *self.health.lock().unwrap() = DeviceHealth::Failed {
-                                    error: error.to_string(),
-                                };
-                                return Response::cortex_error(&error);
+                                return self.stream_error_response(&mut transport, error);
                             }
                         }
                     }
+                    let cached = self.state.lock().unwrap();
                     Response::ok(&cached.snapshot)
                         .unwrap_or_else(|error| Response::error(error.to_string()))
                 }
                 Err(TryLockError::WouldBlock) => {
+                    if !self.accepting_device_requests.load(Ordering::Acquire) {
+                        return Response::coded_error(
+                            DaemonErrorCode::ShuttingDown,
+                            "cortex session is shutting down",
+                        );
+                    }
                     // A write is in progress (amp/bypass takes ~6s). Return
                     // the cached snapshot rather than erroring, so the GUI's
                     // auto-refresh gets a usable state instead of a failure.
                     let cached = self.state.lock().unwrap();
-                    Response::ok(&cached.snapshot)
-                        .unwrap_or_else(|error| Response::error(error.to_string()))
+                    if cached.phase == cortex_rs::CachePhase::Live {
+                        Response::ok(&cached.snapshot)
+                            .unwrap_or_else(|error| Response::error(error.to_string()))
+                    } else {
+                        Response::coded_error(
+                            DaemonErrorCode::NotReady,
+                            "Nano state is invalidated until a fresh device response arrives",
+                        )
+                    }
                 }
                 Err(TryLockError::Poisoned(_)) => {
                     Response::error("Nano transport lock is unavailable")
                 }
             },
-            Request::NanoSetAmp { control, value } => match self.transport.try_lock() {
-                Ok(transport) => {
-                    if let Err(error) = cortex_rs::nano::write_amp(&transport, control, value) {
-                        return Response::cortex_error(&error);
-                    }
-                    std::thread::sleep(Duration::from_secs(6));
-                    match cortex_rs::nano::read_current_state(&transport, Duration::from_secs(5)) {
-                        Ok(state) if state.amp.value(control) == Some(value) => {
-                            let mut cached = self.state.lock().unwrap();
-                            cached.snapshot = state.clone();
-                            cached.last_attempt = Instant::now();
-                            cached.last_received = Instant::now();
-                            cached.revision += 1;
-                            *self.health.lock().unwrap() = DeviceHealth::Connected {
-                                serial: None,
-                                coros_version: None,
-                                last_message_seconds: 0,
-                            };
-                            Response::ok(&state)
-                                .unwrap_or_else(|error| Response::error(error.to_string()))
-                        }
-                        Ok(state) => {
-                            let actual = state.amp.value(control);
-                            let mut cached = self.state.lock().unwrap();
-                            cached.snapshot = state;
-                            cached.last_attempt = Instant::now();
-                            cached.last_received = Instant::now();
-                            cached.revision += 1;
-                            Response::coded_error(
-                                DaemonErrorCode::OutcomeUnconfirmed,
-                                format!(
-                                    "Nano amp write did not read back: expected {value}, got {actual:?}"
-                                ),
+            Request::NanoSetAmp { control, value } => self.with_operation(|transport| {
+                self.write_state_and_confirm(
+                    transport,
+                    self.amp_settle,
+                    |transport| transport.write_amp(control, value),
+                    |state| {
+                        let actual = state.amp.value(control);
+                        (actual != Some(value)).then(|| {
+                            format!(
+                                "Nano amp write did not read back: expected {value}, got {actual:?}"
                             )
-                        }
-                        Err(error) => {
-                            *self.health.lock().unwrap() = DeviceHealth::Failed {
-                                error: error.to_string(),
-                            };
-                            Response::cortex_error(&error)
-                        }
-                    }
+                        })
+                    },
+                )
+            }),
+            Request::NanoSetGateReduction { percent } => {
+                if let Err(error) = cortex_rs::nano::build_set_gate_reduction(percent) {
+                    return Response::cortex_error(&error);
                 }
-                Err(TryLockError::WouldBlock) => Response::coded_error(
-                    DaemonErrorCode::Busy,
-                    "another Nano operation is already in progress",
-                ),
-                Err(TryLockError::Poisoned(_)) => {
-                    Response::error("Nano transport lock is unavailable")
-                }
-            },
-            Request::NanoSetBypass { target, bypassed } => match self.transport.try_lock() {
-                Ok(transport) => {
-                    if let Err(error) = cortex_rs::nano::write_bypass(&transport, target, bypassed)
-                    {
-                        return Response::cortex_error(&error);
-                    }
-                    std::thread::sleep(Duration::from_secs(6));
-                    match cortex_rs::nano::read_current_state(&transport, Duration::from_secs(5)) {
-                        Ok(state) => {
-                            let actual = state
-                                .slots
-                                .iter()
-                                .find(|slot| slot.role == target.role())
-                                .and_then(|slot| slot.bypassed);
-                            let confirmed = actual == Some(bypassed);
-                            let mut cached = self.state.lock().unwrap();
-                            cached.snapshot = state.clone();
-                            cached.last_attempt = Instant::now();
-                            cached.last_received = Instant::now();
-                            cached.revision += 1;
-                            *self.health.lock().unwrap() = DeviceHealth::Connected {
-                                serial: None,
-                                coros_version: None,
-                                last_message_seconds: 0,
-                            };
-                            if confirmed {
-                                Response::ok(&state)
-                                    .unwrap_or_else(|error| Response::error(error.to_string()))
-                            } else {
-                                Response::coded_error(
-                                    DaemonErrorCode::OutcomeUnconfirmed,
-                                    format!(
-                                        "Nano bypass write did not read back: expected {bypassed}, got {actual:?}"
-                                    ),
+                self.with_operation(|transport| {
+                    self.write_state_and_confirm(
+                        transport,
+                        self.amp_settle,
+                        |transport| transport.write_gate_reduction(percent),
+                        |state| {
+                            let actual = state.gate_reduction;
+                            (actual != Some(percent)).then(|| {
+                                format!(
+                                    "Nano Gate-reduction write did not read back: expected {percent}, got {actual:?}"
                                 )
-                            }
-                        }
-                        Err(error) => {
-                            *self.health.lock().unwrap() = DeviceHealth::Failed {
-                                error: error.to_string(),
-                            };
-                            Response::cortex_error(&error)
-                        }
+                            })
+                        },
+                    )
+                })
+            }
+            Request::NanoSetBypass { target, bypassed } => self.with_operation(|transport| {
+                self.write_state_and_confirm(
+                    transport,
+                    self.amp_settle,
+                    |transport| transport.write_bypass(target, bypassed),
+                    |state| {
+                        let actual = state
+                            .slots
+                            .iter()
+                            .find(|slot| slot.role == target.role())
+                            .and_then(|slot| slot.bypassed);
+                        (actual != Some(bypassed)).then(|| {
+                            format!(
+                                "Nano bypass write did not read back: expected {bypassed}, got {actual:?}"
+                            )
+                        })
+                    },
+                )
+            }),
+            Request::NanoReadFxParams { slot } => self.with_operation(|transport| {
+                self.mark_attempted();
+                match transport.read_fx_params(slot, Duration::from_secs(5)) {
+                    Ok(values) => {
+                        self.mark_message_received();
+                        Response::ok(&values)
+                            .unwrap_or_else(|error| Response::error(error.to_string()))
                     }
+                    Err(error) => self.stream_error_response(transport, error),
                 }
-                Err(TryLockError::WouldBlock) => Response::coded_error(
-                    DaemonErrorCode::Busy,
-                    "another Nano operation is already in progress",
-                ),
-                Err(TryLockError::Poisoned(_)) => {
-                    Response::error("Nano transport lock is unavailable")
-                }
-            },
-            Request::NanoReadFxParams { slot } => match self.transport.try_lock() {
-                Ok(transport) => {
-                    match cortex_rs::nano::read_fx_params(&transport, slot, Duration::from_secs(5))
-                    {
-                        Ok(values) => Response::ok(&values)
-                            .unwrap_or_else(|error| Response::error(error.to_string())),
-                        Err(error) => {
-                            *self.health.lock().unwrap() = DeviceHealth::Failed {
-                                error: error.to_string(),
-                            };
-                            Response::cortex_error(&error)
-                        }
-                    }
-                }
-                Err(TryLockError::WouldBlock) => {
-                    let cached = self.state.lock().unwrap();
-                    Response::ok(&cached.snapshot)
-                        .unwrap_or_else(|error| Response::error(error.to_string()))
-                }
-                Err(TryLockError::Poisoned(_)) => {
-                    Response::error("Nano transport lock is unavailable")
-                }
-            },
+            }),
             Request::NanoSetFxParam {
                 slot,
                 param_index,
                 value,
-            } => match self.transport.try_lock() {
-                Ok(transport) => {
-                    if let Err(error) =
-                        cortex_rs::nano::write_fx_param(&transport, slot, param_index, value)
-                    {
-                        return Response::cortex_error(&error);
-                    }
-                    std::thread::sleep(Duration::from_secs(2));
-                    match cortex_rs::nano::read_fx_params(&transport, slot, Duration::from_secs(5))
-                    {
-                        Ok(values)
-                            if param_index < values.len() as u8
-                                && (values[param_index as usize] - value).abs() < 0.001 =>
-                        {
-                            Response::ok(&values)
-                                .unwrap_or_else(|error| Response::error(error.to_string()))
-                        }
-                        Ok(values) => {
-                            let actual = values.get(param_index as usize).copied();
-                            Response::coded_error(
-                                DaemonErrorCode::OutcomeUnconfirmed,
-                                format!(
-                                    "Nano FX param write did not read back: expected {value}, got {actual:?}"
-                                ),
-                            )
-                        }
-                        Err(error) => {
-                            *self.health.lock().unwrap() = DeviceHealth::Failed {
-                                error: error.to_string(),
-                            };
-                            Response::cortex_error(&error)
-                        }
-                    }
+            } => {
+                if let Err(error) = cortex_rs::nano::build_fx_param_write(slot, param_index, value)
+                {
+                    return Response::cortex_error(&error);
                 }
-                Err(TryLockError::WouldBlock) => Response::coded_error(
-                    DaemonErrorCode::Busy,
-                    "another Nano operation is already in progress",
-                ),
-                Err(TryLockError::Poisoned(_)) => {
-                    Response::error("Nano transport lock is unavailable")
-                }
-            },
-            Request::Shutdown => Response::ok(&serde_json::json!({ "stopping": true }))
-                .unwrap_or_else(|error| Response::error(error.to_string())),
+                self.with_operation(|transport| {
+                    self.write_fx_and_confirm(transport, slot, param_index, value)
+                })
+            }
+            Request::Shutdown => unreachable!("shutdown is handled before device admission"),
             _ => Response::coded_error(
                 DaemonErrorCode::Protocol,
                 "the held session owns a Nano Cortex; this operation requires a Quad Cortex",
@@ -1601,8 +1874,14 @@ impl DeviceDaemon {
     }
 
     fn shutdown(&self) {
-        if let Self::Quad(daemon) = self {
-            daemon.shutdown();
+        match self {
+            Self::Quad(daemon) => daemon.shutdown(),
+            Self::Nano(daemon) => {
+                daemon
+                    .accepting_device_requests
+                    .store(false, Ordering::Release);
+                drop(daemon.transport.lock().unwrap());
+            }
         }
     }
 }
@@ -1860,6 +2139,8 @@ pub fn start_detached(device: DeviceKind, lifecycle: DaemonLifecycle) -> Result<
         }
         std::thread::sleep(Duration::from_millis(200));
     }
+    let _ = child.kill();
+    let _ = child.wait();
     anyhow::bail!(
         "the session did not start within 120s; see {}",
         log.display()
@@ -1967,7 +2248,154 @@ mod tests {
 
     use super::*;
     use cortex_rs::link::{FakeLink, HidLink};
+    use std::collections::VecDeque;
     use std::sync::atomic::AtomicUsize;
+
+    #[derive(Default)]
+    struct FakeNanoOperations {
+        states: Mutex<VecDeque<cortex_rs::Result<cortex_rs::nano::NanoCurrentState>>>,
+        fx_values: Mutex<VecDeque<cortex_rs::Result<Vec<f32>>>>,
+        amp_write_error: Mutex<Option<cortex_rs::Error>>,
+        bypass_write_error: Mutex<Option<cortex_rs::Error>>,
+        fx_write_error: Mutex<Option<cortex_rs::Error>>,
+        reconnect_error: Mutex<Option<cortex_rs::Error>>,
+        reconnects: usize,
+        fx_writes: usize,
+    }
+
+    impl NanoOperations for FakeNanoOperations {
+        fn read_state(
+            &mut self,
+            _timeout: Duration,
+        ) -> cortex_rs::Result<cortex_rs::nano::NanoCurrentState> {
+            self.states
+                .lock()
+                .unwrap()
+                .pop_front()
+                .unwrap_or_else(|| Ok(nano_state(10, false)))
+        }
+
+        fn write_amp(
+            &mut self,
+            _control: cortex_rs::nano::NanoAmpControl,
+            _value: u8,
+        ) -> cortex_rs::Result<()> {
+            self.amp_write_error
+                .lock()
+                .unwrap()
+                .take()
+                .map_or(Ok(()), Err)
+        }
+
+        fn write_gate_reduction(&mut self, _percent: u8) -> cortex_rs::Result<()> {
+            Ok(())
+        }
+
+        fn write_bypass(
+            &mut self,
+            _target: cortex_rs::nano::NanoBypassTarget,
+            _bypassed: bool,
+        ) -> cortex_rs::Result<()> {
+            self.bypass_write_error
+                .lock()
+                .unwrap()
+                .take()
+                .map_or(Ok(()), Err)
+        }
+
+        fn read_fx_params(
+            &mut self,
+            _slot: cortex_rs::nano::NanoFxSlot,
+            _timeout: Duration,
+        ) -> cortex_rs::Result<Vec<f32>> {
+            self.fx_values
+                .lock()
+                .unwrap()
+                .pop_front()
+                .unwrap_or_else(|| Ok(vec![0.25, 0.75]))
+        }
+
+        fn write_fx_param(
+            &mut self,
+            _slot: cortex_rs::nano::NanoFxSlot,
+            _param_index: u8,
+            _value: f32,
+        ) -> cortex_rs::Result<()> {
+            self.fx_writes += 1;
+            self.fx_write_error
+                .lock()
+                .unwrap()
+                .take()
+                .map_or(Ok(()), Err)
+        }
+
+        fn reconnect(&mut self) -> cortex_rs::Result<()> {
+            self.reconnects += 1;
+            self.reconnect_error
+                .lock()
+                .unwrap()
+                .take()
+                .map_or(Ok(()), Err)
+        }
+    }
+
+    fn nano_state(gain: u8, bypassed: bool) -> cortex_rs::nano::NanoCurrentState {
+        use cortex_rs::nano::{NanoAmpState, NanoCurrentState, NanoSlotRole, NanoSlotState};
+
+        NanoCurrentState {
+            firmware: Some("fixture".into()),
+            amp: NanoAmpState {
+                gain: Some(gain),
+                ..NanoAmpState::default()
+            },
+            capture_slot: None,
+            capture_volume: None,
+            gate_reduction: Some(50),
+            footswitch_assignments: None,
+            slots: [
+                NanoSlotRole::Gate,
+                NanoSlotRole::PreFx1,
+                NanoSlotRole::PreFx2,
+                NanoSlotRole::Capture,
+                NanoSlotRole::IrCab,
+                NanoSlotRole::PostFx1,
+                NanoSlotRole::PostFx2,
+                NanoSlotRole::PostFx3,
+            ]
+            .into_iter()
+            .map(|role| NanoSlotState {
+                role,
+                loaded_name: None,
+                model_id: None,
+                bypassed: Some(bypassed),
+            })
+            .collect(),
+        }
+    }
+
+    fn fake_nano_daemon(operations: FakeNanoOperations) -> NanoDaemon<FakeNanoOperations> {
+        NanoDaemon {
+            transport: Mutex::new(operations),
+            state: Mutex::new(NanoCache {
+                snapshot: nano_state(10, false),
+                generation: 1,
+                last_attempt: Instant::now() - Duration::from_secs(10),
+                last_received: Instant::now() - Duration::from_secs(10),
+                revision: 1,
+                phase: cortex_rs::CachePhase::Live,
+            }),
+            health: Mutex::new(DeviceHealth::Connected {
+                serial: None,
+                coros_version: None,
+                last_message_seconds: 10,
+            }),
+            accepting_device_requests: AtomicBool::new(true),
+            started: Instant::now(),
+            lifecycle: DaemonLifecycle::Explicit,
+            amp_settle: Duration::ZERO,
+            fx_settle: Duration::ZERO,
+        }
+    }
 
     struct ExclusiveLink {
         inner: FakeLink,
@@ -2064,6 +2492,431 @@ mod tests {
         assert!(data.get("device").is_some(), "status: {data}");
         assert!(data.get("cache").is_some(), "status: {data}");
         daemon.shutdown();
+    }
+
+    #[test]
+    fn nano_fx_read_returns_values_and_refreshes_liveness_without_replacing_state() {
+        let operations = FakeNanoOperations::default();
+        operations
+            .fx_values
+            .lock()
+            .unwrap()
+            .push_back(Ok(vec![0.2, 0.8]));
+        let daemon = fake_nano_daemon(operations);
+
+        let Response::Ok { data } = daemon.handle(Request::NanoReadFxParams {
+            slot: cortex_rs::nano::NanoFxSlot::PreFx1,
+        }) else {
+            panic!("Nano FX read should return its typed values");
+        };
+        assert_eq!(
+            serde_json::from_value::<Vec<f32>>(data).unwrap(),
+            vec![0.2, 0.8]
+        );
+        let cached = daemon.state.lock().unwrap();
+        assert_eq!(cached.revision, 1, "FX values are not a state snapshot");
+        assert!(cached.last_attempt.elapsed() < Duration::from_secs(1));
+        assert!(cached.last_received.elapsed() < Duration::from_secs(1));
+        drop(cached);
+        assert!(matches!(
+            *daemon.health.lock().unwrap(),
+            DeviceHealth::Connected { .. }
+        ));
+    }
+
+    #[test]
+    fn nano_fx_stream_errors_reconnect_before_another_uncorrelated_read() {
+        let operations = FakeNanoOperations::default();
+        operations.fx_values.lock().unwrap().extend([
+            Err(cortex_rs::Error::ReadTimeout(Duration::from_secs(5))),
+            Ok(vec![0.4]),
+        ]);
+        let daemon = fake_nano_daemon(operations);
+
+        let Response::Error { code, .. } = daemon.handle(Request::NanoReadFxParams {
+            slot: cortex_rs::nano::NanoFxSlot::PreFx1,
+        }) else {
+            panic!("the timed-out Nano FX read must fail");
+        };
+        assert_eq!(code, DaemonErrorCode::DeviceTimeout);
+        assert_eq!(daemon.transport.lock().unwrap().reconnects, 1);
+        assert_eq!(daemon.state.lock().unwrap().generation, 2);
+        assert_eq!(
+            daemon.state.lock().unwrap().phase,
+            cortex_rs::CachePhase::Invalidated
+        );
+
+        assert!(matches!(
+            daemon.handle(Request::NanoReadFxParams {
+                slot: cortex_rs::nano::NanoFxSlot::PreFx2,
+            }),
+            Response::Ok { .. }
+        ));
+        assert_eq!(daemon.transport.lock().unwrap().reconnects, 1);
+        assert_eq!(
+            daemon.state.lock().unwrap().phase,
+            cortex_rs::CachePhase::Invalidated,
+            "an FX reply proves liveness but does not refresh the state snapshot"
+        );
+
+        assert!(matches!(
+            daemon.handle(Request::NanoState),
+            Response::Ok { .. }
+        ));
+        assert_eq!(
+            daemon.state.lock().unwrap().phase,
+            cortex_rs::CachePhase::Live
+        );
+    }
+
+    #[test]
+    fn typed_nano_busy_response_does_not_reconnect_a_synchronized_stream() {
+        let operations = FakeNanoOperations::default();
+        operations
+            .fx_values
+            .lock()
+            .unwrap()
+            .push_back(Err(cortex_rs::Error::DeviceBusy {
+                device: DeviceKind::NanoCortex,
+            }));
+        let daemon = fake_nano_daemon(operations);
+
+        let Response::Error { code, .. } = daemon.handle(Request::NanoReadFxParams {
+            slot: cortex_rs::nano::NanoFxSlot::PostFx1,
+        }) else {
+            panic!("remote editor ownership must fail");
+        };
+        assert_eq!(code, DaemonErrorCode::DeviceBusy);
+        assert_eq!(daemon.transport.lock().unwrap().reconnects, 0);
+        assert_eq!(
+            daemon.state.lock().unwrap().phase,
+            cortex_rs::CachePhase::Invalidated
+        );
+        assert_eq!(daemon.transport.lock().unwrap().fx_writes, 0);
+        assert!(matches!(
+            *daemon.health.lock().unwrap(),
+            DeviceHealth::Failed { .. }
+        ));
+    }
+
+    #[test]
+    fn invalid_nano_fx_index_is_rejected_before_the_mutating_write() {
+        let operations = FakeNanoOperations::default();
+        operations
+            .fx_values
+            .lock()
+            .unwrap()
+            .push_back(Ok(vec![0.25]));
+        let daemon = fake_nano_daemon(operations);
+
+        let Response::Error { code, .. } = daemon.handle(Request::NanoSetFxParam {
+            slot: cortex_rs::nano::NanoFxSlot::PostFx1,
+            param_index: 1,
+            value: 0.5,
+        }) else {
+            panic!("an index absent from the loaded model must fail");
+        };
+        assert_eq!(code, DaemonErrorCode::InvalidParameter);
+        assert_eq!(daemon.transport.lock().unwrap().fx_writes, 0);
+    }
+
+    #[test]
+    fn nano_write_transport_error_discards_and_reconnects_the_stream() {
+        let operations = FakeNanoOperations::default();
+        operations
+            .fx_values
+            .lock()
+            .unwrap()
+            .push_back(Ok(vec![0.25]));
+        *operations.fx_write_error.lock().unwrap() =
+            Some(cortex_rs::Error::Hid("write failed".into()));
+        let daemon = fake_nano_daemon(operations);
+
+        let Response::Error { code, .. } = daemon.handle(Request::NanoSetFxParam {
+            slot: cortex_rs::nano::NanoFxSlot::PostFx1,
+            param_index: 0,
+            value: 0.5,
+        }) else {
+            panic!("a failed Nano HID write must fail");
+        };
+        assert_eq!(code, DaemonErrorCode::DeviceUnavailable);
+        let transport = daemon.transport.lock().unwrap();
+        assert_eq!(transport.fx_writes, 1);
+        assert_eq!(transport.reconnects, 1);
+        drop(transport);
+        assert_eq!(
+            daemon.state.lock().unwrap().phase,
+            cortex_rs::CachePhase::Invalidated
+        );
+    }
+
+    #[test]
+    fn failed_nano_reopen_still_ends_the_old_generation() {
+        let operations = FakeNanoOperations::default();
+        operations
+            .fx_values
+            .lock()
+            .unwrap()
+            .push_back(Err(cortex_rs::Error::ReadTimeout(Duration::from_secs(5))));
+        *operations.reconnect_error.lock().unwrap() =
+            Some(cortex_rs::Error::Hid("fictional reopen failure".into()));
+        let daemon = fake_nano_daemon(operations);
+
+        let Response::Error { code, .. } = daemon.handle(Request::NanoReadFxParams {
+            slot: cortex_rs::nano::NanoFxSlot::PostFx1,
+        }) else {
+            panic!("a timeout followed by a failed reopen must fail");
+        };
+        assert_eq!(code, DaemonErrorCode::DeviceUnavailable);
+        let cached = daemon.state.lock().unwrap();
+        assert_eq!(cached.generation, 2);
+        assert_eq!(cached.phase, cortex_rs::CachePhase::Invalidated);
+    }
+
+    #[test]
+    fn nano_reconnect_now_reseeds_state_before_reporting_success() {
+        let operations = FakeNanoOperations::default();
+        operations
+            .states
+            .lock()
+            .unwrap()
+            .push_back(Ok(nano_state(22, false)));
+        let daemon = fake_nano_daemon(operations);
+        daemon.invalidate_cache();
+
+        let Response::Ok { data } = daemon.handle(Request::ReconnectNow) else {
+            panic!("an available Nano should reconnect");
+        };
+        assert_eq!(data, serde_json::json!(true));
+        assert_eq!(daemon.transport.lock().unwrap().reconnects, 1);
+        let cached = daemon.state.lock().unwrap();
+        assert_eq!(cached.generation, 2);
+        assert_eq!(cached.phase, cortex_rs::CachePhase::Live);
+        assert_eq!(cached.snapshot.amp.gain, Some(22));
+    }
+
+    #[test]
+    fn nano_shutdown_acknowledgement_waits_for_the_operation_gate() {
+        let daemon = Arc::new(fake_nano_daemon(FakeNanoOperations::default()));
+        let held = daemon.transport.lock().unwrap();
+        let (sent, received) = std::sync::mpsc::channel();
+        let worker = Arc::clone(&daemon);
+        let join = std::thread::spawn(move || {
+            sent.send(worker.handle(Request::Shutdown)).unwrap();
+        });
+
+        assert!(received.recv_timeout(Duration::from_millis(20)).is_err());
+        drop(held);
+        assert!(matches!(
+            received.recv_timeout(Duration::from_secs(1)).unwrap(),
+            Response::Ok { .. }
+        ));
+        join.join().unwrap();
+
+        let Response::Error { code, .. } = daemon.handle(Request::NanoSetAmp {
+            control: cortex_rs::nano::NanoAmpControl::Gain,
+            value: 11,
+        }) else {
+            panic!("shutdown must permanently stop Nano request admission");
+        };
+        assert_eq!(code, DaemonErrorCode::ShuttingDown);
+    }
+
+    #[test]
+    fn invalid_nano_fx_value_is_rejected_without_failing_device_health() {
+        let daemon = fake_nano_daemon(FakeNanoOperations::default());
+
+        let Response::Error { code, .. } = daemon.handle(Request::NanoSetFxParam {
+            slot: cortex_rs::nano::NanoFxSlot::PostFx1,
+            param_index: 0,
+            value: 1.5,
+        }) else {
+            panic!("an invalid normalized value must fail");
+        };
+        assert_eq!(code, DaemonErrorCode::InvalidParameter);
+        assert!(matches!(
+            *daemon.health.lock().unwrap(),
+            DeviceHealth::Connected { .. }
+        ));
+        assert_eq!(daemon.transport.lock().unwrap().reconnects, 0);
+    }
+
+    #[test]
+    fn nano_amp_write_replaces_cache_on_success_and_preserves_typed_device_busy() {
+        let operations = FakeNanoOperations::default();
+        operations
+            .states
+            .lock()
+            .unwrap()
+            .push_back(Ok(nano_state(11, false)));
+        let daemon = fake_nano_daemon(operations);
+        assert!(matches!(
+            daemon.handle(Request::NanoSetAmp {
+                control: cortex_rs::nano::NanoAmpControl::Gain,
+                value: 11,
+            }),
+            Response::Ok { .. }
+        ));
+        let cached = daemon.state.lock().unwrap();
+        assert_eq!(cached.snapshot.amp.gain, Some(11));
+        assert_eq!(cached.revision, 3);
+        drop(cached);
+
+        *daemon
+            .transport
+            .lock()
+            .unwrap()
+            .amp_write_error
+            .lock()
+            .unwrap() = Some(cortex_rs::Error::DeviceBusy {
+            device: DeviceKind::NanoCortex,
+        });
+        let Response::Error { code, .. } = daemon.handle(Request::NanoSetAmp {
+            control: cortex_rs::nano::NanoAmpControl::Gain,
+            value: 12,
+        }) else {
+            panic!("remote ownership must fail");
+        };
+        assert_eq!(code, DaemonErrorCode::DeviceBusy);
+        assert!(matches!(
+            *daemon.health.lock().unwrap(),
+            DeviceHealth::Failed { .. }
+        ));
+        assert_eq!(
+            daemon.state.lock().unwrap().phase,
+            cortex_rs::CachePhase::Invalidated
+        );
+    }
+
+    #[test]
+    fn nano_gate_reduction_write_replaces_cache_only_after_exact_read_back() {
+        let operations = FakeNanoOperations::default();
+        operations
+            .states
+            .lock()
+            .unwrap()
+            .push_back(Ok(cortex_rs::nano::NanoCurrentState {
+                gate_reduction: Some(51),
+                ..nano_state(10, false)
+            }));
+        let daemon = fake_nano_daemon(operations);
+        assert!(matches!(
+            daemon.handle(Request::NanoSetGateReduction { percent: 51 }),
+            Response::Ok { .. }
+        ));
+        let cached = daemon.state.lock().unwrap();
+        assert_eq!(cached.snapshot.gate_reduction, Some(51));
+        assert_eq!(cached.revision, 3);
+    }
+
+    #[test]
+    fn nano_state_is_not_served_live_while_a_state_write_is_unconfirmed() {
+        let operations = FakeNanoOperations::default();
+        operations
+            .states
+            .lock()
+            .unwrap()
+            .push_back(Ok(nano_state(11, false)));
+        let mut daemon = fake_nano_daemon(operations);
+        daemon.amp_settle = Duration::from_millis(100);
+        let daemon = Arc::new(daemon);
+        let worker = Arc::clone(&daemon);
+        let join = std::thread::spawn(move || {
+            worker.handle(Request::NanoSetAmp {
+                control: cortex_rs::nano::NanoAmpControl::Gain,
+                value: 11,
+            })
+        });
+
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while daemon.state.lock().unwrap().phase == cortex_rs::CachePhase::Live
+            && Instant::now() < deadline
+        {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        let Response::Error { code, .. } = daemon.handle(Request::NanoState) else {
+            panic!("the pre-write Nano snapshot must not remain live");
+        };
+        assert_eq!(code, DaemonErrorCode::NotReady);
+        assert!(matches!(join.join().unwrap(), Response::Ok { .. }));
+        assert_eq!(
+            daemon.state.lock().unwrap().phase,
+            cortex_rs::CachePhase::Live
+        );
+    }
+
+    #[test]
+    fn invalid_nano_gate_reduction_is_rejected_without_failing_device_health() {
+        let daemon = fake_nano_daemon(FakeNanoOperations::default());
+        let Response::Error { code, .. } =
+            daemon.handle(Request::NanoSetGateReduction { percent: 101 })
+        else {
+            panic!("an invalid Gate percentage must fail");
+        };
+        assert_eq!(code, DaemonErrorCode::InvalidParameter);
+        assert!(matches!(
+            *daemon.health.lock().unwrap(),
+            DeviceHealth::Connected { .. }
+        ));
+        assert_eq!(daemon.state.lock().unwrap().revision, 1);
+    }
+
+    #[test]
+    fn nano_write_mismatches_and_contention_keep_stable_error_codes() {
+        let operations = FakeNanoOperations::default();
+        operations
+            .fx_values
+            .lock()
+            .unwrap()
+            .push_back(Ok(vec![0.1]));
+        let daemon = fake_nano_daemon(operations);
+
+        let Response::Error { code, .. } = daemon.handle(Request::NanoSetFxParam {
+            slot: cortex_rs::nano::NanoFxSlot::PostFx1,
+            param_index: 0,
+            value: 0.9,
+        }) else {
+            panic!("mismatched read-back must not confirm the write");
+        };
+        assert_eq!(code, DaemonErrorCode::OutcomeUnconfirmed);
+        let cached = daemon.state.lock().unwrap();
+        assert_eq!(cached.phase, cortex_rs::CachePhase::Invalidated);
+        assert!(cached.last_attempt.elapsed() < Duration::from_secs(1));
+        assert!(cached.last_received.elapsed() < Duration::from_secs(1));
+        drop(cached);
+
+        let held = daemon.transport.lock().unwrap();
+        let Response::Error { code, .. } = daemon.handle(Request::NanoSetBypass {
+            target: cortex_rs::nano::NanoBypassTarget::PreFx1,
+            bypassed: true,
+        }) else {
+            panic!("concurrent Nano writes must fail fast");
+        };
+        assert_eq!(code, DaemonErrorCode::Busy);
+        drop(held);
+    }
+
+    #[test]
+    fn confirmed_nano_fx_write_restores_an_already_live_state_without_a_state_read() {
+        let operations = FakeNanoOperations::default();
+        operations
+            .fx_values
+            .lock()
+            .unwrap()
+            .extend([Ok(vec![0.25]), Ok(vec![0.5])]);
+        let daemon = fake_nano_daemon(operations);
+
+        assert!(matches!(
+            daemon.handle(Request::NanoSetFxParam {
+                slot: cortex_rs::nano::NanoFxSlot::PostFx1,
+                param_index: 0,
+                value: 0.5,
+            }),
+            Response::Ok { .. }
+        ));
+        let cached = daemon.state.lock().unwrap();
+        assert_eq!(cached.phase, cortex_rs::CachePhase::Live);
+        assert_eq!(cached.revision, 2);
     }
 
     #[test]

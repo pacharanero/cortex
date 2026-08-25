@@ -218,5 +218,5 @@ The dependency arrow points *into* the crate: the CLI, MCP server, and future Ta
 
 - **The `Transport::request` diagnostic is synchronous and uncorrelated.** Concurrent and subscribed operation uses the implemented session layer.
 - **First matching device only.** Multi-device scenarios are deferred; `open` does not filter by interface number or serial.
-- **Nano Cortex application runtime support is not implemented.** Low-level transport uses hardware-established PID `0x88E7`, 65-byte reports and shared flag framing. Quad-envelope requests and sessions reject Nano before USB I/O until the Nano-specific four-byte-footer codec is available.
+- **Nano Cortex application runtime support remains partial.** Low-level transport uses hardware-established PID `0x88E7`, 65-byte reports and shared flag framing. The separate four-byte-footer codec and held daemon implement typed state plus amp, bypass and raw FX parameter operations; wider application operations remain outstanding. Quad-envelope requests and sessions reject Nano before USB I/O.
 - **No protocol compatibility negotiation.** Session caches identity/version, but a CorOS update can still silently change the wire format.

@@ -27,6 +27,7 @@ path = [
     "**/*.html",
     "**/*.css",
     "**/*.js",
+    "gui/src/shared/ipc/generated/**",
     "**/*.png",
     "**/Cargo.lock",
     "LICENSE",

@@ -80,8 +80,8 @@ crates/
                  behind the same endpoint/listener/connection API.
   cortex-mcp/   The `cortex-mcp` MCP server: hardware-verified read, recall,
                 scene and live-grid tools; no persistent save/delete tools.
-gui/           Tauri 2 + React + Mantine first draft. Interactive and
-                read-only, with explicit fixture and daemon-backed modes.
+gui/           Tauri 2 + React + Mantine first draft. Interactive, with
+                explicit fixture and daemon-backed modes and no persistent save.
 docs/          Protocol notes, runbooks, GUI docs.
 spec/          Zone specs: spec.md (what it must do) + design.md (how, and why).
                NO tasks.md - progress lives in spec/roadmap.md (outstanding)
@@ -114,8 +114,10 @@ s/             Repo scripts: s/test, s/lint, s/gui-dev, s/version++ ...
   length/flag frame shape as the Quad, and a complete multi-report state read.
   Its BLE application payload maps directly onto HID, but its four-byte footer
   and fixed-chain domain differ from the Quad's eight-byte trailer and grid.
-  Low-level discovery and device-dependent framing are implemented; the Quad
-  session rejects Nano before USB I/O until the separate Nano codec lands.
+  The separate Nano codec and held-daemon path implement typed state plus
+  hardware-verified amp, bypass and raw FX parameter operations; Gate reduction
+  and wider application operations remain provisional. Quad session entry
+  points still reject Nano before USB I/O so the envelopes cannot be conflated.
 
 ## Protocol invariants (do not break silently)
 

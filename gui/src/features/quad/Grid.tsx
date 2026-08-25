@@ -12,13 +12,16 @@ interface GridProps {
 
 export function Grid({ blocks, selected, onSelect }: GridProps) {
   return (
-    <div className="grid" aria-label="Quad Cortex signal grid">
+    <div className="grid" aria-label="Quad Cortex signal grid" role="group">
       {Array.from({ length: 32 }, (_, index) => {
         const row = Math.floor(index / 8);
         const column = index % 8;
         const block = blocks.find((candidate) => candidate.row === row && candidate.column === column);
         return (
           <Button
+            aria-label={block
+              ? `${block.name}, ${block.category}, row ${block.screen_row}, column ${block.column}, ${block.bypassed ? "bypassed" : "engaged"}`
+              : `Empty, row ${row + 1}, column ${column}`}
             aria-pressed={selected?.row === row && selected?.column === column}
             className="grid-cell"
             color="dark"

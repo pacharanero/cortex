@@ -10,10 +10,10 @@ An unofficial, open-source toolkit for the **Neural DSP Quad Cortex and Nano Cor
 
 The project is one toolkit for two related device models, exposed through several interfaces:
 
-- **A desktop GUI intended for both Cortex devices on Linux, Windows and macOS**, built with Tauri, React and Mantine. Its current Quad-specific read-only first draft has explicit browser-fixture and daemon-backed Tauri modes over the shared Rust foundation.
+- **A desktop GUI intended for both Cortex devices on Linux, Windows and macOS**, built with Tauri, React and Mantine. Its interactive first draft has explicit browser-fixture and daemon-backed Tauri modes, non-persistent Quad grid controls, and a Nano fixed-chain editor over the shared Rust foundation.
 - **A hardware-backed CLI** for reading device state, browsing presets, searching the model catalog and editing the grid.
 - **An MCP server** for agentic patch editing through the held-session daemon. Read, recall, scene and unsaved live-grid editing tools are hardware-verified; save and delete are not exposed.
-- **A reusable Rust core** implementing USB HID transport, framing, the protobuf envelope, session handling and a typed domain model. It depends on no host application or async runtime. The CLI and MCP server use it today; the GUI will consume the same behaviour rather than reimplementing it.
+- **A reusable Rust core** implementing USB HID transport, framing, the protobuf envelope, session handling and a typed domain model. It depends on no host application or async runtime. The CLI, MCP server and GUI use the same behaviour rather than reimplementing it.
 
 ## Why this exists
 
@@ -24,14 +24,14 @@ Linux is the first implementation and the only hardware-verified host today, but
 ## What it is not
 
 - **Not a replacement for Cortex Control.** It does not do cloud sync, firmware updates, or Neural Capture creation, and it is not trying to.
-- **Not finished.** The CLI can save through a hardware-verified prepare/edit/commit flow and MCP can edit the unsaved live grid, but major device operations, persistent MCP writes, GUI device integration, cross-platform support and distribution remain unfinished.
+- **Not finished.** The CLI can save through a hardware-verified prepare/edit/commit flow, MCP can edit unsaved working state, and the GUI integrates both devices, but major device operations, persistent MCP and GUI writes, cross-platform verification and distribution remain unfinished.
 - **Not a jailbreak.** It talks to the device over USB exactly as the official editor does. It does not modify firmware, root the unit, or touch the SD card, and it carries none of the warranty risk that route does.
 
 ## Status
 
 The project's central discipline is being honest about what has actually run against real hardware. Throughout these docs:
 
-<span class="status verified">verified</span> means exercised against a real Quad Cortex running CorOS 4.0.1 from this project's own code.
+<span class="status verified">verified</span> means exercised against the applicable real hardware from this project's own code. Quad Cortex claims name CorOS 4.0.1 where version dependence matters; Nano claims identify their own measured operation boundary.
 
 <span class="status provisional">provisional</span> means implemented but not yet verified against the applicable hardware or production integration boundary.
 
@@ -49,9 +49,9 @@ The project's central discipline is being honest about what has actually run aga
 | Prepared save, stored read-back and delete | <span class="status verified">verified</span> |
 | Capture and IR export/import | <span class="status provisional">investigation; no working export/import</span> |
 | MCP server read, recall, scene management and live-grid tools | <span class="status verified">verified; no save/delete tools</span> |
-| Desktop GUI shell | <span class="status provisional">daemon read boundary verified on Linux; native reconnect UI smoke pending</span> |
+| Desktop GUI shell | <span class="status provisional">daemon-backed Rust read/write boundaries verified on Linux; rendered native interaction smokes remain partial</span> |
 | Windows and macOS hardware paths and packaging | <span class="status planned">planned; Linux is the only verified host</span> |
-| Nano Cortex | <span class="status provisional">USB HID framing and state read hardware-verified; toolkit support not yet implemented</span> |
+| Nano Cortex | <span class="status provisional">USB HID, state, amp, bypass and core/daemon/MCP/native-GUI raw FX parameter paths verified on Linux; wider operations and host integrations remain partial</span> |
 
 ## Start here
 

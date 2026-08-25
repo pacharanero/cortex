@@ -89,9 +89,11 @@ function ParameterControl({ parameter, busy, disabled, onWrite }: ParameterContr
     setDraft(parameter.real ?? parameter.normalised);
   }, [parameter.real, parameter.normalised]);
 
+  const name = parameter.name || `Parameter ${parameter.index}`;
+  const accessibleName = parameter.units ? `${name} (${parameter.units})` : name;
   const label = (
     <Group gap="xs">
-      <Text fw={500} size="sm">{parameter.name || `Parameter ${parameter.index}`}</Text>
+      <Text fw={500} size="sm">{name}</Text>
       {parameter.units && <Text c="dimmed" size="xs">{parameter.units}</Text>}
       {parameter.read_only && <Badge color="gray" size="xs">meter</Badge>}
       {parameter.per_scene && <Badge color="grape" size="xs">per scene</Badge>}
@@ -114,6 +116,7 @@ function ParameterControl({ parameter, busy, disabled, onWrite }: ParameterContr
       <div>
         {label}
         <TextInput
+          aria-label={accessibleName}
           defaultValue={parameter.text ?? ""}
           disabled={disabled}
           onBlur={(event) => {
@@ -135,6 +138,7 @@ function ParameterControl({ parameter, busy, disabled, onWrite }: ParameterContr
       <div>
         {label}
         <Select
+          aria-label={accessibleName}
           allowDeselect={false}
           data={steps.map((name, position) => ({ value: String(position), label: name }))}
           disabled={disabled}
@@ -185,9 +189,11 @@ function ParameterControl({ parameter, busy, disabled, onWrite }: ParameterContr
           onChangeEnd={(value) => void commit(value)}
           step={step}
           style={{ flex: 1 }}
+          thumbLabel={`${accessibleName} slider`}
           value={draft ?? min}
         />
         <NumberInput
+          aria-label={`${accessibleName} numeric input`}
           allowDecimal={parameter.kind !== "int"}
           disabled={disabled}
           max={max}
@@ -201,7 +207,7 @@ function ParameterControl({ parameter, busy, disabled, onWrite }: ParameterContr
           value={draft ?? ""}
           onChange={(value) => setDraft(typeof value === "number" ? value : Number.parseFloat(String(value)))}
         />
-        {busy && <Text c="dimmed" size="xs">writing</Text>}
+        {busy && <Text aria-live="polite" c="dimmed" role="status" size="xs">writing {name}</Text>}
       </Group>
       {!usesRealUnits && (
         <Text c="dimmed" size="xs">
