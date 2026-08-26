@@ -18,6 +18,11 @@
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 
+# Pinned deliberately, same reasoning as s/markdownlint's MARKDOWNLINT_VERSION:
+# an unpinned changelog generator turns an upstream release into a surprise
+# diff in a release commit.
+CLIFF_VERSION="2.13.1"
+
 bump="patch"
 mode="auto"
 
@@ -124,6 +129,11 @@ node -e '
 # Only when the repo has adopted git-cliff; skipped silently otherwise so this
 # script works before that decision is made.
 if [[ -f cliff.toml ]]; then
+	command -v git-cliff >/dev/null 2>&1 ||
+		{ echo "git-cliff ${CLIFF_VERSION} is missing. Install it: cargo install git-cliff --version ${CLIFF_VERSION} --locked" >&2; exit 1; }
+	installed_cliff="$(git-cliff --version | awk '{print $2}')"
+	[[ "$installed_cliff" == "$CLIFF_VERSION" ]] ||
+		{ echo "Expected git-cliff ${CLIFF_VERSION}, found ${installed_cliff}. Install it: cargo install git-cliff --version ${CLIFF_VERSION} --locked" >&2; exit 1; }
 	git cliff --tag "v${version}" --output CHANGELOG.md
 fi
 

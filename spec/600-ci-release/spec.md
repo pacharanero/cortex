@@ -49,6 +49,7 @@ Release is only partly wired. `s/version++` and the auto-tag workflow exist; cra
 | Auto-tag workflow | Implemented | `.github/workflows/auto-tag.yml` |
 | crates.io publish workflow | Planned | Not implemented (requires approval per AGENTS.md) |
 | `cargo-dist` release pipeline | Planned | Not implemented |
+| `git-cliff` generates `CHANGELOG.md` in the version-bump flow; the release workflow consumes it | Implemented (CLI-004.13) | `cliff.toml`; `s/version++` pins/verifies `git-cliff 2.13.1` before invoking it; `.github/workflows/release.yml` `host` job extracts the tagged `## [x.y.z]` section for `gh release create --notes-file`, falling back to `--generate-notes` when that section is absent |
 
 ## User Stories
 
@@ -133,7 +134,7 @@ Maintainers merging PRs, and the downstream consumers who install the crate or t
 - [x] CI tests and runs the Rust `@see` traceability gate.
 - [ ] crates.io publish workflow publishes on the release tag (requires approval before first use).
 - [ ] `cargo-dist` produces distributable Linux x86_64 `cortex` and `cortex-mcp` binaries on the release tag.
-- [ ] The release tag produces a GitHub Release with changelog notes.
+- [x] The release tag produces a GitHub Release with changelog notes (`gh release create --notes-file` from the git-cliff-generated `CHANGELOG.md` section, falling back to `--generate-notes` before the first version bump populates it).
 - [ ] The release publishes `SHA256SUMS`, and the public installer refuses an artifact that does not match it.
 
 ## Non-Goals
@@ -157,7 +158,8 @@ Maintainers merging PRs, and the downstream consumers who install the crate or t
 - **Auto-tag details.** The trigger could be a push to `main` that changes the `Cargo.toml` version, or an explicit `s/version++` commit message. The tag format is `vX.Y.Z` (matching `cargo` and `cargo-dist` conventions).
 - **crates.io first publish.** Requires `cargo login` with a token, `cargo publish --dry-run` in CI, and the maintainer's approval (AGENTS.md). The crate name is `cortex-rs`; the CLI binary crate is `cortex-cli`.
 - **`cargo-dist`.** Produces distributable `cortex` and `cortex-mcp` binaries (and later the Tauri GUI through its own bundler). The first target is `x86_64-unknown-linux-gnu`; Linux aarch64, macOS and Windows follow only after their host and hardware paths are verified.
-- **Changelog generation.** Add the house-style `git-cliff` configuration so `s/version++` regenerates `CHANGELOG.md` before the release commit is tagged.
+
+Changelog generation is implemented (CLI-004.13): `cliff.toml` plus the pinned/verified `git-cliff` invocation in `s/version++`, and the tagged-section extraction in `.github/workflows/release.yml`'s `host` job.
 
 ## Glossary
 
