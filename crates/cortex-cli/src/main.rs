@@ -3582,7 +3582,11 @@ fn cmd_nano_state(fmt: Format) -> Result<()> {
                 .map_or_else(|| "unknown".into(), |percent| format!("{percent}%"))
         );
         for slot in &state.slots {
-            let name = slot.loaded_name.as_deref().unwrap_or("-");
+            let name = slot
+                .loaded_name
+                .as_deref()
+                .or(slot.model_name.as_deref())
+                .unwrap_or("-");
             let model = slot
                 .model_id
                 .map_or_else(|| "-".into(), |id| id.to_string());

@@ -115,6 +115,7 @@ It also has version-sync across four manifests with a check mode wired into CI a
 - The Nano does **not** use the Quad's eight-byte message-type trailer or Quad handshake unchanged. A Quad `Version READ` was ignored, while the Nano current-state request returned nine reports and decoded successfully. Reuse the transport/framing substrate, not the Quad message registry or domain model.
 - The editor protocol is exclusive across BLE and HID. An active Bluetooth client caused USB requests to receive `Device is busy!`; disconnecting Bluetooth allowed the same state read to succeed.
 - Its BLE write/notify command-response pair and state decoder are now also the strongest prior art for a Nano USB implementation because the application payload is shared across those transports.
+- Its Nano-specific FX protocol table maps the five current-state model-id fields to 53 product-facing names. That table is the appropriate source for host resolution: the ids mostly overlap the Quad catalog, but they are not interchangeable - Nano id `18001` is `Transpose`, while the Quad factory table uses that id for `Pitch Shifter`. Unknown Nano ids must remain unknown rather than borrowing a Quad name.
 
 ### An additional project, not vendored
 

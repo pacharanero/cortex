@@ -2441,6 +2441,7 @@ mod tests {
                 role,
                 loaded_name: None,
                 model_id: None,
+                model_name: None,
                 bypassed: Some(bypassed),
             })
             .collect(),

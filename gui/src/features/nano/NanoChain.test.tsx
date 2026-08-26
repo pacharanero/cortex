@@ -15,14 +15,14 @@ const state: NanoCurrentState = {
   gate_reduction: null,
   footswitch_assignments: null,
   slots: [
-    { role: "gate", loaded_name: null, model_id: null, bypassed: false },
-    { role: "pre_fx1", loaded_name: "Fictional Drive", model_id: 1, bypassed: false },
-    { role: "pre_fx2", loaded_name: "Fictional Chorus", model_id: 2, bypassed: true },
-    { role: "capture", loaded_name: "Fictional Capture", model_id: null, bypassed: false },
-    { role: "ir_cab", loaded_name: "Fictional IR", model_id: null, bypassed: false },
-    { role: "post_fx1", loaded_name: "Fictional Delay", model_id: 3, bypassed: false },
-    { role: "post_fx2", loaded_name: "Fictional Reverb", model_id: 4, bypassed: false },
-    { role: "post_fx3", loaded_name: "Fictional EQ", model_id: 5, bypassed: false },
+    { role: "gate", loaded_name: null, model_id: null, model_name: null, bypassed: false },
+    { role: "pre_fx1", loaded_name: null, model_id: 1, model_name: "Fictional Drive", bypassed: false },
+    { role: "pre_fx2", loaded_name: null, model_id: 2, model_name: "Fictional Chorus", bypassed: true },
+    { role: "capture", loaded_name: "Fictional Capture", model_id: null, model_name: null, bypassed: false },
+    { role: "ir_cab", loaded_name: "Fictional IR", model_id: null, model_name: null, bypassed: false },
+    { role: "post_fx1", loaded_name: null, model_id: 3, model_name: "Fictional Delay", bypassed: false },
+    { role: "post_fx2", loaded_name: null, model_id: 4, model_name: "Fictional Reverb", bypassed: false },
+    { role: "post_fx3", loaded_name: null, model_id: 5, model_name: "Fictional EQ", bypassed: false },
   ],
 };
 
@@ -42,6 +42,18 @@ function renderNano(current: NanoCurrentState = state, overrides: Record<string,
 }
 
 describe("NanoChain", () => {
+  it("shows resolved effect names and keeps an unknown model explicit", () => {
+    const unknown: NanoCurrentState = {
+      ...state,
+      slots: state.slots.map((slot) => slot.role === "pre_fx1" ? { ...slot, model_id: 99999, model_name: null } : slot),
+    };
+
+    renderNano(unknown);
+
+    expect(screen.getByRole("button", { name: /Position 2: Unknown model 99999/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Position 3: Fictional Chorus/ })).toBeTruthy();
+  });
+
   it("uses the shared editor canvas and gives every control a target-specific name", async () => {
     renderNano(state, { onReadFxParams: vi.fn(async () => [0.25]) });
 

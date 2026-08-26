@@ -18,6 +18,10 @@ loaded_name: string | null,
  */
 model_id: number | null,
 /**
+ * Nano-specific display name resolved from the numeric effect model id.
+ */
+model_name: string | null,
+/**
  * Bypass state when present in the current-state message.
  */
 bypassed: boolean | null, };

@@ -39,7 +39,7 @@ use cortex_rs::{DeviceKind, RecallConsent};
 /// Bump this whenever a request or response changes shape. A client that sees
 /// a mismatch refuses with an actionable message rather than exchanging data
 /// either side will misinterpret.
-pub const DAEMON_PROTOCOL_VERSION: u32 = 19;
+pub const DAEMON_PROTOCOL_VERSION: u32 = 20;
 
 /// A request from a client to the daemon.
 ///

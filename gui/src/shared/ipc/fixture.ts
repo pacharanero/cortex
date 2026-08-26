@@ -137,14 +137,14 @@ const nanoState: NanoCurrentState = {
   capture_slot: 2, capture_volume: 128, gate_reduction: 42,
   footswitch_assignments: { ia: 1, ib: 2, iia: 3, iib: 4 },
   slots: [
-    { role: "gate", loaded_name: null, model_id: null, bypassed: false },
-    { role: "pre_fx1", loaded_name: null, model_id: 1001, bypassed: false },
-    { role: "pre_fx2", loaded_name: null, model_id: 1002, bypassed: true },
-    { role: "capture", loaded_name: "Fictional Capture", model_id: null, bypassed: null },
-    { role: "ir_cab", loaded_name: "Fictional Cabinet", model_id: null, bypassed: false },
-    { role: "post_fx1", loaded_name: null, model_id: 1003, bypassed: false },
-    { role: "post_fx2", loaded_name: null, model_id: 1004, bypassed: false },
-    { role: "post_fx3", loaded_name: null, model_id: 1005, bypassed: false },
+    { role: "gate", loaded_name: null, model_id: null, model_name: null, bypassed: false },
+    { role: "pre_fx1", loaded_name: null, model_id: 1001, model_name: "Fictional Drive", bypassed: false },
+    { role: "pre_fx2", loaded_name: null, model_id: 1002, model_name: "Fictional Chorus", bypassed: true },
+    { role: "capture", loaded_name: "Fictional Capture", model_id: null, model_name: null, bypassed: null },
+    { role: "ir_cab", loaded_name: "Fictional Cabinet", model_id: null, model_name: null, bypassed: false },
+    { role: "post_fx1", loaded_name: null, model_id: 1003, model_name: "Fictional Modulation", bypassed: false },
+    { role: "post_fx2", loaded_name: null, model_id: 1004, model_name: "Fictional Delay", bypassed: false },
+    { role: "post_fx3", loaded_name: null, model_id: 1005, model_name: "Fictional Reverb", bypassed: false },
   ],
 };
 

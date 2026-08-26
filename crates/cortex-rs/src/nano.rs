@@ -11,7 +11,8 @@
 //! by a four-byte footer. The field map is adapted from the Apache-2.0-licensed
 //! `rixrix/deskop-nano-cortex` decoder, which credits the MIT-licensed
 //! `choldy/nano-cortex-web-editor`. The Gate-reduction write layout follows
-//! the same licensed sources; see `THIRD-PARTY-NOTICES.md`.
+//! the same licensed sources; the Nano-specific FX model-name table is adapted
+//! from `deskop-nano-cortex`. See `THIRD-PARTY-NOTICES.md`.
 //!
 //! @see spec/roadmap.md [NANO-001.3]
 //! @see spec/110-framing/design.md
@@ -78,8 +79,75 @@ pub struct NanoSlotState {
     /// Numeric model identifier for one of the five variable FX slots.
     #[cfg_attr(feature = "typescript", ts(type = "number | null"))]
     pub model_id: Option<u64>,
+    /// Nano-specific display name resolved from the numeric effect model id.
+    pub model_name: Option<String>,
     /// Bypass state when present in the current-state message.
     pub bypassed: Option<bool>,
+}
+
+/// Resolve a Nano effect model id to its product-facing display name.
+///
+/// This is deliberately separate from the Quad Cortex runtime catalog: the
+/// products mostly share an id namespace, but not every id has the same name.
+/// Unknown ids remain unresolved so newer firmware is never mislabelled.
+#[must_use]
+pub const fn fx_model_name(model_id: u64) -> Option<&'static str> {
+    match model_id {
+        2 => Some("Obsessive Drive"),
+        3 => Some("OD250"),
+        4 => Some("Rodent Drive"),
+        6 => Some("Exotic"),
+        13 => Some("Chief OD1"),
+        18 => Some("Chief BD2"),
+        22 => Some("Facial Fuzz"),
+        23 => Some("Exotic Z Boost"),
+        27 => Some("Green 808"),
+        3000 => Some("Microtubes B3K"),
+        3007 => Some("Exotic Bass Z Boost"),
+        4001 => Some("Parametric 3"),
+        4003 => Some("Low-High Cut"),
+        4005 => Some("Graphic 9"),
+        5001 => Some("Legendary 87 (M)"),
+        5004 => Some("Solid State Comp (M)"),
+        5005 => Some("VCA Comp (M)"),
+        5007 => Some("Opto Comp (M)"),
+        5012 => Some("Legendary 87 (ST)"),
+        5013 => Some("Solid State Comp (ST)"),
+        5014 => Some("VCA Comp (ST)"),
+        5015 => Some("Opto Comp (ST)"),
+        6004 => Some("Tape Delay"),
+        6010 => Some("Analog Delay"),
+        6011 => Some("Digital Delay (ST)"),
+        6012 => Some("Dual Delay"),
+        6014 => Some("Dual Reverse Delay"),
+        6015 => Some("Circular Delay"),
+        7004 => Some("Tremolo"),
+        7021 => Some("MX Flanger"),
+        7022 => Some("Dream Chorus"),
+        7023 => Some("Chorus 229T"),
+        7024 => Some("Chief CE2W (ST)"),
+        7027 => Some("Chief DC2W (ST)"),
+        7028 => Some("MX Phase 95"),
+        7029 => Some("MX Vibe"),
+        8000 => Some("Room"),
+        8003 => Some("Hall"),
+        8007 => Some("Modulated"),
+        8008 => Some("Ambience"),
+        8009 => Some("Cave"),
+        8011 => Some("Mind Hall"),
+        9010 => Some("Bubba Wah"),
+        9012 => Some("Bass Wah"),
+        9013 => Some("Crying Wah"),
+        9014 => Some("Crying Clyde Wah"),
+        16001 => Some("Adaptive Gate"),
+        16002 => Some("Utility Gate"),
+        16006 => Some("Volume"),
+        16011 => Some("Doubler"),
+        18001 => Some("Transpose"),
+        24001 => Some("Love Meat"),
+        24006 => Some("Envelope Filter"),
+        _ => None,
+    }
 }
 
 /// Raw 0-255 values for the Nano's five amplifier controls.
@@ -643,13 +711,17 @@ pub fn decode_current_state(message: &[u8]) -> Result<NanoCurrentState> {
         ));
     }
 
-    let effect = |index, role| NanoSlotState {
-        role,
-        loaded_name: None,
-        model_id: model_ids[index],
-        bypassed: bypass
-            .and_then(|values| values.get(index))
-            .map(|value| *value != 0),
+    let effect = |index, role| {
+        let model_id = model_ids[index];
+        NanoSlotState {
+            role,
+            loaded_name: None,
+            model_id,
+            model_name: model_id.and_then(fx_model_name).map(str::to_owned),
+            bypassed: bypass
+                .and_then(|values| values.get(index))
+                .map(|value| *value != 0),
+        }
     };
 
     let slots = vec![
@@ -657,6 +729,7 @@ pub fn decode_current_state(message: &[u8]) -> Result<NanoCurrentState> {
             role: NanoSlotRole::Gate,
             loaded_name: None,
             model_id: None,
+            model_name: None,
             bypassed: gate_on.map(|on| !on),
         },
         effect(0, NanoSlotRole::PreFx1),
@@ -665,12 +738,14 @@ pub fn decode_current_state(message: &[u8]) -> Result<NanoCurrentState> {
             role: NanoSlotRole::Capture,
             loaded_name: capture_name,
             model_id: None,
+            model_name: None,
             bypassed: None,
         },
         NanoSlotState {
             role: NanoSlotRole::IrCab,
             loaded_name: ir_name,
             model_id: None,
+            model_name: None,
             bypassed: cab_ir_on.map(|on| !on),
         },
         effect(2, NanoSlotRole::PostFx1),
@@ -971,7 +1046,7 @@ mod tests {
         field_varint(&mut body, 38, 3);
         field_varint(&mut body, 39, 4);
         field_varint(&mut body, 44, 106);
-        for (field, model) in (48..=52).zip([1001, 1002, 1003, 1004, 1005]) {
+        for (field, model) in (48..=52).zip([4, 7024, 4001, 6010, 8000]) {
             field_varint(&mut body, field, model);
         }
         field_fixed32(&mut body, 53, f32::from(158_u8) / 255.0);
@@ -1181,7 +1256,12 @@ mod tests {
                 NanoSlotRole::PostFx3
             ]
         );
-        assert_eq!(state.slots[1].model_id, Some(1001));
+        assert_eq!(state.slots[1].model_id, Some(4));
+        assert_eq!(state.slots[1].model_name.as_deref(), Some("Rodent Drive"));
+        assert_eq!(
+            state.slots[2].model_name.as_deref(),
+            Some("Chief CE2W (ST)")
+        );
         assert_eq!(state.slots[1].bypassed, Some(false));
         assert_eq!(state.slots[2].bypassed, Some(true));
         assert_eq!(
@@ -1192,6 +1272,13 @@ mod tests {
             state.slots[4].loaded_name.as_deref(),
             Some("Fictional Cabinet")
         );
+    }
+
+    #[test]
+    fn nano_model_names_are_product_specific_and_unknown_ids_remain_unknown() {
+        assert_eq!(fx_model_name(18_001), Some("Transpose"));
+        assert_eq!(fx_model_name(6_010), Some("Analog Delay"));
+        assert_eq!(fx_model_name(99_999), None);
     }
 
     #[test]

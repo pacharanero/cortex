@@ -28,6 +28,10 @@ const fxSlots: { role: NanoSlotRole; slot: NanoFxSlot }[] = [
   { role: "post_fx3", slot: "post_fx3" },
 ];
 
+function slotName(slot: NanoCurrentState["slots"][number]): string {
+  return slot.loaded_name ?? slot.model_name ?? (slot.model_id == null ? roleNames[slot.role] : `Unknown model ${slot.model_id}`);
+}
+
 interface NanoChainProps {
   state: NanoCurrentState;
   onSetAmp: (control: NanoAmpControl, value: number) => Promise<void>;
@@ -256,7 +260,7 @@ export function NanoChain({ state, onSetAmp, onSetGateReduction, onSetBypass, on
           positionLabel={`Position ${index + 1}`}
           selected={selectedRole === slot.role}
           state={slot.bypassed == null ? "unknown" : slot.bypassed ? "bypassed" : "engaged"}
-          title={slot.loaded_name ?? "Assigned by device"}
+          title={slotName(slot)}
         />)}
       </EditorCanvas>
     </Paper>
@@ -264,7 +268,7 @@ export function NanoChain({ state, onSetAmp, onSetGateReduction, onSetBypass, on
       id="nano-slot-inspector"
       onClose={selectedRole ? clearSelection : undefined}
       summary={selectedState && <Text mt="sm">{roleNames[selectedState.role]} is {selectedState.bypassed == null ? "in an unknown state" : selectedState.bypassed ? "bypassed" : "engaged"}.</Text>}
-      title={selectedState?.loaded_name ?? (selectedRole ? roleNames[selectedRole] : "Select a chain block")}
+      title={selectedState ? slotName(selectedState) : "Select a chain block"}
     >
       {!selectedRole && <Text c="dimmed" size="sm">Block details and available controls will appear here.</Text>}
       {selectedRole && !selectedFxSlot && <Text c="dimmed" size="sm">No editable parameters are available for this role yet.</Text>}

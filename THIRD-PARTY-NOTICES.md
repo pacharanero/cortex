@@ -60,12 +60,13 @@ SOFTWARE.
   boundary, AFX spec zones, traceability approach, version synchronization,
   release/DX tooling, and hardware-smoke evidence shape informed this
   project's GUI, specs, and plans. Its current-state decoder, fixed-chain
-  domain model, and Gate-reduction write layout were adapted in
+  domain model, Gate-reduction write layout, and Nano-specific FX model-id to
+  display-name table were adapted in
   `crates/cortex-rs/src/nano.rs`, retaining the field-presence and
   provisional-evidence discipline while independently implementing strict
-  malformed-input handling and the HID envelope boundary. That material
-  credits `choldy/nano-cortex-web-editor`, so both upstreams are attributed
-  here.
+  malformed-input handling and the HID envelope boundary. The current-state
+  decoder material credits `choldy/nano-cortex-web-editor`, so both upstreams
+  are attributed here.
 
 ### Apache License 2.0 (deskop-nano-cortex)
 
