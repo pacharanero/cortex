@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 //! Lifecycle supervision for applications that share the held-session daemon.
+//!
+//! @see spec/200-cli/spec.md [FR-18] [FR-19]
+//! @see spec/200-cli/design.md [DES-CLI]
 
 use std::io::Read as _;
 use std::path::{Path, PathBuf};

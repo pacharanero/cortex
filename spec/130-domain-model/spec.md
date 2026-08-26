@@ -80,7 +80,8 @@ Maintainers, AI coding agents, and the CLI/MCP/GUI surfaces that consume the cra
 | FR-16 | The `UNITY_LEVEL` constant (10/13 = 0.76923077, representing 0 dB on the -100..+30 dB span) is exposed for parameter scaling. | Should Have |
 | FR-17 | The `input_level_db` conversion (`-12 + 72 * level`, input ports span -12 to +60 dB) is exposed as a helper for the IO-settings surface. | Should Have |
 | FR-18 | All domain types implement `Debug` and `Clone`; the read-only views implement `Serialize`/`Deserialize` for Tauri and MCP transport. | Should Have |
-| FR-19 | All domain source files carry `@see` doc-comments linking to this spec and its `design.md`. | Must Have |
+| FR-19 | All domain source files carry `@see` doc-comments linking to this governing spec and, where a narrower design anchor exists, its `design.md`. | Must Have |
+| FR-20 | `nano.rs` owns the Nano-specific four-byte-footer application envelope, bounded current-state model, and typed amp, bypass and raw FX parameter operations. Shared HID report framing remains in zone 110; Gate reduction and wider Nano operations remain capability-labelled provisional work. | Must Have |
 
 ### Non-Functional Requirements
 
@@ -104,6 +105,7 @@ Maintainers, AI coding agents, and the CLI/MCP/GUI surfaces that consume the cra
 - [x] `Catalog` parses the `ModelRepo` container and preserves parameter wire positions.
 - [x] Checked slot conversion, input-level scaling, preset navigation, dynamic-option and semantic comparison helpers are implemented.
 - [x] `UNITY_LEVEL`, `input_level_db`, and `db_to_input_level` are exposed.
+- [x] The Nano application codec and typed working-state operations use the separate four-byte-footer domain and label capability evidence without conflating it with the Quad envelope.
 
 ## Non-Goals
 
@@ -127,7 +129,7 @@ Maintainers, AI coding agents, and the CLI/MCP/GUI surfaces that consume the cra
 
 | Zone | Spec | Owns (primary source) | Status |
 | --- | --- | --- | --- |
-| [130-domain-model](./spec.md) | Domain model | `crates/cortex-rs/src/{device,message,catalog,grid,view,safety}.rs` | Partial; core views/builders/safety implemented |
+| [130-domain-model](./spec.md) | Domain model | `crates/cortex-rs/src/{device,message,catalog,grid,view,helpers,safety,nano}.rs` | Partial; core views/builders/safety and bounded Nano operations implemented |
 
 ### The row-numbering trap (authoritative statement)
 

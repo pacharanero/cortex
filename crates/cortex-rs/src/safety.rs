@@ -15,6 +15,7 @@
 //!
 //! @see spec/300-mcp/spec.md [FR-1] [FR-4]
 //! @see spec/400-gui/spec.md
+//! @see spec/130-domain-model/spec.md
 
 use std::time::Duration;
 

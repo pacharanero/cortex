@@ -60,13 +60,13 @@ Maintainers, AI coding agents, and downstream crate consumers.
 
 | ID | Requirement | Priority |
 | --- | --- | --- |
-| FR-1 | Every owned Rust source file (`crates/**/*.rs`, `gui/src-tauri/**/*.rs`) carries a top-level `@see` doc-comment linking to its governing zone. Settled under ENG-004.1: the TypeScript frontend (`gui/src/`), the `s/` scripts, and configuration files (manifests, CI workflows, build/lint config) are explicitly out of scope for `@see` - they are governed instead by the SPDX header requirement (zone 900, FR-2) and each zone's `spec.md` "Owned source" line, which already names them without an `@see` link. | Must Have |
+| FR-1 | Every owned Rust source file (`crates/**/*.rs`, `gui/src-tauri/**/*.rs`) carries a top-level `@see` doc-comment linking to its governing zone. Settled under ENG-004.1: the TypeScript frontend (`gui/src/`), the `s/` scripts, and configuration files (manifests, CI workflows, build/lint config) remain governed by the routing index (FR-3) but are explicitly out of scope for this Rust doc-comment syntax. This exclusion says nothing about their behavioural importance. | Must Have |
 | FR-2 | Spec folders use 3-digit ranged numbering by category (see Appendix), spaced to allow insertion without renumbering. | Must Have |
 | FR-3 | Each source surface has one primary owning zone; the routing index below is the authoritative owner map. Cross-cutting files may be consumed by several zones. | Must Have |
 | FR-4 | Node IDs are zone-local: `[FR-x]`/`[NFR-x]` restart per `spec.md`, `[DES-*]` anchors are unique within a `design.md`. | Must Have |
 | FR-5 | Project progress is tracked only in `spec/roadmap.md` and `spec/completed.md`; zone folders contain no `tasks.md`. | Must Have |
 | FR-6 | Cross-cutting living behaviour uses numbered `900-999` specs; one-off decisions use `docs/adr/` (none yet). | Should Have |
-| FR-7 | Code/spec alignment is bidirectional: existing Rust `@see` links resolve (`s/check-traceability`, ENG-004.2), and every zone `spec.md` lists its owned files - Rust source via `@see`, non-Rust surfaces via the "Owned source" line alone (FR-1). | Must Have |
+| FR-7 | Code/spec alignment is bidirectional: every owned Rust source file carries a resolvable `@see` (`s/check-traceability`, ENG-004.2), and the routing index maps source surfaces to their governing zones (FR-3). Source-owning zone specs should also list their owned paths for navigation, but that optional inventory is not a substitute for the Rust file-level gate. | Must Have |
 | FR-8 | Provisional surfaces (Nano Cortex specifics, MCP safety surface, unverified message types) are labelled as such in code, spec, UI, and release notes. | Must Have |
 | FR-9 | The crate is a leaf: `default-features = false` builds only the protocol/domain surface (no hidapi, no async runtime). | Must Have |
 | FR-10 | The same crate drives the CLI, MCP server, and Tauri backend; none reimplements protocol or domain logic. | Must Have |
@@ -82,7 +82,7 @@ Maintainers, AI coding agents, and downstream crate consumers.
 
 ## Acceptance Criteria
 
-- [x] Every owned `.rs` file resolves to exactly one primary zone and carries a valid `@see`, CI-gated by `s/check-traceability` (ENG-004.1, ENG-004.2). Non-Rust surfaces are explicitly out of scope for `@see` (FR-1).
+- [x] Every owned `.rs` file carries at least one valid `@see` to a living zone spec or design, with header presence and link resolution CI-gated by `s/check-traceability` (ENG-004.1, ENG-004.2). Non-Rust surfaces are explicitly out of scope for `@see` (FR-1).
 - [x] Inserting a zone between `100` and `110` uses `105`, never renumbers.
 - [x] `001-overview` is the singleton routing/rules doc.
 - [x] Provisional surfaces are flagged by capability in code and spec without labelling hardware-verified device support provisional as a whole.
@@ -94,7 +94,7 @@ Maintainers, AI coding agents, and downstream crate consumers.
 - GUI interaction and presentation requirements (owned by zone `400-gui`).
 - Full Nano Cortex support. Hardware verification covers shared USB HID framing, the Nano-specific envelope/domain, held-daemon runtime, typed state, raw amp, bypass and raw FX parameter operations, but wider operations and untested host surfaces remain active work under NANO-001.
 - On-device builds (the `qc-stomp-tools` ioctl route; not in scope for this USB-first project).
-- Extending `@see` traceability to the TypeScript frontend, `s/` scripts, or configuration files. Settled under ENG-004.1: those surfaces are SPDX-headered (zone 900, FR-2) and named in their zone's "Owned source" line, which is judged sufficient for glue/tooling and UI code that does not carry protocol or safety behaviour. A future change proposing `@see` for one of those surfaces needs its own roadmap item with the full contract (NFR-1 resolution, `s/check-traceability` coverage) rather than a narrower one grafted onto FR-1.
+- Applying the Rust `@see` syntax unchanged to the TypeScript frontend, `s/` scripts, or configuration files. Those surfaces can carry lifecycle, release, interaction and safety behaviour and remain subject to their governing zone specs through the routing index. A future proposal for file-level non-Rust traceability needs its own roadmap item, language-appropriate syntax and automated coverage rather than a narrower rule grafted onto FR-1.
 
 ## Dependencies
 
@@ -163,16 +163,17 @@ To answer "where are we up to", read `roadmap.md`. To answer "what must this do"
 
 | Zone | Spec | Owns (primary source) | Status |
 | --- | --- | --- | --- |
+| [001-overview](spec.md) | Workspace architecture and traceability rules | `crates/cortex-rs/src/lib.rs`, `spec/` | Living |
 | [100-transport](../100-transport/spec.md) | USB HID transport | `crates/cortex-rs/src/transport.rs` | Implemented and hardware-verified |
 | [110-framing](../110-framing/spec.md) | HID frame codec | `crates/cortex-rs/src/framing.rs` | Implemented |
-| [120-proto-schema](../120-proto-schema/spec.md) | Protobuf schema | `crates/cortex-rs/{build.rs,proto/}` | Implemented |
-| [130-domain-model](../130-domain-model/spec.md) | Domain model and pure grid builders | `crates/cortex-rs/src/{device,message,catalog,grid,view,safety}.rs` | Partial; core typed views and builders implemented |
+| [120-proto-schema](../120-proto-schema/spec.md) | Protobuf schema and typed message registry | `crates/cortex-rs/{build.rs,proto/}`, `crates/cortex-rs/src/registry.rs` | Implemented |
+| [130-domain-model](../130-domain-model/spec.md) | Domain model and pure grid builders | `crates/cortex-rs/src/{device,message,catalog,grid,view,helpers,safety,nano}.rs` | Partial; core typed views and builders implemented; Nano operations labelled per evidence |
 | [140-session](../140-session/spec.md) | HID link seam, session and subscribed state | `crates/cortex-rs/src/{link,session,state}.rs` | Implemented; core paths hardware-verified |
 | [150-client](../150-client/spec.md) | Client API | `crates/cortex-rs/src/client.rs` | Partial; implemented core read/edit/save paths hardware-verified |
 | [200-cli](../200-cli/spec.md) | CLI and shared host boundary | `crates/cortex-cli/src/{main,connect,decode}.rs`, `crates/cortex-host/src/` | Linux usable pre-alpha; Windows IPC adapter planned |
 | [300-mcp](../300-mcp/spec.md) | MCP server | `crates/cortex-mcp/src/{main,server,transport}.rs`, process tests | Non-persistent tools hardware-verified; save/delete absent |
 | [400-gui](../400-gui/spec.md) | Tauri GUI | `gui/` | Interactive non-persistent editor; fixture and daemon-backed modes |
-| [500-dx-tooling](../500-dx-tooling/spec.md) | DX/tests | `s/`, `.editorconfig`, lint configs | Partial |
+| [500-dx-tooling](../500-dx-tooling/spec.md) | DX/tests and workspace configuration | `s/`, root and crate manifests, `.editorconfig`, lint/build configs | Partial |
 | [600-ci-release](../600-ci-release/spec.md) | CI/release | `.github/workflows/`, `dependabot.yml` | Partial |
 | [900-project-governance](../900-project-governance/spec.md) | Governance | `AGENTS.md`, `NOTICE`, `THIRD-PARTY-NOTICES.md`, `LICENSE` | Implemented |
 
@@ -189,7 +190,7 @@ All spec-driven source files carry a top-level doc-comment:
 
 At least one `@see` MUST point at a `spec.md` or `design.md` under `spec/`.
 
-**Scope (settled under ENG-004.1):** this contract covers owned Rust source under `crates/` and `gui/src-tauri/`. It deliberately excludes the TypeScript frontend (`gui/src/`), the `s/` scripts, and configuration files (manifests, CI workflows, build/lint config) - see Non-Goals.
+**Scope (settled under ENG-004.1):** this file-level `@see` contract covers owned Rust source under `crates/` and `gui/src-tauri/`. The TypeScript frontend (`gui/src/`), the `s/` scripts, and configuration files (manifests, CI workflows, build/lint config) remain mapped to their governing zones by the routing index but do not use this Rust-specific syntax - see Non-Goals.
 
 ### Glossary
 
