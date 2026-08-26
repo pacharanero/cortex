@@ -42,7 +42,7 @@ This zone owns the scripts, the `.editorconfig`, and the lint/format config. The
 | `s/version++` | Implemented | Release script synchronizes Cargo, npm and Tauri versions, runs the Rust and frontend gates, then lands one release commit |
 | No-default workspace clippy/tests run locally, not only in CI | Implemented | `s/lint` runs `cargo clippy --all-targets --no-default-features -- -D warnings`; `s/test` runs `cargo test --all --no-default-features` |
 | Markdown lint | Implemented | `s/markdownlint` runs `markdownlint-cli2@0.23.2` against `.markdownlint.jsonc`, from `s/lint` and a dedicated CI step |
-| Traceability lint | Implemented | `s/check-traceability` resolves existing Rust `@see` paths and node IDs, requires a living spec/design target, and has isolated fixture coverage in `tests/check-traceability.sh` |
+| Traceability lint | Implemented | `s/check-traceability` requires a module-level `//! @see` header in every tracked Rust file, resolves its paths and node IDs, requires a living spec/design target, and has isolated fixture coverage in `tests/check-traceability.sh` |
 | Tracked Git hooks | Implemented | `s/install-hooks` sets `core.hooksPath=.githooks`; `.githooks/pre-commit` runs `s/lint` |
 
 ## User Stories
@@ -86,7 +86,7 @@ Maintainers and AI coding agents running the local gate before a commit.
 | FR-12 | `s/markdownlint` runs `markdownlint-cli2` (pinned, via `npx`) against `.markdownlint.jsonc` in both `s/lint` and CI. The config is not purely stylistic: `MD056` and `MD040` catch defects that silently degrade the rendered docs. | Should Have |
 | FR-13 | `s/install-hooks` sets `core.hooksPath` to the tracked `.githooks/` directory, and reverses that with `-u`. | Should Have |
 | FR-14 | `.githooks/pre-commit` runs `s/lint` and refuses the commit on failure. | Should Have |
-| FR-15 | `s/check-traceability` validates complete `@see` syntax, target existence, literal structural node resolution, and at least one living spec/design target for every Rust file that already carries a header. Its parser behavior is covered in isolated temporary Git repositories. | Should Have |
+| FR-15 | `s/check-traceability` requires a module-level `//! @see` header in every tracked Rust file and validates complete syntax, target existence, literal structural node resolution, and at least one living spec/design target. Its parser behavior is covered in isolated temporary Git repositories. | Should Have |
 | FR-16 | `s/check-docs-nav` fails if a `docs/` page is not reachable from `mkdocs.yml`'s nav and is not a named exception (with a reason) in `.nav-exceptions`; it also fails if a nav entry or named exception no longer exists. | Should Have |
 | FR-17 | `s/linkcheck` builds the Zensical site and fails if a rendered internal link or image resource does not resolve within the configured deployment prefix, or if a fragment does not match a rendered target ID. External links are not checked. | Should Have |
 | FR-18 | `s/spellcheck` runs the updater-visible codespell version pinned in `requirements.txt` against `docs/` and never installs or downgrades packages during lint. | Should Have |

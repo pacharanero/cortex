@@ -96,7 +96,7 @@ Maintainers merging PRs, and the downstream consumers who install the crate or t
 | FR-12 | The path-filtered docs workflow builds Zensical and deploys through GitHub Pages artifacts. | Must Have |
 | FR-13 | CI type-checks and builds both explicit GUI frontend modes (`npm run check --prefix gui`: fixture and Tauri). | Must Have |
 | FR-14 | CI builds the full Tauri Rust backend as a debug, unbundled boundary check (`npm run tauri --prefix gui -- build --debug --no-bundle --ci`), catching `tauri.conf.json`/icon/`beforeBuildCommand` integration failures that `cargo test`/`cargo clippy` alone do not exercise. | Must Have |
-| FR-15 | CI runs the traceability checker's isolated fixture suite and then validates every existing Rust `@see` header against its target path, literal node ID, and living-spec requirement. | Should Have |
+| FR-15 | CI runs the traceability checker's isolated fixture suite and then requires every tracked Rust file to carry a module-level `//! @see` header whose target path, literal node IDs and living-spec requirement all resolve. | Should Have |
 | FR-20 | Auto-tag workflow is implemented: a version bump on `main` creates `vX.Y.Z` and directly invokes future release workflows rather than relying on tag-event recursion. Its first live release remains unevidenced. | Must Have |
 
 #### Planned

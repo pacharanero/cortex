@@ -1,6 +1,11 @@
 // SPDX-FileCopyrightText: 2026 Dr Marcus Baw
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+//! Generate the TypeScript IPC contract from the Rust boundary types.
+//!
+//! @see spec/400-gui/spec.md
+//! @see spec/400-gui/design.md [DES-BOUNDARY]
+
 use std::path::PathBuf;
 
 use cortex_gui::{DashboardSnapshot, ParameterView};

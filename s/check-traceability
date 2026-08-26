@@ -2,14 +2,13 @@
 # SPDX-FileCopyrightText: 2026 Dr Marcus Baw
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
-# Resolve every `@see` traceability header in the owned Rust tree against its
-# target document, so a moved or renumbered spec/roadmap item is caught here
-# rather than left as a dead pointer for the next reader to trip over.
+# Require and resolve `@see` traceability headers throughout the owned Rust
+# tree, so an unlinked file or a moved or renumbered target is caught here
+# rather than left for the next reader to trip over.
 #
-# Each `@see` line is `<path> [ID] [ID2] ...` or `<path> ID` (a lone,
-# unbracketed node id) or just `<path>` with no id at all. This script does
-# not require a file to carry an `@see` header at all - a header-less file is
-# ENG-004.1's job, not this gate's - it only checks headers that exist:
+# Each `//! @see` line is `<path> [ID] [ID2] ...` or `<path> ID` (a lone,
+# unbracketed node id) or just `<path>` with no id at all. This script requires
+# every tracked Rust file to carry that module-level doc-comment form, then checks:
 #
 #   - the target path must exist in the tree
 #   - each node id must resolve inside that target, as one of:
@@ -20,9 +19,8 @@
 #     design.md target, as required by spec/001-overview/spec.md
 #
 # This deliberately does not check for a back-reference from the spec back to
-# the source file: only 8 of 13 zone spec.md files currently name an "Owned
-# source" line, so that check would be noisy against zones that simply
-# haven't adopted the convention yet rather than catching a real defect.
+# the source file. The routing index is the authoritative directory-level
+# owner map; source-owning zone specs may repeat their paths for navigation.
 
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
@@ -86,9 +84,10 @@ while IFS= read -r file; do
 
 	while IFS= read -r content || [[ -n "$content" ]]; do
 		lineno=$((lineno + 1))
-		[[ "$content" == *"@see"* ]] || continue
-		has_header=true
-		after="${content#*@see}"
+		[[ "$content" == "//! @see"* ]] && has_header=true
+		trimmed="$(trim "$content")"
+		[[ "$trimmed" == "//! @see"* ]] || continue
+		after="${trimmed#*@see}"
 		after="$(trim "$after")"
 		if [[ -z "$after" ]]; then
 			fail "$file:$lineno: @see is missing a target"
@@ -133,7 +132,9 @@ while IFS= read -r file; do
 		done
 	done < "$file"
 
-	if [[ "$has_header" == true && "$has_living_target" == false ]]; then
+	if [[ "$has_header" == false ]]; then
+		fail "$file: missing @see traceability header"
+	elif [[ "$has_living_target" == false ]]; then
 		fail "$file: @see headers must include at least one spec/*/spec.md or spec/*/design.md target"
 	fi
 done <<< "$tracked_files"

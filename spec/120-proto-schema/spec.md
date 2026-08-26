@@ -155,7 +155,7 @@ ATMA=1    ATMA variant (identified by prior art as the Nano codename; proves onl
 
 | Zone | Spec | Owns (primary source) | Status |
 | --- | --- | --- | --- |
-| [120-proto-schema](./spec.md) | Protobuf schema | `crates/cortex-rs/{build.rs,proto/}` | Implemented |
+| [120-proto-schema](./spec.md) | Protobuf schema and typed message registry | `crates/cortex-rs/{build.rs,proto/}`, `crates/cortex-rs/src/registry.rs` | Implemented |
 
 ### Glossary
 

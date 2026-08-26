@@ -91,7 +91,19 @@ expect_success "lone unbracketed id"
 reset_case
 write_source '//! no traceability header yet'
 stage_case
-expect_success "missing header remains outside this gate"
+expect_failure "missing header" "missing @see traceability header"
+
+reset_case
+write_source '// @see spec/100-test/spec.md'
+write_target spec/100-test/spec.md '# Spec'
+stage_case
+expect_failure "ordinary comment is not a header" "missing @see traceability header"
+
+reset_case
+write_source '    //! @see spec/100-test/spec.md'
+write_target spec/100-test/spec.md '# Spec'
+stage_case
+expect_failure "nested doc comment is not a top-level header" "missing @see traceability header"
 
 reset_case
 write_source '//! @see spec/100-test/missing.md'

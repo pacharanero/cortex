@@ -11,6 +11,7 @@
 //!
 //! @see spec/110-framing/spec.md [FR-13]
 //! @see spec/120-proto-schema/spec.md
+//! @see spec/130-domain-model/spec.md [FR-4] [FR-5] [FR-6] [FR-7]
 
 use bytes::Bytes;
 

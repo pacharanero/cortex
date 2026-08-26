@@ -15,6 +15,7 @@
 //!
 //! @see spec/roadmap.md [NANO-001.3]
 //! @see spec/110-framing/design.md
+//! @see spec/130-domain-model/spec.md
 
 use crate::{Error, Result};
 

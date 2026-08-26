@@ -46,7 +46,7 @@ source .venv/bin/activate
 
 ## `s/check-traceability`
 
-Validate every existing Rust `@see` header against its target document and node identifier. Each covered file must link to at least one living zone `spec.md` or `design.md`; progress-ledger links may supplement that target but cannot replace it. Run by `s/lint` and CI, with parser behavior covered by `tests/check-traceability.sh` in `s/test` and CI.
+Require every tracked Rust file to carry a module-level `//! @see` header and validate each target document and node identifier. Every file must link to at least one living zone `spec.md` or `design.md`; progress-ledger links may supplement that target but cannot replace it. Run by `s/lint` and CI, with parser behavior covered by `tests/check-traceability.sh` in `s/test` and CI.
 
 - `s/check-traceability`
 
