@@ -2436,8 +2436,8 @@ fn prot_006_12_global_settings_mutate_poll_restore() -> cortex_rs::Result<()> {
 }
 
 #[test]
-#[ignore = "requires visual confirmation on a real Quad Cortex"]
-fn gig_view_and_tuner_visibility_visual_check() -> cortex_rs::Result<()> {
+#[ignore = "requires visual confirmation of Gig View on a real Quad Cortex"]
+fn gig_view_visibility_visual_check() -> cortex_rs::Result<()> {
     let qc = QuadCortex::connect(
         DeviceKind::QuadCortex,
         Duration::from_secs(10),
@@ -2450,21 +2450,14 @@ fn gig_view_and_tuner_visibility_visual_check() -> cortex_rs::Result<()> {
 
     let exercise = (|| -> cortex_rs::Result<()> {
         qc.set_gig_view(false)?;
-        qc.show_tuner(false)?;
         qc.set_gig_view(true)?;
         eprintln!("[PAUSE] confirm Gig View is visible for {pause} seconds");
-        std::thread::sleep(Duration::from_secs(pause));
-        qc.set_gig_view(false)?;
-        qc.show_tuner(true)?;
-        eprintln!("[PAUSE] confirm the Tuner is visible for {pause} seconds");
         std::thread::sleep(Duration::from_secs(pause));
         Ok(())
     })();
 
-    let hide_tuner = qc.show_tuner(false);
     let hide_gig_view = qc.set_gig_view(false);
     qc.disconnect();
-    hide_tuner?;
     hide_gig_view?;
     exercise
 }

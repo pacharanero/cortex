@@ -48,8 +48,8 @@ use crate::proto::{
     MasterVolumeMessage, MidiMessageInfo, MidiPortSettings, MidiSettingsMessage, ModeMessage,
     OutputPortSettings, PinnedModelsMessage, PortSettings, RecallPresetMessage,
     RecentsFavoritesItem, RecentsFavoritesMessage, SceneColorMessage, SceneCopyMessage,
-    SceneLabelMessage, SceneMessage, SetlistPositionMessage, ShowGigViewMessage, ShowTunerMessage,
-    TunerMessage, UsbPortSettings, VersionMessage,
+    SceneLabelMessage, SceneMessage, SetlistPositionMessage, ShowGigViewMessage, TunerMessage,
+    UsbPortSettings, VersionMessage,
 };
 use crate::session::{InboundMessage, Session};
 
@@ -3844,21 +3844,21 @@ impl QuadCortex {
         )
     }
 
-    /// Open or close the tuner on the unit.
+    /// Report that host-controlled Tuner visibility is unsupported.
+    ///
+    /// `CorOS` 4.0.1 ignored the recovered `ShowTuner{UPDATE, show}` shape without
+    /// an error or visible change, both with and without an explicit
+    /// `ShowTuner{READ}` subscription. Physical Tuner open/close also emitted no
+    /// `ShowTuner` traffic during a normal subscribed host session.
     ///
     /// # Errors
     ///
-    /// Returns a session error if the update cannot be sent.
-    pub fn show_tuner(&self, shown: bool) -> crate::Result<()> {
-        let message = ShowTunerMessage {
-            action: MessageAction::Update as i32,
-            show: shown,
-            ..Default::default()
-        };
-        self.session.send(
-            MessageType::ShowTuner,
-            &prost::Message::encode_to_vec(&message),
-        )
+    /// Returns [`crate::Error::UnsupportedDeviceOperation`] without device I/O.
+    pub fn show_tuner(&self, _shown: bool) -> crate::Result<()> {
+        Err(crate::Error::UnsupportedDeviceOperation {
+            device: crate::DeviceKind::QuadCortex,
+            operation: "ShowTuner visibility has no measured device effect",
+        })
     }
 
     /// Select one input known to be accepted by the tuner.
@@ -7041,7 +7041,13 @@ mod tests {
         .unwrap();
         qc.set_mode(FootswitchModeSlot::StompScene).unwrap();
         qc.set_gig_view(true).unwrap();
-        qc.show_tuner(false).unwrap();
+        assert!(matches!(
+            qc.show_tuner(false),
+            Err(crate::Error::UnsupportedDeviceOperation {
+                device: crate::DeviceKind::QuadCortex,
+                operation: "ShowTuner visibility has no measured device effect"
+            })
+        ));
         qc.set_tuner_input(TunerInput::Return2).unwrap();
         qc.set_tuner_mute(true).unwrap();
         qc.set_tuner_reference(2.0).unwrap();
@@ -7084,10 +7090,6 @@ mod tests {
         let (next, body) = wait_for_write(&link, next, MessageType::ShowGigView);
         let gig: ShowGigViewMessage = prost::Message::decode(body.as_slice()).unwrap();
         assert!(gig.show);
-        let (next, body) = wait_for_write(&link, next, MessageType::ShowTuner);
-        let show: ShowTunerMessage = prost::Message::decode(body.as_slice()).unwrap();
-        assert!(!show.show);
-
         let (next, body) = wait_for_write(&link, next, MessageType::Tuner);
         let input: TunerMessage = prost::Message::decode(body.as_slice()).unwrap();
         assert!(matches!(

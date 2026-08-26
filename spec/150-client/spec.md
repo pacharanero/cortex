@@ -30,7 +30,7 @@ The session layer (zone 140) provides correlated request/response and broadcast-
 
 This zone knows NOTHING about hidapi, HID reports, framing, or the session state machine. It holds a `Session` reference and builds protobuf messages, handing them to the session's `send`/`request`/`await_broadcast`/`collect` primitives. That keeps this layer testable with a fake session and keeps all wire concerns below it.
 
-Verification is per method. The implemented non-UI read, navigation, grid-edit, tempo, STOMP/expression/MIDI, file, capture/IR selection, global-setting, I/O and pin/Favorite paths are hardware-verified against CorOS 4.0.1. A CorOS 4.0.1 false-only capture-dialog response froze and rebooted the unit, so no response is exposed; visual-only Gig View/Tuner visibility methods remain unverified; positive host capture acceptance is structurally unavailable and planned separately.
+Verification is per method. The implemented non-UI read, navigation, grid-edit, tempo, STOMP/expression/MIDI, file, capture/IR selection, global-setting, I/O and pin/Favorite paths are hardware-verified against CorOS 4.0.1. A CorOS 4.0.1 false-only capture-dialog response froze and rebooted the unit, so no response is exposed. Gig View visibility is hardware-verified; the recovered `ShowTuner` update had no visible effect and now fails before I/O. Positive host capture acceptance is structurally unavailable and planned separately.
 
 ---
 
@@ -174,7 +174,7 @@ Preset File replies have no usable request-id correlation. Exact action and targ
 | FR-63 | `set_master_volume_assignment` and `set_global_bypass` perform explicit settings READ, merge partial intent, and write every sibling in each nested replacement group. Their restore APIs require complete typed nested state. | Must Have |
 | FR-64 | Global EQ exposes whole-EQ bypass; five bands at stride 5 with Gain/Frequency/Q/Type/Enabled offsets 0-4; and OUT level/1-2/3-4 at indices 25-27. Every parameter is a sparse one-index write, normalized 0-1; no dB mapping is claimed for OUT level. | Should Have |
 | FR-65 | `set_mode_cycle(slots)` replaces a non-empty cycle of typed values 0-8, with at most one HYBRID and never a HYBRID alone. Value 9 cannot be represented. `set_mode` accepts the same closed slot type. | Should Have |
-| FR-81 | `set_gig_view(shown)` and `show_tuner(shown)` open/close their device views. Tuner input is limited to the established accepted set; mute is Boolean; reference is a finite -15..=15 Hz offset from 440. | Should Have |
+| FR-81 | `set_gig_view(shown)` opens/closes Gig View. `show_tuner(shown)` returns unsupported before I/O because the recovered update was a measured silent no-op on CorOS 4.0.1. Tuner input is limited to the established accepted set; mute is Boolean; reference is a finite -15..=15 Hz offset from 440. | Should Have |
 
 #### Pinning and Favorites
 
@@ -245,7 +245,7 @@ Successful write dispatch is not device confirmation. `io_settings_complete` iss
 - [x] `set_ir()` preserved the exact device-returned key/name, and timed on-unit inspection confirmed no warning for the selected user IR.
 - [x] PROT-006.13 complete I/O read, mutation, pairing and exact restoration coverage passed on CorOS 4.0.1 with external outputs disconnected.
 - [x] Pure helpers and typed views pass fictional-fixture tests; PROT-006.15 is complete.
-- [~] Verification remains per operation: the false-only capture-dialog response was removed after it froze and rebooted a CorOS 4.0.1 unit; positive host capture belongs to the separate planned host-workflow scope, and Gig View/Tuner visibility remain visually unverified.
+- [x] Verification remains per operation: the false-only capture-dialog response was removed after it froze and rebooted a CorOS 4.0.1 unit; positive host capture belongs to the separate planned host-workflow scope; Gig View visibility is verified; and the measured no-op Tuner visibility path fails before I/O.
 
 ---
 
@@ -316,7 +316,7 @@ Implemented constants such as `UNITY_LEVEL`, `USER_SETLIST_ROOT`, and `SCENE_UNL
 
 ### Provisional labelling
 
-The implemented non-UI Quad Cortex surface is hardware-verified per operation from this crate on CorOS 4.0.1. The host-owned capture-dialog response and visual-only Gig View/Tuner visibility methods remain unverified, as do all future operations and platforms. Do not apply one blanket label to the entire client.
+The implemented non-UI Quad Cortex surface is hardware-verified per operation from this crate on CorOS 4.0.1. The host-owned capture-dialog response remains unavailable; Gig View visibility is verified; and host-controlled Tuner visibility is explicitly unsupported after the recovered update produced no visible effect. Future operations and platforms remain unverified. Do not apply one blanket label to the entire client.
 
 ### Hardware findings (CorOS 4.0.1)
 
