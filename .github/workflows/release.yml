@@ -25,7 +25,7 @@ on:
   workflow_call:
     inputs:
       tag:
-        description: Release tag to build without publishing.
+        description: Release tag to build and publish as a GitHub Release.
         required: true
         type: string
 

@@ -4,7 +4,8 @@
 # git-cliff configuration (CLI-004.13). Adapted from git-cliff's own published
 # default (https://github.com/orhun/git-cliff/blob/v2.13.1/config/cliff.toml)
 # rather than written from memory, then trimmed and regrouped against this
-# repo's real Conventional Commits history (`git log --oneline`).
+# repo's real Conventional Commits history (`git log --oneline`) and checked
+# against the house-style `koloki-co/dsc` example.
 #
 # git-cliff generates CHANGELOG.md; cargo-dist does not generate changelogs
 # itself; it only optionally consumes an existing one. `s/version++` runs
@@ -62,6 +63,6 @@ commit_parsers = [
     { message = ".*", group = "<!-- 9 -->Other" },
 ]
 filter_commits = false
-tag_pattern = "v[0-9]*"
+tag_pattern = "^v[0-9]+\\.[0-9]+\\.[0-9]+$"
 topo_order = false
 sort_commits = "oldest"
