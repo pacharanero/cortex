@@ -15,6 +15,7 @@ export type { NanoAmpState } from "./NanoAmpState";
 export type { NanoBypassTarget } from "./NanoBypassTarget";
 export type { NanoCurrentState } from "./NanoCurrentState";
 export type { NanoFootswitchAssignments } from "./NanoFootswitchAssignments";
+export type { NanoFxParameter } from "./NanoFxParameter";
 export type { NanoFxSlot } from "./NanoFxSlot";
 export type { NanoSlotRole } from "./NanoSlotRole";
 export type { NanoSlotState } from "./NanoSlotState";

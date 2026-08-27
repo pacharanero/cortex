@@ -10,7 +10,7 @@ use std::path::PathBuf;
 
 use cortex_gui::{DashboardSnapshot, ParameterView};
 use cortex_rs::ParameterInput;
-use cortex_rs::nano::{NanoAmpControl, NanoBypassTarget, NanoFxSlot};
+use cortex_rs::nano::{NanoAmpControl, NanoBypassTarget, NanoFxParameter, NanoFxSlot};
 use ts_rs::TS;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -26,6 +26,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ParameterInput::export_all_to(&output)?;
     NanoAmpControl::export_all_to(&output)?;
     NanoBypassTarget::export_all_to(&output)?;
+    NanoFxParameter::export_all_to(&output)?;
     NanoFxSlot::export_all_to(&output)?;
 
     let mut bindings = Vec::new();

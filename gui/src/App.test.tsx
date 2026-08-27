@@ -160,4 +160,20 @@ describe("device switching", () => {
     await waitFor(() => expect(api.dashboard.mock.calls.length).toBeGreaterThan(1), { timeout: 2_000 });
     await waitFor(() => expect(screen.getAllByText("write outcome was not confirmed")).toHaveLength(1));
   });
+
+  it("does not report a confirmed Nano write as failed when the follow-up dashboard refresh fails", async () => {
+    const initial = snapshot("nano_cortex");
+    initial.nano!.amp.gain = 10;
+    api.dashboard
+      .mockResolvedValue(initial)
+      .mockResolvedValueOnce(initial)
+      .mockRejectedValueOnce(new Error("secondary dashboard refresh failed"));
+    api.setNanoAmp.mockResolvedValue(undefined);
+    renderApp();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Apply gain" }));
+
+    expect(await screen.findByText("gain applied.")).toBeTruthy();
+    expect(screen.queryByText("secondary dashboard refresh failed")).toBeNull();
+  });
 });

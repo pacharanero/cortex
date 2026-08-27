@@ -81,7 +81,7 @@ Maintainers, AI coding agents, and the CLI/MCP/GUI surfaces that consume the cra
 | FR-17 | The `input_level_db` conversion (`-12 + 72 * level`, input ports span -12 to +60 dB) is exposed as a helper for the IO-settings surface. | Should Have |
 | FR-18 | All domain types implement `Debug` and `Clone`; the read-only views implement `Serialize`/`Deserialize` for Tauri and MCP transport. | Should Have |
 | FR-19 | All domain source files carry `@see` doc-comments linking to this governing spec and, where a narrower design anchor exists, its `design.md`. | Must Have |
-| FR-20 | `nano.rs` owns the Nano-specific four-byte-footer application envelope, bounded current-state model, Nano-specific FX model-id/display-name resolution, and typed amp, bypass and raw FX parameter operations. Unknown model ids remain unresolved rather than borrowing Quad catalog semantics. Shared HID report framing remains in zone 110; Gate reduction and wider Nano operations remain capability-labelled provisional work. | Must Have |
+| FR-20 | `nano.rs` owns the Nano-specific four-byte-footer application envelope, bounded current-state model, Nano-specific FX model-id/display-name resolution, attributed per-model FX parameter labels, and typed amp, bypass and raw FX parameter operations. Host-facing parameters retain an explicit zero-based wire index and normalized value; unknown models and surplus indices remain present without guessed names. Shared HID report framing remains in zone 110; Gate reduction and wider Nano operations remain capability-labelled provisional work. | Must Have |
 
 ### Non-Functional Requirements
 
@@ -105,7 +105,7 @@ Maintainers, AI coding agents, and the CLI/MCP/GUI surfaces that consume the cra
 - [x] `Catalog` parses the `ModelRepo` container and preserves parameter wire positions.
 - [x] Checked slot conversion, input-level scaling, preset navigation, dynamic-option and semantic comparison helpers are implemented.
 - [x] `UNITY_LEVEL`, `input_level_db`, and `db_to_input_level` are exposed.
-- [x] The Nano application codec and typed working-state operations use the separate four-byte-footer domain and label capability evidence without conflating it with the Quad envelope; FX names use the Nano-specific table and preserve unknown ids explicitly.
+- [x] The Nano application codec and typed working-state operations use the separate four-byte-footer domain and label capability evidence without conflating it with the Quad envelope; FX model and parameter names use Nano-specific attributed tables, preserve unknown ids/indices explicitly, and do not present inferred units or conversions as wire facts.
 
 ## Non-Goals
 

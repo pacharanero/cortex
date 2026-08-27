@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 import { invoke } from "@tauri-apps/api/core";
-import type { CortexApi, DashboardSnapshot, DeviceKind, ParameterInput, ParameterView } from "./types";
+import type { CortexApi, DashboardSnapshot, DeviceKind, NanoFxParameter, ParameterInput, ParameterView } from "./types";
 
 async function invokeCommand<T>(command: string, args?: Record<string, unknown>): Promise<T> {
   try {
@@ -30,7 +30,7 @@ export const tauriApi: CortexApi = {
   setNanoAmp(control, value) { return invokeCommand<void>("set_nano_amp", { control, value }); },
   setNanoGateReduction(percent) { return invokeCommand<void>("set_nano_gate_reduction", { percent }); },
   setNanoBypass(target, bypassed) { return invokeCommand<void>("set_nano_bypass", { target, bypassed }); },
-  readNanoFxParams(slot) { return invokeCommand<number[]>("read_nano_fx_params", { slot }); },
-  setNanoFxParam(slot, paramIndex, value) { return invokeCommand<number[]>("set_nano_fx_param", { slot, paramIndex, value }); },
+  readNanoFxParams(slot) { return invokeCommand<NanoFxParameter[]>("read_nano_fx_params", { slot }); },
+  setNanoFxParam(slot, expectedModelId, paramIndex, value) { return invokeCommand<NanoFxParameter[]>("set_nano_fx_param", { slot, expectedModelId, paramIndex, value }); },
   setDevice(device) { return invokeCommand<void>("set_device", { device }); },
 };

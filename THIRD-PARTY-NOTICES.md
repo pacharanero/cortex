@@ -60,8 +60,8 @@ SOFTWARE.
   boundary, AFX spec zones, traceability approach, version synchronization,
   release/DX tooling, and hardware-smoke evidence shape informed this
   project's GUI, specs, and plans. Its current-state decoder, fixed-chain
-  domain model, Gate-reduction write layout, and Nano-specific FX model-id to
-  display-name table were adapted in
+  domain model, Gate-reduction write layout, Nano-specific FX model-id to
+  display-name table, and per-model FX parameter-label profiles were adapted in
   `crates/cortex-rs/src/nano.rs`, retaining the field-presence and
   provisional-evidence discipline while independently implementing strict
   malformed-input handling and the HID envelope boundary. The current-state

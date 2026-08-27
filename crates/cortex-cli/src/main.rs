@@ -377,7 +377,7 @@ enum NanoCmd {
         #[arg(action = clap::ArgAction::Set)]
         bypassed: bool,
     },
-    /// Read FX parameter values (normalized 0.0-1.0) for one editable slot.
+    /// Read named FX parameters (normalized 0.0-1.0) for one editable slot.
     ReadFxParams {
         /// FX slot to read.
         #[arg(value_enum)]
@@ -388,6 +388,9 @@ enum NanoCmd {
         /// FX slot to change.
         #[arg(value_enum)]
         slot: NanoFxSlotArg,
+        /// Model id returned by `nano state` when the parameter was selected.
+        #[arg(long)]
+        expected_model_id: u64,
         /// Parameter index within the slot's model.
         param_index: u8,
         /// Normalized value, 0.0 to 1.0.
@@ -1099,10 +1102,11 @@ fn run(cli: Cli) -> Result<()> {
             command:
                 NanoCmd::SetFxParam {
                     slot,
+                    expected_model_id,
                     param_index,
                     value,
                 },
-        }) => cmd_nano_set_fx_param(slot.into(), param_index, value, fmt),
+        }) => cmd_nano_set_fx_param(slot.into(), expected_model_id, param_index, value, fmt),
         Some(Command::Preset { command }) => match command {
             PresetCmd::Copy {
                 from_setlist,
@@ -1428,12 +1432,13 @@ fn dry_run_plan(command: Option<&Command>) -> Result<Option<DryRunPlan>> {
             NanoCmd::ReadFxParams { slot: _ } => None,
             NanoCmd::SetFxParam {
                 slot,
+                expected_model_id,
                 param_index,
                 value,
             } => Some(plan(
                 "nano set-fx-param",
                 "Nano working state and heard audio",
-                serde_json::json!({ "slot": format!("{slot:?}").to_lowercase(), "param_index": param_index, "value": value }),
+                serde_json::json!({ "slot": format!("{slot:?}").to_lowercase(), "expected_model_id": expected_model_id, "param_index": param_index, "value": value }),
                 &[
                     "write the normalized FX parameter value",
                     "wait two seconds",
@@ -3634,30 +3639,40 @@ fn cmd_nano_set_bypass(
 }
 
 fn cmd_nano_read_fx_params(slot: cortex_rs::nano::NanoFxSlot, fmt: Format) -> Result<()> {
-    let values: Vec<f32> = cortex_host::DaemonClient::for_device(DeviceKind::NanoCortex)
-        .request(&cortex_host::Request::NanoReadFxParams { slot })?;
-    emit(&values, fmt, |values| {
-        println!("{slot:?} FX parameters ({}):", values.len());
-        for (i, value) in values.iter().enumerate() {
-            println!("  param {i}: {value:.6}");
+    let parameters: Vec<cortex_rs::nano::NanoFxParameter> =
+        cortex_host::DaemonClient::for_device(DeviceKind::NanoCortex)
+            .request(&cortex_host::Request::NanoReadFxParams { slot })?;
+    emit(&parameters, fmt, |parameters| {
+        println!("{slot:?} FX parameters ({}):", parameters.len());
+        for parameter in parameters {
+            match &parameter.name {
+                Some(name) => println!(
+                    "  param {} ({name}): {:.6}",
+                    parameter.index, parameter.normalized
+                ),
+                None => println!("  param {}: {:.6}", parameter.index, parameter.normalized),
+            }
         }
     })
 }
 
 fn cmd_nano_set_fx_param(
     slot: cortex_rs::nano::NanoFxSlot,
+    expected_model_id: u64,
     param_index: u8,
     value: f32,
     fmt: Format,
 ) -> Result<()> {
-    let values: Vec<f32> = cortex_host::DaemonClient::for_device(DeviceKind::NanoCortex).request(
-        &cortex_host::Request::NanoSetFxParam {
-            slot,
-            param_index,
-            value,
-        },
-    )?;
-    emit(&values, fmt, |_| {
+    let parameters: Vec<cortex_rs::nano::NanoFxParameter> = cortex_host::DaemonClient::for_device(
+        DeviceKind::NanoCortex,
+    )
+    .request(&cortex_host::Request::NanoSetFxParam {
+        slot,
+        expected_model_id,
+        param_index,
+        value,
+    })?;
+    emit(&parameters, fmt, |_| {
         println!("set {slot:?} param {param_index} to {value:.6}; verified by fresh read-back");
     })
 }
@@ -4030,6 +4045,8 @@ mod tests {
                 "cortex",
                 "nano",
                 "set-fx-param",
+                "--expected-model-id",
+                "27",
                 "pre-fx1",
                 "3",
                 "0.5",

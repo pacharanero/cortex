@@ -694,6 +694,12 @@ async fn hardware_smoke_reads_and_confirms_nano_tools_through_official_client() 
         .find(|slot| slot.role == cortex_rs::nano::NanoSlotRole::PreFx1)
         .and_then(|slot| slot.bypassed)
         .context("Nano state omitted Pre FX 1 bypass state")?;
+    let pre_fx1_model_id = state
+        .slots
+        .iter()
+        .find(|slot| slot.role == cortex_rs::nano::NanoSlotRole::PreFx1)
+        .and_then(|slot| slot.model_id)
+        .context("Nano state omitted Pre FX 1 model id")?;
     call(
         &client,
         "set_nano_bypass",
@@ -709,22 +715,29 @@ async fn hardware_smoke_reads_and_confirms_nano_tools_through_official_client() 
             serde_json::json!({"slot":slot}),
         )
         .await?;
-        let values = result
+        let parameters = result
             .structured_content
             .as_ref()
             .and_then(serde_json::Value::as_array)
             .context("Nano FX read returned no parameter array")?;
-        anyhow::ensure!(!values.is_empty(), "{slot} returned no parameters");
+        anyhow::ensure!(!parameters.is_empty(), "{slot} returned no parameters");
         anyhow::ensure!(
-            values.iter().all(|value| {
-                value
-                    .as_f64()
+            parameters.iter().all(|parameter| {
+                parameter
+                    .get("normalized")
+                    .and_then(serde_json::Value::as_f64)
                     .is_some_and(|value| value.is_finite() && (0.0..=1.0).contains(&value))
             }),
             "{slot} returned a non-normalized parameter"
         );
         if slot == "pre_fx1" {
-            first_value = values.first().and_then(serde_json::Value::as_f64);
+            first_value = parameters
+                .iter()
+                .find(|parameter| {
+                    parameter.get("index").and_then(serde_json::Value::as_u64) == Some(0)
+                })
+                .and_then(|parameter| parameter.get("normalized"))
+                .and_then(serde_json::Value::as_f64);
         }
     }
 
@@ -732,7 +745,7 @@ async fn hardware_smoke_reads_and_confirms_nano_tools_through_official_client() 
     call(
         &client,
         "set_nano_fx_param",
-        serde_json::json!({"slot":"pre_fx1","param_index":0,"value":original}),
+        serde_json::json!({"slot":"pre_fx1","expected_model_id":pre_fx1_model_id,"param_index":0,"value":original}),
     )
     .await?;
     let confirmed = call(
@@ -745,7 +758,12 @@ async fn hardware_smoke_reads_and_confirms_nano_tools_through_official_client() 
         .structured_content
         .as_ref()
         .and_then(serde_json::Value::as_array)
-        .and_then(|values| values.first())
+        .and_then(|parameters| {
+            parameters.iter().find(|parameter| {
+                parameter.get("index").and_then(serde_json::Value::as_u64) == Some(0)
+            })
+        })
+        .and_then(|parameter| parameter.get("normalized"))
         .and_then(serde_json::Value::as_f64)
         .context("Nano FX confirmation returned no first parameter")?;
     anyhow::ensure!(
