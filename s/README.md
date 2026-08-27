@@ -118,6 +118,8 @@ The landing *is* the release: the auto-tag workflow creates the tag once the com
 
 Runs the full `s/lint` gate before touching the version, so a failure leaves no half-bumped tree.
 
+When `cliff.toml` is present, the script requires exactly `git-cliff 2.13.1`, verifies it during preflight, and regenerates `CHANGELOG.md` in the release commit.
+
 - `s/version++` - patch bump (0.0.1 -> 0.0.2)
 - `s/version++ minor` / `s/version++ major`
 - `s/version++ --pr` - open a release PR instead of pushing to `main`

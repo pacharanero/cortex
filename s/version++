@@ -18,6 +18,11 @@
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 
+# Pinned deliberately, same reasoning as s/markdownlint's MARKDOWNLINT_VERSION:
+# an unpinned changelog generator turns an upstream release into a surprise
+# diff in a release commit.
+CLIFF_VERSION="2.13.1"
+
 bump="patch"
 mode="auto"
 
@@ -66,6 +71,13 @@ command -v npm >/dev/null 2>&1 ||
 	{ echo "npm is missing; it is required to synchronize the GUI release version." >&2; exit 1; }
 command -v node >/dev/null 2>&1 ||
 	{ echo "node is missing; it is required to synchronize the Tauri release version." >&2; exit 1; }
+if [[ -f cliff.toml ]]; then
+	command -v git-cliff >/dev/null 2>&1 ||
+		{ echo "git-cliff ${CLIFF_VERSION} is missing. Install it: cargo install git-cliff --version ${CLIFF_VERSION} --locked" >&2; exit 1; }
+	installed_cliff="$(git-cliff --version | awk '{print $2}')"
+	[[ "$installed_cliff" == "$CLIFF_VERSION" ]] ||
+		{ echo "Expected git-cliff ${CLIFF_VERSION}, found ${installed_cliff}. Install it: cargo install git-cliff --version ${CLIFF_VERSION} --locked" >&2; exit 1; }
+fi
 
 if [[ "$(git branch --show-current)" != "main" ]]; then
 	echo "Refusing to release: check out main first." >&2
