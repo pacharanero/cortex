@@ -73,7 +73,7 @@ Then **unplug and replug the unit**.
 
 ## 2. Quit Cortex Control
 
-The protocol requires one effective HID owner, but the OS/device does not enforce it safely: a second process may open successfully and silently break the first owner's next request. If Neural DSP's Cortex Control is running, including in a VM with USB passthrough, quit it first.
+The protocol requires one effective HID owner, but the OS/device does not enforce it safely: a second process may open successfully and silently break the first owner's next request. If Neural DSP's Cortex Control is running, for example in a Virtual Machine with USB passthrough, quit it first.
 
 The same applies in reverse: while `cortex` holds a session, Cortex Control will not connect.
 

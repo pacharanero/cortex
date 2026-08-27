@@ -6,6 +6,7 @@ import type {
   DeviceKind,
   NanoAmpControl,
   NanoBypassTarget,
+  NanoFxParameter,
   NanoFxSlot,
   ParameterInput,
   ParameterView,
@@ -16,6 +17,7 @@ export type { DeviceKind };
 export type { LiveBlock } from "./generated";
 export type { NanoAmpControl };
 export type { NanoBypassTarget };
+export type { NanoFxParameter };
 export type { NanoCurrentState } from "./generated";
 export type { NanoFxSlot };
 export type { NanoSlotRole } from "./generated";
@@ -58,7 +60,7 @@ export interface CortexApi {
   /** Set Nano Gate reduction to 0-100% and wait for exact fresh read-back. */
   setNanoGateReduction(percent: number): Promise<void>;
   setNanoBypass(target: NanoBypassTarget, bypassed: boolean): Promise<void>;
-  readNanoFxParams(slot: NanoFxSlot): Promise<number[]>;
-  setNanoFxParam(slot: NanoFxSlot, paramIndex: number, value: number): Promise<number[]>;
+  readNanoFxParams(slot: NanoFxSlot): Promise<NanoFxParameter[]>;
+  setNanoFxParam(slot: NanoFxSlot, expectedModelId: number, paramIndex: number, value: number): Promise<NanoFxParameter[]>;
   setDevice(device: DeviceKind | null): Promise<void>;
 }

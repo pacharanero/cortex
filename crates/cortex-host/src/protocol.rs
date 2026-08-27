@@ -39,7 +39,7 @@ use cortex_rs::{DeviceKind, RecallConsent};
 /// Bump this whenever a request or response changes shape. A client that sees
 /// a mismatch refuses with an actionable message rather than exchanging data
 /// either side will misinterpret.
-pub const DAEMON_PROTOCOL_VERSION: u32 = 20;
+pub const DAEMON_PROTOCOL_VERSION: u32 = 22;
 
 /// A request from a client to the daemon.
 ///
@@ -83,6 +83,8 @@ pub enum Request {
     NanoSetFxParam {
         /// Typed FX slot (Pre FX 1-2, Post FX 1-3).
         slot: cortex_rs::nano::NanoFxSlot,
+        /// Model id shown when the caller loaded this parameter.
+        expected_model_id: u64,
         /// Parameter index within the slot's model.
         param_index: u8,
         /// Normalized 0.0-1.0 value.
@@ -709,10 +711,11 @@ mod tests {
             (
                 Request::NanoSetFxParam {
                     slot: cortex_rs::nano::NanoFxSlot::PostFx1,
+                    expected_model_id: 6_010,
                     param_index: 3,
                     value: 0.5,
                 },
-                serde_json::json!({ "op": "nano_set_fx_param", "slot": "post_fx1", "param_index": 3, "value": 0.5 }),
+                serde_json::json!({ "op": "nano_set_fx_param", "slot": "post_fx1", "expected_model_id": 6010, "param_index": 3, "value": 0.5 }),
             ),
             (Request::Version, serde_json::json!({ "op": "version" })),
             (
@@ -1221,12 +1224,14 @@ mod tests {
             (
                 Request::NanoSetFxParam {
                     slot: cortex_rs::nano::NanoFxSlot::PostFx1,
+                    expected_model_id: 6_010,
                     param_index: 3,
                     value: 0.5,
                 },
                 serde_json::json!({
                     "op": "nano_set_fx_param",
                     "slot": "post_fx1",
+                    "expected_model_id": 6010,
                     "param_index": 3,
                     "value": 0.5
                 }),

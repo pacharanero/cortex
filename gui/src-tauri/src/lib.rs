@@ -228,7 +228,7 @@ trait DashboardSource: Send + Sync {
     fn read_nano_fx_params(
         &self,
         _slot: cortex_rs::nano::NanoFxSlot,
-    ) -> Result<Vec<f32>, CommandError> {
+    ) -> Result<Vec<cortex_rs::nano::NanoFxParameter>, CommandError> {
         Err(CommandError::daemon(
             "this dashboard source does not support Nano FX parameter reads",
         ))
@@ -236,9 +236,10 @@ trait DashboardSource: Send + Sync {
     fn set_nano_fx_param(
         &self,
         _slot: cortex_rs::nano::NanoFxSlot,
+        _expected_model_id: u64,
         _param_index: u8,
         _value: f32,
-    ) -> Result<Vec<f32>, CommandError> {
+    ) -> Result<Vec<cortex_rs::nano::NanoFxParameter>, CommandError> {
         Err(CommandError::daemon(
             "this dashboard source does not support Nano FX parameter writes",
         ))
@@ -662,21 +663,23 @@ impl DashboardSource for DaemonDashboardSource {
     fn read_nano_fx_params(
         &self,
         slot: cortex_rs::nano::NanoFxSlot,
-    ) -> Result<Vec<f32>, CommandError> {
+    ) -> Result<Vec<cortex_rs::nano::NanoFxParameter>, CommandError> {
         self.nano_client
-            .request::<Vec<f32>>(&Request::NanoReadFxParams { slot })
+            .request::<Vec<cortex_rs::nano::NanoFxParameter>>(&Request::NanoReadFxParams { slot })
             .map_err(|error| CommandError::daemon(error.to_string()))
     }
 
     fn set_nano_fx_param(
         &self,
         slot: cortex_rs::nano::NanoFxSlot,
+        expected_model_id: u64,
         param_index: u8,
         value: f32,
-    ) -> Result<Vec<f32>, CommandError> {
+    ) -> Result<Vec<cortex_rs::nano::NanoFxParameter>, CommandError> {
         self.nano_client
-            .request::<Vec<f32>>(&Request::NanoSetFxParam {
+            .request::<Vec<cortex_rs::nano::NanoFxParameter>>(&Request::NanoSetFxParam {
                 slot,
+                expected_model_id,
                 param_index,
                 value,
             })
@@ -1312,7 +1315,7 @@ async fn set_device(
 async fn read_nano_fx_params(
     state: tauri::State<'_, AppState>,
     slot: cortex_rs::nano::NanoFxSlot,
-) -> Result<Vec<f32>, CommandError> {
+) -> Result<Vec<cortex_rs::nano::NanoFxParameter>, CommandError> {
     let source = Arc::clone(&state.source);
     tauri::async_runtime::spawn_blocking(move || source.read_nano_fx_params(slot))
         .await
@@ -1323,15 +1326,16 @@ async fn read_nano_fx_params(
 async fn set_nano_fx_param(
     state: tauri::State<'_, AppState>,
     slot: cortex_rs::nano::NanoFxSlot,
+    expected_model_id: u64,
     param_index: u8,
     value: f32,
-) -> Result<Vec<f32>, CommandError> {
+) -> Result<Vec<cortex_rs::nano::NanoFxParameter>, CommandError> {
     let source = Arc::clone(&state.source);
-    tauri::async_runtime::spawn_blocking(move || source.set_nano_fx_param(slot, param_index, value))
-        .await
-        .map_err(|error| {
-            CommandError::daemon(format!("Nano FX param write task failed: {error}"))
-        })?
+    tauri::async_runtime::spawn_blocking(move || {
+        source.set_nano_fx_param(slot, expected_model_id, param_index, value)
+    })
+    .await
+    .map_err(|error| CommandError::daemon(format!("Nano FX param write task failed: {error}")))?
 }
 
 #[tauri::command]
@@ -1560,29 +1564,52 @@ mod tests {
         ];
 
         let mut first_value = None;
+        let expected_model_id = source
+            .dashboard()
+            .unwrap()
+            .nano
+            .unwrap()
+            .slots
+            .into_iter()
+            .find(|slot| slot.role == cortex_rs::nano::NanoSlotRole::PreFx1)
+            .and_then(|slot| slot.model_id)
+            .expect("Pre FX 1 has no loaded model");
         for slot in slots {
-            let values = source.read_nano_fx_params(slot).unwrap();
-            assert!(!values.is_empty(), "{slot:?} returned no parameters");
+            let parameters = source.read_nano_fx_params(slot).unwrap();
+            assert!(!parameters.is_empty(), "{slot:?} returned no parameters");
             assert!(
-                values
+                parameters
                     .iter()
-                    .all(|value| value.is_finite() && (0.0..=1.0).contains(value)),
+                    .all(|parameter| parameter.normalized.is_finite()
+                        && (0.0..=1.0).contains(&parameter.normalized)),
                 "{slot:?} returned a non-normalized parameter"
             );
             if slot == cortex_rs::nano::NanoFxSlot::PreFx1 {
-                first_value = values.first().copied();
+                first_value = parameters
+                    .iter()
+                    .find(|parameter| parameter.index == 0)
+                    .map(|parameter| parameter.normalized);
             }
         }
 
         let original = first_value.expect("Pre FX 1 returned no parameters");
         let write_confirmed = source
-            .set_nano_fx_param(cortex_rs::nano::NanoFxSlot::PreFx1, 0, original)
+            .set_nano_fx_param(
+                cortex_rs::nano::NanoFxSlot::PreFx1,
+                expected_model_id,
+                0,
+                original,
+            )
             .unwrap();
-        assert!((write_confirmed[0] - original).abs() <= 0.001);
+        assert!(write_confirmed.iter().any(|parameter| {
+            parameter.index == 0 && (parameter.normalized - original).abs() <= 0.001
+        }));
         let confirmed = source
             .read_nano_fx_params(cortex_rs::nano::NanoFxSlot::PreFx1)
             .unwrap();
-        assert!((confirmed[0] - original).abs() <= 0.001);
+        assert!(confirmed.iter().any(|parameter| {
+            parameter.index == 0 && (parameter.normalized - original).abs() <= 0.001
+        }));
     }
 
     struct FailingSource;

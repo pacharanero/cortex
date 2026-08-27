@@ -227,6 +227,9 @@ impl CortexMcp {
             },
             "set_nano_fx_param" => Request::NanoSetFxParam {
                 slot: serde_json::from_value(required(args, "slot")?.clone())?,
+                expected_model_id: required(args, "expected_model_id")?
+                    .as_u64()
+                    .context("expected_model_id must be a non-negative integer")?,
                 param_index: bounded_u32(args, "param_index", 0, 255)? as u8,
                 value: f32_arg(args, "value")?,
             },

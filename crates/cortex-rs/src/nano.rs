@@ -11,8 +11,8 @@
 //! by a four-byte footer. The field map is adapted from the Apache-2.0-licensed
 //! `rixrix/deskop-nano-cortex` decoder, which credits the MIT-licensed
 //! `choldy/nano-cortex-web-editor`. The Gate-reduction write layout follows
-//! the same licensed sources; the Nano-specific FX model-name table is adapted
-//! from `deskop-nano-cortex`. See `THIRD-PARTY-NOTICES.md`.
+//! the same licensed sources; the Nano-specific FX model-name and parameter-label
+//! tables are adapted from `deskop-nano-cortex`. See `THIRD-PARTY-NOTICES.md`.
 //!
 //! @see spec/roadmap.md [NANO-001.3]
 //! @see spec/110-framing/design.md
@@ -92,62 +92,497 @@ pub struct NanoSlotState {
 /// Unknown ids remain unresolved so newer firmware is never mislabelled.
 #[must_use]
 pub const fn fx_model_name(model_id: u64) -> Option<&'static str> {
-    match model_id {
-        2 => Some("Obsessive Drive"),
-        3 => Some("OD250"),
-        4 => Some("Rodent Drive"),
-        6 => Some("Exotic"),
-        13 => Some("Chief OD1"),
-        18 => Some("Chief BD2"),
-        22 => Some("Facial Fuzz"),
-        23 => Some("Exotic Z Boost"),
-        27 => Some("Green 808"),
-        3000 => Some("Microtubes B3K"),
-        3007 => Some("Exotic Bass Z Boost"),
-        4001 => Some("Parametric 3"),
-        4003 => Some("Low-High Cut"),
-        4005 => Some("Graphic 9"),
-        5001 => Some("Legendary 87 (M)"),
-        5004 => Some("Solid State Comp (M)"),
-        5005 => Some("VCA Comp (M)"),
-        5007 => Some("Opto Comp (M)"),
-        5012 => Some("Legendary 87 (ST)"),
-        5013 => Some("Solid State Comp (ST)"),
-        5014 => Some("VCA Comp (ST)"),
-        5015 => Some("Opto Comp (ST)"),
-        6004 => Some("Tape Delay"),
-        6010 => Some("Analog Delay"),
-        6011 => Some("Digital Delay (ST)"),
-        6012 => Some("Dual Delay"),
-        6014 => Some("Dual Reverse Delay"),
-        6015 => Some("Circular Delay"),
-        7004 => Some("Tremolo"),
-        7021 => Some("MX Flanger"),
-        7022 => Some("Dream Chorus"),
-        7023 => Some("Chorus 229T"),
-        7024 => Some("Chief CE2W (ST)"),
-        7027 => Some("Chief DC2W (ST)"),
-        7028 => Some("MX Phase 95"),
-        7029 => Some("MX Vibe"),
-        8000 => Some("Room"),
-        8003 => Some("Hall"),
-        8007 => Some("Modulated"),
-        8008 => Some("Ambience"),
-        8009 => Some("Cave"),
-        8011 => Some("Mind Hall"),
-        9010 => Some("Bubba Wah"),
-        9012 => Some("Bass Wah"),
-        9013 => Some("Crying Wah"),
-        9014 => Some("Crying Clyde Wah"),
-        16001 => Some("Adaptive Gate"),
-        16002 => Some("Utility Gate"),
-        16006 => Some("Volume"),
-        16011 => Some("Doubler"),
-        18001 => Some("Transpose"),
-        24001 => Some("Love Meat"),
-        24006 => Some("Envelope Filter"),
-        _ => None,
+    match fx_model_profile(model_id) {
+        Some(profile) => Some(profile.name),
+        None => None,
     }
+}
+
+#[derive(Clone, Copy)]
+struct NanoFxProfile {
+    name: &'static str,
+    parameter_names: &'static [&'static str],
+}
+
+#[allow(clippy::too_many_lines)] // One explicit table keeps model metadata auditable.
+const fn fx_model_profile(model_id: u64) -> Option<NanoFxProfile> {
+    let profile = match model_id {
+        2 => NanoFxProfile {
+            name: "Obsessive Drive",
+            parameter_names: &["Drive", "Peak", "Tone", "Volume"],
+        },
+        3 => NanoFxProfile {
+            name: "OD250",
+            parameter_names: &["Gain", "Volume"],
+        },
+        4 => NanoFxProfile {
+            name: "Rodent Drive",
+            parameter_names: &["Distortion", "Filter", "Volume"],
+        },
+        6 => NanoFxProfile {
+            name: "Exotic",
+            parameter_names: &["Gain", "Bass", "Treble", "Volume"],
+        },
+        13 => NanoFxProfile {
+            name: "Chief OD1",
+            parameter_names: &["Gain", "Level"],
+        },
+        18 => NanoFxProfile {
+            name: "Chief BD2",
+            parameter_names: &["Gain", "Tone", "Volume"],
+        },
+        22 => NanoFxProfile {
+            name: "Facial Fuzz",
+            parameter_names: &["Fuzz", "Volume", "Pickup", "Pickup Level"],
+        },
+        23 => NanoFxProfile {
+            name: "Exotic Z Boost",
+            parameter_names: &["Gain", "Bass", "Treble", "Volume"],
+        },
+        27 => NanoFxProfile {
+            name: "Green 808",
+            parameter_names: &["Overdrive", "Tone", "Level"],
+        },
+        3000 => NanoFxProfile {
+            name: "Microtubes B3K",
+            parameter_names: &["Drive", "Growl", "Midboost", "Tone", "Level", "Blend"],
+        },
+        3007 => NanoFxProfile {
+            name: "Exotic Bass Z Boost",
+            parameter_names: &["Gain", "Bass", "Treble", "Volume"],
+        },
+        4001 => NanoFxProfile {
+            name: "Parametric 3",
+            parameter_names: &[
+                "1 Gain", "1 Freq", "1 Q", "1 Type", "1 Active", "2 Gain", "2 Freq", "2 Q",
+                "2 Type", "2 Active", "3 Gain", "3 Freq", "3 Q", "3 Type", "3 Active", "Output",
+            ],
+        },
+        4003 => NanoFxProfile {
+            name: "Low-High Cut",
+            parameter_names: &["HPF Slope", "HPF Freq", "LPF Slope", "LPF Freq", "Output"],
+        },
+        4005 => NanoFxProfile {
+            name: "Graphic 9",
+            parameter_names: &[
+                "65Hz", "125Hz", "250Hz", "500hz", "1kHz", "2kHz", "4kHz", "8kHz", "16kHz", "HPF",
+                "LPF", "Output",
+            ],
+        },
+        5001 => NanoFxProfile {
+            name: "Legendary 87 (M)",
+            parameter_names: &["Input", "Ratio", "Attack", "Release", "Makeup", "Mix"],
+        },
+        5004 => NanoFxProfile {
+            name: "Solid State Comp (M)",
+            parameter_names: &["Threshold", "Ratio", "Attack", "Release", "Makeup", "Mix"],
+        },
+        5005 => NanoFxProfile {
+            name: "VCA Comp (M)",
+            parameter_names: &["Threshold", "Ratio", "Attack", "Release", "Makeup", "Mix"],
+        },
+        5007 => NanoFxProfile {
+            name: "Opto Comp (M)",
+            parameter_names: &["Threshold", "Ratio", "Attack", "Release", "Makeup", "Mix"],
+        },
+        5012 => NanoFxProfile {
+            name: "Legendary 87 (ST)",
+            parameter_names: &["Input", "Ratio", "Attack", "Release", "Makeup", "Mix"],
+        },
+        5013 => NanoFxProfile {
+            name: "Solid State Comp (ST)",
+            parameter_names: &["Threshold", "Ratio", "Attack", "Release", "Makeup", "Mix"],
+        },
+        5014 => NanoFxProfile {
+            name: "VCA Comp (ST)",
+            parameter_names: &["Threshold", "Ratio", "Attack", "Release", "Makeup", "Mix"],
+        },
+        5015 => NanoFxProfile {
+            name: "Opto Comp (ST)",
+            parameter_names: &["Threshold", "Ratio", "Attack", "Release", "Makeup", "Mix"],
+        },
+        6004 => NanoFxProfile {
+            name: "Tape Delay",
+            parameter_names: &[
+                "Mix",
+                "Feedback",
+                "High Pass",
+                "Low Pass",
+                "Drive",
+                "Delay Time",
+                "Wow",
+                "Flutter",
+                "Ping Pong",
+                "Sync",
+                "Sync Note",
+            ],
+        },
+        6010 => NanoFxProfile {
+            name: "Analog Delay",
+            parameter_names: &[
+                "Mix",
+                "Feedback",
+                "High Pass",
+                "Low Pass",
+                "Ping Pong",
+                "Delay Time",
+                "Mod Rate",
+                "Mod Depth",
+                "Width",
+                "Drive",
+                "Sync",
+                "Sync Note",
+            ],
+        },
+        6011 => NanoFxProfile {
+            name: "Digital Delay (ST)",
+            parameter_names: &[
+                "Mix",
+                "Feedback",
+                "High Pass",
+                "Low Pass",
+                "Ping Pong",
+                "Delay Time",
+                "Mod Rate",
+                "Mod Depth",
+                "Width",
+                "Dyn Depth",
+                "Dyn Mode",
+                "Threshold",
+                "Attack",
+                "Release",
+                "Knee",
+                "Feedback Depth",
+                "Sync",
+                "Sync Note",
+            ],
+        },
+        6012 => NanoFxProfile {
+            name: "Dual Delay",
+            parameter_names: &[
+                "Mix",
+                "Delay Time L",
+                "Feedback L",
+                "X-Feedback",
+                "Delay Time R",
+                "Feedback R",
+                "High Pass",
+                "Low Pass",
+                "Mod Rate",
+                "Mod Depth",
+                "Link FBack",
+                "Dyn Depth",
+                "Dyn Mode",
+                "Threshold",
+                "Attack",
+                "Release",
+                "Knee",
+                "Feedback Depth",
+                "Sync L",
+                "Sync Note L",
+                "Sync R",
+                "Sync Note R",
+            ],
+        },
+        6014 => NanoFxProfile {
+            name: "Dual Reverse Delay",
+            parameter_names: &[
+                "Mix",
+                "Delay Time L",
+                "Feedback L",
+                "X-Feedback",
+                "Feedback Mode",
+                "Delay Time R",
+                "Feedback R",
+                "Overlap",
+                "Trig Threshold",
+                "Dyn Depth",
+                "Dyn Mode",
+                "Threshold",
+                "Attack",
+                "Release",
+                "Knee",
+                "Feedback Depth",
+                "High Pass",
+                "Low Pass",
+                "Link FBack",
+                "Sync",
+                "Sync Note L",
+                "Sync Note R",
+            ],
+        },
+        6015 => NanoFxProfile {
+            name: "Circular Delay",
+            parameter_names: &[
+                "Mix",
+                "Tap Preset",
+                "Delay Time",
+                "Feedback",
+                "Diffusion",
+                "High Pass",
+                "Low Pass",
+                "Mod Rate",
+                "Mod Depth",
+                "Vintage Mode",
+                "Sync",
+                "Sync Note",
+            ],
+        },
+        7004 => NanoFxProfile {
+            name: "Tremolo",
+            parameter_names: &[
+                "Rate",
+                "Depth",
+                "Waveform",
+                "Duty Cycle",
+                "Width",
+                "Smoothing",
+                "LFO Active",
+                "Fade In",
+                "Fade Out",
+                "Boost",
+                "Sync",
+                "Sync Note",
+            ],
+        },
+        7021 => NanoFxProfile {
+            name: "MX Flanger",
+            parameter_names: &[
+                "Mix",
+                "Manual",
+                "Width",
+                "Speed",
+                "Regen",
+                "Output",
+                "Sync",
+                "Sync Note",
+            ],
+        },
+        7022 => NanoFxProfile {
+            name: "Dream Chorus",
+            parameter_names: &[
+                "Mix",
+                "Speed",
+                "Depth",
+                "Mode",
+                "Output",
+                "Sync",
+                "Sync Note",
+            ],
+        },
+        7023 => NanoFxProfile {
+            name: "Chorus 229T",
+            parameter_names: &[
+                "Mix",
+                "Rate",
+                "Depth",
+                "Width",
+                "Output",
+                "Sync",
+                "Sync Note",
+            ],
+        },
+        7024 => NanoFxProfile {
+            name: "Chief CE2W (ST)",
+            parameter_names: &[
+                "Mix",
+                "Rate",
+                "Depth",
+                "Type",
+                "Width",
+                "Output",
+                "Sync",
+                "Sync Note",
+            ],
+        },
+        7027 => NanoFxProfile {
+            name: "Chief DC2W (ST)",
+            parameter_names: &["Mix", "Mode", "Mode Type", "Drive", "Output"],
+        },
+        7028 => NanoFxProfile {
+            name: "MX Phase 95",
+            parameter_names: &[
+                "Mix",
+                "Speed",
+                "Type",
+                "Mode",
+                "Output",
+                "Sync",
+                "Sync Note",
+            ],
+        },
+        7029 => NanoFxProfile {
+            name: "MX Vibe",
+            parameter_names: &[
+                "Mix",
+                "Vibe",
+                "Speed",
+                "Level",
+                "Depth",
+                "Output",
+                "Sync",
+                "Sync Note",
+            ],
+        },
+        8000 => NanoFxProfile {
+            name: "Room",
+            parameter_names: &["Mix", "Decay", "Pre Delay", "High Pass", "Low Pass"],
+        },
+        8003 => NanoFxProfile {
+            name: "Hall",
+            parameter_names: &["Mix", "Decay", "Pre Delay", "High Pass", "Low Pass"],
+        },
+        8007 => NanoFxProfile {
+            name: "Modulated",
+            parameter_names: &[
+                "Mix",
+                "Decay",
+                "Pre Delay",
+                "Mod Speed",
+                "Mod Depth",
+                "High Pass",
+                "Low Pass",
+            ],
+        },
+        8008 => NanoFxProfile {
+            name: "Ambience",
+            parameter_names: &["Mix", "Size", "Pre Delay", "High Pass", "Low Pass"],
+        },
+        8009 => NanoFxProfile {
+            name: "Cave",
+            parameter_names: &[
+                "Mix",
+                "Decay",
+                "Pre Delay",
+                "Damping",
+                "High Pass",
+                "Low Pass",
+            ],
+        },
+        8011 => NanoFxProfile {
+            name: "Mind Hall",
+            parameter_names: &[
+                "Mix",
+                "Decay",
+                "Pre Delay",
+                "High Pass",
+                "Low Pass",
+                "Damping",
+            ],
+        },
+        9010 => NanoFxProfile {
+            name: "Bubba Wah",
+            parameter_names: &["Wah"],
+        },
+        9012 => NanoFxProfile {
+            name: "Bass Wah",
+            parameter_names: &["Wah"],
+        },
+        9013 => NanoFxProfile {
+            name: "Crying Wah",
+            parameter_names: &["Wah"],
+        },
+        9014 => NanoFxProfile {
+            name: "Crying Clyde Wah",
+            parameter_names: &["Wah"],
+        },
+        16001 => NanoFxProfile {
+            name: "Adaptive Gate",
+            parameter_names: &["Noise Reduction"],
+        },
+        16002 => NanoFxProfile {
+            name: "Utility Gate",
+            parameter_names: &["Threshold", "Attack", "Hold", "Release", "Range"],
+        },
+        16006 => NanoFxProfile {
+            name: "Volume",
+            parameter_names: &["Level", "Curve"],
+        },
+        16011 => NanoFxProfile {
+            name: "Doubler",
+            parameter_names: &["Spread", "Dry Level", "FX Level"],
+        },
+        18001 => NanoFxProfile {
+            name: "Transpose",
+            parameter_names: &["Mix", "Semitones", "Pitch Fine", "High Pass", "Low Pass"],
+        },
+        24001 => NanoFxProfile {
+            name: "Love Meat",
+            parameter_names: &[
+                "Sensitivity",
+                "Attack",
+                "Decay",
+                "Color",
+                "Intensity",
+                "Blend",
+                "Trig Detection",
+                "Trigger Mode",
+                "Filter Cutoff",
+                "Filter Type",
+                "Level",
+            ],
+        },
+        24006 => NanoFxProfile {
+            name: "Envelope Filter",
+            parameter_names: &[
+                "Sens",
+                "Attack",
+                "Decay",
+                "LP/BP/HP",
+                "Level",
+                "Freq",
+                "Freq Depth",
+                "Reso",
+                "Mix",
+            ],
+        },
+        _ => return None,
+    };
+    Some(profile)
+}
+
+/// One host-facing Nano FX parameter enriched with licensed semantic metadata.
+///
+/// The wire response supplies only positional normalized values. `index` is
+/// therefore the authoritative zero-based wire index, while `name` remains
+/// absent for unknown models and parameters added by newer firmware.
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct NanoFxParameter {
+    /// Zero-based index used by the Nano FX parameter write command.
+    pub index: u8,
+    /// Semantic label from the licensed model profile, when known.
+    pub name: Option<String>,
+    /// Raw normalized value supplied by the device, from 0.0 through 1.0.
+    pub normalized: f32,
+}
+
+/// Attach licensed semantic labels to raw Nano FX parameter values.
+///
+/// Every raw value is retained. Unknown models and values beyond a known
+/// profile receive no name rather than a guessed label.
+///
+/// # Panics
+///
+/// Panics if `values` contains more than 256 entries. The Nano wire format
+/// bounds parameter counts to one byte, so such input cannot come from a
+/// decoded parameter refresh.
+#[must_use]
+pub fn describe_fx_params(model_id: Option<u64>, values: &[f32]) -> Vec<NanoFxParameter> {
+    let names = model_id
+        .and_then(fx_model_profile)
+        .map(|profile| profile.parameter_names)
+        .unwrap_or_default();
+    values
+        .iter()
+        .copied()
+        .enumerate()
+        .map(|(index, normalized)| NanoFxParameter {
+            index: u8::try_from(index).expect("Nano refresh length limits parameter indices to u8"),
+            name: names.get(index).map(|name| (*name).to_owned()),
+            normalized,
+        })
+        .collect()
 }
 
 /// Raw 0-255 values for the Nano's five amplifier controls.
@@ -1279,6 +1714,84 @@ mod tests {
         assert_eq!(fx_model_name(18_001), Some("Transpose"));
         assert_eq!(fx_model_name(6_010), Some("Analog Delay"));
         assert_eq!(fx_model_name(99_999), None);
+    }
+
+    #[test]
+    fn every_known_nano_fx_model_has_a_nonempty_parameter_profile() {
+        let known_ids = [
+            2, 3, 4, 6, 13, 18, 22, 23, 27, 3_000, 3_007, 4_001, 4_003, 4_005, 5_001, 5_004, 5_005,
+            5_007, 5_012, 5_013, 5_014, 5_015, 6_004, 6_010, 6_011, 6_012, 6_014, 6_015, 7_004,
+            7_021, 7_022, 7_023, 7_024, 7_027, 7_028, 7_029, 8_000, 8_003, 8_007, 8_008, 8_009,
+            8_011, 9_010, 9_012, 9_013, 9_014, 16_001, 16_002, 16_006, 16_011, 18_001, 24_001,
+            24_006,
+        ];
+        assert_eq!(known_ids.len(), 53);
+        for model_id in known_ids {
+            let profile = fx_model_profile(model_id).expect("known Nano model needs a profile");
+            assert!(!profile.name.is_empty());
+            assert!(!profile.parameter_names.is_empty(), "model {model_id}");
+            assert!(profile.parameter_names.iter().all(|name| !name.is_empty()));
+        }
+    }
+
+    #[test]
+    fn nano_fx_parameters_keep_wire_indices_and_known_names() {
+        assert_eq!(
+            describe_fx_params(Some(27), &[0.25, 0.5, 0.75]),
+            vec![
+                NanoFxParameter {
+                    index: 0,
+                    name: Some("Overdrive".into()),
+                    normalized: 0.25,
+                },
+                NanoFxParameter {
+                    index: 1,
+                    name: Some("Tone".into()),
+                    normalized: 0.5,
+                },
+                NanoFxParameter {
+                    index: 2,
+                    name: Some("Level".into()),
+                    normalized: 0.75,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn analog_delay_parameter_profile_retains_wire_index_order() {
+        assert_eq!(
+            fx_model_profile(6_010).unwrap().parameter_names,
+            [
+                "Mix",
+                "Feedback",
+                "High Pass",
+                "Low Pass",
+                "Ping Pong",
+                "Delay Time",
+                "Mod Rate",
+                "Mod Depth",
+                "Width",
+                "Drive",
+                "Sync",
+                "Sync Note",
+            ]
+        );
+    }
+
+    #[test]
+    fn nano_fx_parameters_preserve_unknown_models_and_profile_extensions() {
+        let unknown = describe_fx_params(Some(99_999), &[0.25]);
+        assert_eq!(unknown[0].index, 0);
+        assert_eq!(unknown[0].name, None);
+        assert!((unknown[0].normalized - 0.25).abs() < f32::EPSILON);
+
+        let extended = describe_fx_params(Some(3), &[0.1, 0.2, 0.3]);
+        assert_eq!(extended[0].name.as_deref(), Some("Gain"));
+        assert_eq!(extended[1].name.as_deref(), Some("Volume"));
+        assert_eq!(extended[2].index, 2);
+        assert_eq!(extended[2].name, None);
+        assert!((extended[2].normalized - 0.3).abs() < f32::EPSILON);
     }
 
     #[test]

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Dr Marcus Baw
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-import type { CortexApi, DashboardSnapshot, DeviceKind, LiveBlock, NanoCurrentState, NanoFxSlot, ParameterInput, ParameterView, SceneSnapshot } from "./types";
+import type { CortexApi, DashboardSnapshot, DeviceKind, LiveBlock, NanoCurrentState, NanoFxParameter, NanoFxSlot, ParameterInput, ParameterView, SceneSnapshot } from "./types";
 
 /**
  * Parameters per block cell, keyed "row,column".
@@ -138,23 +138,31 @@ const nanoState: NanoCurrentState = {
   footswitch_assignments: { ia: 1, ib: 2, iia: 3, iib: 4 },
   slots: [
     { role: "gate", loaded_name: null, model_id: null, model_name: null, bypassed: false },
-    { role: "pre_fx1", loaded_name: null, model_id: 1001, model_name: "Fictional Drive", bypassed: false },
-    { role: "pre_fx2", loaded_name: null, model_id: 1002, model_name: "Fictional Chorus", bypassed: true },
+    { role: "pre_fx1", loaded_name: null, model_id: 27, model_name: "Green 808", bypassed: false },
+    { role: "pre_fx2", loaded_name: null, model_id: 7024, model_name: "Chief CE2W (ST)", bypassed: true },
     { role: "capture", loaded_name: "Fictional Capture", model_id: null, model_name: null, bypassed: null },
     { role: "ir_cab", loaded_name: "Fictional Cabinet", model_id: null, model_name: null, bypassed: false },
-    { role: "post_fx1", loaded_name: null, model_id: 1003, model_name: "Fictional Modulation", bypassed: false },
-    { role: "post_fx2", loaded_name: null, model_id: 1004, model_name: "Fictional Delay", bypassed: false },
-    { role: "post_fx3", loaded_name: null, model_id: 1005, model_name: "Fictional Reverb", bypassed: false },
+    { role: "post_fx1", loaded_name: null, model_id: 7022, model_name: "Dream Chorus", bypassed: false },
+    { role: "post_fx2", loaded_name: null, model_id: 6010, model_name: "Analog Delay", bypassed: false },
+    { role: "post_fx3", loaded_name: null, model_id: 8000, model_name: "Room", bypassed: false },
   ],
 };
 
-const nanoFxParameters: Record<NanoFxSlot, number[]> = {
-  pre_fx1: [0.5, 0.25, 0.75, 0.0, 1.0],
-  pre_fx2: [0.5, 0.25, 0.75, 0.0, 1.0],
-  post_fx1: [0.5, 0.25, 0.75, 0.0, 1.0],
-  post_fx2: [0.5, 0.25, 0.75, 0.0, 1.0],
-  post_fx3: [0.5, 0.25, 0.75, 0.0, 1.0],
+const nanoFxParameters: Record<NanoFxSlot, NanoFxParameter[]> = {
+  pre_fx1: fxParameters(["Overdrive", "Tone", "Level"]),
+  pre_fx2: fxParameters(["Mix", "Rate", "Depth", "Type", "Width", "Output", "Sync", "Sync Note"]),
+  post_fx1: fxParameters(["Mix", "Speed", "Depth", "Mode", "Output", "Sync", "Sync Note"]),
+  post_fx2: fxParameters(["Mix", "Feedback", "High Pass", "Low Pass", "Ping Pong", "Delay Time", "Mod Rate", "Mod Depth", "Width", "Drive", "Sync", "Sync Note"]),
+  post_fx3: fxParameters(["Mix", "Decay", "Pre Delay", "High Pass", "Low Pass"]),
 };
+
+function fxParameters(names: (string | null)[]): NanoFxParameter[] {
+  return names.map((name, index) => ({
+    index,
+    name,
+    normalized: [0.5, 0.25, 0.75, 0, 1][index % 5],
+  }));
+}
 
 /** The device answers an edit with a new revision; the header shows it. */
 function bumpRevision() {
@@ -240,13 +248,16 @@ export const fixtureApi: CortexApi = {
     const slot = nanoState.slots.find((s) => s.role === target);
     if (slot) slot.bypassed = bypassed;
   },
-  async readNanoFxParams(slot) { return [...nanoFxParameters[slot]]; },
-  async setNanoFxParam(slot, paramIndex, value) {
-    const values = nanoFxParameters[slot];
-    if (!Number.isInteger(paramIndex) || paramIndex < 0 || paramIndex >= values.length) throw new Error(`Nano FX parameter index ${paramIndex} is out of range`);
+  async readNanoFxParams(slot) { return structuredClone(nanoFxParameters[slot]); },
+  async setNanoFxParam(slot, expectedModelId, paramIndex, value) {
+    const actualModelId = nanoState.slots.find((candidate) => candidate.role === slot)?.model_id;
+    if (actualModelId !== expectedModelId) throw new Error(`Nano FX model changed before the write: expected model ${expectedModelId}, got ${actualModelId}`);
+    const parameters = nanoFxParameters[slot];
+    const parameter = parameters.find((candidate) => candidate.index === paramIndex);
+    if (!Number.isInteger(paramIndex) || !parameter) throw new Error(`Nano FX parameter index ${paramIndex} is out of range`);
     if (!Number.isFinite(value) || value < 0 || value > 1) throw new Error("Nano FX parameter value must be normalized from 0 to 1");
-    values[paramIndex] = value;
-    return [...values];
+    parameter.normalized = value;
+    return structuredClone(parameters);
   },
   async setDevice(_device) {},
   async blockParameters(row: number, column: number) {

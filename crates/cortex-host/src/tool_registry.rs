@@ -221,7 +221,7 @@ fn grid_edits() -> Vec<ToolSpec> {
         ),
         nano_spec(
             "read_nano_fx_params",
-            "Read normalized 0.0-1.0 FX parameter values for one editable Nano slot. Read-only; requires a Nano-owned held session.",
+            "Read FX parameters for one editable Nano slot as zero-based wire indices, semantic names when known, and normalized 0.0-1.0 values. Unknown models and parameters retain their raw index and value with no guessed name. Read-only; requires a Nano-owned held session.",
             object_schema(
                 &json!({"slot":{"type":"string","enum":["pre_fx1","pre_fx2","post_fx1","post_fx2","post_fx3"]}}),
                 &["slot"],
@@ -230,10 +230,10 @@ fn grid_edits() -> Vec<ToolSpec> {
         ),
         nano_spec(
             "set_nano_fx_param",
-            "Set one Nano FX parameter to a normalized 0.0-1.0 value. Changes heard working state, saves nothing, and succeeds only after a fresh read confirms the value. Requires a Nano-owned held session.",
+            "Set one Nano FX parameter by zero-based wire index to a normalized 0.0-1.0 value. Pass the model id returned by nano_state as expected_model_id; the write fails if the loaded model changed. Returns fresh indices, semantic names when known, and normalized values. Changes heard working state, saves nothing, and succeeds only after a fresh read confirms the value. Requires a Nano-owned held session.",
             object_schema(
-                &json!({"slot":{"type":"string","enum":["pre_fx1","pre_fx2","post_fx1","post_fx2","post_fx3"]},"param_index":{"type":"integer","minimum":0},"value":{"type":"number","minimum":0,"maximum":1}}),
-                &["slot", "param_index", "value"],
+                &json!({"slot":{"type":"string","enum":["pre_fx1","pre_fx2","post_fx1","post_fx2","post_fx3"]},"expected_model_id":{"type":"integer","minimum":0},"param_index":{"type":"integer","minimum":0},"value":{"type":"number","minimum":0,"maximum":1}}),
+                &["slot", "expected_model_id", "param_index", "value"],
             ),
             false,
         ),

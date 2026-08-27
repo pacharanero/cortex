@@ -209,7 +209,12 @@ export function App() {
     setNanoOperationInProgress(true);
     try {
       const result = await operation();
-      await refreshAfterNanoOperation(epoch);
+      try {
+        await refreshAfterNanoOperation(epoch);
+      } catch {
+        // The operation result already carries device confirmation. The regular
+        // dashboard poll will surface and retry a secondary refresh failure.
+      }
       return result;
     } catch (reason) {
       if (epoch === dashboardEpoch.current) setNanoOperationError(reason instanceof Error ? reason.message : String(reason));
@@ -233,8 +238,8 @@ export function App() {
     // parent-level write error while the generation-keyed editor remounts.
     return runNanoOperation(() => cortexApi.readNanoFxParams(slot), false);
   };
-  const setNanoFxParam = async (slot: NanoFxSlot, paramIndex: number, value: number) => {
-    return runNanoOperation(() => cortexApi.setNanoFxParam(slot, paramIndex, value));
+  const setNanoFxParam = async (slot: NanoFxSlot, expectedModelId: number, paramIndex: number, value: number) => {
+    return runNanoOperation(() => cortexApi.setNanoFxParam(slot, expectedModelId, paramIndex, value));
   };
   const switchDevice = async (device: "quad_cortex" | "nano_cortex" | "auto") => {
     const epoch = dashboardEpoch.current + 1;

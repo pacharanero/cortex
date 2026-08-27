@@ -4,7 +4,7 @@
 import { Alert, Badge, Button, Group, NumberInput, Paper, SimpleGrid, Slider, Stack, Switch, Text, Title } from "@mantine/core";
 import { useEffect, useRef, useState } from "react";
 import { EditorBlockCard, EditorCanvas, InspectorPanel } from "../../shared/editor/EditorCanvas";
-import type { NanoAmpControl, NanoBypassTarget, NanoCurrentState, NanoFxSlot, NanoSlotRole } from "../../shared/ipc/types";
+import type { NanoAmpControl, NanoBypassTarget, NanoCurrentState, NanoFxParameter, NanoFxSlot, NanoSlotRole } from "../../shared/ipc/types";
 
 const roleNames: Record<NanoSlotRole, string> = {
   gate: "Gate", pre_fx1: "Pre FX 1", pre_fx2: "Pre FX 2", capture: "Capture",
@@ -37,8 +37,8 @@ interface NanoChainProps {
   onSetAmp: (control: NanoAmpControl, value: number) => Promise<void>;
   onSetGateReduction: (percent: number) => Promise<void>;
   onSetBypass: (target: NanoBypassTarget, bypassed: boolean) => Promise<void>;
-  onReadFxParams: (slot: NanoFxSlot) => Promise<number[]>;
-  onSetFxParam: (slot: NanoFxSlot, paramIndex: number, value: number) => Promise<number[]>;
+  onReadFxParams: (slot: NanoFxSlot) => Promise<NanoFxParameter[]>;
+  onSetFxParam: (slot: NanoFxSlot, expectedModelId: number, paramIndex: number, value: number) => Promise<NanoFxParameter[]>;
 }
 
 export function NanoChain({ state, onSetAmp, onSetGateReduction, onSetBypass, onReadFxParams, onSetFxParam }: NanoChainProps) {
@@ -50,13 +50,15 @@ export function NanoChain({ state, onSetAmp, onSetGateReduction, onSetBypass, on
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [selectedRole, setSelectedRole] = useState<NanoSlotRole | null>(null);
-  const [fxParams, setFxParams] = useState<number[] | null>(null);
-  const [fxDraft, setFxDraft] = useState<number[]>([]);
+  const [fxParams, setFxParams] = useState<NanoFxParameter[] | null>(null);
+  const [fxModelId, setFxModelId] = useState<number | null>(null);
+  const [fxDraft, setFxDraft] = useState<Record<number, number>>({});
   const selectionEpoch = useRef(0);
   const ampEditEpoch = useRef(new Map<NanoAmpControl, number>());
   const gateEditEpoch = useRef(0);
-  const fxEditEpoch = useRef<number[]>([]);
-  const pendingFxRead = useRef<{ slot: NanoFxSlot; epoch: number } | null>(null);
+  const fxEditEpoch = useRef(new Map<number, number>());
+  const pendingFxRead = useRef<{ slot: NanoFxSlot; modelId: number | null; epoch: number } | null>(null);
+  const selectedModel = useRef<{ role: NanoSlotRole; modelId: number | null } | null>(null);
 
   useEffect(() => {
     if (busy) return;
@@ -80,21 +82,41 @@ export function NanoChain({ state, onSetAmp, onSetGateReduction, onSetBypass, on
   const selectedState = state.slots.find((slot) => slot.role === selectedRole) ?? null;
   const selectedFxSlot = fxSlots.find((slot) => slot.role === selectedRole)?.slot ?? null;
 
-  const runFxReads = async (first: { slot: NanoFxSlot; epoch: number }) => {
-    let request: { slot: NanoFxSlot; epoch: number } | null = first;
+  useEffect(() => {
+    const current = selectedRole && selectedFxSlot
+      ? { role: selectedRole, modelId: selectedState?.model_id ?? null }
+      : null;
+    const previous = selectedModel.current;
+    selectedModel.current = current;
+    if (!previous || !current || previous.role !== current.role || previous.modelId === current.modelId) return;
+
+    selectionEpoch.current += 1;
+    pendingFxRead.current = null;
+    setSelectedRole(null);
+    setFxParams(null);
+    setFxModelId(null);
+    setFxDraft({});
+    fxEditEpoch.current = new Map();
+    setError(null);
+    setStatus(`${roleNames[current.role]} model changed; select it again to load the new parameters.`);
+  }, [selectedRole, selectedFxSlot, selectedState?.model_id]);
+
+  const runFxReads = async (first: { slot: NanoFxSlot; modelId: number | null; epoch: number }) => {
+    let request: { slot: NanoFxSlot; modelId: number | null; epoch: number } | null = first;
     while (request) {
-      const { slot, epoch } = request;
+      const { slot, modelId, epoch } = request;
       const role = fxSlots.find((item) => item.slot === slot)?.role ?? "pre_fx1";
       const operation = `fx-read:${slot}`;
       setBusy(operation);
       setError(null);
       setStatus(`Reading ${roleNames[role]} parameters...`);
       try {
-        const values = await onReadFxParams(slot);
+        const parameters = await onReadFxParams(slot);
         if (selectionEpoch.current === epoch) {
-          setFxParams(values);
-          setFxDraft(values);
-          fxEditEpoch.current = values.map(() => 0);
+          setFxParams(parameters);
+          setFxModelId(modelId);
+          setFxDraft(Object.fromEntries(parameters.map((parameter) => [parameter.index, parameter.normalized])));
+          fxEditEpoch.current = new Map(parameters.map((parameter) => [parameter.index, 0]));
           setStatus(`${roleNames[role]} parameters loaded.`);
         }
       } catch (reason) {
@@ -113,18 +135,20 @@ export function NanoChain({ state, onSetAmp, onSetGateReduction, onSetBypass, on
     if (busy && !busy.startsWith("fx-read:")) return;
     const request = {
       slot: fxSlots.find((candidate) => candidate.role === role)?.slot,
+      modelId: state.slots.find((candidate) => candidate.role === role)?.model_id ?? null,
       epoch: ++selectionEpoch.current,
     };
     setSelectedRole(role);
     setFxParams(null);
-    setFxDraft([]);
-    fxEditEpoch.current = [];
+    setFxModelId(null);
+    setFxDraft({});
+    fxEditEpoch.current = new Map();
     setError(null);
     if (!request.slot) {
       pendingFxRead.current = null;
       return;
     }
-    const fxRequest = { slot: request.slot, epoch: request.epoch };
+    const fxRequest = { slot: request.slot, modelId: request.modelId, epoch: request.epoch };
     if (busy?.startsWith("fx-read:")) {
       pendingFxRead.current = fxRequest;
       return;
@@ -195,36 +219,42 @@ export function NanoChain({ state, onSetAmp, onSetGateReduction, onSetBypass, on
   const applyFxParam = async (slot: NanoFxSlot, paramIndex: number) => {
     if (busy) return;
     const value = fxDraft[paramIndex];
-    if (value == null) return;
+    const expectedModelId = fxModelId;
+    if (value == null || expectedModelId == null) return;
     const epoch = selectionEpoch.current;
-    const editEpoch = fxEditEpoch.current[paramIndex] ?? 0;
+    const editEpoch = fxEditEpoch.current.get(paramIndex) ?? 0;
     const operation = `fx-write:${slot}:${paramIndex}`;
     setBusy(operation);
     setError(null);
     setStatus(`Applying FX parameter ${paramIndex}...`);
     try {
-      const values = await onSetFxParam(slot, paramIndex, value);
+      const parameters = await onSetFxParam(slot, expectedModelId, paramIndex, value);
       if (selectionEpoch.current !== epoch) return;
-      setFxParams(values);
-      setFxDraft((current) => values.map((confirmed, index) => {
-        if (index === paramIndex && (fxEditEpoch.current[index] ?? 0) === editEpoch) return confirmed;
-        return current[index] ?? confirmed;
-      }));
+      setFxParams(parameters);
+      setFxDraft((current) => Object.fromEntries(parameters.map((parameter) => [
+        parameter.index,
+        parameter.index === paramIndex && (fxEditEpoch.current.get(parameter.index) ?? 0) === editEpoch
+          ? parameter.normalized
+          : current[parameter.index] ?? parameter.normalized,
+      ])));
       setStatus(`FX parameter ${paramIndex} applied.`);
     } catch (reason) {
       try {
-        const values = await onReadFxParams(slot);
+        const parameters = await onReadFxParams(slot);
         if (selectionEpoch.current === epoch) {
-          setFxParams(values);
-          setFxDraft((current) => values.map((confirmed, index) => {
-            if (index === paramIndex && (fxEditEpoch.current[index] ?? 0) !== editEpoch) return current[index] ?? confirmed;
-            return confirmed;
-          }));
+          setFxParams(parameters);
+          setFxDraft((current) => Object.fromEntries(parameters.map((parameter) => [
+            parameter.index,
+            parameter.index === paramIndex && (fxEditEpoch.current.get(parameter.index) ?? 0) !== editEpoch
+              ? current[parameter.index] ?? parameter.normalized
+              : parameter.normalized,
+          ])));
         }
       } catch {
         if (selectionEpoch.current === epoch) {
           setFxParams(null);
-          setFxDraft([]);
+          setFxModelId(null);
+          setFxDraft({});
         }
       }
       setError(reason instanceof Error ? reason.message : String(reason));
@@ -239,7 +269,8 @@ export function NanoChain({ state, onSetAmp, onSetGateReduction, onSetBypass, on
     pendingFxRead.current = null;
     setSelectedRole(null);
     setFxParams(null);
-    setFxDraft([]);
+    setFxModelId(null);
+    setFxDraft({});
   };
 
   return <Stack gap="md">
@@ -275,33 +306,33 @@ export function NanoChain({ state, onSetAmp, onSetGateReduction, onSetBypass, on
       {selectedFxSlot && fxParams === null && <Text c="dimmed" size="sm">Reading parameters...</Text>}
       {selectedFxSlot && fxParams != null && <>
         <SimpleGrid cols={{ base: 1, sm: 2, lg: 3 }}>
-          {fxParams.map((value, index) => <Group align="flex-end" key={index} wrap="nowrap">
+          {fxParams.map((parameter) => <Group align="flex-end" key={parameter.index} wrap="nowrap">
             <div style={{ flex: 1 }}>
-              <Text fw={600} size="xs">Param {index}</Text>
+              <Text fw={600} size="xs">{parameter.name ?? `Param ${parameter.index}`}</Text>
               <Slider
-                aria-busy={busy === `fx-write:${selectedFxSlot}:${index}`}
-                disabled={busy !== null && busy !== `fx-write:${selectedFxSlot}:${index}`}
+                aria-busy={busy === `fx-write:${selectedFxSlot}:${parameter.index}`}
+                disabled={busy !== null && busy !== `fx-write:${selectedFxSlot}:${parameter.index}`}
                 label={(value) => value.toFixed(2)}
                 max={1}
                 min={0}
                 onChange={(nextValue) => {
-                  fxEditEpoch.current[index] = (fxEditEpoch.current[index] ?? 0) + 1;
-                  setFxDraft((current) => { const next = [...current]; next[index] = nextValue; return next; });
+                  fxEditEpoch.current.set(parameter.index, (fxEditEpoch.current.get(parameter.index) ?? 0) + 1);
+                  setFxDraft((current) => ({ ...current, [parameter.index]: nextValue }));
                 }}
                 size="sm"
                 step={0.001}
-                thumbLabel={`${roleNames[selectedRole ?? "pre_fx1"]} parameter ${index} normalized value`}
-                value={fxDraft[index] ?? value}
+                thumbLabel={`${roleNames[selectedRole ?? "pre_fx1"]} ${parameter.name ?? `parameter ${parameter.index}`} normalized value`}
+                value={fxDraft[parameter.index] ?? parameter.normalized}
               />
-              <Text c="dimmed" size="xs">device: {value.toFixed(3)} | draft: {(fxDraft[index] ?? value).toFixed(3)}</Text>
+              <Text c="dimmed" size="xs">parameter {parameter.index} | device: {parameter.normalized.toFixed(3)} | draft: {(fxDraft[parameter.index] ?? parameter.normalized).toFixed(3)}</Text>
             </div>
             <Button
-              aria-busy={busy === `fx-write:${selectedFxSlot}:${index}`}
-              aria-label={`Apply ${roleNames[selectedRole ?? "pre_fx1"]} parameter ${index}`}
-              disabled={(busy !== null && busy !== `fx-write:${selectedFxSlot}:${index}`) || Math.abs((fxDraft[index] ?? value) - value) < 0.0005}
-              onClick={() => void applyFxParam(selectedFxSlot, index)}
+              aria-busy={busy === `fx-write:${selectedFxSlot}:${parameter.index}`}
+              aria-label={`Apply ${roleNames[selectedRole ?? "pre_fx1"]} ${parameter.name ?? `parameter ${parameter.index}`}`}
+              disabled={fxModelId == null || (busy !== null && busy !== `fx-write:${selectedFxSlot}:${parameter.index}`) || Math.abs((fxDraft[parameter.index] ?? parameter.normalized) - parameter.normalized) < 0.0005}
+              onClick={() => void applyFxParam(selectedFxSlot, parameter.index)}
               size="xs"
-            >{busy === `fx-write:${selectedFxSlot}:${index}` ? "Applying..." : "Apply"}</Button>
+            >{busy === `fx-write:${selectedFxSlot}:${parameter.index}` ? "Applying..." : "Apply"}</Button>
           </Group>)}
         </SimpleGrid>
         <Text c="dimmed" size="xs">The normalized 0.0-1.0 path and this rendered Linux control are hardware-verified with device read-back and restoration. Values vary by loaded model.</Text>

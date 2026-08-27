@@ -1407,6 +1407,8 @@ struct NanoCache {
     generation: u64,
     last_attempt: Instant,
     last_received: Instant,
+    last_state_attempt: Instant,
+    last_state_received: Instant,
     revision: u64,
     phase: cortex_rs::CachePhase,
 }
@@ -1425,6 +1427,8 @@ impl NanoDaemon<NanoTransport> {
                 generation: 1,
                 last_attempt: Instant::now(),
                 last_received: Instant::now(),
+                last_state_attempt: Instant::now(),
+                last_state_received: Instant::now(),
                 revision: 1,
                 phase: cortex_rs::CachePhase::Live,
             }),
@@ -1443,6 +1447,52 @@ impl NanoDaemon<NanoTransport> {
 }
 
 impl<T: NanoOperations> NanoDaemon<T> {
+    fn describe_fx_params(
+        &self,
+        slot: cortex_rs::nano::NanoFxSlot,
+        values: &[f32],
+    ) -> Vec<cortex_rs::nano::NanoFxParameter> {
+        let cached = self.state.lock().unwrap();
+        let model_id = (cached.phase == cortex_rs::CachePhase::Live)
+            .then(|| {
+                cached
+                    .snapshot
+                    .slots
+                    .iter()
+                    .find(|state| state.role == slot.role())
+                    .and_then(|state| state.model_id)
+            })
+            .flatten();
+        cortex_rs::nano::describe_fx_params(model_id, values)
+    }
+
+    fn fx_model_id(&self, slot: cortex_rs::nano::NanoFxSlot) -> Option<u64> {
+        let cached = self.state.lock().unwrap();
+        (cached.phase == cortex_rs::CachePhase::Live)
+            .then(|| {
+                cached
+                    .snapshot
+                    .slots
+                    .iter()
+                    .find(|state| state.role == slot.role())
+                    .and_then(|state| state.model_id)
+            })
+            .flatten()
+    }
+
+    fn state_snapshot_is_fresh(&self) -> bool {
+        let cached = self.state.lock().unwrap();
+        cached.phase == cortex_rs::CachePhase::Live
+            && cached.last_state_received.elapsed() < Duration::from_secs(5)
+    }
+
+    fn refresh_state(&self, transport: &mut T) -> cortex_rs::Result<()> {
+        self.mark_state_attempted();
+        let state = transport.read_state(Duration::from_secs(5))?;
+        self.replace_snapshot(state);
+        Ok(())
+    }
+
     fn mark_connected(&self) {
         *self.health.lock().unwrap() = DeviceHealth::Connected {
             serial: None,
@@ -1459,6 +1509,12 @@ impl<T: NanoOperations> NanoDaemon<T> {
 
     fn mark_attempted(&self) {
         self.state.lock().unwrap().last_attempt = Instant::now();
+    }
+
+    fn mark_state_attempted(&self) {
+        let mut cached = self.state.lock().unwrap();
+        cached.last_attempt = Instant::now();
+        cached.last_state_attempt = Instant::now();
     }
 
     fn begin_state_mutation(&self) -> bool {
@@ -1500,6 +1556,8 @@ impl<T: NanoOperations> NanoDaemon<T> {
         cached.snapshot = state;
         cached.last_attempt = Instant::now();
         cached.last_received = Instant::now();
+        cached.last_state_attempt = Instant::now();
+        cached.last_state_received = Instant::now();
         cached.revision += 1;
         cached.phase = cortex_rs::CachePhase::Live;
         drop(cached);
@@ -1543,6 +1601,7 @@ impl<T: NanoOperations> NanoDaemon<T> {
             return self.stream_error_response(transport, error);
         }
         std::thread::sleep(settle);
+        self.mark_state_attempted();
         match transport.read_state(Duration::from_secs(5)) {
             Ok(state) => {
                 let mismatch = mismatch(&state);
@@ -1563,9 +1622,22 @@ impl<T: NanoOperations> NanoDaemon<T> {
         &self,
         transport: &mut T,
         slot: cortex_rs::nano::NanoFxSlot,
+        expected_model_id: u64,
         param_index: u8,
         value: f32,
     ) -> Response {
+        if let Err(error) = self.refresh_state(transport) {
+            return self.stream_error_response(transport, error);
+        }
+        let actual_model_id = self.fx_model_id(slot);
+        if actual_model_id != Some(expected_model_id) {
+            return Response::coded_error(
+                DaemonErrorCode::InvalidParameter,
+                format!(
+                    "Nano FX model changed before the write: expected model {expected_model_id}, got {actual_model_id:?}"
+                ),
+            );
+        }
         self.mark_attempted();
         let current = match transport.read_fx_params(slot, Duration::from_secs(5)) {
             Ok(values) => {
@@ -1596,7 +1668,8 @@ impl<T: NanoOperations> NanoDaemon<T> {
                     if restore_live_phase {
                         self.restore_live_phase();
                     }
-                    Response::ok(&values).unwrap_or_else(|error| Response::error(error.to_string()))
+                    Response::ok(&self.describe_fx_params(slot, &values))
+                        .unwrap_or_else(|error| Response::error(error.to_string()))
                 } else {
                     Response::coded_error(
                         DaemonErrorCode::OutcomeUnconfirmed,
@@ -1701,7 +1774,7 @@ impl<T: NanoOperations> NanoDaemon<T> {
                     self.mark_failed(&error);
                     return Response::cortex_error(&error);
                 }
-                self.mark_attempted();
+                self.mark_state_attempted();
                 match transport.read_state(Duration::from_secs(5)) {
                     Ok(state) => {
                         self.replace_snapshot(state);
@@ -1722,9 +1795,10 @@ impl<T: NanoOperations> NanoDaemon<T> {
                     let should_refresh = {
                         let mut cached = self.state.lock().unwrap();
                         let should_refresh = cached.phase != cortex_rs::CachePhase::Live
-                            || cached.last_attempt.elapsed() >= Duration::from_secs(5);
+                            || cached.last_state_attempt.elapsed() >= Duration::from_secs(5);
                         if should_refresh {
                             cached.last_attempt = Instant::now();
+                            cached.last_state_attempt = Instant::now();
                         }
                         should_refresh
                     };
@@ -1824,11 +1898,16 @@ impl<T: NanoOperations> NanoDaemon<T> {
                 )
             }),
             Request::NanoReadFxParams { slot } => self.with_operation(|transport| {
+                if !self.state_snapshot_is_fresh()
+                    && let Err(error) = self.refresh_state(transport)
+                {
+                    return self.stream_error_response(transport, error);
+                }
                 self.mark_attempted();
                 match transport.read_fx_params(slot, Duration::from_secs(5)) {
                     Ok(values) => {
                         self.mark_message_received();
-                        Response::ok(&values)
+                        Response::ok(&self.describe_fx_params(slot, &values))
                             .unwrap_or_else(|error| Response::error(error.to_string()))
                     }
                     Err(error) => self.stream_error_response(transport, error),
@@ -1836,6 +1915,7 @@ impl<T: NanoOperations> NanoDaemon<T> {
             }),
             Request::NanoSetFxParam {
                 slot,
+                expected_model_id,
                 param_index,
                 value,
             } => {
@@ -1844,7 +1924,13 @@ impl<T: NanoOperations> NanoDaemon<T> {
                     return Response::cortex_error(&error);
                 }
                 self.with_operation(|transport| {
-                    self.write_fx_and_confirm(transport, slot, param_index, value)
+                    self.write_fx_and_confirm(
+                        transport,
+                        slot,
+                        expected_model_id,
+                        param_index,
+                        value,
+                    )
                 })
             }
             Request::Shutdown => unreachable!("shutdown is handled before device admission"),
@@ -2437,12 +2523,24 @@ mod tests {
                 NanoSlotRole::PostFx3,
             ]
             .into_iter()
-            .map(|role| NanoSlotState {
-                role,
-                loaded_name: None,
-                model_id: None,
-                model_name: None,
-                bypassed: Some(bypassed),
+            .map(|role| {
+                let model_id = match role {
+                    NanoSlotRole::PreFx1 => Some(27),
+                    NanoSlotRole::PreFx2 => Some(7_024),
+                    NanoSlotRole::PostFx1 => Some(7_022),
+                    NanoSlotRole::PostFx2 => Some(6_010),
+                    NanoSlotRole::PostFx3 => Some(8_000),
+                    _ => None,
+                };
+                NanoSlotState {
+                    role,
+                    loaded_name: None,
+                    model_id,
+                    model_name: model_id
+                        .and_then(cortex_rs::nano::fx_model_name)
+                        .map(str::to_owned),
+                    bypassed: Some(bypassed),
+                }
             })
             .collect(),
         }
@@ -2456,6 +2554,8 @@ mod tests {
                 generation: 1,
                 last_attempt: Instant::now() - Duration::from_secs(10),
                 last_received: Instant::now() - Duration::from_secs(10),
+                last_state_attempt: Instant::now() - Duration::from_secs(10),
+                last_state_received: Instant::now(),
                 revision: 1,
                 phase: cortex_rs::CachePhase::Live,
             }),
@@ -2585,8 +2685,19 @@ mod tests {
             panic!("Nano FX read should return its typed values");
         };
         assert_eq!(
-            serde_json::from_value::<Vec<f32>>(data).unwrap(),
-            vec![0.2, 0.8]
+            serde_json::from_value::<Vec<cortex_rs::nano::NanoFxParameter>>(data).unwrap(),
+            vec![
+                cortex_rs::nano::NanoFxParameter {
+                    index: 0,
+                    name: Some("Overdrive".into()),
+                    normalized: 0.2,
+                },
+                cortex_rs::nano::NanoFxParameter {
+                    index: 1,
+                    name: Some("Tone".into()),
+                    normalized: 0.8,
+                },
+            ]
         );
         let cached = daemon.state.lock().unwrap();
         assert_eq!(cached.revision, 1, "FX values are not a state snapshot");
@@ -2597,6 +2708,33 @@ mod tests {
             *daemon.health.lock().unwrap(),
             DeviceHealth::Connected { .. }
         ));
+    }
+
+    #[test]
+    fn nano_fx_read_refreshes_a_stale_model_snapshot_before_naming_parameters() {
+        let operations = FakeNanoOperations::default();
+        operations
+            .fx_values
+            .lock()
+            .unwrap()
+            .push_back(Ok(vec![0.2]));
+        let daemon = fake_nano_daemon(operations);
+        daemon.state.lock().unwrap().last_state_received = Instant::now() - Duration::from_secs(6);
+
+        let Response::Ok { data } = daemon.handle(Request::NanoReadFxParams {
+            slot: cortex_rs::nano::NanoFxSlot::PreFx1,
+        }) else {
+            panic!("Nano FX read should retain its raw parameter");
+        };
+        let parameters =
+            serde_json::from_value::<Vec<cortex_rs::nano::NanoFxParameter>>(data).unwrap();
+        assert_eq!(parameters.len(), 1);
+        assert_eq!(parameters[0].index, 0);
+        assert_eq!(parameters[0].name.as_deref(), Some("Overdrive"));
+        assert_eq!(parameters[0].normalized, 0.2);
+        assert!(
+            daemon.state.lock().unwrap().last_state_received.elapsed() < Duration::from_secs(1)
+        );
     }
 
     #[test]
@@ -2621,17 +2759,19 @@ mod tests {
             cortex_rs::CachePhase::Invalidated
         );
 
-        assert!(matches!(
-            daemon.handle(Request::NanoReadFxParams {
-                slot: cortex_rs::nano::NanoFxSlot::PreFx2,
-            }),
-            Response::Ok { .. }
-        ));
+        let Response::Ok { data } = daemon.handle(Request::NanoReadFxParams {
+            slot: cortex_rs::nano::NanoFxSlot::PreFx1,
+        }) else {
+            panic!("the reopened Nano FX stream should answer");
+        };
+        let parameters =
+            serde_json::from_value::<Vec<cortex_rs::nano::NanoFxParameter>>(data).unwrap();
+        assert_eq!(parameters[0].name.as_deref(), Some("Overdrive"));
         assert_eq!(daemon.transport.lock().unwrap().reconnects, 1);
         assert_eq!(
             daemon.state.lock().unwrap().phase,
-            cortex_rs::CachePhase::Invalidated,
-            "an FX reply proves liveness but does not refresh the state snapshot"
+            cortex_rs::CachePhase::Live,
+            "the model metadata refresh must restore a live state snapshot"
         );
 
         assert!(matches!(
@@ -2686,6 +2826,7 @@ mod tests {
 
         let Response::Error { code, .. } = daemon.handle(Request::NanoSetFxParam {
             slot: cortex_rs::nano::NanoFxSlot::PostFx1,
+            expected_model_id: 7_022,
             param_index: 1,
             value: 0.5,
         }) else {
@@ -2709,6 +2850,7 @@ mod tests {
 
         let Response::Error { code, .. } = daemon.handle(Request::NanoSetFxParam {
             slot: cortex_rs::nano::NanoFxSlot::PostFx1,
+            expected_model_id: 7_022,
             param_index: 0,
             value: 0.5,
         }) else {
@@ -2803,6 +2945,7 @@ mod tests {
 
         let Response::Error { code, .. } = daemon.handle(Request::NanoSetFxParam {
             slot: cortex_rs::nano::NanoFxSlot::PostFx1,
+            expected_model_id: 7_022,
             param_index: 0,
             value: 1.5,
         }) else {
@@ -2948,6 +3091,7 @@ mod tests {
 
         let Response::Error { code, .. } = daemon.handle(Request::NanoSetFxParam {
             slot: cortex_rs::nano::NanoFxSlot::PostFx1,
+            expected_model_id: 7_022,
             param_index: 0,
             value: 0.9,
         }) else {
@@ -2972,7 +3116,7 @@ mod tests {
     }
 
     #[test]
-    fn confirmed_nano_fx_write_restores_an_already_live_state_without_a_state_read() {
+    fn confirmed_nano_fx_write_refreshes_model_identity_and_restores_live_state() {
         let operations = FakeNanoOperations::default();
         operations
             .fx_values
@@ -2984,6 +3128,7 @@ mod tests {
         assert!(matches!(
             daemon.handle(Request::NanoSetFxParam {
                 slot: cortex_rs::nano::NanoFxSlot::PostFx1,
+                expected_model_id: 7_022,
                 param_index: 0,
                 value: 0.5,
             }),
@@ -2991,7 +3136,33 @@ mod tests {
         ));
         let cached = daemon.state.lock().unwrap();
         assert_eq!(cached.phase, cortex_rs::CachePhase::Live);
-        assert_eq!(cached.revision, 2);
+        assert_eq!(cached.revision, 3);
+    }
+
+    #[test]
+    fn nano_fx_write_rejects_a_model_changed_since_the_caller_read_state() {
+        let operations = FakeNanoOperations::default();
+        let mut changed = nano_state(10, false);
+        changed
+            .slots
+            .iter_mut()
+            .find(|slot| slot.role == cortex_rs::nano::NanoSlotRole::PostFx1)
+            .unwrap()
+            .model_id = Some(8_000);
+        operations.states.lock().unwrap().push_back(Ok(changed));
+        let daemon = fake_nano_daemon(operations);
+
+        let Response::Error { code, message } = daemon.handle(Request::NanoSetFxParam {
+            slot: cortex_rs::nano::NanoFxSlot::PostFx1,
+            expected_model_id: 7_022,
+            param_index: 0,
+            value: 0.5,
+        }) else {
+            panic!("a stale model identity must fail before the FX write");
+        };
+        assert_eq!(code, DaemonErrorCode::InvalidParameter);
+        assert!(message.contains("expected model 7022"));
+        assert_eq!(daemon.transport.lock().unwrap().fx_writes, 0);
     }
 
     #[test]

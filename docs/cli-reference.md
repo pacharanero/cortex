@@ -267,7 +267,7 @@ Commands:
   set-amp             Set one amp control as raw 0-255 and verify through fresh read-back
   set-gate-reduction  Set Gate reduction as 0-100% and verify through fresh read-back
   set-bypass          Bypass or engage one Gate/FX role and verify through fresh read-back
-  read-fx-params      Read FX parameter values (normalized 0.0-1.0) for one editable slot
+  read-fx-params      Read named FX parameters (normalized 0.0-1.0) for one editable slot
   set-fx-param        Set one FX parameter (normalized 0.0-1.0) and verify through fresh read-back
   help                Print this message or the help of the given subcommand(s)
 
@@ -483,10 +483,10 @@ Options:
 
 #### `cortex nano read-fx-params`
 
-Read FX parameter values (normalized 0.0-1.0) for one editable slot.
+Read named FX parameters (normalized 0.0-1.0) for one editable slot.
 
 ```text
-Read FX parameter values (normalized 0.0-1.0) for one editable slot
+Read named FX parameters (normalized 0.0-1.0) for one editable slot
 
 Usage: cortex nano read-fx-params [OPTIONS] <SLOT>
 
@@ -533,7 +533,7 @@ Set one FX parameter (normalized 0.0-1.0) and verify through fresh read-back.
 ```text
 Set one FX parameter (normalized 0.0-1.0) and verify through fresh read-back
 
-Usage: cortex nano set-fx-param [OPTIONS] <SLOT> <PARAM_INDEX> <VALUE>
+Usage: cortex nano set-fx-param [OPTIONS] --expected-model-id <EXPECTED_MODEL_ID> <SLOT> <PARAM_INDEX> <VALUE>
 
 Arguments:
   <SLOT>
@@ -548,6 +548,9 @@ Arguments:
           Normalized value, 0.0 to 1.0
 
 Options:
+      --expected-model-id <EXPECTED_MODEL_ID>
+          Model id returned by `nano state` when the parameter was selected
+
       --format <FORMAT>
           Output format. `text` is for humans; `json` is for scripts and agents, and is stable enough to parse.
 
