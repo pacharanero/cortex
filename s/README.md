@@ -6,7 +6,7 @@ Run them from anywhere in the repo.
 
 ## `s/test`
 
-Run the Rust and frontend build/test gate, including the traceability and documentation-quality fixture suites. Run it with `s/lint` before committing; CI additionally checks the Windows host boundary and Tauri integration build.
+Run the Rust and frontend build/test gate, including released-installer compatibility refusal and replacement-rollback tests plus the traceability and documentation-quality fixture suites. Run it with `s/lint` before committing; CI additionally checks the Windows host boundary and Tauri integration build.
 
 - `s/test` - everything
 
@@ -116,7 +116,7 @@ Bump the version, commit, and land the release commit on `main`. **This pushes.*
 
 The landing *is* the release: the auto-tag workflow creates the tag once the commit reaches `main`. There is deliberately no `s/release` - a second script that also tagged was a source of divergence between repos.
 
-Runs the full `s/lint` gate before touching the version, so a failure leaves no half-bumped tree.
+Runs the full `s/test` and `s/lint` gates before touching the version, so a failure leaves no half-bumped tree.
 
 When `cliff.toml` is present, the script requires exactly `git-cliff 2.13.1`, verifies it during preflight, and regenerates `CHANGELOG.md` in the release commit.
 
@@ -128,7 +128,7 @@ Every crate takes `version.workspace = true`, so the single version in the root 
 
 ## `s/release-preview`
 
-Build the non-publishing Linux x86_64 release preview using the cargo-dist version declared in `Cargo.toml`. It validates the release plan, produces one archive with `cortex`, `cortex-mcp`, licences/notices, and the udev rule, writes a portable `SHA256SUMS`, then verifies both archive contents and checksum. It never tags, hosts, or publishes.
+Build the non-publishing Linux x86_64 release preview using the cargo-dist version declared in `Cargo.toml`. It validates the release plan and enforces the published glibc 2.34/`libudev.so.1` runtime contract before producing one archive with `cortex`, `cortex-mcp`, licences/notices, and the udev rule. It writes a portable `SHA256SUMS`, then verifies both archive contents and checksum. It never tags, hosts, or publishes.
 
 - `s/release-preview`
 

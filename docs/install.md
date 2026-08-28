@@ -2,16 +2,16 @@
 
 ## Released Linux Install
 
-- **Linux x86_64 only.** The leaf crate is portable, but released CLI/MCP host binaries currently support only Linux x86_64. Windows named pipes and native Windows/macOS lifecycle and hardware paths remain unimplemented or unverified.
+- **Linux x86_64 only.** The leaf crate is portable, but released CLI/MCP host binaries currently support only Linux x86_64 with glibc 2.34 or newer and `libudev.so.1`. Ubuntu 22.04 x86_64 is the verified clean release environment; other recent glibc distributions are expected to work but remain user-tested rather than release-verified. Alpine/musl, ARM/aarch64, Ubuntu 20.04, Debian 11 and RHEL-family 8 do not satisfy this archive contract. Unsigned Windows and macOS preview artifacts are on the roadmap, but their native session lifecycle and hardware paths are not yet supported.
 - A **Quad Cortex or Nano Cortex**, connected by USB and powered on. Quad provides the full grid/session surface; Nano provides typed state plus non-persistent amp, bypass and raw FX parameter operations, while Gate reduction remains hardware-provisional.
 
 ```sh
 curl -LsSf https://pacharanero.github.io/cortex/install.sh | sh
 ```
 
-The script requires `curl` or `wget`, a SHA-256 tool, `tar`, `xz` (usually the `xz-utils` or `xz` package), and the coreutils `install` command. It downloads the latest GitHub Release archive, verifies its entry in the release's `SHA256SUMS`, then installs both `cortex` and `cortex-mcp` to `~/.local/bin` by default. It does not require Rust, a compiler, `protoc`, or development headers.
+The script requires `curl` or `wget`, a SHA-256 tool, `tar`, `xz` (usually the `xz-utils` or `xz` package), coreutils, `getconf` and `ldd`. It downloads the latest GitHub Release archive, verifies its entry in the release's `SHA256SUMS`, then checks the staged binaries against the glibc and shared-library contract and starts both with non-device probes before replacing anything. Only after both binaries pass does it stage the complete install in the destination and replace `cortex`, `cortex-mcp` and the udev rule, restoring the prior set if a final rename fails. The default destination is `~/.local/bin`. It does not require Rust, a compiler, `protoc`, or development headers.
 
-Set `CORTEX_VERSION=v0.1.0` to install a specific release, or `CORTEX_INSTALL_DIR=/some/bin` to choose a destination. Re-running it replaces both binaries and refreshes shell completions when the shell can be detected.
+Set `CORTEX_VERSION=v0.2.0` to install that specific release after publication, or `CORTEX_INSTALL_DIR=/some/bin` to choose a destination. Re-running it replaces both binaries and refreshes shell completions when the shell can be detected.
 
 ## Developer Build Requirements
 

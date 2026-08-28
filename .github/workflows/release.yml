@@ -19,6 +19,7 @@ on:
       - NOTICE
       - THIRD-PARTY-NOTICES.md
       - docs/install.sh
+      - s/check-release-runtime
       - s/release-preview
       - .github/workflows/release.yml
   workflow_dispatch:
@@ -31,6 +32,10 @@ on:
 
 permissions:
   contents: read
+
+concurrency:
+  group: release-${{ inputs.tag || github.sha }}
+  cancel-in-progress: false
 
 env:
   CARGO_DIST_VERSION: "0.32.0"
@@ -104,6 +109,7 @@ jobs:
           mkdir -p "$stage/LICENSES"
           install -m 0755 target/dist/cortex "$stage/cortex"
           install -m 0755 target/dist/cortex-mcp "$stage/cortex-mcp"
+          s/check-release-runtime "$stage/cortex" "$stage/cortex-mcp"
           install -m 0644 LICENSE NOTICE THIRD-PARTY-NOTICES.md 70-neural-dsp-cortex.rules "$stage/"
           install -m 0644 LICENSES/* "$stage/LICENSES/"
           archive="target/release-preview/cortex-${RELEASE_TAG#v}-${TARGET}.tar.xz"
@@ -127,6 +133,7 @@ jobs:
     needs: preview
     if: inputs.tag != ''
     runs-on: ubuntu-22.04
+    environment: release
     permissions:
       contents: write
     env:
@@ -161,16 +168,22 @@ jobs:
           # version; fall back to GitHub's commit-derived notes only when that
           # section does not exist (e.g. before CHANGELOG.md was adopted).
           version="${RELEASE_TAG#v}"
-          notes_args=(--generate-notes)
+          notes_file="$(mktemp)"
           if [[ -f CHANGELOG.md ]] && grep -q "^## \[${version}\]" CHANGELOG.md; then
-            notes_file="$(mktemp)"
             awk -v ver="$version" '
               $0 ~ "^## \\[" ver "\\]" { found=1; next }
               found && /^## \[/ { exit }
               found { print }
             ' CHANGELOG.md > "$notes_file"
-            notes_args=(--notes-file "$notes_file")
+          else
+            gh api --method POST "repos/${GITHUB_REPOSITORY}/releases/generate-notes" \
+              -f tag_name="$RELEASE_TAG" --jq .body > "$notes_file"
           fi
 
-          gh release create "$RELEASE_TAG" --target "$RELEASE_TAG" "${notes_args[@]}" \
-            "${archives[@]}" release/SHA256SUMS
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release edit "$RELEASE_TAG" --title "$RELEASE_TAG" --notes-file "$notes_file"
+            gh release upload "$RELEASE_TAG" --clobber "${archives[@]}" release/SHA256SUMS
+          else
+            gh release create "$RELEASE_TAG" --verify-tag --title "$RELEASE_TAG" \
+              --notes-file "$notes_file" "${archives[@]}" release/SHA256SUMS
+          fi

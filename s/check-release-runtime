@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Dr Marcus Baw
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# Enforce the documented ABI contract on staged Linux x86_64 release binaries.
+
+set -euo pipefail
+
+max_glibc="2.34"
+
+if [[ $# -ne 2 ]]; then
+    echo "Usage: s/check-release-runtime PATH_TO_CORTEX PATH_TO_CORTEX_MCP" >&2
+    exit 2
+fi
+
+for binary in "$@"; do
+    [[ -x "$binary" ]] || { echo "release binary is missing or not executable: $binary" >&2; exit 1; }
+    versions="$(readelf --version-info "$binary" | sed -n 's/.*Name: GLIBC_\([0-9.]*\).*/\1/p')"
+    [[ -n "$versions" ]] || { echo "could not read glibc requirements from $binary" >&2; exit 1; }
+    required="$(printf '%s\n' "$versions" | sort -V | tail -n 1)"
+    highest="$(printf '%s\n%s\n' "$required" "$max_glibc" | sort -V | tail -n 1)"
+    [[ "$highest" == "$max_glibc" ]] || {
+        echo "$binary requires glibc $required, newer than the published compatibility contract $max_glibc" >&2
+        exit 1
+    }
+done
+
+readelf --dynamic "$1" | grep -Fq 'Shared library: [libudev.so.1]' || {
+    echo "$1 does not declare the required libudev.so.1 dependency" >&2
+    exit 1
+}
+
+printf 'release runtime contract: glibc <= %s and libudev.so.1 required\n' "$max_glibc"

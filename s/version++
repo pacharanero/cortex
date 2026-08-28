@@ -109,8 +109,8 @@ landing_mode="$(detect_landing_mode)"
 # The full local gate, not a subset. A release that skips a check the ordinary
 # workflow runs is how a repo ends up shipping something CI would have caught.
 echo "version++: running the full gate ..."
+s/test
 s/lint
-(cd gui && npm run check)
 
 # --- bump -----------------------------------------------------------------
 
