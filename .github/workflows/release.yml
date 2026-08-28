@@ -23,6 +23,11 @@ on:
       - s/release-preview
       - .github/workflows/release.yml
   workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag to rebuild and publish; leave empty for a preview only.
+        required: false
+        type: string
   workflow_call:
     inputs:
       tag:
@@ -156,11 +161,20 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test -f release/SHA256SUMS
-          mapfile -t archives < <(compgen -G 'release/*.tar.xz')
-          test "${#archives[@]}" -eq 1
+          # dist-plan.json is uploaded from the repository root, so
+          # upload-artifact preserves the release-preview directory hierarchy.
+          artifact_dir=release/target/release-preview
+          if [[ ! -f "$artifact_dir/SHA256SUMS" ]]; then
+            echo "Missing $artifact_dir/SHA256SUMS in the downloaded artifact" >&2
+            exit 1
+          fi
+          mapfile -t archives < <(compgen -G "$artifact_dir/*.tar.xz")
+          if [[ "${#archives[@]}" -ne 1 ]]; then
+            echo "Expected exactly one release archive in $artifact_dir; found ${#archives[@]}" >&2
+            exit 1
+          fi
           (
-            cd release
+            cd "$artifact_dir"
             sha256sum --check --strict SHA256SUMS
           )
 
@@ -182,8 +196,8 @@ jobs:
 
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release edit "$RELEASE_TAG" --title "$RELEASE_TAG" --notes-file "$notes_file"
-            gh release upload "$RELEASE_TAG" --clobber "${archives[@]}" release/SHA256SUMS
+            gh release upload "$RELEASE_TAG" --clobber "${archives[@]}" "$artifact_dir/SHA256SUMS"
           else
             gh release create "$RELEASE_TAG" --verify-tag --title "$RELEASE_TAG" \
-              --notes-file "$notes_file" "${archives[@]}" release/SHA256SUMS
+              --notes-file "$notes_file" "${archives[@]}" "$artifact_dir/SHA256SUMS"
           fi
