@@ -80,6 +80,9 @@ jobs:
           tests/check-traceability.sh
           s/check-traceability
 
+      - name: Released installer fixtures
+        run: tests/install-release.sh
+
       - name: Install frontend dependencies
         run: npm ci --prefix gui
 
@@ -109,6 +112,38 @@ jobs:
           cargo check -p cortex-host --target x86_64-pc-windows-gnu
           cargo check -p cortex-mcp --target x86_64-pc-windows-gnu
 
+  audit:
+    name: Security audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: taiki-e/install-action@fcf5432d9f50d67e37ee6e29bdb7a224ff67b4a7 # v2.86.8
+        with:
+          tool: cargo-audit@0.22.2
+          fallback: none
+
+      - run: cargo audit
+
+  workflow-security:
+    name: GitHub Actions security
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: taiki-e/install-action@fcf5432d9f50d67e37ee6e29bdb7a224ff67b4a7 # v2.86.8
+        with:
+          tool: zizmor@1.29.0
+          fallback: none
+
+      - run: zizmor --strict-collection .
+        env:
+          GH_TOKEN: ${{ github.token }}
+
   reuse:
     name: REUSE licence lint
     runs-on: ubuntu-latest
@@ -118,3 +153,12 @@ jobs:
           persist-credentials: false
 
       - uses: fsfe/reuse-action@676e2d560c9a403aa252096d99fcab3e1132b0f5 # v6.0.0
+
+  tag-release:
+    name: Tag and release version bump
+    needs: [test, audit, workflow-security, reuse]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      actions: read
+      contents: write
+    uses: ./.github/workflows/auto-tag.yml

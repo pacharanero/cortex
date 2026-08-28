@@ -27,17 +27,24 @@ spec: spec.md
 
 The `s/` scripts are executable bash files at the repo root in `s/`. Each carries an SPDX header, a one-line description, `set -euo pipefail`, and a `cd` to the repo root via `git rev-parse --show-toplevel`. They are the canonical entry points so a maintainer or agent does not have to remember the exact incantations.
 
-### Design choice: a fast local Rust test path
+### Design choice: the canonical local test path
 
-`s/test` runs the same three steps as `.github/workflows/ci.yml`:
+`s/test` runs the repository's build and test gate:
 
 ```sh
 cargo fmt --all --check
 cargo clippy --all-targets --all-features -- -D warnings
 cargo test --all
+cargo test --all --no-default-features
+(cd gui && npm run check)
+tests/check-traceability.sh
+tests/check-docs-nav.sh
+tests/linkcheck.sh
+tests/spellcheck.sh
+tests/install-release.sh
 ```
 
-CI additionally runs no-default workspace clippy/tests, real-device-data lint, Windows host-boundary checks and platform setup. `s/lint` already adds the device-data lint and a no-HID crate check. The remaining parity gap is tracked rather than hidden.
+CI additionally runs no-default workspace clippy, real-device-data and version/traceability lint, RustSec, Zizmor, REUSE, Windows host-boundary checks, the Tauri build boundary and platform setup. The split local contract is `s/test` plus `s/lint`; release commits run both through `s/version++` before changing any manifest.
 
 ### Design choice: `reuse` is optional in `s/lint`
 
@@ -100,7 +107,7 @@ This is the house-style rule (tauri-gui.md): the script is the canonical entry p
 
 ### `s/version++`
 
-Implemented for the Rust workspace, npm package/lock, Tauri configuration and release commit flow. A future CI drift check can enforce equality outside release runs.
+Implemented for the Rust workspace, npm package/lock, Tauri configuration and release commit flow. It requires a clean `main`, runs `s/test` and `s/lint` before changing any version, and leaves the tree untouched if either gate fails. `s/check-versions` enforces equality outside release runs.
 
 A thin bash script works for `Cargo.toml` (toml-edit) and `gui/package.json` (jq). If the parsing gets complex, this is the one script that might justify an `xtask` Rust binary.
 
@@ -116,7 +123,5 @@ The pre-commit hook should be opt-in (a script the maintainer runs), not forced 
 
 ## [DES-LIMITS] Known Limitations
 
-- **GUI version drift is handled at release time.** `s/version++` synchronizes `gui/package.json`, `gui/package-lock.json` and `gui/src-tauri/tauri.conf.json` to the canonical workspace version before committing.
-- **No markdown lint yet.** The config and the CI step are planned.
-- **No pre-commit hook yet.** `.githooks/` does not exist; `s/install-hooks` is planned.
-- **`s/test` does not run `cargo test --all --no-default-features`.** CI does (the leaf-crate no-default-features path); the local script currently runs the all-features path only. This is a gap to close.
+- **Local CI parity is deliberately split.** The complete local gate is `s/test` plus `s/lint`; CI additionally owns platform setup, Windows cross-checks, the Tauri integration build, RustSec, Zizmor and mandatory REUSE availability.
+- **Release hosting remains externally gated.** `s/version++` prepares and lands the release commit, while post-merge CI and the protected `release` environment retain tag and publication authority.

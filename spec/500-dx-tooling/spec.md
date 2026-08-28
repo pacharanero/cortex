@@ -33,13 +33,13 @@ This zone owns the scripts, the `.editorconfig`, and the lint/format config. The
 
 | Claim | Status | Evidence |
 | --- | --- | --- |
-| `s/test` runs fmt + clippy + tests | Implemented | `s/test` runs `cargo fmt --all --check`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test --all`, `cargo test --all --no-default-features`, frontend checks, `tests/check-traceability.sh`, `tests/check-docs-nav.sh`, `tests/linkcheck.sh` and `tests/spellcheck.sh` |
+| `s/test` runs fmt + clippy + tests | Implemented | `s/test` runs `cargo fmt --all --check`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test --all`, `cargo test --all --no-default-features`, frontend checks, released-installer transaction fixtures, `tests/check-traceability.sh`, `tests/check-docs-nav.sh`, `tests/linkcheck.sh` and `tests/spellcheck.sh` |
 | `s/lint` runs fmt + clippy + no-HID check + REUSE + repository policy lints | Implemented | `s/lint` runs `cargo fmt --all --check`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo clippy --all-targets --no-default-features -- -D warnings`, `reuse lint` when available, `s/lint-no-device-data`, `s/check-versions`, and `s/check-traceability` |
 | Docs-site quality lints (nav orphans, internal links, spelling) | Implemented | The dependency-free `s/check-docs-nav` validates pages, nav entries and named exceptions in both directions; `s/linkcheck` builds with Zensical and validates rendered HTML links, image resources and anchors within the deployment prefix; `s/spellcheck` runs the updater-visible codespell pin in `requirements.txt`. All three run from `s/lint` and dedicated CI steps, with fixture coverage in `tests/check-docs-nav.sh`, `tests/linkcheck.sh` and `tests/spellcheck.sh` |
 | `.editorconfig` enforces UTF-8, LF, 4-space indent (2 for md/yaml/json), final newline | Implemented | `.editorconfig` at repo root |
 | `cargo fmt` and `cargo clippy` run in CI | Implemented | `.github/workflows/ci.yml` (owned by zone 600) |
 | `s/gui-dev` | Implemented | Runs the Tauri dev server from the repository-independent entry point |
-| `s/version++` | Implemented | Release script synchronizes Cargo, npm and Tauri versions, runs the Rust and frontend gates, then lands one release commit |
+| `s/version++` | Implemented | Release script synchronizes Cargo, npm and Tauri versions, runs both canonical full gates (`s/test` and `s/lint`), then lands one release commit |
 | No-default workspace clippy/tests run locally, not only in CI | Implemented | `s/lint` runs `cargo clippy --all-targets --no-default-features -- -D warnings`; `s/test` runs `cargo test --all --no-default-features` |
 | Markdown lint | Implemented | `s/markdownlint` runs `markdownlint-cli2@0.23.2` against `.markdownlint.jsonc`, from `s/lint` and a dedicated CI step |
 | Traceability lint | Implemented | `s/check-traceability` requires a module-level `//! @see` header in every tracked Rust file, resolves its paths and node IDs, requires a living spec/design target, and has isolated fixture coverage in `tests/check-traceability.sh` |
@@ -137,10 +137,6 @@ Maintainers and AI coding agents running the local gate before a commit.
 - **Python 3 and `requirements.txt`** - provide Zensical for rendered-site link checking and the pinned codespell typo checker; local setup uses the documented virtual environment and CI installs the same declaration explicitly.
 - **Zone 600 (CI)** - the workflow this zone mirrors locally.
 - **Zone 400 (GUI)** - supplies the manifests `s/gui-dev` runs and `s/version++` must keep in sync.
-
-## Future
-
-- **`s/version++` GUI synchronization.** Implemented for `gui/package.json`, `gui/package-lock.json` and `gui/src-tauri/tauri.conf.json`; a future CI drift check can verify they match outside release runs.
 
 ## Glossary
 

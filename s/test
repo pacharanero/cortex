@@ -19,3 +19,4 @@ tests/check-traceability.sh
 tests/check-docs-nav.sh
 tests/linkcheck.sh
 tests/spellcheck.sh
+tests/install-release.sh

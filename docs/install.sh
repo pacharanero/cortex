@@ -17,6 +17,7 @@ set -eu
 REPO='pacharanero/cortex'
 TARGET='x86_64-unknown-linux-gnu'
 INSTALL_DIR="${CORTEX_INSTALL_DIR:-$HOME/.local/bin}"
+MIN_GLIBC='2.34'
 
 err() { printf 'error: %s\n' "$*" >&2; exit 1; }
 info() { printf '%s\n' "$*"; }
@@ -48,6 +49,104 @@ latest_version() {
     sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$1" | sed -n '1p'
 }
 
+glibc_is_supported() {
+    version="$1"
+    major="${version%%.*}"
+    minor="${version#*.}"
+    minor="${minor%%.*}"
+    case "$major" in ''|*[!0-9]*) return 1 ;; esac
+    case "$minor" in ''|*[!0-9]*) return 1 ;; esac
+    [ "$major" -gt 2 ] || { [ "$major" -eq 2 ] && [ "$minor" -ge 34 ]; }
+}
+
+check_runtime() {
+    stage="$1"
+    command -v getconf >/dev/null 2>&1 || err "cannot verify glibc $MIN_GLIBC compatibility: getconf is missing"
+    glibc="$(getconf GNU_LIBC_VERSION 2>/dev/null | sed -n 's/^glibc[[:space:]]*//p')"
+    [ -n "$glibc" ] || err "released binaries require glibc $MIN_GLIBC or newer; this system does not report glibc"
+    glibc_is_supported "$glibc" || err "released binaries require glibc $MIN_GLIBC or newer; this system reports $glibc"
+
+    command -v ldd >/dev/null 2>&1 || err 'cannot verify runtime libraries: ldd is missing'
+    for binary in "$stage/cortex" "$stage/cortex-mcp"; do
+        dependencies="$(ldd "$binary" 2>&1)" || err "could not inspect runtime libraries for ${binary##*/}: $dependencies"
+        if printf '%s\n' "$dependencies" | grep -q 'libudev\.so\.1 => not found'; then
+            err 'libudev.so.1 is required; install libudev (often packaged as libudev1 or systemd-libs)'
+        fi
+        if printf '%s\n' "$dependencies" | grep -q '=> not found'; then
+            err "a runtime library required by ${binary##*/} is missing: $dependencies"
+        fi
+    done
+
+    "$stage/cortex" --version >/dev/null 2>&1 || err 'downloaded cortex binary cannot run on this system'
+    "$stage/cortex-mcp" </dev/null >/dev/null 2>&1 || err 'downloaded cortex-mcp binary cannot start on this system'
+}
+
+install_release() {
+    stage="$1"
+    cli_new="$INSTALL_DIR/.cortex.new.$$"
+    mcp_new="$INSTALL_DIR/.cortex-mcp.new.$$"
+    rule_new="$INSTALL_DIR/.70-neural-dsp-cortex.rules.new.$$"
+    cli_old="$INSTALL_DIR/.cortex.old.$$"
+    mcp_old="$INSTALL_DIR/.cortex-mcp.old.$$"
+    rule_old="$INSTALL_DIR/.70-neural-dsp-cortex.rules.old.$$"
+
+    rm -f "$cli_new" "$mcp_new" "$rule_new" "$cli_old" "$mcp_old" "$rule_old"
+    if ! install -m 0755 "$stage/cortex" "$cli_new" ||
+       ! install -m 0755 "$stage/cortex-mcp" "$mcp_new" ||
+       ! install -m 0644 "$stage/70-neural-dsp-cortex.rules" "$rule_new"; then
+        rm -f "$cli_new" "$mcp_new" "$rule_new"
+        err 'could not stage the release in the install directory; the existing installation was not changed'
+    fi
+
+    had_cli=false
+    had_mcp=false
+    had_rule=false
+    backup_failed=false
+    if [ -e "$INSTALL_DIR/cortex" ]; then
+        had_cli=true
+        cp -p "$INSTALL_DIR/cortex" "$cli_old" || backup_failed=true
+    fi
+    if [ -e "$INSTALL_DIR/cortex-mcp" ]; then
+        had_mcp=true
+        cp -p "$INSTALL_DIR/cortex-mcp" "$mcp_old" || backup_failed=true
+    fi
+    if [ -e "$INSTALL_DIR/70-neural-dsp-cortex.rules" ]; then
+        had_rule=true
+        cp -p "$INSTALL_DIR/70-neural-dsp-cortex.rules" "$rule_old" || backup_failed=true
+    fi
+    if [ "$backup_failed" = true ]; then
+        rm -f "$cli_new" "$mcp_new" "$rule_new" "$cli_old" "$mcp_old" "$rule_old"
+        err 'could not back up the installed release; the existing installation was not changed'
+    fi
+
+    if mv "$cli_new" "$INSTALL_DIR/cortex" &&
+       mv "$mcp_new" "$INSTALL_DIR/cortex-mcp" &&
+       mv "$rule_new" "$INSTALL_DIR/70-neural-dsp-cortex.rules"; then
+        rm -f "$cli_old" "$mcp_old" "$rule_old" || true
+        return
+    fi
+
+    rollback_failed=false
+    if [ "$had_cli" = true ]; then
+        mv "$cli_old" "$INSTALL_DIR/cortex" || rollback_failed=true
+    else
+        rm -f "$INSTALL_DIR/cortex" || rollback_failed=true
+    fi
+    if [ "$had_mcp" = true ]; then
+        mv "$mcp_old" "$INSTALL_DIR/cortex-mcp" || rollback_failed=true
+    else
+        rm -f "$INSTALL_DIR/cortex-mcp" || rollback_failed=true
+    fi
+    if [ "$had_rule" = true ]; then
+        mv "$rule_old" "$INSTALL_DIR/70-neural-dsp-cortex.rules" || rollback_failed=true
+    else
+        rm -f "$INSTALL_DIR/70-neural-dsp-cortex.rules" || rollback_failed=true
+    fi
+    rm -f "$cli_new" "$mcp_new" "$rule_new"
+    [ "$rollback_failed" = false ] || err 'could not replace or fully restore the installed release; inspect the install directory'
+    err 'could not replace the installed release; the previous installation was restored'
+}
+
 main() {
     [ "$(uname -s)" = Linux ] || err 'only Linux is supported by the released host binaries'
     case "$(uname -m)" in
@@ -66,6 +165,7 @@ main() {
         version="$(latest_version "$tmpdir/release.json")"
         [ -n "$version" ] || err 'could not determine the latest release'
     fi
+    printf '%s\n' "$version" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$' || err "invalid release version: $version"
 
     archive="cortex-${version#v}-${TARGET}.tar.xz"
     base="https://github.com/$REPO/releases/download/$version"
@@ -82,10 +182,11 @@ main() {
     stage="$tmpdir/cortex-${version#v}-${TARGET}"
     [ -x "$stage/cortex" ] || err 'archive did not contain cortex'
     [ -x "$stage/cortex-mcp" ] || err 'archive did not contain cortex-mcp'
+    [ -f "$stage/70-neural-dsp-cortex.rules" ] || err 'archive did not contain the udev rule'
+    check_runtime "$stage"
+    info "Runtime compatibility OK (glibc $glibc; shared libraries present)."
     mkdir -p "$INSTALL_DIR"
-    install -m 0755 "$stage/cortex" "$INSTALL_DIR/cortex"
-    install -m 0755 "$stage/cortex-mcp" "$INSTALL_DIR/cortex-mcp"
-    install -m 0644 "$stage/70-neural-dsp-cortex.rules" "$INSTALL_DIR/70-neural-dsp-cortex.rules"
+    install_release "$stage"
 
     info "Installed cortex and cortex-mcp to $INSTALL_DIR"
     case ":$PATH:" in

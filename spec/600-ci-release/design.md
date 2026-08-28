@@ -26,7 +26,7 @@ spec: spec.md
 
 ### Behaviour
 
-`.github/workflows/ci.yml` runs on `push` to `main`, `pull_request`, and `workflow_dispatch`. The test job installs protobuf, hidapi/udev and Tauri Linux prerequisites; rejects real device data; runs both feature configurations; and cross-checks host/MCP code for Windows. REUSE is a separate job. The YAML below is schematic; the workflow file is authoritative.
+`.github/workflows/ci.yml` runs on `push` to `main`, `pull_request`, and `workflow_dispatch`. The test job installs protobuf, hidapi/udev and Tauri Linux prerequisites; rejects real device data; runs released-installer fixtures and both feature configurations; and cross-checks host/MCP code for Windows. REUSE, RustSec audit and Zizmor are separate blocking jobs. A final reusable-workflow job exists only for pushes to `main`, depends on all four gates, and calls auto-tag after they pass. The YAML below is schematic; the workflow file is authoritative.
 
 ```yaml
 name: CI
@@ -74,6 +74,16 @@ jobs:
         with:
           persist-credentials: false
       - uses: fsfe/reuse-action@676e2d560c9a403aa252096d99fcab3e1132b0f5 # v6.0.0
+  audit:
+    name: Security audit
+    # pinned taiki-e/install-action -> cargo-audit 0.22.2 -> cargo audit
+  workflow-security:
+    name: GitHub Actions security
+    # pinned taiki-e/install-action -> Zizmor 1.29.0 -> strict collection
+  tag-release:
+    needs: [test, audit, workflow-security, reuse]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    uses: ./.github/workflows/auto-tag.yml
 ```
 
 ### Design choice: SHA pins with version comments
@@ -83,8 +93,9 @@ Every action is pinned to a specific commit SHA with a `# vX.Y.Z` comment. This 
 | Action | SHA | Version |
 | --- | --- | --- |
 | `actions/checkout` | `3d3c42e5aac5ba805825da76410c181273ba90b1` | `# v7.0.1` |
-| `dtolnay/rust-toolchain` | `e97e2d8cc328f1b50210efc529dca0028893a2d9` | `# v1` |
-| `Swatinem/rust-cache` | `c19371144df3bb44fab255c43d04cbc2ab54d1c4` | `# v2.9.1` |
+| `dtolnay/rust-toolchain` | `6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772` | `# v1` |
+| `Swatinem/rust-cache` | `6323deb102c322ba6fcbdcafc7e3dddab59af2b6` | `# v2.9.2` |
+| `taiki-e/install-action` | `fcf5432d9f50d67e37ee6e29bdb7a224ff67b4a7` | `# v2.86.8` |
 | `fsfe/reuse-action` | `676e2d560c9a403aa252096d99fcab3e1132b0f5` | `# v6.0.0` |
 
 Dependabot opens PRs to bump these SHAs (the `github-actions` ecosystem in `dependabot.yml`), and the version comment is updated in the same PR.
@@ -105,6 +116,10 @@ This enforces the leaf-crate discipline (AGENTS.md / 001-overview NFR-4): the cr
 ### Design choice: REUSE as a separate job
 
 The REUSE license lint is a separate job (`reuse`) rather than a step in `test`. This lets it run in parallel and keeps the license check visible in the CI status as a distinct signal. It also means a REUSE failure does not block the fmt/clippy/test signal (and vice versa).
+
+### Design choice: security scanners as separate blocking jobs
+
+`cargo audit` and `zizmor --strict-collection .` are distinct jobs so a dependency advisory and an unsafe workflow each produce one unambiguous required-check signal. Both prebuilt scanner binaries are version-pinned and installed through the SHA-pinned `taiki-e/install-action` with `fallback: none`; installation cannot silently switch to a source build or a different downloader. Zizmor receives only the workflow's read-only token for online ref validation. Auto-tag is a reusable workflow called by the final main-only CI job rather than a privileged `workflow_run` trigger, which Zizmor correctly treats as fundamentally dangerous.
 
 ### Design choice: `protoc` installed via `apt`
 
@@ -153,22 +168,22 @@ One Cargo entry at `/` covers the workspace and member manifests; duplicate per-
 
 ### Behaviour
 
-The release pipeline is partly wired. `s/version++`, auto-tagging, the Linux preview, and GitHub Release hosting exist; crates.io publishing, GUI bundles, and a live cascade smoke remain. The implementation follows house-style distribution.md:
+The release pipeline is partly wired. `s/version++`, post-gate auto-tagging, the Linux preview, protected GitHub Release hosting and retry repair exist; crates.io publishing, GUI bundles, and a live cascade smoke remain. The implementation follows house-style distribution.md:
 
-1. **`s/version++`** (zone 500) bumps the canonical Rust workspace version, synchronizes the npm and Tauri manifests, and regenerates `CHANGELOG.md` with a pinned git-cliff version in one release commit.
-2. **Auto-tag workflow** detects the version bump on `main` and creates a `vX.Y.Z` tag. Implemented.
+1. **`s/version++`** (zone 500) runs both full local gates, bumps the canonical Rust workspace version, synchronizes the npm and Tauri manifests, and regenerates `CHANGELOG.md` with a pinned git-cliff version in one release commit.
+2. **Auto-tag workflow** is called only after test, RustSec, Zizmor and REUSE pass on a `main` push; it detects the version bump and creates a `vX.Y.Z` tag. Implemented.
 3. **Planned crates.io publish workflow** will run dry-run and publish selected crates only after explicit approval.
-4. **Partially implemented `cargo-dist` workflow** is invoked directly by `auto-tag.yml` through `workflow_call`. The first supported target is `x86_64-unknown-linux-gnu`, packaging both binaries plus licences/notices, the canonical two-product `70-neural-dsp-cortex.rules` and `SHA256SUMS`. The rule granting Nano access is not a Nano runtime support claim. Preview builds pass; live publication remains unexercised.
-5. **GitHub Release** hosting is implemented. It publishes the tag's exact git-cliff section when present and falls back to GitHub-generated notes before the first generated changelog; the live cascade remains unevidenced.
-6. **Public installer** at the docs-site root resolves the latest release, verifies the selected archive against `SHA256SUMS`, installs both binaries and refreshes or prescribes completions.
+4. **Partially implemented `cargo-dist` workflow** is invoked directly by `auto-tag.yml` through `workflow_call`. The first supported target is `x86_64-unknown-linux-gnu`, packaging both binaries plus licences/notices, the canonical two-product `70-neural-dsp-cortex.rules` and `SHA256SUMS`. Before packaging, `s/check-release-runtime` rejects binaries requiring glibc newer than 2.34 or a `cortex` binary that does not declare `libudev.so.1`. The rule granting Nano access is not a Nano runtime support claim. Preview builds pass; live publication remains unexercised.
+5. **GitHub Release** hosting is implemented behind the protected `release` environment. Auto-tag reads the environment first and refuses to mint the tag unless a required-reviewer rule exists. It publishes the tag's exact git-cliff section when present and otherwise asks GitHub's generate-notes API for a notes file. A tag-scoped concurrency group serializes retries; a rerun edits an existing release and uploads both assets with `--clobber`, so a tag or release created before an interrupted upload remains recoverable without interleaving an archive and checksum from different builds. The live cascade remains unevidenced.
+6. **Public installer** at the docs-site root resolves the latest release and verifies the selected archive against `SHA256SUMS`. It then checks host glibc, runs `ldd` over both staged binaries, executes staged CLI version output and starts staged MCP with EOF. Only after every check passes does it stage the complete replacement in the destination, retain the prior files and replace them; a final rename failure restores the prior set before returning failure.
 
 ### Design choice: workflow-call release cascade
 
-`s/version++` creates the commit; the auto-tag workflow creates the tag and directly invokes the release workflow through `workflow_call`. The tag is the permanent release identity, but its `GITHUB_TOKEN` creation event is not relied upon to trigger another workflow because GitHub suppresses that recursion.
+`s/version++` creates the commit; the main-push CI job runs every blocking check, then calls auto-tag as a reusable workflow. Auto-tag creates the tag and directly invokes the release workflow through a second `workflow_call`. The tag is the permanent release identity, but its `GITHUB_TOKEN` creation event is not relied upon to trigger another workflow because GitHub suppresses that recursion. Avoiding `workflow_run` also prevents a privileged workflow from checking out an attacker-controlled run.
 
 ### Design choice: approval before first publish
 
-Per AGENTS.md, publishing to crates.io, cutting a release tag, and any externally visible action require explicit approval. The crates.io publish workflow will not run on the first tag without the maintainer enabling it. The workflow uses a secret (`CARGO_REGISTRY_TOKEN`) stored in GitHub.
+Per AGENTS.md, publishing to crates.io, cutting a release tag, and any externally visible action require explicit approval. Binary hosting names the protected `release` environment and waits for its required reviewer after the read-only archive build. The crates.io publish workflow will not run on the first tag without the maintainer enabling it. The workflow uses a secret (`CARGO_REGISTRY_TOKEN`) stored in GitHub.
 
 ### Design choice: `cargo-dist` for binaries
 
@@ -182,7 +197,7 @@ Per AGENTS.md, publishing to crates.io, cutting a release tag, and any externall
 
 ## [DES-LIMITS] Known Limitations
 
-- **Release pipeline is incomplete.** Auto-tagging, the Linux preview, and GitHub Release hosting exist; crates.io publishing, GUI bundles, and a live auto-tag-to-release smoke remain.
+- **Release pipeline is incomplete.** Post-gate auto-tagging, the Linux preview, protected GitHub Release hosting and retry repair exist; crates.io publishing, GUI bundles, and a live auto-tag-to-release smoke remain.
 - **No committed `CHANGELOG.md` yet.** The pinned git-cliff flow is implemented, but the file is first generated by the next `s/version++` release commit.
 - **Linux-native CI.** There is no native macOS/Windows matrix, but host and MCP crates are cross-checked for Windows.
 - **No hardware smoke in CI.** CI has no hardware; the hardware smoke runbook is manual.
