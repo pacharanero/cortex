@@ -11,7 +11,7 @@ tags: ["ci", "release", "github-actions", "dependabot", "cargo-dist", "crates-io
 
 # 600 CI / Release - Spec
 
-> The Rust CI and documentation deployment workflows, Dependabot config, implemented auto-tagging, and planned crates.io/cargo-dist release pipeline.
+> The Rust CI and documentation deployment workflows, Dependabot config, implemented auto-tagging and Linux binary releases, and planned crates.io publication.
 
 ## References
 
@@ -28,7 +28,7 @@ tags: ["ci", "release", "github-actions", "dependabot", "cargo-dist", "crates-io
 
 CI runs formatting, clippy on all-feature and no-default workspace configurations, default-feature and no-default workspace tests, RustSec audit, Zizmor workflow analysis, real-device-data lint, released-installer fixtures, version and traceability checks, Windows host/MCP cross-checks, and REUSE. Documentation has a separate path-filtered Zensical Pages workflow. Actions are SHA-pinned with version comments and use minimal permissions.
 
-Release is partly wired. `s/version++`, post-gate auto-tagging, the Linux x86_64 cargo-dist preview, and recoverable GitHub Release hosting exist; crates.io publishing and GUI bundles do not, and the live auto-tag-to-release cascade remains unexercised. The first binary release is deliberately Linux x86_64 and installs the `cortex` and `cortex-mcp` pair; other host platforms remain unsupported until their daemon boundary and hardware behaviour are verified. The host job names the protected `release` environment, so publication requires an explicit human approval after the archive is built and verified.
+Release is partly wired. `s/version++`, post-gate auto-tagging, the Linux x86_64 cargo-dist build, and recoverable GitHub Release hosting are live; crates.io publishing and GUI bundles do not exist. The first binary release is deliberately Linux x86_64 and installs the `cortex` and `cortex-mcp` pair; other host platforms remain unsupported until their daemon boundary and hardware behaviour are verified. The host job names the protected `release` environment, so publication requires an explicit human approval after the archive is built and verified.
 
 ## Verification Basis
 
@@ -51,9 +51,9 @@ Release is partly wired. `s/version++`, post-gate auto-tagging, the Linux x86_64
 | Zensical Pages deployment | Implemented and deployed | `.github/workflows/docs.yml` |
 | Auto-tag workflow | Implemented | `.github/workflows/auto-tag.yml` |
 | crates.io publish workflow | Planned | Not implemented (requires approval per AGENTS.md) |
-| `cargo-dist` release pipeline | Partially implemented | `.github/workflows/release.yml` validates the cargo-dist plan and builds the Linux x86_64 preview; live publication remains unexercised |
+| `cargo-dist` release pipeline | Implemented and live-verified | `.github/workflows/release.yml` validates the cargo-dist plan and builds the Linux x86_64 archive; release `v0.2.0` published that archive and `SHA256SUMS` after protected approval |
 | `git-cliff` generates `CHANGELOG.md` in the version-bump flow; the release workflow consumes it | Implemented (CLI-004.13) | `cliff.toml`; `s/version++` pins/verifies `git-cliff 2.13.1` before invoking it; `.github/workflows/release.yml` `host` job extracts the tagged `## [x.y.z]` section for `gh release create --notes-file`, falling back to `--generate-notes` when that section is absent |
-| Release publication is gated and recoverable | Implemented, live approval unevidenced | CI calls auto-tag only after every blocking job succeeds on `main`; before tagging it verifies that `release` has a required-reviewer rule; an existing exact tag continues the cascade; an existing partial GitHub Release is edited and its assets replaced; tag-scoped concurrency prevents interleaved assets |
+| Release publication is gated and recoverable | Implemented and live-verified | CI run `33183332396` created `v0.2.0` only after every blocking job passed; the first host attempt exposed an artifact-path defect before release creation; PR #36 added exact-tag recovery dispatch; run `33186261368` rebuilt the tag, waited for protected approval, and published the release |
 
 ## User Stories
 
@@ -106,18 +106,18 @@ Maintainers merging PRs, and the downstream consumers who install the crate or t
 | FR-17 | CI runs `zizmor --strict-collection .` as a separate blocking job using pinned Zizmor 1.29.0 and a read-only workflow token. | Must Have |
 | FR-18 | The released installer verifies glibc 2.34+, every staged dynamic dependency and staged binary execution before replacing either installed binary; fixture tests pin transactional refusal. | Must Have |
 | FR-19 | Auto-tag runs only after all CI jobs succeed on a `main` push; it fails before tagging unless `release` has a required reviewer; retries require an existing tag to resolve to the exact commit and continue into a protected, idempotent, tag-serialized release-hosting job. An explicit release-workflow dispatch accepts an existing tag for recovery after a workflow fix. | Must Have |
-| FR-20 | Auto-tag workflow is implemented: a version bump on `main` creates `vX.Y.Z` and directly invokes future release workflows rather than relying on tag-event recursion. Its first live release remains unevidenced. | Must Have |
-| FR-23 | The auto-tag workflow invokes the release workflow, which creates a GitHub Release for that tag with changelog notes. The implementation exists; its first live cascade remains unevidenced. | Should Have |
+| FR-20 | Auto-tag workflow is implemented: a version bump on `main` creates `vX.Y.Z` and directly invokes release workflows rather than relying on tag-event recursion. | Must Have |
+| FR-22 | The cargo-dist release workflow is invoked from auto-tag through `workflow_call`, builds Linux x86_64 `cortex` and `cortex-mcp`, and attaches the combined archive to the GitHub Release. | Must Have |
+| FR-23 | The auto-tag workflow invokes the release workflow, which creates a GitHub Release for that tag with changelog notes. | Should Have |
+| FR-25 | Every binary release publishes one authoritative `SHA256SUMS` covering its artifacts. | Must Have |
+| FR-26 | A docs-root `install.sh` fetches the latest supported Linux archive, verifies it against `SHA256SUMS`, installs both binaries without requiring Rust or `protoc`, and refreshes or prescribes shell completions. | Must Have |
 
 #### Planned
 
 | ID | Requirement | Priority |
 | --- | --- | --- |
 | FR-21 | crates.io publish workflow: gated on the release tag, publishes `cortex-rs` (and later `cortex-cli`) to crates.io. **Requires approval before first use** (AGENTS.md). | Must Have |
-| FR-22 | `cargo-dist` release pipeline: invoked from `auto-tag.yml` through `workflow_call`, builds Linux x86_64 `cortex` and `cortex-mcp` artifacts, and attaches them to the GitHub release. | Must Have |
 | FR-24 | Dependabot updates for `github-actions` are grouped and pinned to SHAs with version comments (matching the existing convention). | Should Have |
-| FR-25 | Every binary release publishes one authoritative `SHA256SUMS` covering its artifacts. | Must Have |
-| FR-26 | A docs-root `install.sh` fetches the latest supported Linux archive, verifies it against `SHA256SUMS`, installs both binaries without requiring Rust or `protoc`, and refreshes or prescribes shell completions. | Must Have |
 
 ### Non-Functional Requirements
 
@@ -136,7 +136,7 @@ Maintainers merging PRs, and the downstream consumers who install the crate or t
 - [x] Dependabot watches Cargo, npm, pip and GitHub Actions, weekly, with cooldown and grouping.
 - [x] CI uses `permissions: contents: read`.
 - [x] CI installs Rust native prerequisites, rejects real device data, cross-checks the Windows host boundary and caches Cargo.
-- [x] Auto-tag workflow is implemented for a `vX.Y.Z` tag on a version bump; no first live tag is claimed.
+- [x] Auto-tag workflow created `v0.2.0` from the gated release commit on its first live version bump.
 - [x] Documentation builds and deploys through the artifact-based Pages workflow.
 - [x] CI type-checks/builds both GUI frontend modes and builds the full Tauri backend as a debug, unbundled boundary check.
 - [x] CI tests and runs the Rust `@see` traceability gate.
@@ -144,9 +144,9 @@ Maintainers merging PRs, and the downstream consumers who install the crate or t
 - [x] Auto-tag is downstream of every blocking CI job, and publication uses the protected `release` environment with safe tag/release retry behavior.
 - [x] Release packaging enforces the glibc 2.34/`libudev.so.1` contract, and installer fixtures prove incompatible staged binaries do not replace an existing installation.
 - [ ] crates.io publish workflow publishes on the release tag (requires approval before first use).
-- [ ] `cargo-dist` produces distributable Linux x86_64 `cortex` and `cortex-mcp` binaries on the release tag.
-- [ ] The release tag produces a GitHub Release with changelog notes. The workflow passes the git-cliff-generated section through `--notes-file` and otherwise writes GitHub's generated-notes API response to that file, but the live auto-tag cascade has not yet been exercised.
-- [ ] The release publishes `SHA256SUMS`, and the public installer refuses an artifact that does not match it.
+- [x] `cargo-dist` produces distributable Linux x86_64 `cortex` and `cortex-mcp` binaries on the release tag.
+- [x] The release tag produces a GitHub Release with the exact git-cliff-generated changelog section.
+- [x] The release publishes `SHA256SUMS`, and installer fixtures prove that a mismatched artifact is refused. A clean public-install smoke remains CLI-004.10.
 
 ## Non-Goals
 
@@ -167,7 +167,6 @@ Maintainers merging PRs, and the downstream consumers who install the crate or t
 
 ## Future
 
-- **Auto-tag recovery evidence.** The implemented post-gate workflow detects a workspace version change and creates `vX.Y.Z`; the first live run must prove that an exact-commit existing tag continues rather than suppressing release repair. A protected release-workflow dispatch can rebuild and host an existing exact tag when recovery requires workflow changes that an old run cannot consume.
 - **crates.io first publish.** Requires `cargo login` with a token, `cargo publish --dry-run` in CI, and the maintainer's approval (AGENTS.md). The crate name is `cortex-rs`; the CLI binary crate is `cortex-cli`.
 - **`cargo-dist`.** Produces distributable `cortex` and `cortex-mcp` binaries (and later the Tauri GUI through its own bundler). The first target is `x86_64-unknown-linux-gnu`; Linux aarch64, macOS and Windows follow only after their host and hardware paths are verified.
 
