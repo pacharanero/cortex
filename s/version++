@@ -62,8 +62,8 @@ while (($#)); do
 done
 
 # --- preflight ------------------------------------------------------------
-# Everything is checked before the version moves, so a failure leaves no
-# half-bumped tree to unpick.
+# Prerequisites and the full ordinary gate are checked before the version
+# moves. Generated release files receive their own checks below.
 
 command -v cargo-set-version >/dev/null 2>&1 ||
 	{ echo "cargo-set-version is missing. Install it: cargo install cargo-edit" >&2; exit 1; }
@@ -115,7 +115,10 @@ s/lint
 # --- bump -----------------------------------------------------------------
 
 cargo set-version --bump "$bump"
-cargo generate-lockfile
+# Refresh only the workspace package entries. `cargo generate-lockfile` also
+# upgrades every semver-compatible dependency, which does not belong in a
+# version-only release commit.
+cargo check --workspace --offline
 
 version="$(awk -F\" '/^version = / { print $2; exit }' Cargo.toml)"
 [[ -n "$version" ]] ||
@@ -137,7 +140,16 @@ node -e '
 # script works before that decision is made.
 if [[ -f cliff.toml ]]; then
 	git cliff --tag "v${version}" --output CHANGELOG.md
+	node -e '
+      const fs = require("fs");
+      const path = "CHANGELOG.md";
+      fs.writeFileSync(path, `${fs.readFileSync(path, "utf8").trimEnd()}\n`);
+    '
 fi
+
+s/check-versions
+git diff --check
+[[ ! -f CHANGELOG.md ]] || s/markdownlint CHANGELOG.md
 
 if [[ "$landing_mode" == "pr" ]]; then
 	git switch -c "release/v${version}"
