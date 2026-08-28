@@ -105,7 +105,7 @@ Maintainers merging PRs, and the downstream consumers who install the crate or t
 | FR-16 | CI runs `cargo audit` as a separate blocking job using pinned `cargo-audit 0.22.2`. | Must Have |
 | FR-17 | CI runs `zizmor --strict-collection .` as a separate blocking job using pinned Zizmor 1.29.0 and a read-only workflow token. | Must Have |
 | FR-18 | The released installer verifies glibc 2.34+, every staged dynamic dependency and staged binary execution before replacing either installed binary; fixture tests pin transactional refusal. | Must Have |
-| FR-19 | Auto-tag runs only after all CI jobs succeed on a `main` push; it fails before tagging unless `release` has a required reviewer; reruns require an existing tag to resolve to the exact commit and continue into a protected, idempotent, tag-serialized release-hosting job. | Must Have |
+| FR-19 | Auto-tag runs only after all CI jobs succeed on a `main` push; it fails before tagging unless `release` has a required reviewer; retries require an existing tag to resolve to the exact commit and continue into a protected, idempotent, tag-serialized release-hosting job. An explicit release-workflow dispatch accepts an existing tag for recovery after a workflow fix. | Must Have |
 | FR-20 | Auto-tag workflow is implemented: a version bump on `main` creates `vX.Y.Z` and directly invokes future release workflows rather than relying on tag-event recursion. Its first live release remains unevidenced. | Must Have |
 | FR-23 | The auto-tag workflow invokes the release workflow, which creates a GitHub Release for that tag with changelog notes. The implementation exists; its first live cascade remains unevidenced. | Should Have |
 
@@ -167,7 +167,7 @@ Maintainers merging PRs, and the downstream consumers who install the crate or t
 
 ## Future
 
-- **Auto-tag recovery evidence.** The implemented post-gate workflow detects a workspace version change and creates `vX.Y.Z`; the first live run must prove that an exact-commit existing tag continues rather than suppressing release repair.
+- **Auto-tag recovery evidence.** The implemented post-gate workflow detects a workspace version change and creates `vX.Y.Z`; the first live run must prove that an exact-commit existing tag continues rather than suppressing release repair. A protected release-workflow dispatch can rebuild and host an existing exact tag when recovery requires workflow changes that an old run cannot consume.
 - **crates.io first publish.** Requires `cargo login` with a token, `cargo publish --dry-run` in CI, and the maintainer's approval (AGENTS.md). The crate name is `cortex-rs`; the CLI binary crate is `cortex-cli`.
 - **`cargo-dist`.** Produces distributable `cortex` and `cortex-mcp` binaries (and later the Tauri GUI through its own bundler). The first target is `x86_64-unknown-linux-gnu`; Linux aarch64, macOS and Windows follow only after their host and hardware paths are verified.
 
