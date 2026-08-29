@@ -17,7 +17,20 @@ install_dir="$tmp/install"
 mkdir -p "$release" "$stage" "$fake_bin" "$install_dir"
 
 printf '%s\n' '#!/bin/sh' 'if [ "${1:-}" = "--version" ]; then echo "cortex 9.8.7"; fi' 'exit 0' > "$stage/cortex"
-printf '%s\n' '#!/bin/sh' '[ "${FAKE_MCP_START_FAILURE:-}" != 1 ]' > "$stage/cortex-mcp"
+cat > "$stage/cortex-mcp" <<'SH'
+#!/bin/sh
+[ "${FAKE_MCP_START_FAILURE:-}" != 1 ] || exit 1
+IFS= read -r request
+case "$request" in
+    *'"method":"initialize"'*) ;;
+    *) exit 1 ;;
+esac
+if [ "${FAKE_MCP_BAD_RESPONSE:-}" = 1 ]; then
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-11-25","serverInfo":{"name":"not-cortex-mcp"}}}'
+else
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-11-25","serverInfo":{"name":"cortex-mcp"}}}'
+fi
+SH
 printf '%s\n' 'fictional rule' > "$stage/70-neural-dsp-cortex.rules"
 chmod +x "$stage/cortex" "$stage/cortex-mcp"
 archive="cortex-${version#v}-${target}.tar.xz"
@@ -89,6 +102,7 @@ run_installer() {
         FAKE_GLIBC_VERSION="${FAKE_GLIBC_VERSION:-2.34}" \
         FAKE_RUNTIME_FAILURE="${FAKE_RUNTIME_FAILURE:-}" \
         FAKE_MCP_START_FAILURE="${FAKE_MCP_START_FAILURE:-}" \
+        FAKE_MCP_BAD_RESPONSE="${FAKE_MCP_BAD_RESPONSE:-}" \
         FAKE_MV_FAILURE="${FAKE_MV_FAILURE:-}" \
         FAKE_MV_MARKER="$tmp/mv-failed" \
         REAL_MV="$real_mv" \
@@ -118,6 +132,7 @@ FAKE_GLIBC_VERSION=2.33 assert_refused_without_replacement
 FAKE_GLIBC_VERSION=2.34 FAKE_RUNTIME_FAILURE=udev assert_refused_without_replacement
 FAKE_GLIBC_VERSION=2.34 FAKE_RUNTIME_FAILURE=mcp assert_refused_without_replacement
 FAKE_GLIBC_VERSION=2.34 FAKE_MCP_START_FAILURE=1 assert_refused_without_replacement
+FAKE_GLIBC_VERSION=2.34 FAKE_MCP_BAD_RESPONSE=1 assert_refused_without_replacement
 rm -f "$tmp/mv-failed"
 FAKE_GLIBC_VERSION=2.34 FAKE_MV_FAILURE=mcp assert_refused_without_replacement
 

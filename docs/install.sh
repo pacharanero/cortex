@@ -78,7 +78,20 @@ check_runtime() {
     done
 
     "$stage/cortex" --version >/dev/null 2>&1 || err 'downloaded cortex binary cannot run on this system'
-    "$stage/cortex-mcp" </dev/null >/dev/null 2>&1 || err 'downloaded cortex-mcp binary cannot start on this system'
+    mcp_stdout="$stage/.cortex-mcp-probe.out"
+    mcp_stderr="$stage/.cortex-mcp-probe.err"
+    mcp_initialize='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"installer-probe","version":"1"}}}'
+    if ! printf '%s\n' "$mcp_initialize" | "$stage/cortex-mcp" >"$mcp_stdout" 2>"$mcp_stderr"; then
+        rm -f "$mcp_stdout" "$mcp_stderr"
+        err 'downloaded cortex-mcp binary cannot complete MCP initialization on this system'
+    fi
+    if ! grep -Fq '"jsonrpc":"2.0"' "$mcp_stdout" ||
+       ! grep -Fq '"protocolVersion":"2025-11-25"' "$mcp_stdout" ||
+       ! grep -Fq '"name":"cortex-mcp"' "$mcp_stdout"; then
+        rm -f "$mcp_stdout" "$mcp_stderr"
+        err 'downloaded cortex-mcp binary returned an invalid MCP initialization response'
+    fi
+    rm -f "$mcp_stdout" "$mcp_stderr"
 }
 
 install_release() {
