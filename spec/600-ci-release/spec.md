@@ -146,7 +146,7 @@ Maintainers merging PRs, and the downstream consumers who install the crate or t
 - [ ] crates.io publish workflow publishes on the release tag (requires approval before first use).
 - [x] `cargo-dist` produces distributable Linux x86_64 `cortex` and `cortex-mcp` binaries on the release tag.
 - [x] The release tag produces a GitHub Release with the exact git-cliff-generated changelog section.
-- [x] The release publishes `SHA256SUMS`, and installer fixtures prove that a mismatched artifact is refused. A clean public-install smoke remains CLI-004.10.
+- [x] The release publishes `SHA256SUMS`, installer fixtures prove that a mismatched artifact is refused, and the exact public installer passed the CLI-004.10 clean Ubuntu 22.04 smoke against v0.2.0.
 
 ## Non-Goals
 
