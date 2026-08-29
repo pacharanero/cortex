@@ -4,7 +4,9 @@ The desktop GUI is one of the toolkit's three user-facing interfaces alongside t
 
 The current first draft supports working Quad and Nano surfaces through one managed Rust backend. Quad mode reads status, grid, active scene, CPU and populated preset slots and exposes non-persistent recall, scene, parameter and bypass controls. Nano mode renders the fixed eight-role signal chain, exposes explicit Apply controls for the five raw amp values and Gate reduction from the typed, paced daemon snapshot, and provides an FX parameter inspector; it deliberately does not force those roles into the Quad grid model. Neither mode opens a second HID connection.
 
-Linux is the first and only hardware-verified baseline today because Neural DSP has not provided Cortex Control for Linux and this community project began by filling that gap for ourselves. Windows and macOS transport, local IPC, packaging and hardware testing remain outstanding; the project will not describe them as supported until that evidence exists.
+Linux is the first and only hardware-verified baseline today because Neural DSP has not provided Cortex Control for Linux and this community project began by filling that gap for ourselves. Unix-domain IPC and Windows local-only named-pipe IPC are implemented, and the release pipeline is configured to build native `.deb`, `.dmg` and NSIS `.exe` tester previews. Its first native remote run is pending. Windows and macOS device behavior remains unverified, so their packages remain provisional rather than supported.
+
+Windows and macOS host work is active rather than merely planned. Windows now has a native named-pipe daemon/process boundary and unsigned current-user NSIS package configuration; macOS has Apple Silicon DMG configuration with ad-hoc signing. The [Windows tester-preview smoke](windows-smoke.md) covers direct hardware and the preferred first-pass QEMU/KVM setup. The first remote package matrix and a corresponding native macOS package/device smoke remain outstanding.
 
 It adapts the mockable IPC-boundary architecture of `rixrix/deskop-nano-cortex` (Apache-2.0), while independently implementing the Quad-specific model and Mantine presentation. See `NOTICE` and `THIRD-PARTY-NOTICES.md`.
 
@@ -17,6 +19,16 @@ Install the platform's [Tauri prerequisites](https://v2.tauri.app/start/prerequi
 - Run `npm run check` inside `gui/` to type-check and build both adapters.
 
 The mode is never inferred from success or failure. A daemon error remains an error; Tauri mode does not fall back to plausible-looking fixture state. The header identifies fixture mode explicitly with a yellow banner.
+
+## Tester-preview packages
+
+The native package pipeline is configured to build a Linux x86_64 `.deb`, an Apple Silicon `.dmg`, and a Windows x86_64 NSIS `.exe`. Each desktop package embeds the matching `cortex` CLI beside the GUI because that process owns the held USB session; it does not embed `cortex-mcp`. The Linux package also installs the two-device udev rule. Once these previews are published, their release downloads share one `SHA256SUMS` file and should be verified before installation.
+
+- **Linux x86_64:** `sha256sum --check --ignore-missing SHA256SUMS`, then `sudo apt install ./Cortex_<version>_amd64.deb`. This is the only host with real-device evidence.
+- **macOS arm64:** set `package=Cortex_<version>_aarch64.dmg`, then run `grep "  $(basename "$package")$" SHA256SUMS | shasum -a 256 -c -`; open the `.dmg` and drag Cortex into Applications. The package is ad-hoc signed, not Developer ID signed or notarized; macOS may require an explicit approval in Privacy & Security. Device and daemon behavior remain provisional.
+- **Windows x86_64:** compare `Get-FileHash -Algorithm SHA256` with `SHA256SUMS`, then run the NSIS `.exe`. The installer is unsigned and Windows SmartScreen may warn. Installing an upgrade or uninstalling closes a running Cortex GUI, stops both product sessions, and refuses to continue if it cannot remove the old bundled helper. Named-pipe isolation and daemon lifecycle are tested without hardware; USB/HID behavior remains provisional.
+
+The GUI exposes no persistent save control on any platform. Report the operating-system version, package filename, device model, CorOS version, and whether startup, reconnect, reads and one reversible working-copy edit succeeded. Do not attach raw USB captures or logs containing serial numbers, preset names or other owner-specific device data.
 
 Daemon snapshots carry physical-session generation and cache revisions. Reconnecting, failed, incomplete and invalidated state hides the old live grid rather than presenting it as current. During reconnect the GUI shows the real daemon attempt count and last error; **Reconnect now** interrupts the current automatic backoff without bypassing the full subscribed handshake. A generation change also clears the selected block. CPU may initially say that it is awaiting a device push because the first subscribed CPU report is delayed.
 

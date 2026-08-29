@@ -12,7 +12,7 @@ spec: spec.md
 
 # 600 CI / Release - Design
 
-> Design for the CI workflow and the planned release pipeline. The interesting parts are the SHA-pinning convention (supply-chain hardening), the dual-feature-path clippy/test matrix (leaf-crate discipline), and the release cascade (auto-tag -> crates.io -> `cargo-dist`).
+> Design for the CI workflow and release pipeline. The interesting parts are the SHA-pinning convention (supply-chain hardening), the dual-feature-path clippy/test matrix (leaf-crate discipline), the native Tauri tester-preview matrix, and the release cascade.
 
 ## References
 
@@ -168,14 +168,15 @@ One Cargo entry at `/` covers the workspace and member manifests; duplicate per-
 
 ### Behaviour
 
-The release pipeline is partly wired. `s/version++`, post-gate auto-tagging, the Linux archive, protected GitHub Release hosting and retry repair are live; crates.io publishing and GUI bundles remain. The implementation follows house-style distribution.md:
+The release pipeline is partly wired. `s/version++`, post-gate auto-tagging and the Linux archive are live; protected draft-staged GitHub Release hosting and the native GUI package matrix are implemented with their first remote run pending, while crates.io publishing remains future work. The implementation follows house-style distribution.md:
 
 1. **`s/version++`** (zone 500) runs both full local gates, bumps the canonical Rust workspace version, synchronizes the npm and Tauri manifests, and regenerates `CHANGELOG.md` with a pinned git-cliff version in one release commit.
 2. **Auto-tag workflow** is called only after test, RustSec, Zizmor and REUSE pass on a `main` push; it detects the version bump and creates a `vX.Y.Z` tag. Implemented.
 3. **Planned crates.io publish workflow** will run dry-run and publish selected crates only after explicit approval.
 4. **`cargo-dist` workflow** is invoked directly by `auto-tag.yml` through `workflow_call`. The first supported target is `x86_64-unknown-linux-gnu`, packaging both binaries plus licences/notices, the canonical two-product `70-neural-dsp-cortex.rules` and `SHA256SUMS`. Before packaging, `s/check-release-runtime` rejects binaries requiring glibc newer than 2.34 or a `cortex` binary that does not declare `libudev.so.1`. The rule granting Nano access is not a Nano runtime support claim.
-5. **GitHub Release** hosting is implemented behind the protected `release` environment. Auto-tag reads the environment first and refuses to mint the tag unless a required-reviewer rule exists. It publishes the tag's exact git-cliff section when present and otherwise asks GitHub's generate-notes API for a notes file. A tag-scoped concurrency group serializes retries; a rerun edits an existing release and uploads both assets with `--clobber`, so a tag or release created before an interrupted upload remains recoverable without interleaving an archive and checksum from different builds.
-6. **Public installer** at the docs-site root resolves the latest release and verifies the selected archive against `SHA256SUMS`. It then checks host glibc, runs `ldd` over both staged binaries, executes staged CLI version output and starts staged MCP with EOF. Only after every check passes does it stage the complete replacement in the destination, retain the prior files and replace them; a final rename failure restores the prior set before returning failure.
+5. **Native GUI matrix** runs on Ubuntu 22.04 x86_64, macOS 15 arm64 and Windows 2022 x86_64. Each runner installs the same locked frontend tree and pinned `protoc`, executes the host/CLI tests natively, stages `cortex-<target-triple>[.exe]`, and asks Tauri to produce exactly one `.deb`, `.dmg` or NSIS `.exe`. The ordinary development config keeps bundling disabled; the release overlay alone supplies icons, package metadata, resources and `externalBin`. `docs/gui/windows-smoke.md` then separates QEMU/KVM tester evidence from the final native Windows host pass; the equivalent macOS device smoke is still outstanding.
+6. **GitHub Release** hosting is implemented behind the protected `release` environment. Auto-tag reads the environment first and refuses to mint the tag unless a required-reviewer rule exists. It publishes the tag's exact git-cliff section when present and otherwise asks GitHub's generate-notes API for a notes file. A tag-scoped concurrency group serializes retries. The host creates a private draft, uploads every payload, uploads the regenerated `SHA256SUMS` last, and publishes only after all uploads succeed. An interrupted retry deletes and replaces only that private draft because native installers are not reproducible; an already published release is immutable and makes the workflow fail rather than add, replace or retain stale assets.
+7. **Public installer** at the docs-site root resolves the latest release and verifies the selected archive against `SHA256SUMS`. It then checks host glibc, runs `ldd` over both staged binaries, executes staged CLI version output and starts staged MCP with EOF. Only after every check passes does it stage the complete replacement in the destination, retain the prior files and replace them; a final rename failure restores the prior set before returning failure. This script remains the Linux CLI/MCP installer rather than guessing how to automate native GUI trust prompts.
 
 The first live cascade on 2026-08-28 created annotated tag `v0.2.0` at release commit `c2a7612` after all main gates passed. Its host job stopped before release creation because `upload-artifact` had preserved the `target/release-preview` hierarchy while the consumer expected flattened files. PR #36 corrected that contract and added a protected exact-tag dispatch; recovery run `33186261368` rebuilt the tag on Ubuntu 22.04, waited for required approval, published the release, and produced a checksum-valid archive with the expected contents.
 
@@ -189,7 +190,7 @@ Per AGENTS.md, publishing to crates.io, cutting a release tag, and any externall
 
 ### Design choice: `cargo-dist` for binaries
 
-`cargo-dist` produces distributable binaries from a release tag. The product surface is the pair: `cortex` owns the held USB session and `cortex-mcp` gives local agent harnesses a bounded stdio adapter to it. The first preview is Linux x86_64 only, matching the operational Unix IPC adapter and hardware evidence. Linux aarch64 follows validation. The host boundary now has a Windows named-pipe seam, but Windows waits for that adapter, detached-process lifecycle and hardware testing. The Tauri GUI will use Tauri's bundler once its backend is connected.
+`cargo-dist` produces distributable binaries from a release tag. The product surface is the pair: `cortex` owns the held USB session and `cortex-mcp` gives local agent harnesses a bounded stdio adapter to it. The first supported archive remains Linux x86_64, matching the hardware evidence. Tauri's bundler handles the GUI separately: its `externalBin` contract renames the staged target-qualified helper to the ordinary sibling `cortex` executable that the Rust backend already discovers. The Windows named-pipe and detached-process boundaries are implemented and tested natively without hardware; Windows and macOS packages remain provisional until real-device smoke closes that gap.
 
 ### Alternatives considered
 
@@ -199,7 +200,7 @@ Per AGENTS.md, publishing to crates.io, cutting a release tag, and any externall
 
 ## [DES-LIMITS] Known Limitations
 
-- **Release pipeline is incomplete.** Post-gate auto-tagging, the Linux archive, protected GitHub Release hosting and retry repair are live. The release workflow accepts an existing tag on explicit dispatch so a workflow defect can be fixed before rebuilding and repairing that release through the same protected hosting job. Crates.io publishing and GUI bundles remain.
-- **Linux-native CI.** There is no native macOS/Windows matrix, but host and MCP crates are cross-checked for Windows.
+- **Release pipeline is incomplete.** Post-gate auto-tagging, the Linux archive, native GUI package matrix, protected draft-staged GitHub Release hosting and pre-publication retry repair are implemented. The release workflow accepts an existing tag on explicit dispatch so a workflow defect can be fixed before replacing an interrupted private draft through the same protected hosting job; it will not repair or mutate a published release. The native matrix still needs its first remote pass; crates.io publishing remains future work.
+- **Native does not mean hardware-verified.** macOS and Windows runners prove compilation, local IPC/process behavior and package production without a connected Cortex. They do not establish USB permissions, HID behavior or device compatibility.
 - **No hardware smoke in CI.** CI has no hardware; the hardware smoke runbook is manual.
-- **Frontend CI is Linux-only.** CI installs the locked npm tree and type-checks/builds both explicit fixture and Tauri frontend modes. Native Windows/macOS Tauri and hardware paths remain deferred until those hosts are supported.
+- **Frontend quality checks remain Linux-centralized.** The full frontend unit/type/build suite runs in the main Linux job; native release jobs rebuild the locked frontend through Tauri and focus on host tests plus packaging rather than triplicating every browser-fixture test.

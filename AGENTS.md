@@ -19,6 +19,7 @@ crate encodes.
 
 - [README.md](README.md) - setup (udev rule, build, run) and project overview.
 - [docs/protocol.md](docs/protocol.md) - the public implementer-facing wire reference; correct it in the same change whenever evidence changes a protocol claim.
+- [docs/gui/windows-smoke.md](docs/gui/windows-smoke.md) - native Windows and QEMU/KVM tester-preview verification; use it before promoting Windows host claims.
 - [spec/prior-art.md](spec/prior-art.md) - what each reference project already knows, the exact files to read, and which negative results are worth re-testing. Check it before capturing hardware traffic.
 - [NOTICE](NOTICE) and [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) - attribution for the MIT- and Apache-2.0-licensed prior art this project ports from.
 - [/home/marcus/code/house-style/AGENTS.md](/home/marcus/code/house-style/AGENTS.md) - cross-repo standards (the source of truth for CI, distribution, licensing, docs, etc.).
@@ -76,8 +77,8 @@ crates/
                 built via prost.
   cortex-cli/   The `cortex` binary: thin main.rs, all behaviour in the crate.
   cortex-host/  Shared synchronous daemon contract and local IPC facade.
-                 Unix sockets are implemented; Windows named pipes are planned
-                 behind the same endpoint/listener/connection API.
+                 Unix sockets and local-only Windows named pipes implement the
+                 same endpoint/listener/connection API.
   cortex-mcp/   The `cortex-mcp` MCP server: hardware-verified read, recall,
                 scene and live-grid tools; no persistent save/delete tools.
 gui/           Tauri 2 + React + Mantine first draft. Interactive, with
@@ -237,8 +238,10 @@ reuse lint
 ```
 
 Frontend changes additionally: `npm run check` (lint + typecheck) inside
-`gui/`. GUI changes additionally: the manual hardware smoke runbook against a
-real Quad Cortex - CI has no hardware.
+`gui/`. GUI changes additionally require the applicable manual hardware smoke:
+the general runbook on Linux or `docs/gui/windows-smoke.md` for the provisional
+Windows package, using native hardware or QEMU/KVM as documented. CI has no
+hardware.
 
 ## Approval Required
 

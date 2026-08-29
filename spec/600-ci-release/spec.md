@@ -11,7 +11,7 @@ tags: ["ci", "release", "github-actions", "dependabot", "cargo-dist", "crates-io
 
 # 600 CI / Release - Spec
 
-> The Rust CI and documentation deployment workflows, Dependabot config, implemented auto-tagging and Linux binary releases, and planned crates.io publication.
+> The Rust CI and documentation deployment workflows, Dependabot config, implemented auto-tagging, Linux binary releases and native GUI tester-preview packages, and planned crates.io publication.
 
 ## References
 
@@ -28,7 +28,7 @@ tags: ["ci", "release", "github-actions", "dependabot", "cargo-dist", "crates-io
 
 CI runs formatting, clippy on all-feature and no-default workspace configurations, default-feature and no-default workspace tests, RustSec audit, Zizmor workflow analysis, real-device-data lint, released-installer fixtures, version and traceability checks, Windows host/MCP cross-checks, and REUSE. Documentation has a separate path-filtered Zensical Pages workflow. Actions are SHA-pinned with version comments and use minimal permissions.
 
-Release is partly wired. `s/version++`, post-gate auto-tagging, the Linux x86_64 cargo-dist build, and recoverable GitHub Release hosting are live; crates.io publishing and GUI bundles do not exist. The first binary release is deliberately Linux x86_64 and installs the `cortex` and `cortex-mcp` pair; other host platforms remain unsupported until their daemon boundary and hardware behaviour are verified. The host job names the protected `release` environment, so publication requires an explicit human approval after the archive is built and verified.
+Release is partly wired. `s/version++`, post-gate auto-tagging, the Linux x86_64 cargo-dist build, draft-staged GitHub Release hosting, and native Linux `.deb`, Apple Silicon `.dmg` and Windows x86_64 NSIS GUI builders exist; crates.io publishing does not. The CLI/MCP archive remains the hardware-verified Linux channel. The unsigned Windows and ad-hoc-signed macOS GUI packages remain provisional until their native daemon and USB paths pass hardware smoke. The host job names the protected `release` environment, so publication requires explicit human approval after every artifact is built and verified.
 
 ## Verification Basis
 
@@ -53,7 +53,8 @@ Release is partly wired. `s/version++`, post-gate auto-tagging, the Linux x86_64
 | crates.io publish workflow | Planned | Not implemented (requires approval per AGENTS.md) |
 | `cargo-dist` release pipeline | Implemented and live-verified | `.github/workflows/release.yml` validates the cargo-dist plan and builds the Linux x86_64 archive; release `v0.2.0` published that archive and `SHA256SUMS` after protected approval |
 | `git-cliff` generates `CHANGELOG.md` in the version-bump flow; the release workflow consumes it | Implemented (CLI-004.13) | `cliff.toml`; `s/version++` pins/verifies `git-cliff 2.13.1` before invoking it; `.github/workflows/release.yml` `host` job extracts the tagged `## [x.y.z]` section for `gh release create --notes-file`, falling back to `--generate-notes` when that section is absent |
-| Release publication is gated and recoverable | Implemented and live-verified | CI run `33183332396` created `v0.2.0` only after every blocking job passed; the first host attempt exposed an artifact-path defect before release creation; PR #36 added exact-tag recovery dispatch; run `33186261368` rebuilt the tag, waited for protected approval, and published the release |
+| Release publication is gated and recoverable | Implemented; protected gate live-verified, draft transaction remote run pending | CI run `33183332396` created `v0.2.0` only after every blocking job passed; run `33186261368` rebuilt the tag, waited for protected approval, and published the release. The native package revision stages every asset on a replaceable private draft, publishes only after the authoritative checksum is uploaded, and refuses to modify any published release. |
+| Native GUI tester-preview builders | Implemented, remote run pending | `.github/workflows/release.yml` runs host/CLI tests then builds Linux x86_64 `.deb`, macOS arm64 `.dmg` and Windows x86_64 NSIS `.exe` packages with `s/gui-bundle`; the Linux `.deb` has been built and its payload inspected locally |
 
 ## User Stories
 
@@ -105,12 +106,15 @@ Maintainers merging PRs, and the downstream consumers who install the crate or t
 | FR-16 | CI runs `cargo audit` as a separate blocking job using pinned `cargo-audit 0.22.2`. | Must Have |
 | FR-17 | CI runs `zizmor --strict-collection .` as a separate blocking job using pinned Zizmor 1.29.0 and a read-only workflow token. | Must Have |
 | FR-18 | The released installer verifies glibc 2.34+, every staged dynamic dependency and staged binary execution before replacing either installed binary; fixture tests pin transactional refusal. | Must Have |
-| FR-19 | Auto-tag runs only after all CI jobs succeed on a `main` push; it fails before tagging unless `release` has a required reviewer; retries require an existing tag to resolve to the exact commit and continue into a protected, idempotent, tag-serialized release-hosting job. An explicit release-workflow dispatch accepts an existing tag for recovery after a workflow fix. | Must Have |
+| FR-19 | Auto-tag runs only after all CI jobs succeed on a `main` push; it fails before tagging unless `release` has a required reviewer; retries require an existing tag to resolve to the exact commit and continue into a protected, tag-serialized release-hosting job. Hosting stages the complete asset set on a private draft, replaces an interrupted draft as one transaction because native packages are not reproducible, publishes only after checksum upload, and refuses to modify an already published release. An explicit release-workflow dispatch accepts an existing tag for recovery before publication. | Must Have |
 | FR-20 | Auto-tag workflow is implemented: a version bump on `main` creates `vX.Y.Z` and directly invokes release workflows rather than relying on tag-event recursion. | Must Have |
 | FR-22 | The cargo-dist release workflow is invoked from auto-tag through `workflow_call`, builds Linux x86_64 `cortex` and `cortex-mcp`, and attaches the combined archive to the GitHub Release. | Must Have |
 | FR-23 | The auto-tag workflow invokes the release workflow, which creates a GitHub Release for that tag with changelog notes. | Should Have |
 | FR-25 | Every binary release publishes one authoritative `SHA256SUMS` covering its artifacts. | Must Have |
 | FR-26 | A docs-root `install.sh` fetches the latest supported Linux archive, verifies it against `SHA256SUMS`, installs both binaries without requiring Rust or `protoc`, and refreshes or prescribes shell completions. | Must Have |
+| FR-27 | Pull requests affecting the GUI, host or packaging run native Linux x86_64, macOS arm64 and Windows x86_64 jobs. Each job executes host/CLI tests, stages a target-qualified `cortex` helper, builds exactly one non-empty Tauri package, and uploads it for inspection. | Must Have |
+| FR-28 | A tagged release publishes the Linux CLI/MCP archive plus `.deb`, `.dmg` and NSIS `.exe` GUI packages behind the protected release environment, with one regenerated `SHA256SUMS` covering every published artifact. | Must Have |
+| FR-29 | Windows and macOS GUI artifacts remain labelled provisional and unsigned/ad-hoc signed until each host passes a documented real-device smoke. Windows provides a native and QEMU/KVM package, IPC, USB, GUI lifecycle, upgrade and uninstall runbook; native Windows remains the final host evidence, and the equivalent macOS runbook/evidence remains outstanding. | Must Have |
 
 #### Planned
 
@@ -125,7 +129,7 @@ Maintainers merging PRs, and the downstream consumers who install the crate or t
 | --- | --- | --- |
 | NFR-1 | No secrets are committed to the repo; crates.io publishing uses a secret stored in GitHub. | Review-enforced |
 | NFR-2 | Action SHAs are pinned; Dependabot opens PRs to bump them (with the version comment updated). | Review-enforced |
-| NFR-3 | Jobs run on Linux today, with a Windows host-boundary cross-compile. Native Windows/macOS and hardware verification remain future gates. | Implemented |
+| NFR-3 | The main code-quality job remains Linux-based; release previews add native Linux, macOS arm64 and Windows x86_64 package/test jobs. Windows/macOS hardware verification remains manual and outstanding. | Implemented, remote run pending |
 | NFR-4 | The local gate documents its subset of CI; the remaining remote-only platform (Windows) cross-checks are not implied by local green. | Review-enforced |
 | NFR-5 | Release actions are externally visible and require explicit approval before first use (AGENTS.md). | Process-enforced |
 
@@ -151,8 +155,7 @@ Maintainers merging PRs, and the downstream consumers who install the crate or t
 ## Non-Goals
 
 - **The local gate.** Owned by zone 500 (`s/test`, `s/lint`). This zone mirrors it in CI.
-- **GUI build matrices and bundle/installer tests.** Frontend typecheck/build and a single-target debug, unbundled Tauri build boundary are in CI (Linux only); a real bundle (`.deb`/AppImage) is not built or tested here, and native Windows/macOS Tauri builds remain out of scope until those hosts are supported.
-- **A macOS/Windows matrix.** The project is Linux-first today. Unsigned developer-preview archives are roadmap item CLI-004.14; native Windows and macOS CI become required when their local IPC, process lifecycle, packaging and hardware paths are implemented.
+- **Signed or notarized GUI installers.** The tester previews deliberately establish reproducible package and host boundaries before credentials or support claims. macOS uses ad-hoc signing and Windows is unsigned.
 - **Hardware smoke in CI.** CI has no hardware; the hardware smoke runbook is manual (AGENTS.md). This zone does not attempt to connect to a real Quad Cortex.
 
 ## Dependencies
@@ -168,7 +171,7 @@ Maintainers merging PRs, and the downstream consumers who install the crate or t
 ## Future
 
 - **crates.io first publish.** Requires `cargo login` with a token, `cargo publish --dry-run` in CI, and the maintainer's approval (AGENTS.md). The crate name is `cortex-rs`; the CLI binary crate is `cortex-cli`.
-- **`cargo-dist`.** Produces distributable `cortex` and `cortex-mcp` binaries (and later the Tauri GUI through its own bundler). The first target is `x86_64-unknown-linux-gnu`; Linux aarch64, macOS and Windows follow only after their host and hardware paths are verified.
+- **`cargo-dist`.** Produces the distributable Linux `cortex` and `cortex-mcp` archive. Tauri's bundler separately produces the native GUI packages because it owns application metadata, icons, sidecars and operating-system package formats.
 
 - **Changelog generation.** Implemented (CLI-004.13): `cliff.toml` plus the pinned/verified `git-cliff` invocation in `s/version++`, and the tagged-section extraction in `.github/workflows/release.yml`'s `host` job.
 

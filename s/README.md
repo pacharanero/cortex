@@ -132,6 +132,14 @@ Build the non-publishing Linux x86_64 release preview using the cargo-dist versi
 
 - `s/release-preview`
 
+## `s/gui-bundle`
+
+Build one native tester-preview GUI package with the target-qualified `cortex` session helper embedded beside the desktop executable. The script only accepts the native release combinations used by CI; Tauri applies the configured macOS ad-hoc signature, but the script does not use release signing credentials, notarize or publish anything.
+
+- `s/gui-bundle x86_64-unknown-linux-gnu deb`
+- `s/gui-bundle aarch64-apple-darwin dmg`
+- `s/gui-bundle x86_64-pc-windows-msvc nsis`
+
 ## `s/usb-trace`
 
 Record the USB traffic to and from the Quad Cortex, using `usbmon` on the Linux host.
