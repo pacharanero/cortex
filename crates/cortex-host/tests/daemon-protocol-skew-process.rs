@@ -8,8 +8,6 @@
 //! @see spec/200-cli/spec.md [FR-28]
 //! @see spec/200-cli/design.md [DES-CLI]
 
-#![cfg(unix)]
-
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
@@ -56,10 +54,13 @@ fn spawn_daemon(label: &str, version: u32) -> (Child, LocalEndpoint) {
 }
 
 fn wait(mut child: Child, endpoint: &LocalEndpoint) {
+    #[cfg(windows)]
+    let _ = endpoint;
     let deadline = Instant::now() + Duration::from_secs(5);
     while Instant::now() < deadline {
         if let Some(status) = child.try_wait().unwrap() {
             assert!(status.success(), "fixture daemon exited {status}");
+            #[cfg(unix)]
             std::fs::remove_file(PathBuf::from(endpoint.to_string()).with_extension("lock"))
                 .unwrap();
             return;

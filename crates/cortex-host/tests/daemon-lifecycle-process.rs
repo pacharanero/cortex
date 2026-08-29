@@ -8,8 +8,6 @@
 //! @see spec/200-cli/spec.md [FR-18] [FR-26] [FR-27]
 //! @see spec/300-mcp/spec.md [FR-45]
 
-#![cfg(unix)]
-
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
@@ -74,8 +72,11 @@ fn wait_for_exit(mut child: Child, endpoint: &LocalEndpoint) {
                 !DaemonClient::new(endpoint.clone()).is_running(),
                 "endpoint still appears owned after process exit"
             );
-            let lock = PathBuf::from(endpoint.to_string()).with_extension("lock");
-            let _ = std::fs::remove_file(lock);
+            #[cfg(unix)]
+            {
+                let lock = PathBuf::from(endpoint.to_string()).with_extension("lock");
+                let _ = std::fs::remove_file(lock);
+            }
             return;
         }
         std::thread::sleep(Duration::from_millis(5));

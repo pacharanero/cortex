@@ -2254,6 +2254,15 @@ pub fn start_detached(device: DeviceKind, lifecycle: DaemonLifecycle) -> Result<
         });
     }
 
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+
+        const DETACHED_PROCESS: u32 = 0x0000_0008;
+        const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+        cmd.creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP);
+    }
+
     let mut child = cmd.spawn()?;
     eprintln!(
         "cortex session: starting in the background, logging to {}",
@@ -2649,12 +2658,12 @@ mod tests {
         let mut line = serde_json::to_string(request).expect("encode");
         line.push('\n');
         client.write_all(line.as_bytes()).expect("write");
-        client.shutdown_write().expect("half close");
-
-        let control = serve(daemon, server);
-        let mut reply = String::new();
-        BufReader::new(client).read_line(&mut reply).expect("read");
-        (control, reply)
+        std::thread::scope(|scope| {
+            let worker = scope.spawn(|| serve(daemon, server));
+            let mut reply = String::new();
+            BufReader::new(client).read_line(&mut reply).expect("read");
+            (worker.join().unwrap(), reply)
+        })
     }
 
     #[test]
@@ -3170,11 +3179,12 @@ mod tests {
         let daemon = fake_daemon();
         let (mut client, server) = LocalConnection::pair().expect("local IPC pair");
         client.write_all(b"this is not json\n").expect("write");
-        client.shutdown_write().expect("half close");
-
-        let control = serve(&daemon, server);
-        let mut reply = String::new();
-        BufReader::new(client).read_line(&mut reply).expect("read");
+        let (control, reply) = std::thread::scope(|scope| {
+            let worker = scope.spawn(|| serve(&daemon, server));
+            let mut reply = String::new();
+            BufReader::new(client).read_line(&mut reply).expect("read");
+            (worker.join().unwrap(), reply)
+        });
 
         assert_eq!(
             control,
@@ -3565,12 +3575,19 @@ mod tests {
         line.push('\n');
         client.write_all(line.as_bytes()).expect("first");
         client.write_all(line.as_bytes()).expect("second");
-        client.shutdown_write().expect("half close");
-
-        serve(&daemon, server);
-
-        let reader = BufReader::new(client);
-        let replies = reader.lines().count();
+        let replies = std::thread::scope(|scope| {
+            let worker = scope.spawn(|| serve(&daemon, server));
+            let mut reader = BufReader::new(client);
+            let mut replies = 0;
+            for _ in 0..2 {
+                let mut reply = String::new();
+                reader.read_line(&mut reply).expect("read");
+                replies += usize::from(!reply.is_empty());
+            }
+            drop(reader);
+            worker.join().unwrap();
+            replies
+        });
         assert_eq!(
             replies, 2,
             "a client may send several requests on one stream"
@@ -3599,11 +3616,21 @@ mod tests {
         let daemon = fake_daemon();
         let (mut client, server) = LocalConnection::pair().expect("local IPC pair");
         client.write_all(b"\n\n").expect("write");
-        client.shutdown_write().expect("half close");
-
-        serve(&daemon, server);
-        let replies = BufReader::new(client).lines().count();
-        assert_eq!(replies, 0, "blank lines are keepalive noise, not requests");
+        client
+            .set_read_timeout(Some(Duration::from_millis(20)))
+            .expect("timeout");
+        std::thread::scope(|scope| {
+            let worker = scope.spawn(|| serve(&daemon, server));
+            let mut reply = String::new();
+            let error = BufReader::new(client)
+                .read_line(&mut reply)
+                .expect_err("blank lines must not receive a response");
+            assert!(matches!(
+                error.kind(),
+                std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+            ));
+            worker.join().unwrap();
+        });
         daemon.shutdown();
     }
 }

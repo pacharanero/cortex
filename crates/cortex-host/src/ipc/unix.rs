@@ -9,7 +9,6 @@
 use std::fmt;
 use std::fs::File;
 use std::io::{Read, Write};
-use std::net::Shutdown;
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
@@ -38,7 +37,11 @@ impl LocalEndpoint {
         let path = if let Some(dir) = std::env::var_os("XDG_RUNTIME_DIR") {
             PathBuf::from(dir).join(socket_name)
         } else {
-            let uid = std::env::var("UID").unwrap_or_else(|_| "0".into());
+            let uid = std::env::var("UID").unwrap_or_else(|_| {
+                let identity =
+                    std::env::var_os("HOME").map_or_else(std::env::temp_dir, PathBuf::from);
+                format!("h{:016x}", stable_hash(&identity.to_string_lossy()))
+            });
             let suffix = match device {
                 cortex_rs::DeviceKind::QuadCortex => "",
                 cortex_rs::DeviceKind::NanoCortex => "-nano",
@@ -50,8 +53,10 @@ impl LocalEndpoint {
 
     /// Build an endpoint around an explicit Unix socket path.
     #[must_use]
-    pub fn at(path: PathBuf) -> Self {
-        Self { path }
+    pub fn at(path: impl AsRef<std::path::Path>) -> Self {
+        Self {
+            path: path.as_ref().to_path_buf(),
+        }
     }
 
     /// Place for logs from the detached daemon process.
@@ -85,6 +90,12 @@ impl LocalEndpoint {
             Err(error) => Err(error),
         }
     }
+}
+
+fn stable_hash(value: &str) -> u64 {
+    value.bytes().fold(0xcbf2_9ce4_8422_2325, |hash, byte| {
+        (hash ^ u64::from(byte)).wrapping_mul(0x0000_0100_0000_01b3)
+    })
 }
 
 impl fmt::Display for LocalEndpoint {
@@ -247,15 +258,6 @@ impl LocalConnection {
     /// Returns the socket option error.
     pub fn set_write_timeout(&self, timeout: Option<Duration>) -> std::io::Result<()> {
         self.inner.set_write_timeout(timeout)
-    }
-
-    /// Half-close the writer while retaining the read side.
-    ///
-    /// # Errors
-    ///
-    /// Returns the socket shutdown error.
-    pub fn shutdown_write(&self) -> std::io::Result<()> {
-        self.inner.shutdown(Shutdown::Write)
     }
 
     /// Connected pair used by transport-independent protocol tests.

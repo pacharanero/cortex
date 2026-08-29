@@ -3,8 +3,8 @@
 
 //! Platform-neutral local IPC facade for the held Cortex daemon.
 //!
-//! Unix currently uses a user-owned domain socket. Windows will use a
-//! current-user named pipe behind the same API once that adapter is selected.
+//! Unix uses a user-owned domain socket. Windows uses a local-only named pipe
+//! restricted to the pipe object's owner.
 //!
 //! @see spec/200-cli/spec.md [FR-18]
 //! @see spec/200-cli/design.md [DES-CLI]

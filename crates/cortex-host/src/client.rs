@@ -81,7 +81,7 @@ impl DaemonClient {
     /// Whether a daemon is listening or has claimed the endpoint while starting.
     #[must_use]
     pub fn is_running(&self) -> bool {
-        LocalConnection::connect(&self.endpoint).is_ok() || self.endpoint.has_active_claim()
+        self.endpoint.has_active_claim() || LocalConnection::connect(&self.endpoint).is_ok()
     }
 
     /// Require a compatible held session and return its status.

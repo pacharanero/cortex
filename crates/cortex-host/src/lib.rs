@@ -5,12 +5,12 @@
 //!
 //! This crate owns the local daemon contract and synchronous local IPC client.
 //! It intentionally has no HID feature and cannot open a device. Unix sockets
-//! are the current adapter; Windows named pipes fit behind the same facade.
+//! and local-only Windows named pipes implement the same facade.
 //!
 //! @see spec/200-cli/spec.md [FR-18] [FR-19]
 //! @see spec/200-cli/design.md [DES-CLI]
 
-#![forbid(unsafe_code)]
+#![deny(unsafe_code)]
 #![warn(missing_docs)]
 #![warn(clippy::all, clippy::pedantic)]
 
