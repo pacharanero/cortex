@@ -206,6 +206,27 @@ existing projects:
 - `s/version++` - bump the canonical version across Cargo, npm package/lock,
   and Tauri configuration in one release commit.
 
+## Git Workflow
+
+`main` is protected. Agents work on a descriptive branch, push each validated
+coherent parcel, and open or update a focused pull request.
+
+- Land pull requests with a normal merge commit using
+  `gh pr merge --merge --delete-branch`. Do not integrate PR work by
+  cherry-picking it onto `main`, squash-merging it, or rebase-merging it. A
+  normal merge preserves the reviewed branch history and keeps release commits
+  intact for git-cliff.
+- Push review fixes to the existing PR branch and let its checks rerun; do not
+  create replacement commits directly on `main`.
+- Branch cleanup is part of merging. After the PR reports `MERGED`, confirm its
+  remote head was deleted, remove any clean local worktree and branch for it,
+  and run `git fetch --prune`. The repository setting automatically deletes
+  same-repository head branches, but agents still verify the end state.
+- Before deleting a branch manually, prove that its PR merged and that any
+  linked worktree is clean. Never delete an open, unmerged, unknown, or
+  contributor-fork branch as cleanup.
+- Finish with `main` plus only branches that represent genuinely active work.
+
 ## Before Every Commit
 
 ```sh
@@ -225,6 +246,9 @@ Ask before publishing the crate to crates.io, cutting a release tag, changing
 the license, editing `NOTICE`/`THIRD-PARTY-NOTICES.md` attribution,
 force-pushing, or any externally visible action. Do not commit vendored
 reference-repo content into this repo's tree.
+
+Deleting a same-repository branch whose PR is confirmed merged is routine
+cleanup under the Git Workflow above. Ask before deleting any other branch.
 
 ## Assurance
 
