@@ -309,8 +309,7 @@ jobs:
           if ($guiProcess.HasExited) { throw "Packaged GUI exited during launch smoke" }
           $upgrade = Start-Process $packages[0].FullName -ArgumentList '/S' -Wait -PassThru
           if ($upgrade.ExitCode -ne 0) { throw "NSIS upgrade failed: $($upgrade.ExitCode)" }
-          $guiProcess.Refresh()
-          if (-not $guiProcess.HasExited) { throw "Upgrade did not close the installed GUI" }
+          if (-not $guiProcess.WaitForExit(5000)) { throw "Upgrade did not close the installed GUI" }
           foreach ($path in @($cli, $gui, $uninstaller)) {
             if (-not (Test-Path $path)) { throw "Upgrade lost installed payload: $path" }
           }
@@ -321,8 +320,7 @@ jobs:
           if ($guiProcess.HasExited) { throw "Upgraded GUI exited during launch smoke" }
           $uninstall = Start-Process $uninstaller -ArgumentList '/S' -Wait -PassThru
           if ($uninstall.ExitCode -ne 0) { throw "NSIS uninstall failed: $($uninstall.ExitCode)" }
-          $guiProcess.Refresh()
-          if (-not $guiProcess.HasExited) { throw "Uninstall did not close the installed GUI" }
+          if (-not $guiProcess.WaitForExit(5000)) { throw "Uninstall did not close the installed GUI" }
           foreach ($path in @($cli, $gui, $uninstaller)) {
             if (Test-Path $path) { throw "Uninstall retained payload: $path" }
           }
