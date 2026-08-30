@@ -408,5 +408,6 @@ Not covered by this runbook:
 
 - MCP protocol/discovery behavior beyond the same daemon/core operations.
 - GUI write interactions and visual-polish coverage beyond the daemon read boundary above.
+- Windows package, named-pipe and QEMU/KVM host verification; use the dedicated [Windows tester-preview smoke](gui/windows-smoke.md).
 - Capture/IR payload transfer, the positive host-owned capture workflow, a working host-controlled Tuner visibility shape, and most physical control paths.
 - Nano application operations beyond the bounded transport/state smoke above, including typed Bluetooth ownership-conflict decoding under NANO-001.3.

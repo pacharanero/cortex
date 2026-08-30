@@ -44,7 +44,9 @@ extra_css:
 
 nav:
   - Home: index.md
-  - Cross-platform GUI: gui/first-draft.md
+  - Cross-platform GUI:
+      - Current GUI: gui/first-draft.md
+      - Windows tester-preview smoke: gui/windows-smoke.md
   - Install: install.md
   - Agent setup: agent-setup.md
   - MCP tone-building demo: mcp-tone-building-demo.md

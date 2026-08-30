@@ -96,6 +96,6 @@ The `cortex session` daemon is this project's owner. CLI, MCP and GUI clients us
 
 ## Implementation status
 
-The Quad transport, framing, session and broad read/write client surface are implemented in `cortex-rs` and hardware-verified on Linux. Windows and macOS host paths remain planned until local IPC, packaging and real-device behaviour are tested on each platform.
+The Quad transport, framing, session and broad read/write client surface are implemented in `cortex-rs` and hardware-verified on Linux. Windows and macOS host expansion is in progress: native package builders exist and Windows local IPC is implemented, but both hosts remain provisional until their package and real-device behavior passes the platform smoke.
 
 Raw USB captures can contain serials, paths, preset names and capture names. Keep captures private and publish decoded structural findings in your own words.

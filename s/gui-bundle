@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Dr Marcus Baw
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# Build one native Tauri package with its target-qualified cortex helper.
+
+set -euo pipefail
+
+root="$(git rev-parse --show-toplevel)"
+target="${1:-}"
+bundle="${2:-}"
+
+case "$target:$bundle" in
+  x86_64-unknown-linux-gnu:deb|aarch64-apple-darwin:dmg|x86_64-pc-windows-msvc:nsis) ;;
+  *)
+    echo "usage: s/gui-bundle <x86_64-unknown-linux-gnu deb|aarch64-apple-darwin dmg|x86_64-pc-windows-msvc nsis>" >&2
+    exit 2
+    ;;
+esac
+
+exe_suffix=""
+if [[ "$target" == *-windows-* ]]; then
+  exe_suffix=".exe"
+fi
+
+cargo build --manifest-path "$root/Cargo.toml" --locked --profile dist -p cortex-cli --target "$target"
+mkdir -p "$root/target/tauri-sidecars"
+cp \
+  "$root/target/$target/dist/cortex$exe_suffix" \
+  "$root/target/tauri-sidecars/cortex-$target$exe_suffix"
+
+cd "$root/gui"
+exec npm run tauri -- build \
+  --ci \
+  --target "$target" \
+  --bundles "$bundle" \
+  --config src-tauri/tauri.release.conf.json

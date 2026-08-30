@@ -19,7 +19,7 @@ The project is one toolkit for two related device models, exposed through severa
 
 Neural DSP provides Cortex Control for macOS and Windows but has not provided a Linux editor. This community project began by building that missing support for ourselves; today it is maintained by one person.
 
-Linux is the first implementation and the only hardware-verified host today, but it is not the product boundary. The aspiration is one open-source desktop GUI for Quad Cortex and Nano Cortex on Linux, Windows and macOS, with matching CLI and MCP interfaces where each device's capabilities permit them. Each device/platform combination will be called supported only after its transport, local IPC, packaging and real-hardware behaviour have been tested.
+Linux is the first implementation and the only hardware-verified host today, but it is not the product boundary. Windows and macOS host work is active: native package jobs are configured to build an unsigned Windows x86_64 NSIS installer and ad-hoc-signed Apple Silicon DMG, while Windows also has its named-pipe daemon boundary and a direct/QEMU hardware-smoke runbook. Their first remote package matrix is pending, and both hosts remain provisional until their native package and real-device smokes pass. Each device/platform combination will be called supported only after its transport, local IPC, packaging and real-hardware behaviour have been tested.
 
 ## What it is not
 
@@ -50,13 +50,14 @@ The project's central discipline is being honest about what has actually run aga
 | Capture and IR export/import | <span class="status provisional">investigation; no working export/import</span> |
 | MCP server read, recall, scene management and live-grid tools | <span class="status verified">verified; no save/delete tools</span> |
 | Desktop GUI shell | <span class="status provisional">daemon-backed Rust read/write boundaries verified on Linux; rendered native interaction smokes remain partial</span> |
-| Windows and macOS hardware paths and packaging | <span class="status planned">planned; Linux is the only verified host</span> |
+| Windows and macOS hardware paths and packaging | <span class="status provisional">native package builders implemented; Windows IPC implemented; remote package runs and real-device smokes pending</span> |
 | Nano Cortex | <span class="status provisional">USB HID, state, amp, bypass and core/daemon/MCP/native-GUI raw FX parameter paths verified on Linux; wider operations and host integrations remain partial</span> |
 
 ## Start here
 
 - **[Install](install.md)** - the udev rule, building, and your first command.
 - **[GUI first draft](gui/first-draft.md)** - the current desktop shell and its verification boundary.
+- **[Windows tester-preview smoke](gui/windows-smoke.md)** - native Windows and QEMU/KVM package, IPC, USB and GUI checks.
 - **[Walkthrough](walkthrough.md)** - a tour of the CLI with hardware-captured output shapes and fictionalised identifiers/preset names.
 - **[CLI reference](cli-reference.md)** - every command.
 - **[The protocol](protocol.md)** - what we know about the wire, and how we know it.

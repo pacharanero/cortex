@@ -6,6 +6,8 @@
 //! @see spec/400-gui/spec.md
 //! @see spec/400-gui/design.md
 
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 fn main() {
     cortex_gui::run();
 }

@@ -384,6 +384,12 @@ fn start_auto_managed_session(
     if device_kind == cortex_rs::DeviceKind::NanoCortex {
         command.args(["--device", "nano"]);
     }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+
+        command.creation_flags(windows_sys::Win32::System::Threading::CREATE_NO_WINDOW);
+    }
     let mut child = command
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
@@ -442,11 +448,9 @@ fn sibling_cortex_binary() -> Result<PathBuf, CommandError> {
     let path = if let Some(path) = std::env::var_os("CORTEX_CLI_PATH") {
         PathBuf::from(path)
     } else {
-        std::env::current_exe()
-            .map_err(|error| {
-                CommandError::daemon(format!("could not locate the GUI executable: {error}"))
-            })?
-            .with_file_name(format!("cortex{}", std::env::consts::EXE_SUFFIX))
+        sibling_cortex_path(&std::env::current_exe().map_err(|error| {
+            CommandError::daemon(format!("could not locate the GUI executable: {error}"))
+        })?)
     };
     if !path.is_file() {
         return Err(CommandError::daemon(format!(
@@ -455,6 +459,10 @@ fn sibling_cortex_binary() -> Result<PathBuf, CommandError> {
         )));
     }
     Ok(path)
+}
+
+fn sibling_cortex_path(gui_executable: &std::path::Path) -> PathBuf {
+    gui_executable.with_file_name(format!("cortex{}", std::env::consts::EXE_SUFFIX))
 }
 struct DaemonDashboardSource {
     quad_client: DaemonClient,
@@ -1444,6 +1452,21 @@ mod tests {
     fn scene_letters_are_rendered_in_rust() {
         assert_eq!(scene_letter(0), "A");
         assert_eq!(scene_letter(7), "H");
+    }
+
+    #[test]
+    fn packaged_helper_uses_the_gui_executables_directory() {
+        let executable = PathBuf::from(format!(
+            "/opt/cortex/cortex-gui{}",
+            std::env::consts::EXE_SUFFIX
+        ));
+        assert_eq!(
+            sibling_cortex_path(&executable),
+            PathBuf::from(format!(
+                "/opt/cortex/cortex{}",
+                std::env::consts::EXE_SUFFIX
+            ))
+        );
     }
 
     #[test]

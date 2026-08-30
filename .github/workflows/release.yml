@@ -1,9 +1,9 @@
 # SPDX-FileCopyrightText: 2026 Dr Marcus Baw
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
-# Build the Linux archive on every relevant pull request, retaining it for
-# inspection. When the auto-tag cascade invokes this workflow, publish that
-# same verified archive and its SHA256SUMS file as a GitHub Release.
+# Build the Linux CLI/MCP archive and native GUI tester previews on every
+# relevant pull request. When the auto-tag cascade invokes this workflow,
+# publish those same verified artifacts with one SHA256SUMS file.
 name: Release preview
 
 on:
@@ -13,6 +13,12 @@ on:
       - Cargo.toml
       - crates/**
       - gui/src-tauri/Cargo.toml
+      - gui/package-lock.json
+      - gui/package.json
+      - gui/index.html
+      - gui/*.ts
+      - gui/src/**
+      - gui/src-tauri/**
       - 70-neural-dsp-cortex.rules
       - LICENSE
       - LICENSES/**
@@ -20,6 +26,7 @@ on:
       - THIRD-PARTY-NOTICES.md
       - docs/install.sh
       - s/check-release-runtime
+      - s/gui-bundle
       - s/release-preview
       - .github/workflows/release.yml
   workflow_dispatch:
@@ -133,9 +140,200 @@ jobs:
             dist-plan.json
           if-no-files-found: error
 
+  gui-preview:
+    name: GUI preview (${{ matrix.label }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: Linux x86_64
+            runner: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            bundle: deb
+            package: target/x86_64-unknown-linux-gnu/release/bundle/deb/*.deb
+            artifact: cortex-gui-linux-x86_64-preview
+          - label: macOS arm64 ad-hoc signed
+            runner: macos-15
+            target: aarch64-apple-darwin
+            bundle: dmg
+            package: target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
+            artifact: cortex-gui-macos-arm64-ad-hoc-signed-preview
+          - label: Windows x86_64 unsigned
+            runner: windows-2022
+            target: x86_64-pc-windows-msvc
+            bundle: nsis
+            package: target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
+            artifact: cortex-gui-windows-x86_64-unsigned-preview
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.tag || github.sha }}
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+        with:
+          toolchain: stable
+          targets: ${{ matrix.target }}
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.20.0
+          cache: npm
+          cache-dependency-path: gui/package-lock.json
+      - uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
+        with:
+          version: "36.0"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install Linux GUI prerequisites
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes \
+            build-essential \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libssl-dev \
+            libudev-dev \
+            libwebkit2gtk-4.1-dev \
+            libxdo-dev
+      - name: Install frontend dependencies
+        run: npm ci --prefix gui
+      - name: Test native daemon boundary
+        run: cargo test --locked -p cortex-host -p cortex-cli --target ${{ matrix.target }}
+      - name: Build native GUI package
+        shell: bash
+        run: s/gui-bundle "${{ matrix.target }}" "${{ matrix.bundle }}"
+      - name: Verify package output
+        shell: bash
+        env:
+          PACKAGE_GLOB: ${{ matrix.package }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          packages=( $PACKAGE_GLOB )
+          if [[ "${#packages[@]}" -ne 1 || ! -s "${packages[0]}" ]]; then
+            echo "Expected exactly one non-empty package matching $PACKAGE_GLOB" >&2
+            exit 1
+          fi
+      - name: Verify Debian package contents
+        if: runner.os == 'Linux'
+        shell: bash
+        env:
+          PACKAGE_GLOB: ${{ matrix.package }}
+        run: |
+          set -euo pipefail
+          package=( $PACKAGE_GLOB )
+          [[ "$(dpkg-deb --field "${package[0]}" Architecture)" = amd64 ]]
+          contents="$(dpkg-deb --contents "${package[0]}")"
+          grep -qE '[[:space:]]\.?/?usr/bin/cortex-gui$' <<<"$contents"
+          grep -qE '[[:space:]]\.?/?usr/bin/cortex$' <<<"$contents"
+          grep -qE '[[:space:]]\.?/?usr/lib/udev/rules\.d/70-neural-dsp-cortex\.rules$' <<<"$contents"
+          control_dir="$RUNNER_TEMP/cortex-deb-control"
+          mkdir -p "$control_dir"
+          dpkg-deb --control "${package[0]}" "$control_dir"
+          test -f "$control_dir/postinst"
+          grep -q 'udevadm control --reload-rules' "$control_dir/postinst"
+          grep -q 'udevadm trigger --action=add --subsystem-match=hidraw' "$control_dir/postinst"
+      - name: Verify macOS package contents and signature
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          PACKAGE_GLOB: ${{ matrix.package }}
+        run: |
+          set -euo pipefail
+          package=( $PACKAGE_GLOB )
+          mount_point="$RUNNER_TEMP/cortex-dmg"
+          mkdir -p "$mount_point"
+          printf 'Y\n' | PAGER=cat hdiutil attach "${package[0]}" -readonly -nobrowse -mountpoint "$mount_point"
+          trap 'hdiutil detach "$mount_point"' EXIT
+          shopt -s nullglob
+          apps=( "$mount_point"/*.app )
+          [[ "${#apps[@]}" -eq 1 ]]
+          test -x "${apps[0]}/Contents/MacOS/cortex-gui"
+          test -x "${apps[0]}/Contents/MacOS/cortex"
+          test -f "${apps[0]}/Contents/Resources/NOTICE"
+          file "${apps[0]}/Contents/MacOS/cortex-gui" | grep -q 'arm64'
+          file "${apps[0]}/Contents/MacOS/cortex" | grep -q 'arm64'
+          codesign --verify --deep --strict "${apps[0]}"
+      - name: Verify Windows install and uninstall
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          PACKAGE_GLOB: ${{ matrix.package }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $packages = @(Get-ChildItem $env:PACKAGE_GLOB)
+          if ($packages.Count -ne 1) { throw "Expected one NSIS package" }
+          $install = Start-Process $packages[0].FullName -ArgumentList '/S' -Wait -PassThru
+          if ($install.ExitCode -ne 0) { throw "NSIS install failed: $($install.ExitCode)" }
+
+          $installDir = Join-Path $env:LOCALAPPDATA 'Cortex'
+          $cli = Join-Path $installDir 'cortex.exe'
+          $gui = Join-Path $installDir 'cortex-gui.exe'
+          $uninstaller = Join-Path $installDir 'uninstall.exe'
+          foreach ($path in @($cli, $gui, $uninstaller, (Join-Path $installDir 'NOTICE'))) {
+            if (-not (Test-Path $path)) { throw "Missing installed payload: $path" }
+          }
+          function Get-PeMachine([string] $path) {
+            $stream = [IO.File]::OpenRead($path)
+            try {
+              $reader = [IO.BinaryReader]::new($stream)
+              $stream.Position = 0x3c
+              $peOffset = $reader.ReadInt32()
+              $stream.Position = $peOffset + 4
+              return $reader.ReadUInt16()
+            } finally {
+              $stream.Dispose()
+            }
+          }
+          foreach ($path in @($cli, $gui)) {
+            if ((Get-PeMachine $path) -ne 0x8664) { throw "Payload is not Windows x86_64: $path" }
+          }
+          & $cli --version
+          if ($LASTEXITCODE -ne 0) { throw "Packaged cortex helper did not run" }
+
+          $lock = [IO.File]::Open($cli, 'Open', 'Read', 'Read')
+          try {
+            $blockedUpgrade = Start-Process $packages[0].FullName -ArgumentList '/S' -Wait -PassThru
+            if ($blockedUpgrade.ExitCode -eq 0) {
+              throw "NSIS upgrade did not fail closed while the helper was locked"
+            }
+          } finally {
+            $lock.Dispose()
+          }
+
+          $guiProcess = Start-Process $gui -PassThru
+          Start-Sleep -Seconds 2
+          $guiProcess.Refresh()
+          if ($guiProcess.HasExited) { throw "Packaged GUI exited during launch smoke" }
+          $upgrade = Start-Process $packages[0].FullName -ArgumentList '/S' -Wait -PassThru
+          if ($upgrade.ExitCode -ne 0) { throw "NSIS upgrade failed: $($upgrade.ExitCode)" }
+          if (-not $guiProcess.WaitForExit(5000)) { throw "Upgrade did not close the installed GUI" }
+          foreach ($path in @($cli, $gui, $uninstaller)) {
+            if (-not (Test-Path $path)) { throw "Upgrade lost installed payload: $path" }
+          }
+
+          $guiProcess = Start-Process $gui -PassThru
+          Start-Sleep -Seconds 2
+          $guiProcess.Refresh()
+          if ($guiProcess.HasExited) { throw "Upgraded GUI exited during launch smoke" }
+          $uninstall = Start-Process $uninstaller -ArgumentList '/S' -Wait -PassThru
+          if ($uninstall.ExitCode -ne 0) { throw "NSIS uninstall failed: $($uninstall.ExitCode)" }
+          if (-not $guiProcess.WaitForExit(5000)) { throw "Uninstall did not close the installed GUI" }
+          foreach ($path in @($cli, $gui, $uninstaller)) {
+            if (Test-Path $path) { throw "Uninstall retained payload: $path" }
+          }
+      - name: Upload native GUI preview
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.package }}
+          if-no-files-found: error
+
   host:
     name: Publish GitHub Release
-    needs: preview
+    needs: [preview, gui-preview]
     if: inputs.tag != ''
     runs-on: ubuntu-22.04
     environment: release
@@ -157,6 +355,12 @@ jobs:
         with:
           name: cortex-linux-x86_64-preview
           path: release
+      - name: Download native GUI previews
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: cortex-gui-*-preview
+          path: release/gui
+          merge-multiple: true
       - name: Create GitHub Release
         shell: bash
         run: |
@@ -177,6 +381,25 @@ jobs:
             cd "$artifact_dir"
             sha256sum --check --strict SHA256SUMS
           )
+          mapfile -t gui_packages < <(compgen -G "release/gui/*")
+          if [[ "${#gui_packages[@]}" -ne 3 ]]; then
+            echo "Expected exactly three native GUI packages; found ${#gui_packages[@]}" >&2
+            exit 1
+          fi
+
+          asset_dir=release/assets
+          mkdir -p "$asset_dir"
+          cp "${archives[@]}" "$asset_dir/"
+          for package in "${gui_packages[@]}"; do
+            name="${package##*/}"
+            cp "$package" "$asset_dir/${name%.*}-preview.${name##*.}"
+          done
+          (
+            cd "$asset_dir"
+            sha256sum * > SHA256SUMS
+            sha256sum --check --strict SHA256SUMS
+          )
+          mapfile -t release_payloads < <(compgen -G "$asset_dir/*" | grep -v '/SHA256SUMS$')
 
           # Prefer the git-cliff section s/version++ generated for this exact
           # version; fall back to GitHub's commit-derived notes only when that
@@ -193,11 +416,30 @@ jobs:
             gh api --method POST "repos/${GITHUB_REPOSITORY}/releases/generate-notes" \
               -f tag_name="$RELEASE_TAG" --jq .body > "$notes_file"
           fi
+          composed_notes="$(mktemp)"
+          {
+            printf '> [!WARNING]\n'
+            printf '> Native GUI assets ending in `-preview` are provisional tester previews. '
+            printf 'Linux is the only hardware-verified host; Windows and macOS device paths remain unverified.\n\n'
+            cat "$notes_file"
+          } > "$composed_notes"
+          notes_file="$composed_notes"
 
-          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            gh release edit "$RELEASE_TAG" --title "$RELEASE_TAG" --notes-file "$notes_file"
-            gh release upload "$RELEASE_TAG" --clobber "${archives[@]}" "$artifact_dir/SHA256SUMS"
-          else
-            gh release create "$RELEASE_TAG" --verify-tag --title "$RELEASE_TAG" \
-              --notes-file "$notes_file" "${archives[@]}" "$artifact_dir/SHA256SUMS"
+          existing_release="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/releases?per_page=100" \
+            --jq '.[] | select(.tag_name == "'"$RELEASE_TAG"'") | [.id, .draft] | @tsv')"
+          if [[ -n "$existing_release" ]]; then
+            release_id="${existing_release%%$'\t'*}"
+            draft="${existing_release#*$'\t'}"
+            if [[ "$draft" != true ]]; then
+              echo "Release $RELEASE_TAG is already published and immutable" >&2
+              exit 1
+            fi
+            # A failed upload leaves only a private draft. Replace that draft
+            # as a unit because native installers are not reproducible builds.
+            gh api --method DELETE "repos/${GITHUB_REPOSITORY}/releases/${release_id}"
           fi
+          gh release create "$RELEASE_TAG" --verify-tag --draft --title "$RELEASE_TAG" \
+            --notes-file "$notes_file"
+          gh release upload "$RELEASE_TAG" "${release_payloads[@]}"
+          gh release upload "$RELEASE_TAG" "$asset_dir/SHA256SUMS"
+          gh release edit "$RELEASE_TAG" --draft=false

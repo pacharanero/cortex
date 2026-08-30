@@ -8,12 +8,12 @@
 //! @see spec/200-cli/spec.md [FR-18] [FR-26] [FR-27]
 //! @see spec/300-mcp/spec.md [FR-45]
 
-#![cfg(unix)]
-
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex, MutexGuard};
+use std::time::{Duration, Instant};
 
 use cortex_host::{
     CacheStatus, DAEMON_PROTOCOL_VERSION, DaemonClient, DaemonError, DaemonErrorCode,
@@ -25,19 +25,25 @@ const CHILD_ENV: &str = "CORTEX_LIFECYCLE_CHILD";
 const MODE_ENV: &str = "CORTEX_LIFECYCLE_MODE";
 const SOCKET_ENV: &str = "CORTEX_LIFECYCLE_SOCKET";
 const TIMEOUT_ENV: &str = "CORTEX_LIFECYCLE_TIMEOUT_MS";
+static NEXT_ENDPOINT_ID: AtomicU64 = AtomicU64::new(0);
+static PROCESS_TEST_LOCK: Mutex<()> = Mutex::new(());
 
 fn endpoint(label: &str) -> LocalEndpoint {
-    let unique = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
+    let unique = NEXT_ENDPOINT_ID.fetch_add(1, Ordering::Relaxed);
+    let label_hash = label.bytes().fold(0_u8, u8::wrapping_add);
     LocalEndpoint::at(std::env::temp_dir().join(format!(
-        "cortex-lifecycle-{label}-{}-{unique}.sock",
+        "cx-{label_hash:02x}-{:x}-{unique:x}",
         std::process::id()
     )))
 }
 
-fn spawn_daemon(label: &str, lifecycle: DaemonLifecycle) -> (Child, LocalEndpoint) {
+fn spawn_daemon(
+    label: &str,
+    lifecycle: DaemonLifecycle,
+) -> (MutexGuard<'static, ()>, Child, LocalEndpoint) {
+    let guard = PROCESS_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let endpoint = endpoint(label);
     let (mode, timeout_ms) = match lifecycle {
         DaemonLifecycle::Explicit => ("explicit", 0),
@@ -55,14 +61,16 @@ fn spawn_daemon(label: &str, lifecycle: DaemonLifecycle) -> (Child, LocalEndpoin
         .spawn()
         .unwrap();
     let deadline = Instant::now() + Duration::from_secs(5);
-    while Instant::now() < deadline && !DaemonClient::new(endpoint.clone()).is_running() {
+    let mut listener_ready = false;
+    while Instant::now() < deadline {
+        if cortex_host::LocalConnection::connect(&endpoint).is_ok() {
+            listener_ready = true;
+            break;
+        }
         std::thread::sleep(Duration::from_millis(5));
     }
-    assert!(
-        DaemonClient::new(endpoint.clone()).is_running(),
-        "fixture daemon did not claim its endpoint"
-    );
-    (child, endpoint)
+    assert!(listener_ready, "fixture daemon did not bind its endpoint");
+    (guard, child, endpoint)
 }
 
 fn wait_for_exit(mut child: Child, endpoint: &LocalEndpoint) {
@@ -74,8 +82,11 @@ fn wait_for_exit(mut child: Child, endpoint: &LocalEndpoint) {
                 !DaemonClient::new(endpoint.clone()).is_running(),
                 "endpoint still appears owned after process exit"
             );
-            let lock = PathBuf::from(endpoint.to_string()).with_extension("lock");
-            let _ = std::fs::remove_file(lock);
+            #[cfg(unix)]
+            {
+                let lock = PathBuf::from(endpoint.to_string()).with_extension("lock");
+                let _ = std::fs::remove_file(lock);
+            }
             return;
         }
         std::thread::sleep(Duration::from_millis(5));
@@ -86,7 +97,7 @@ fn wait_for_exit(mut child: Child, endpoint: &LocalEndpoint) {
 
 #[test]
 fn auto_managed_daemon_exits_idle_and_cleans_its_endpoint() {
-    let (child, endpoint) = spawn_daemon(
+    let (_guard, child, endpoint) = spawn_daemon(
         "idle",
         DaemonLifecycle::AutoManaged {
             idle_timeout: Duration::from_millis(150),
@@ -98,7 +109,7 @@ fn auto_managed_daemon_exits_idle_and_cleans_its_endpoint() {
 #[test]
 fn every_completed_request_restarts_the_idle_timeout() {
     let timeout = Duration::from_millis(250);
-    let (mut child, endpoint) = spawn_daemon(
+    let (_guard, mut child, endpoint) = spawn_daemon(
         "reset",
         DaemonLifecycle::AutoManaged {
             idle_timeout: timeout,
@@ -119,12 +130,15 @@ fn every_completed_request_restarts_the_idle_timeout() {
 #[test]
 fn a_connection_accepted_at_the_idle_boundary_can_deliver_its_request() {
     let timeout = Duration::from_millis(250);
-    let (mut child, endpoint) = spawn_daemon(
+    let (_guard, mut child, endpoint) = spawn_daemon(
         "accepted-boundary",
         DaemonLifecycle::AutoManaged {
             idle_timeout: timeout,
         },
     );
+    DaemonClient::new(endpoint.clone())
+        .require_compatible()
+        .unwrap();
     std::thread::sleep(Duration::from_millis(210));
     let mut connection = cortex_host::LocalConnection::connect(&endpoint).unwrap();
     connection
@@ -151,7 +165,7 @@ fn a_connection_accepted_at_the_idle_boundary_can_deliver_its_request() {
 
 #[test]
 fn in_flight_request_protects_idle_exit_and_other_clients_are_not_blocked() {
-    let (child, endpoint) = spawn_daemon(
+    let (_guard, child, endpoint) = spawn_daemon(
         "concurrent",
         DaemonLifecycle::AutoManaged {
             idle_timeout: Duration::from_millis(150),
@@ -179,7 +193,7 @@ fn in_flight_request_protects_idle_exit_and_other_clients_are_not_blocked() {
 
 #[test]
 fn explicitly_started_daemon_does_not_gain_an_idle_timeout() {
-    let (mut child, endpoint) = spawn_daemon("explicit", DaemonLifecycle::Explicit);
+    let (_guard, mut child, endpoint) = spawn_daemon("explicit", DaemonLifecycle::Explicit);
     std::thread::sleep(Duration::from_millis(350));
     assert!(
         child.try_wait().unwrap().is_none(),
@@ -193,7 +207,7 @@ fn explicitly_started_daemon_does_not_gain_an_idle_timeout() {
 
 #[test]
 fn typed_daemon_failure_survives_the_process_boundary() {
-    let (child, endpoint) = spawn_daemon("typed-error", DaemonLifecycle::Explicit);
+    let (_guard, child, endpoint) = spawn_daemon("typed-error", DaemonLifecycle::Explicit);
     let error = DaemonClient::new(endpoint.clone())
         .request_value(&Request::ActiveScene)
         .expect_err("fixture active-scene request must fail");

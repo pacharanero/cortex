@@ -4410,7 +4410,10 @@ mod tests {
         // Deliberate convention, not an XDG path: ~/.zfunc is what several
         // widely-used Rust CLIs tell people to put on their fpath, so a user
         // gets one directory for all of them rather than one per tool.
-        let home = std::path::PathBuf::from(std::env::var("HOME").expect("HOME is set"));
+        let Some(home) = std::env::var_os("HOME").map(std::path::PathBuf::from) else {
+            assert!(completion_dir(clap_complete::Shell::Zsh).is_none());
+            return;
+        };
         assert_eq!(
             completion_dir(clap_complete::Shell::Zsh),
             Some(home.join(".zfunc"))
@@ -4420,7 +4423,13 @@ mod tests {
     #[test]
     fn completion_dirs_are_under_the_users_home() {
         use clap_complete::Shell;
-        let home = std::path::PathBuf::from(std::env::var("HOME").expect("HOME is set"));
+        let Some(home) = std::env::var_os("HOME").map(std::path::PathBuf::from) else {
+            for shell in [Shell::Bash, Shell::Zsh, Shell::Fish, Shell::Elvish] {
+                assert!(completion_dir(shell).is_none());
+            }
+            assert!(completion_dir(Shell::PowerShell).is_none());
+            return;
+        };
         for shell in [Shell::Bash, Shell::Zsh, Shell::Fish, Shell::Elvish] {
             let dir = completion_dir(shell).expect("a directory is known");
             assert!(

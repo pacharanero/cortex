@@ -21,5 +21,8 @@ cortex-rs = { path = "../../crates/cortex-rs", default-features = false, feature
 cortex-host = { path = "../../crates/cortex-host", features = ["typescript"] }
 ts-rs = { workspace = true }
 
+[target.'cfg(windows)'.dependencies]
+windows-sys = { workspace = true, features = ["Win32_System_Threading"] }
+
 [dev-dependencies]
 serde_json = { workspace = true }

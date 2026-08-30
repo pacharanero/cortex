@@ -6,10 +6,11 @@
 //! @see spec/200-cli/spec.md [FR-18]
 //! @see spec/200-cli/design.md [DES-CLI]
 
+#![allow(unsafe_code)]
+
 use std::fmt;
 use std::fs::File;
 use std::io::{Read, Write};
-use std::net::Shutdown;
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
@@ -31,27 +32,21 @@ impl LocalEndpoint {
     /// The current user's daemon endpoint for one Cortex product.
     #[must_use]
     pub fn for_device(device: cortex_rs::DeviceKind) -> Self {
-        let socket_name = match device {
-            cortex_rs::DeviceKind::QuadCortex => "cortex.sock",
-            cortex_rs::DeviceKind::NanoCortex => "cortex-nano.sock",
-        };
+        let socket_name = runtime_socket_name(device);
         let path = if let Some(dir) = std::env::var_os("XDG_RUNTIME_DIR") {
             PathBuf::from(dir).join(socket_name)
         } else {
-            let uid = std::env::var("UID").unwrap_or_else(|_| "0".into());
-            let suffix = match device {
-                cortex_rs::DeviceKind::QuadCortex => "",
-                cortex_rs::DeviceKind::NanoCortex => "-nano",
-            };
-            std::env::temp_dir().join(format!("cortex-{uid}{suffix}.sock"))
+            fallback_path(device, &std::env::temp_dir())
         };
         Self { path }
     }
 
     /// Build an endpoint around an explicit Unix socket path.
     #[must_use]
-    pub fn at(path: PathBuf) -> Self {
-        Self { path }
+    pub fn at(path: impl AsRef<std::path::Path>) -> Self {
+        Self {
+            path: path.as_ref().to_path_buf(),
+        }
     }
 
     /// Place for logs from the detached daemon process.
@@ -85,6 +80,28 @@ impl LocalEndpoint {
             Err(error) => Err(error),
         }
     }
+}
+
+fn runtime_socket_name(device: cortex_rs::DeviceKind) -> &'static str {
+    match device {
+        cortex_rs::DeviceKind::QuadCortex => "cortex.sock",
+        cortex_rs::DeviceKind::NanoCortex => "cortex-nano.sock",
+    }
+}
+
+fn fallback_path(device: cortex_rs::DeviceKind, temp_dir: &std::path::Path) -> PathBuf {
+    let suffix = match device {
+        cortex_rs::DeviceKind::QuadCortex => "",
+        cortex_rs::DeviceKind::NanoCortex => "-nano",
+    };
+    let uid = effective_uid();
+    temp_dir.join(format!("cortex-{uid}{suffix}.sock"))
+}
+
+fn effective_uid() -> libc::uid_t {
+    // SAFETY: geteuid has no preconditions and returns the process's effective
+    // user identity without consulting mutable environment variables.
+    unsafe { libc::geteuid() }
 }
 
 impl fmt::Display for LocalEndpoint {
@@ -183,9 +200,11 @@ impl LocalListener {
     ///
     /// Returns the socket accept error.
     pub fn accept(&self) -> std::io::Result<LocalConnection> {
-        self.inner
-            .accept()
-            .map(|(inner, _)| LocalConnection { inner })
+        let (inner, _) = self.inner.accept()?;
+        // macOS propagates the listener's nonblocking mode to accepted
+        // sockets. Restore blocking I/O so per-connection timeouts govern reads.
+        inner.set_nonblocking(false)?;
+        Ok(LocalConnection { inner })
     }
 
     /// Configure whether accept returns immediately when no client is waiting.
@@ -249,15 +268,6 @@ impl LocalConnection {
         self.inner.set_write_timeout(timeout)
     }
 
-    /// Half-close the writer while retaining the read side.
-    ///
-    /// # Errors
-    ///
-    /// Returns the socket shutdown error.
-    pub fn shutdown_write(&self) -> std::io::Result<()> {
-        self.inner.shutdown(Shutdown::Write)
-    }
-
     /// Connected pair used by transport-independent protocol tests.
     ///
     /// # Errors
@@ -317,9 +327,29 @@ mod tests {
 
         assert_eq!(quad, LocalEndpoint::daemon());
         assert_ne!(quad, nano);
-        assert!(quad.to_string().ends_with("cortex.sock"));
-        assert!(nano.to_string().ends_with("cortex-nano.sock"));
-        assert!(nano.log_path().ends_with("cortex-nano.log"));
+        assert_eq!(
+            runtime_socket_name(cortex_rs::DeviceKind::QuadCortex),
+            "cortex.sock"
+        );
+        assert_eq!(
+            runtime_socket_name(cortex_rs::DeviceKind::NanoCortex),
+            "cortex-nano.sock"
+        );
+    }
+
+    #[test]
+    fn fallback_endpoints_use_the_effective_uid() {
+        let root = PathBuf::from("/tmp/fictional-runtime");
+        let uid = effective_uid();
+
+        assert_eq!(
+            fallback_path(cortex_rs::DeviceKind::QuadCortex, &root),
+            root.join(format!("cortex-{uid}.sock"))
+        );
+        assert_eq!(
+            fallback_path(cortex_rs::DeviceKind::NanoCortex, &root),
+            root.join(format!("cortex-{uid}-nano.sock"))
+        );
     }
 
     #[test]
@@ -388,6 +418,30 @@ mod tests {
         for worker in workers {
             worker.join().unwrap();
         }
+        std::fs::remove_file(endpoint.path.with_extension("lock")).unwrap();
+    }
+
+    #[test]
+    fn accepted_connections_wait_for_their_read_timeout() {
+        let endpoint = test_endpoint("io");
+        let bound = LocalListener::bind(&endpoint).unwrap();
+        bound.listener.set_nonblocking(true).unwrap();
+        let _client = LocalConnection::connect(&endpoint).unwrap();
+        let mut server = bound.listener.accept().unwrap();
+        server
+            .set_read_timeout(Some(Duration::from_millis(20)))
+            .unwrap();
+        let started = std::time::Instant::now();
+
+        let error = server.read(&mut [0_u8; 1]).unwrap_err();
+
+        assert!(matches!(
+            error.kind(),
+            std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+        ));
+        assert!(started.elapsed() >= Duration::from_millis(10));
+        bound.listener.cleanup_endpoint().unwrap();
+        drop(bound.listener);
         std::fs::remove_file(endpoint.path.with_extension("lock")).unwrap();
     }
 

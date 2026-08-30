@@ -182,7 +182,7 @@ where
     let activity = Arc::new(Activity::new());
 
     std::thread::scope(|scope| -> std::io::Result<ServerExit> {
-        let mut idle_candidate = None;
+        let mut idle_candidate: Option<Instant> = None;
         loop {
             if stopping.load(Ordering::Acquire) {
                 break;
@@ -211,17 +211,18 @@ where
                         .idle_timeout()
                         .is_some_and(|timeout| activity.is_idle_for(timeout))
                     {
-                        // Require another accept poll after the first idle
-                        // observation. A client can enter the listen backlog
-                        // between a WouldBlock result and the clock check; the
-                        // extra poll admits it before teardown wins.
-                        if idle_candidate
-                            .is_some_and(|since: Instant| since.elapsed() >= ACCEPT_POLL)
-                        {
-                            stopping.store(true, Ordering::Release);
-                            break;
+                        // Keep polling for one connection-admission window after
+                        // the first idle observation. A client can enter the
+                        // listen backlog between a WouldBlock result and the
+                        // clock check; this admits it before teardown wins.
+                        if let Some(since) = idle_candidate {
+                            if since.elapsed() >= CONNECTION_POLL {
+                                stopping.store(true, Ordering::Release);
+                                break;
+                            }
+                        } else {
+                            idle_candidate = Some(Instant::now());
                         }
-                        idle_candidate = Some(Instant::now());
                     } else {
                         idle_candidate = None;
                     }
