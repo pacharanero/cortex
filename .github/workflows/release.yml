@@ -245,7 +245,7 @@ jobs:
           package=( $PACKAGE_GLOB )
           mount_point="$RUNNER_TEMP/cortex-dmg"
           mkdir -p "$mount_point"
-          hdiutil attach "${package[0]}" -readonly -nobrowse -mountpoint "$mount_point"
+          printf 'Y\n' | PAGER=cat hdiutil attach "${package[0]}" -readonly -nobrowse -mountpoint "$mount_point"
           trap 'hdiutil detach "$mount_point"' EXIT
           shopt -s nullglob
           apps=( "$mount_point"/*.app )
