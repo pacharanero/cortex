@@ -6,7 +6,9 @@
   # GUI first so its polling cannot restart a daemon while sidecars are removed.
   # Match the full installed path so another user's process or unrelated
   # same-named software is never terminated.
-  nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoLogo -NoProfile -NonInteractive -Command "& { $$target = [IO.Path]::GetFullPath($$args[0]); function Find-CortexGui { @(Get-Process -Name cortex-gui -ErrorAction SilentlyContinue | Where-Object { try { [IO.Path]::GetFullPath($$_.Path) -eq $$target } catch { $$false } }) }; Find-CortexGui | Stop-Process -Force -ErrorAction SilentlyContinue; Start-Sleep -Milliseconds 250; if (@(Find-CortexGui).Count -ne 0) { exit 1 } }" "$INSTDIR\cortex-gui.exe"'
+  # Retain each match before stopping it: Path can become unreadable during
+  # termination, which must not be mistaken for the process having exited.
+  nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoLogo -NoProfile -NonInteractive -Command "& { $$target = [IO.Path]::GetFullPath($$args[0]); function Find-CortexGui { @(Get-Process -Name cortex-gui -ErrorAction SilentlyContinue | Where-Object { try { [IO.Path]::GetFullPath($$_.Path) -eq $$target } catch { $$false } }) }; $$processes = Find-CortexGui; $$processes | Stop-Process -Force -ErrorAction SilentlyContinue; foreach ($$process in $$processes) { if (-not $$process.WaitForExit(5000)) { exit 1 } }; if (@(Find-CortexGui).Count -ne 0) { exit 1 } }" "$INSTDIR\cortex-gui.exe"'
   Pop $0
   StrCmp $0 "0" cortex_gui_stopped
   MessageBox MB_OK|MB_ICONSTOP "Cortex could not close its installed GUI. Close it manually, then run the installer again." /SD IDOK
