@@ -344,7 +344,12 @@ impl LocalListener {
     ///
     /// Returns the named-pipe accept error.
     pub fn accept(&self) -> std::io::Result<LocalConnection> {
-        self.inner.accept().map(LocalConnection::new)
+        let inner = self.inner.accept()?;
+        // The listener polls in PIPE_NOWAIT mode, which accepted server
+        // instances inherit. Restore blocking I/O so zero bytes means EOF and
+        // the connection's overlapped read timeout controls waiting.
+        inner.set_nonblocking(false)?;
+        Ok(LocalConnection::new(inner))
     }
 
     /// Configure whether accept returns immediately when no client is waiting.
@@ -814,6 +819,18 @@ mod tests {
             .set_read_timeout(Some(Duration::from_millis(20)))
             .unwrap();
         let error = client.read(&mut [0_u8; 1]).unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
+    }
+
+    #[test]
+    fn server_side_reads_wait_for_their_timeout() {
+        let (_client, mut server) = LocalConnection::pair().unwrap();
+        server
+            .set_read_timeout(Some(Duration::from_millis(20)))
+            .unwrap();
+
+        let error = server.read(&mut [0_u8; 1]).unwrap_err();
+
         assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
     }
 
