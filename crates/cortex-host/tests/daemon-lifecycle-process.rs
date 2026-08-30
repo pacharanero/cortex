@@ -29,9 +29,11 @@ fn endpoint(label: &str) -> LocalEndpoint {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    LocalEndpoint::at(
-        std::env::temp_dir().join(format!("cx-{label}-{}-{unique:x}", std::process::id())),
-    )
+    let label_hash = label.bytes().fold(0_u8, u8::wrapping_add);
+    LocalEndpoint::at(std::env::temp_dir().join(format!(
+        "cx-{label_hash:02x}-{:x}-{unique:x}",
+        std::process::id()
+    )))
 }
 
 fn spawn_daemon(label: &str, lifecycle: DaemonLifecycle) -> (Child, LocalEndpoint) {
@@ -52,13 +54,15 @@ fn spawn_daemon(label: &str, lifecycle: DaemonLifecycle) -> (Child, LocalEndpoin
         .spawn()
         .unwrap();
     let deadline = Instant::now() + Duration::from_secs(5);
-    while Instant::now() < deadline && !DaemonClient::new(endpoint.clone()).is_running() {
+    let mut listener_ready = false;
+    while Instant::now() < deadline {
+        if cortex_host::LocalConnection::connect(&endpoint).is_ok() {
+            listener_ready = true;
+            break;
+        }
         std::thread::sleep(Duration::from_millis(5));
     }
-    assert!(
-        DaemonClient::new(endpoint.clone()).is_running(),
-        "fixture daemon did not claim its endpoint"
-    );
+    assert!(listener_ready, "fixture daemon did not bind its endpoint");
     (child, endpoint)
 }
 
