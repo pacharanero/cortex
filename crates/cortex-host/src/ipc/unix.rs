@@ -200,9 +200,11 @@ impl LocalListener {
     ///
     /// Returns the socket accept error.
     pub fn accept(&self) -> std::io::Result<LocalConnection> {
-        self.inner
-            .accept()
-            .map(|(inner, _)| LocalConnection { inner })
+        let (inner, _) = self.inner.accept()?;
+        // macOS propagates the listener's nonblocking mode to accepted
+        // sockets. Restore blocking I/O so per-connection timeouts govern reads.
+        inner.set_nonblocking(false)?;
+        Ok(LocalConnection { inner })
     }
 
     /// Configure whether accept returns immediately when no client is waiting.
@@ -416,6 +418,30 @@ mod tests {
         for worker in workers {
             worker.join().unwrap();
         }
+        std::fs::remove_file(endpoint.path.with_extension("lock")).unwrap();
+    }
+
+    #[test]
+    fn accepted_connections_wait_for_their_read_timeout() {
+        let endpoint = test_endpoint("accepted-blocking");
+        let bound = LocalListener::bind(&endpoint).unwrap();
+        bound.listener.set_nonblocking(true).unwrap();
+        let _client = LocalConnection::connect(&endpoint).unwrap();
+        let mut server = bound.listener.accept().unwrap();
+        server
+            .set_read_timeout(Some(Duration::from_millis(20)))
+            .unwrap();
+        let started = std::time::Instant::now();
+
+        let error = server.read(&mut [0_u8; 1]).unwrap_err();
+
+        assert!(matches!(
+            error.kind(),
+            std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+        ));
+        assert!(started.elapsed() >= Duration::from_millis(10));
+        bound.listener.cleanup_endpoint().unwrap();
+        drop(bound.listener);
         std::fs::remove_file(endpoint.path.with_extension("lock")).unwrap();
     }
 
