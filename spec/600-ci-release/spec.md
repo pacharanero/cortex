@@ -129,7 +129,7 @@ Maintainers merging PRs, and the downstream consumers who install the crate or t
 | --- | --- | --- |
 | NFR-1 | No secrets are committed to the repo; crates.io publishing uses a secret stored in GitHub. | Review-enforced |
 | NFR-2 | Action SHAs are pinned; Dependabot opens PRs to bump them (with the version comment updated). | Review-enforced |
-| NFR-3 | The main code-quality job remains Linux-based; release previews add native Linux, macOS arm64 and Windows x86_64 package/test jobs. Windows/macOS hardware verification remains manual and outstanding. | Implemented, remote run pending |
+| NFR-3 | The main code-quality job remains Linux-based; release previews add native Linux, macOS arm64 and Windows x86_64 package/test jobs. Windows/macOS hardware verification remains manual and outstanding. | Implemented; remote matrix passed in run `33317851191` |
 | NFR-4 | The local gate documents its subset of CI; the remaining remote-only platform (Windows) cross-checks are not implied by local green. | Review-enforced |
 | NFR-5 | Release actions are externally visible and require explicit approval before first use (AGENTS.md). | Process-enforced |
 
@@ -151,6 +151,7 @@ Maintainers merging PRs, and the downstream consumers who install the crate or t
 - [x] `cargo-dist` produces distributable Linux x86_64 `cortex` and `cortex-mcp` binaries on the release tag.
 - [x] The release tag produces a GitHub Release with the exact git-cliff-generated changelog section.
 - [x] The release publishes `SHA256SUMS`, installer fixtures prove that a mismatched artifact is refused, and the exact public installer passed the CLI-004.10 clean Ubuntu 22.04 smoke against v0.2.0.
+- [x] Release-preview run `33317851191` passed native Linux, macOS arm64 and Windows x86_64 host tests, package builds and package-specific verification without hardware.
 
 ## Non-Goals
 
