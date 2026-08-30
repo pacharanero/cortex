@@ -330,7 +330,7 @@ async fn a_long_lived_mcp_restarts_after_auto_managed_idle_exit() -> anyhow::Res
     let endpoint = runtime_dir.join("cortex.sock");
     write_fake_sibling(&script)?;
 
-    let transport = mcp_transport(&runtime_dir, &script, &marker, 1, 500)?;
+    let transport = mcp_transport(&runtime_dir, &script, &marker, 1, 1_000)?;
     let client = ().serve(transport).await?;
     let first = client
         .call_tool(CallToolRequestParams::new("get_status"))
@@ -338,7 +338,7 @@ async fn a_long_lived_mcp_restarts_after_auto_managed_idle_exit() -> anyhow::Res
     assert_eq!(first.is_error, Some(false));
     // Enter the interval after idle serving stops but before the old owner
     // releases its claim. The next tool must wait for release, then start.
-    tokio::time::sleep(Duration::from_millis(1_100)).await;
+    tokio::time::sleep(Duration::from_millis(1_300)).await;
 
     let second = client
         .call_tool(CallToolRequestParams::new("get_status"))
