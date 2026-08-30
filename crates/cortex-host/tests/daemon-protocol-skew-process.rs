@@ -24,7 +24,7 @@ const SOCKET_ENV: &str = "CORTEX_PROTOCOL_SKEW_SOCKET";
 
 fn endpoint(label: &str) -> LocalEndpoint {
     LocalEndpoint::at(std::env::temp_dir().join(format!(
-        "cortex-protocol-skew-{label}-{}-{}.sock",
+        "cx-skew-{label}-{}-{}",
         std::process::id(),
         DAEMON_PROTOCOL_VERSION
     )))

@@ -225,11 +225,13 @@ jobs:
           package=( $PACKAGE_GLOB )
           [[ "$(dpkg-deb --field "${package[0]}" Architecture)" = amd64 ]]
           contents="$(dpkg-deb --contents "${package[0]}")"
-          grep -qE '\./usr/bin/cortex-gui$' <<<"$contents"
-          grep -qE '\./usr/bin/cortex$' <<<"$contents"
-          grep -qE '\./usr/lib/udev/rules\.d/70-neural-dsp-cortex\.rules$' <<<"$contents"
+          grep -qE '[[:space:]]\.?/?usr/bin/cortex-gui$' <<<"$contents"
+          grep -qE '[[:space:]]\.?/?usr/bin/cortex$' <<<"$contents"
+          grep -qE '[[:space:]]\.?/?usr/lib/udev/rules\.d/70-neural-dsp-cortex\.rules$' <<<"$contents"
           control_dir="$RUNNER_TEMP/cortex-deb-control"
+          mkdir -p "$control_dir"
           dpkg-deb --control "${package[0]}" "$control_dir"
+          test -f "$control_dir/postinst"
           grep -q 'udevadm control --reload-rules' "$control_dir/postinst"
           grep -q 'udevadm trigger --action=add --subsystem-match=hidraw' "$control_dir/postinst"
       - name: Verify macOS package contents and signature

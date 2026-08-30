@@ -24,18 +24,21 @@ use interprocess::os::windows::named_pipe::{
 use interprocess::os::windows::security_descriptor::SecurityDescriptor;
 use widestring::U16CString;
 use windows_sys::Win32::Foundation::{
-    ERROR_ACCESS_DENIED, ERROR_FILE_NOT_FOUND, ERROR_PIPE_BUSY, GENERIC_READ, GENERIC_WRITE,
-    INVALID_HANDLE_VALUE,
+    ERROR_ACCESS_DENIED, ERROR_FILE_NOT_FOUND, ERROR_IO_PENDING, ERROR_OPERATION_ABORTED,
+    ERROR_PIPE_BUSY, ERROR_PIPE_NOT_CONNECTED, GENERIC_READ, GENERIC_WRITE, HANDLE,
+    INVALID_HANDLE_VALUE, WAIT_TIMEOUT,
 };
 use windows_sys::Win32::Security::{
     GetLengthSid, GetTokenInformation, IsValidSid, TOKEN_QUERY, TOKEN_USER, TokenUser,
 };
 use windows_sys::Win32::Storage::FileSystem::{
-    CreateFileW, FILE_FLAG_OVERLAPPED, OPEN_EXISTING, SECURITY_ANONYMOUS, SECURITY_SQOS_PRESENT,
+    CreateFileW, FILE_FLAG_OVERLAPPED, OPEN_EXISTING, ReadFile, SECURITY_ANONYMOUS,
+    SECURITY_SQOS_PRESENT, WriteFile,
 };
-use windows_sys::Win32::System::Pipes::PeekNamedPipe;
+use windows_sys::Win32::System::IO::{CancelIoEx, GetOverlappedResultEx, OVERLAPPED};
 use windows_sys::Win32::System::Threading::{
-    GetCurrentProcess, OpenProcess, OpenProcessToken, PROCESS_QUERY_LIMITED_INFORMATION,
+    CreateEventW, GetCurrentProcess, INFINITE, OpenProcess, OpenProcessToken,
+    PROCESS_QUERY_LIMITED_INFORMATION,
 };
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(1);
@@ -373,6 +376,7 @@ struct Timeouts {
 pub struct LocalConnection {
     inner: Arc<SharedPipe>,
     timeouts: Arc<Mutex<Timeouts>>,
+    write_timed_out: Arc<Mutex<bool>>,
 }
 
 struct SharedPipe(BytePipe);
@@ -382,6 +386,7 @@ impl LocalConnection {
         Self {
             inner: Arc::new(SharedPipe(inner)),
             timeouts: Arc::new(Mutex::new(Timeouts::default())),
+            write_timed_out: Arc::new(Mutex::new(false)),
         }
     }
 
@@ -462,6 +467,7 @@ impl LocalConnection {
         Ok(Self {
             inner: Arc::clone(&self.inner),
             timeouts: Arc::clone(&self.timeouts),
+            write_timed_out: Arc::clone(&self.write_timed_out),
         })
     }
 
@@ -469,7 +475,7 @@ impl LocalConnection {
     ///
     /// # Errors
     ///
-    /// Returns an invalid-input error for a zero timeout or the named-pipe mode error.
+    /// Returns an invalid-input error for a zero timeout.
     pub fn set_read_timeout(&self, timeout: Option<Duration>) -> std::io::Result<()> {
         validate_timeout(timeout)?;
         let mut timeouts = self
@@ -477,16 +483,14 @@ impl LocalConnection {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         timeouts.read = timeout;
-        self.inner
-            .0
-            .set_nonblocking(timeouts.read.is_some() || timeouts.write.is_some())
+        Ok(())
     }
 
     /// Set the write timeout.
     ///
     /// # Errors
     ///
-    /// Returns an invalid-input error for a zero timeout or the named-pipe mode error.
+    /// Returns an invalid-input error for a zero timeout.
     pub fn set_write_timeout(&self, timeout: Option<Duration>) -> std::io::Result<()> {
         validate_timeout(timeout)?;
         let mut timeouts = self
@@ -494,9 +498,7 @@ impl LocalConnection {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         timeouts.write = timeout;
-        self.inner
-            .0
-            .set_nonblocking(timeouts.read.is_some() || timeouts.write.is_some())
+        Ok(())
     }
 
     /// Connected pair used by transport-independent protocol tests.
@@ -545,83 +547,189 @@ fn validate_timeout(timeout: Option<Duration>) -> std::io::Result<()> {
     Ok(())
 }
 
-fn retry_nonblocking<T>(
-    timeout: Option<Duration>,
-    mut operation: impl FnMut() -> std::io::Result<T>,
-    mut retry_success: impl FnMut(&T) -> std::io::Result<bool>,
-) -> std::io::Result<T> {
-    let deadline = timeout.map(|timeout| Instant::now() + timeout);
-    loop {
-        match operation() {
-            Ok(value) if retry_success(&value)? => {
-                if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
-                    return Err(std::io::Error::new(
-                        std::io::ErrorKind::TimedOut,
-                        "local named-pipe operation timed out",
-                    ));
-                }
-                std::thread::sleep(RETRY_POLL);
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
-                    return Err(std::io::Error::new(
-                        std::io::ErrorKind::TimedOut,
-                        "local named-pipe operation timed out",
-                    ));
-                }
-                std::thread::sleep(RETRY_POLL);
-            }
-            result => return result,
+fn timed_overlapped_io(
+    handle: HANDLE,
+    timeout: Duration,
+    start: impl FnOnce(*mut OVERLAPPED) -> i32,
+) -> std::io::Result<usize> {
+    // SAFETY: null attributes and name are permitted; the returned event is
+    // immediately wrapped for RAII closure.
+    let event = unsafe { CreateEventW(ptr::null(), 1, 0, ptr::null()) };
+    if event.is_null() {
+        return Err(std::io::Error::last_os_error());
+    }
+    // SAFETY: CreateEventW returned this newly owned event handle.
+    let event = unsafe { OwnedHandle::from_raw_handle(event) };
+    let mut overlapped = OVERLAPPED {
+        hEvent: event.as_raw_handle(),
+        ..OVERLAPPED::default()
+    };
+
+    if start(&raw mut overlapped) == 0 {
+        let error = std::io::Error::last_os_error();
+        if error
+            .raw_os_error()
+            .and_then(|code| u32::try_from(code).ok())
+            != Some(ERROR_IO_PENDING)
+        {
+            return Err(error);
         }
+    }
+
+    let wait_ms = u32::try_from(
+        timeout
+            .as_nanos()
+            .div_ceil(1_000_000)
+            .clamp(1, u128::from(INFINITE.saturating_sub(1))),
+    )
+    .expect("the timeout was clamped to a finite DWORD");
+    let mut transferred = 0_u32;
+    // SAFETY: the pipe, event, OVERLAPPED and transfer count remain live for
+    // the full wait, and this thread does not reuse the OVERLAPPED concurrently.
+    if unsafe {
+        GetOverlappedResultEx(
+            handle,
+            &raw const overlapped,
+            &raw mut transferred,
+            wait_ms,
+            0,
+        )
+    } != 0
+    {
+        return Ok(usize::try_from(transferred).unwrap_or(usize::MAX));
+    }
+
+    let error = std::io::Error::last_os_error();
+    if error
+        .raw_os_error()
+        .and_then(|code| u32::try_from(code).ok())
+        != Some(WAIT_TIMEOUT)
+    {
+        return Err(error);
+    }
+
+    // SAFETY: cancellation names this operation's live OVERLAPPED. The second
+    // wait drains completion before the caller's buffer can be released.
+    let cancelled = unsafe { CancelIoEx(handle, &raw const overlapped) } != 0;
+    // SAFETY: the same live operation is awaited to completion without a bound
+    // after cancellation, as required before its borrowed buffer can be reused.
+    if unsafe {
+        GetOverlappedResultEx(
+            handle,
+            &raw const overlapped,
+            &raw mut transferred,
+            INFINITE,
+            0,
+        )
+    } != 0
+    {
+        // Completion won the cancellation race; report its real result so a
+        // caller never retries an operation that actually reached the peer.
+        return Ok(usize::try_from(transferred).unwrap_or(usize::MAX));
+    }
+    let cancellation_error = std::io::Error::last_os_error();
+    let cancellation_code = cancellation_error
+        .raw_os_error()
+        .and_then(|code| u32::try_from(code).ok());
+    if cancelled && cancellation_code == Some(ERROR_OPERATION_ABORTED) {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::TimedOut,
+            "local named-pipe operation timed out",
+        ))
+    } else {
+        Err(cancellation_error)
     }
 }
 
 impl Read for LocalConnection {
     fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
         let inner = &self.inner.0;
-        let buffer_is_empty = buffer.is_empty();
-        retry_nonblocking(
-            self.read_timeout(),
-            || (&mut &*inner).read(buffer),
-            |bytes_read| {
-                if *bytes_read != 0 || buffer_is_empty {
-                    return Ok(false);
-                }
-                // SAFETY: `inner` owns a live named-pipe handle for this call;
-                // every optional output pointer is null as permitted by the API.
-                let connected = unsafe {
-                    PeekNamedPipe(
-                        inner.as_raw_handle(),
-                        ptr::null_mut(),
-                        0,
-                        ptr::null_mut(),
-                        ptr::null_mut(),
-                        ptr::null_mut(),
-                    )
-                } != 0;
-                if connected {
-                    Ok(true)
-                } else {
-                    let error = std::io::Error::last_os_error();
-                    if error.kind() == std::io::ErrorKind::BrokenPipe {
-                        Ok(false)
-                    } else {
-                        Err(error)
-                    }
-                }
-            },
-        )
+        let Some(timeout) = self.read_timeout() else {
+            return (&mut &*inner).read(buffer);
+        };
+        if buffer.is_empty() {
+            return Ok(0);
+        }
+        let length = u32::try_from(buffer.len()).unwrap_or(u32::MAX);
+        let result = timed_overlapped_io(inner.as_raw_handle(), timeout, |overlapped| {
+            // SAFETY: the buffer is writable for `length` bytes and remains
+            // borrowed until timed_overlapped_io completes or drains cancellation.
+            unsafe {
+                ReadFile(
+                    inner.as_raw_handle(),
+                    buffer.as_mut_ptr(),
+                    length,
+                    ptr::null_mut(),
+                    overlapped,
+                )
+            }
+        });
+        match result {
+            Err(error)
+                if error.kind() == std::io::ErrorKind::BrokenPipe
+                    || error
+                        .raw_os_error()
+                        .and_then(|code| u32::try_from(code).ok())
+                        == Some(ERROR_PIPE_NOT_CONNECTED) =>
+            {
+                Ok(0)
+            }
+            result => result,
+        }
     }
 }
 
 impl Write for LocalConnection {
     fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
         let inner = &self.inner.0;
-        retry_nonblocking(
-            self.write_timeout(),
-            || (&mut &*inner).write(buffer),
-            |bytes_written| Ok(*bytes_written == 0 && !buffer.is_empty()),
-        )
+        let mut write_timed_out = self
+            .write_timed_out
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if *write_timed_out {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                "local named-pipe connection is unusable after a write timeout",
+            ));
+        }
+        let Some(timeout) = self.write_timeout() else {
+            return (&mut &*inner).write(buffer);
+        };
+        if buffer.is_empty() {
+            return Ok(0);
+        }
+        let length = u32::try_from(buffer.len()).unwrap_or(u32::MAX);
+        let result = timed_overlapped_io(inner.as_raw_handle(), timeout, |overlapped| {
+            // SAFETY: the buffer is readable for `length` bytes and remains
+            // borrowed until timed_overlapped_io completes or drains cancellation.
+            unsafe {
+                WriteFile(
+                    inner.as_raw_handle(),
+                    buffer.as_ptr(),
+                    length,
+                    ptr::null_mut(),
+                    overlapped,
+                )
+            }
+        });
+        if result.is_ok()
+            || result
+                .as_ref()
+                .is_err_and(|error| error.kind() == std::io::ErrorKind::TimedOut)
+        {
+            // Direct WriteFile calls bypass interprocess's send wrapper. Keep
+            // its linger-on-drop guarantee for successful or partial writes.
+            inner.mark_dirty();
+        }
+        if result
+            .as_ref()
+            .is_err_and(|error| error.kind() == std::io::ErrorKind::TimedOut)
+        {
+            // Cancellation can leave an unknown prefix in the peer's stream,
+            // so retrying on this connection could duplicate protocol bytes.
+            *write_timed_out = true;
+        }
+        result
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
@@ -663,9 +771,8 @@ mod tests {
         )));
         let started = Instant::now();
 
-        let error = match LocalConnection::connect(&endpoint) {
-            Ok(_) => panic!("a missing endpoint unexpectedly accepted a connection"),
-            Err(error) => error,
+        let Err(error) = LocalConnection::connect(&endpoint) else {
+            panic!("a missing endpoint unexpectedly accepted a connection");
         };
 
         assert_eq!(error.kind(), std::io::ErrorKind::NotFound);
@@ -719,5 +826,15 @@ mod tests {
         drop(server);
 
         assert_eq!(client.read(&mut [0_u8; 1]).unwrap(), 0);
+    }
+
+    #[test]
+    fn a_write_timeout_poisons_further_writes() {
+        let (mut client, _server) = LocalConnection::pair().unwrap();
+        *client.write_timed_out.lock().unwrap() = true;
+
+        let error = client.write(b"retry").unwrap_err();
+
+        assert_eq!(error.kind(), std::io::ErrorKind::BrokenPipe);
     }
 }

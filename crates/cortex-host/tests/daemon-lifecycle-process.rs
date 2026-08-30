@@ -29,10 +29,9 @@ fn endpoint(label: &str) -> LocalEndpoint {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    LocalEndpoint::at(std::env::temp_dir().join(format!(
-        "cortex-lifecycle-{label}-{}-{unique}.sock",
-        std::process::id()
-    )))
+    LocalEndpoint::at(
+        std::env::temp_dir().join(format!("cx-{label}-{}-{unique:x}", std::process::id())),
+    )
 }
 
 fn spawn_daemon(label: &str, lifecycle: DaemonLifecycle) -> (Child, LocalEndpoint) {
