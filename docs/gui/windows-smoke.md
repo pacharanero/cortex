@@ -22,7 +22,7 @@ Use the Windows x86_64 artifact from the native release-preview job or a publish
 For a release package, verify the checksum in PowerShell before accepting the unsigned SmartScreen prompt:
 
 ```powershell
-$Package = Get-Item .\Cortex_*_x64-setup.exe
+$Package = Get-Item .\Cortex_*_x64-setup-preview.exe
 if (@($Package).Count -ne 1) { throw 'Expected exactly one Cortex installer' }
 
 $Pattern = [regex]::Escape($Package.Name) + '$'
@@ -234,10 +234,10 @@ Confirm communication and claim pipes exist only while expected. Do not publish 
 
 A real upgrade requires two different package versions. A same-version reinstall exercises only NSIS maintenance behavior.
 
-1. Leave the GUI and one product session running.
-2. Run the newer installer interactively.
-3. Confirm it closes the GUI, stops both product sessions and replaces the old sibling helper. It must abort rather than continue if the old helper cannot be removed.
-4. Run `& $Cli --version` and confirm it reports the newer package version.
+1. Leave the GUI and one product session running, then run the newer installer interactively.
+2. Confirm it closes only the GUI from that installation and aborts because the session still locks the sibling helper. It must not stop or kill the session implicitly.
+3. Wait for device operations to finish, stop both product sessions manually, and rerun the newer installer.
+4. Confirm it replaces the old sibling helper, then run `& $Cli --version` and confirm it reports the newer package version.
 5. Confirm neither old daemon survives with an incompatible protocol version, then repeat one held-session read.
 
 After retaining the smoke result, uninstall:

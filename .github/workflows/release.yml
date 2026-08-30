@@ -215,6 +215,114 @@ jobs:
             echo "Expected exactly one non-empty package matching $PACKAGE_GLOB" >&2
             exit 1
           fi
+      - name: Verify Debian package contents
+        if: runner.os == 'Linux'
+        shell: bash
+        env:
+          PACKAGE_GLOB: ${{ matrix.package }}
+        run: |
+          set -euo pipefail
+          package=( $PACKAGE_GLOB )
+          [[ "$(dpkg-deb --field "${package[0]}" Architecture)" = amd64 ]]
+          contents="$(dpkg-deb --contents "${package[0]}")"
+          grep -qE '\./usr/bin/cortex-gui$' <<<"$contents"
+          grep -qE '\./usr/bin/cortex$' <<<"$contents"
+          grep -qE '\./usr/lib/udev/rules\.d/70-neural-dsp-cortex\.rules$' <<<"$contents"
+          control_dir="$RUNNER_TEMP/cortex-deb-control"
+          dpkg-deb --control "${package[0]}" "$control_dir"
+          grep -q 'udevadm control --reload-rules' "$control_dir/postinst"
+          grep -q 'udevadm trigger --action=add --subsystem-match=hidraw' "$control_dir/postinst"
+      - name: Verify macOS package contents and signature
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          PACKAGE_GLOB: ${{ matrix.package }}
+        run: |
+          set -euo pipefail
+          package=( $PACKAGE_GLOB )
+          mount_point="$RUNNER_TEMP/cortex-dmg"
+          mkdir -p "$mount_point"
+          hdiutil attach "${package[0]}" -readonly -nobrowse -mountpoint "$mount_point"
+          trap 'hdiutil detach "$mount_point"' EXIT
+          shopt -s nullglob
+          apps=( "$mount_point"/*.app )
+          [[ "${#apps[@]}" -eq 1 ]]
+          test -x "${apps[0]}/Contents/MacOS/cortex-gui"
+          test -x "${apps[0]}/Contents/MacOS/cortex"
+          test -f "${apps[0]}/Contents/Resources/NOTICE"
+          file "${apps[0]}/Contents/MacOS/cortex-gui" | grep -q 'arm64'
+          file "${apps[0]}/Contents/MacOS/cortex" | grep -q 'arm64'
+          codesign --verify --deep --strict "${apps[0]}"
+      - name: Verify Windows install and uninstall
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          PACKAGE_GLOB: ${{ matrix.package }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $packages = @(Get-ChildItem $env:PACKAGE_GLOB)
+          if ($packages.Count -ne 1) { throw "Expected one NSIS package" }
+          $install = Start-Process $packages[0].FullName -ArgumentList '/S' -Wait -PassThru
+          if ($install.ExitCode -ne 0) { throw "NSIS install failed: $($install.ExitCode)" }
+
+          $installDir = Join-Path $env:LOCALAPPDATA 'Cortex'
+          $cli = Join-Path $installDir 'cortex.exe'
+          $gui = Join-Path $installDir 'cortex-gui.exe'
+          $uninstaller = Join-Path $installDir 'uninstall.exe'
+          foreach ($path in @($cli, $gui, $uninstaller, (Join-Path $installDir 'NOTICE'))) {
+            if (-not (Test-Path $path)) { throw "Missing installed payload: $path" }
+          }
+          function Get-PeMachine([string] $path) {
+            $stream = [IO.File]::OpenRead($path)
+            try {
+              $reader = [IO.BinaryReader]::new($stream)
+              $stream.Position = 0x3c
+              $peOffset = $reader.ReadInt32()
+              $stream.Position = $peOffset + 4
+              return $reader.ReadUInt16()
+            } finally {
+              $stream.Dispose()
+            }
+          }
+          foreach ($path in @($cli, $gui)) {
+            if ((Get-PeMachine $path) -ne 0x8664) { throw "Payload is not Windows x86_64: $path" }
+          }
+          & $cli --version
+          if ($LASTEXITCODE -ne 0) { throw "Packaged cortex helper did not run" }
+
+          $lock = [IO.File]::Open($cli, 'Open', 'Read', 'Read')
+          try {
+            $blockedUpgrade = Start-Process $packages[0].FullName -ArgumentList '/S' -Wait -PassThru
+            if ($blockedUpgrade.ExitCode -eq 0) {
+              throw "NSIS upgrade did not fail closed while the helper was locked"
+            }
+          } finally {
+            $lock.Dispose()
+          }
+
+          $guiProcess = Start-Process $gui -PassThru
+          Start-Sleep -Seconds 2
+          $guiProcess.Refresh()
+          if ($guiProcess.HasExited) { throw "Packaged GUI exited during launch smoke" }
+          $upgrade = Start-Process $packages[0].FullName -ArgumentList '/S' -Wait -PassThru
+          if ($upgrade.ExitCode -ne 0) { throw "NSIS upgrade failed: $($upgrade.ExitCode)" }
+          $guiProcess.Refresh()
+          if (-not $guiProcess.HasExited) { throw "Upgrade did not close the installed GUI" }
+          foreach ($path in @($cli, $gui, $uninstaller)) {
+            if (-not (Test-Path $path)) { throw "Upgrade lost installed payload: $path" }
+          }
+
+          $guiProcess = Start-Process $gui -PassThru
+          Start-Sleep -Seconds 2
+          $guiProcess.Refresh()
+          if ($guiProcess.HasExited) { throw "Upgraded GUI exited during launch smoke" }
+          $uninstall = Start-Process $uninstaller -ArgumentList '/S' -Wait -PassThru
+          if ($uninstall.ExitCode -ne 0) { throw "NSIS uninstall failed: $($uninstall.ExitCode)" }
+          $guiProcess.Refresh()
+          if (-not $guiProcess.HasExited) { throw "Uninstall did not close the installed GUI" }
+          foreach ($path in @($cli, $gui, $uninstaller)) {
+            if (Test-Path $path) { throw "Uninstall retained payload: $path" }
+          }
       - name: Upload native GUI preview
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -280,7 +388,11 @@ jobs:
 
           asset_dir=release/assets
           mkdir -p "$asset_dir"
-          cp "${archives[@]}" "${gui_packages[@]}" "$asset_dir/"
+          cp "${archives[@]}" "$asset_dir/"
+          for package in "${gui_packages[@]}"; do
+            name="${package##*/}"
+            cp "$package" "$asset_dir/${name%.*}-preview.${name##*.}"
+          done
           (
             cd "$asset_dir"
             sha256sum * > SHA256SUMS
@@ -303,6 +415,14 @@ jobs:
             gh api --method POST "repos/${GITHUB_REPOSITORY}/releases/generate-notes" \
               -f tag_name="$RELEASE_TAG" --jq .body > "$notes_file"
           fi
+          composed_notes="$(mktemp)"
+          {
+            printf '> [!WARNING]\n'
+            printf '> Native GUI assets ending in `-preview` are provisional tester previews. '
+            printf 'Linux is the only hardware-verified host; Windows and macOS device paths remain unverified.\n\n'
+            cat "$notes_file"
+          } > "$composed_notes"
+          notes_file="$composed_notes"
 
           existing_release="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/releases?per_page=100" \
             --jq '.[] | select(.tag_name == "'"$RELEASE_TAG"'") | [.id, .draft] | @tsv')"

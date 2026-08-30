@@ -384,6 +384,12 @@ fn start_auto_managed_session(
     if device_kind == cortex_rs::DeviceKind::NanoCortex {
         command.args(["--device", "nano"]);
     }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+
+        command.creation_flags(windows_sys::Win32::System::Threading::CREATE_NO_WINDOW);
+    }
     let mut child = command
         .stdout(Stdio::null())
         .stderr(Stdio::piped())

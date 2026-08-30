@@ -6,6 +6,8 @@
 //! @see spec/200-cli/spec.md [FR-18]
 //! @see spec/200-cli/design.md [DES-CLI]
 
+#![allow(unsafe_code)]
+
 use std::fmt;
 use std::fs::File;
 use std::io::{Read, Write};
@@ -30,23 +32,11 @@ impl LocalEndpoint {
     /// The current user's daemon endpoint for one Cortex product.
     #[must_use]
     pub fn for_device(device: cortex_rs::DeviceKind) -> Self {
-        let socket_name = match device {
-            cortex_rs::DeviceKind::QuadCortex => "cortex.sock",
-            cortex_rs::DeviceKind::NanoCortex => "cortex-nano.sock",
-        };
+        let socket_name = runtime_socket_name(device);
         let path = if let Some(dir) = std::env::var_os("XDG_RUNTIME_DIR") {
             PathBuf::from(dir).join(socket_name)
         } else {
-            let uid = std::env::var("UID").unwrap_or_else(|_| {
-                let identity =
-                    std::env::var_os("HOME").map_or_else(std::env::temp_dir, PathBuf::from);
-                format!("h{:016x}", stable_hash(&identity.to_string_lossy()))
-            });
-            let suffix = match device {
-                cortex_rs::DeviceKind::QuadCortex => "",
-                cortex_rs::DeviceKind::NanoCortex => "-nano",
-            };
-            std::env::temp_dir().join(format!("cortex-{uid}{suffix}.sock"))
+            fallback_path(device, &std::env::temp_dir())
         };
         Self { path }
     }
@@ -92,10 +82,26 @@ impl LocalEndpoint {
     }
 }
 
-fn stable_hash(value: &str) -> u64 {
-    value.bytes().fold(0xcbf2_9ce4_8422_2325, |hash, byte| {
-        (hash ^ u64::from(byte)).wrapping_mul(0x0000_0100_0000_01b3)
-    })
+fn runtime_socket_name(device: cortex_rs::DeviceKind) -> &'static str {
+    match device {
+        cortex_rs::DeviceKind::QuadCortex => "cortex.sock",
+        cortex_rs::DeviceKind::NanoCortex => "cortex-nano.sock",
+    }
+}
+
+fn fallback_path(device: cortex_rs::DeviceKind, temp_dir: &std::path::Path) -> PathBuf {
+    let suffix = match device {
+        cortex_rs::DeviceKind::QuadCortex => "",
+        cortex_rs::DeviceKind::NanoCortex => "-nano",
+    };
+    let uid = effective_uid();
+    temp_dir.join(format!("cortex-{uid}{suffix}.sock"))
+}
+
+fn effective_uid() -> libc::uid_t {
+    // SAFETY: geteuid has no preconditions and returns the process's effective
+    // user identity without consulting mutable environment variables.
+    unsafe { libc::geteuid() }
 }
 
 impl fmt::Display for LocalEndpoint {
@@ -319,9 +325,29 @@ mod tests {
 
         assert_eq!(quad, LocalEndpoint::daemon());
         assert_ne!(quad, nano);
-        assert!(quad.to_string().ends_with("cortex.sock"));
-        assert!(nano.to_string().ends_with("cortex-nano.sock"));
-        assert!(nano.log_path().ends_with("cortex-nano.log"));
+        assert_eq!(
+            runtime_socket_name(cortex_rs::DeviceKind::QuadCortex),
+            "cortex.sock"
+        );
+        assert_eq!(
+            runtime_socket_name(cortex_rs::DeviceKind::NanoCortex),
+            "cortex-nano.sock"
+        );
+    }
+
+    #[test]
+    fn fallback_endpoints_use_the_effective_uid() {
+        let root = PathBuf::from("/tmp/fictional-runtime");
+        let uid = effective_uid();
+
+        assert_eq!(
+            fallback_path(cortex_rs::DeviceKind::QuadCortex, &root),
+            root.join(format!("cortex-{uid}.sock"))
+        );
+        assert_eq!(
+            fallback_path(cortex_rs::DeviceKind::NanoCortex, &root),
+            root.join(format!("cortex-{uid}-nano.sock"))
+        );
     }
 
     #[test]

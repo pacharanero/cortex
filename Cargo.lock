@@ -518,6 +518,7 @@ dependencies = [
  "tauri",
  "tauri-build",
  "ts-rs",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -528,6 +529,7 @@ dependencies = [
  "cortex-rs",
  "fs4",
  "interprocess",
+ "libc",
  "serde",
  "serde_json",
  "ts-rs",

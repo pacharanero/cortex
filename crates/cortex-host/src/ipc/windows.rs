@@ -431,11 +431,15 @@ impl LocalConnection {
             }
 
             let error = std::io::Error::last_os_error();
-            let retryable = error
+            let error_code = error
                 .raw_os_error()
-                .and_then(|code| u32::try_from(code).ok())
+                .and_then(|code| u32::try_from(code).ok());
+            let retryable = error_code
                 .is_some_and(|code| matches!(code, ERROR_FILE_NOT_FOUND | ERROR_PIPE_BUSY));
             if !retryable {
+                return Err(error);
+            }
+            if error_code == Some(ERROR_FILE_NOT_FOUND) && !endpoint.has_active_claim() {
                 return Err(error);
             }
             if Instant::now() >= deadline {
@@ -649,6 +653,23 @@ mod tests {
 
         assert!(!sid.is_empty());
         assert_eq!(sid, process_sid(std::process::id()).unwrap());
+    }
+
+    #[test]
+    fn missing_endpoint_does_not_wait_for_a_startup_that_was_never_claimed() {
+        let endpoint = LocalEndpoint::at(PathBuf::from(format!(
+            r"\\.\pipe\cortex-missing-{}",
+            std::process::id()
+        )));
+        let started = Instant::now();
+
+        let error = match LocalConnection::connect(&endpoint) {
+            Ok(_) => panic!("a missing endpoint unexpectedly accepted a connection"),
+            Err(error) => error,
+        };
+
+        assert_eq!(error.kind(), std::io::ErrorKind::NotFound);
+        assert!(started.elapsed() < CONNECT_TIMEOUT / 2);
     }
 
     #[test]

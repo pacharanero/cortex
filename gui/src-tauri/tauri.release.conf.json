@@ -34,6 +34,7 @@
         "files": {
           "/usr/lib/udev/rules.d/70-neural-dsp-cortex.rules": "../../70-neural-dsp-cortex.rules"
         },
+        "postInstallScript": "linux/post-install.sh",
         "section": "sound"
       }
     },

@@ -1,37 +1,32 @@
 # SPDX-FileCopyrightText: 2026 Dr Marcus Baw
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
-!macro StopCortexSessions
+!macro PrepareCortexUpgrade
   # The pre-install hook runs before Tauri's standard app shutdown. Close the
   # GUI first so its polling cannot restart a daemon while sidecars are removed.
-  nsExec::ExecToLog '"$SYSDIR\taskkill.exe" /F /T /IM cortex-gui.exe'
+  # Match the full installed path so another user's process or unrelated
+  # same-named software is never terminated.
+  nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoLogo -NoProfile -NonInteractive -Command "& { $$target = [IO.Path]::GetFullPath($$args[0]); function Find-CortexGui { @(Get-Process -Name cortex-gui -ErrorAction SilentlyContinue | Where-Object { try { [IO.Path]::GetFullPath($$_.Path) -eq $$target } catch { $$false } }) }; Find-CortexGui | Stop-Process -Force -ErrorAction SilentlyContinue; Start-Sleep -Milliseconds 250; if (@(Find-CortexGui).Count -ne 0) { exit 1 } }" "$INSTDIR\cortex-gui.exe"'
   Pop $0
-  IfFileExists "$INSTDIR\cortex.exe" 0 cortex_force_stop
-  nsExec::ExecToLog '"$INSTDIR\cortex.exe" session stop --device quad'
-  Pop $0
-  nsExec::ExecToLog '"$INSTDIR\cortex.exe" session stop --device nano'
-  Pop $0
-  # The daemon force-exits after a three-second shutdown grace period.
-  Sleep 4000
-  cortex_force_stop:
-  nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoLogo -NoProfile -NonInteractive -Command "& { Get-Process -Name cortex,cortex-gui -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue; Start-Sleep -Milliseconds 250; if (Get-Process -Name cortex,cortex-gui -ErrorAction SilentlyContinue) { exit 1 } }"'
-  Pop $0
-  StrCmp $0 "0" cortex_processes_stopped
-  MessageBox MB_OK|MB_ICONSTOP "Cortex could not close its running processes. Close them manually, then run the installer again."
+  StrCmp $0 "0" cortex_gui_stopped
+  MessageBox MB_OK|MB_ICONSTOP "Cortex could not close its installed GUI. Close it manually, then run the installer again." /SD IDOK
   Abort
-  cortex_processes_stopped:
+  cortex_gui_stopped:
   # Delete explicitly so an upgrade cannot retain an unversioned stale sidecar.
+  # Never ask a daemon to stop implicitly: its explicit stop watchdog may end
+  # an in-flight operation. Any daemon or direct command keeps this file locked,
+  # so fail closed and let the operator stop it at a safe point.
   Delete "$INSTDIR\cortex.exe"
-  IfFileExists "$INSTDIR\cortex.exe" 0 cortex_sessions_stopped
-  MessageBox MB_OK|MB_ICONSTOP "Cortex could not remove its old session helper. Close it manually, then run the installer again."
+  IfFileExists "$INSTDIR\cortex.exe" 0 cortex_helper_removed
+  MessageBox MB_OK|MB_ICONSTOP "Cortex could not remove its old session helper. Wait for direct operations to finish, stop both Cortex sessions manually, then run the installer again." /SD IDOK
   Abort
-  cortex_sessions_stopped:
+  cortex_helper_removed:
 !macroend
 
 !macro NSIS_HOOK_PREINSTALL
-  !insertmacro StopCortexSessions
+  !insertmacro PrepareCortexUpgrade
 !macroend
 
 !macro NSIS_HOOK_PREUNINSTALL
-  !insertmacro StopCortexSessions
+  !insertmacro PrepareCortexUpgrade
 !macroend
