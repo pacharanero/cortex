@@ -423,7 +423,7 @@ mod tests {
 
     #[test]
     fn accepted_connections_wait_for_their_read_timeout() {
-        let endpoint = test_endpoint("accepted-blocking");
+        let endpoint = test_endpoint("io");
         let bound = LocalListener::bind(&endpoint).unwrap();
         bound.listener.set_nonblocking(true).unwrap();
         let _client = LocalConnection::connect(&endpoint).unwrap();
