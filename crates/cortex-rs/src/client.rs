@@ -7703,7 +7703,7 @@ mod tests {
             })
             .collect::<Vec<_>>();
         assert_eq!(messages.len(), 600);
-        for sequence in messages.chunks_exact(3) {
+        for sequence in messages.as_chunks::<3>().0 {
             assert_eq!(sequence[0].message_type, MessageType::Grid as u16);
             assert_eq!(sequence[1].message_type, MessageType::Scene as u16);
             assert_eq!(sequence[2].message_type, MessageType::Grid as u16);
