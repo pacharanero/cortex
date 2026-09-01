@@ -971,7 +971,7 @@ fn decode_fx_param_refresh_response(message: &[u8]) -> Result<Option<Vec<f32>>> 
         ));
     }
     let value_len = body[3] as usize;
-    if value_len % 4 != 0 {
+    if !value_len.is_multiple_of(4) {
         return Err(Error::Decode(
             "Nano FX parameter refresh has a non-float value length".into(),
         ));

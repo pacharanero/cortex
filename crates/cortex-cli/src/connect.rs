@@ -273,10 +273,11 @@ impl Daemon {
             *parsed = None;
             return None;
         };
-        if let Some((generation, revision, catalog)) = parsed.as_ref() {
-            if *generation == payload.generation && *revision == payload.revision {
-                return Some(catalog.clone());
-            }
+        if let Some((generation, revision, catalog)) = parsed.as_ref()
+            && *generation == payload.generation
+            && *revision == payload.revision
+        {
+            return Some(catalog.clone());
         }
         *parsed = None;
         let catalog = cortex_rs::Catalog::parse(&payload.value).ok()?;
@@ -292,10 +293,10 @@ impl Daemon {
     /// A structural sparse push intentionally invalidates the live preset.
     /// Repair it with the side-effect-free read, never by guessing defaults.
     fn repair_live_preset(&self, timeout: Duration) {
-        if self.state.current_preset().is_none() {
-            if let Err(error) = self.client().read_current_preset(timeout) {
-                eprintln!("cortex session: warning: live-grid cache refresh failed ({error})");
-            }
+        if self.state.current_preset().is_none()
+            && let Err(error) = self.client().read_current_preset(timeout)
+        {
+            eprintln!("cortex session: warning: live-grid cache refresh failed ({error})");
         }
     }
 
@@ -412,12 +413,12 @@ impl Daemon {
                 }),
             },
             Request::ActiveScene => {
-                if self.cache_is_usable() {
-                    if let Some(scene) = self.state.active_scene() {
-                        return Response::ok(&scene.value).unwrap_or_else(|e| {
-                            Response::error(format!("serialising active scene: {e}"))
-                        });
-                    }
+                if self.cache_is_usable()
+                    && let Some(scene) = self.state.active_scene()
+                {
+                    return Response::ok(&scene.value).unwrap_or_else(|e| {
+                        Response::error(format!("serialising active scene: {e}"))
+                    });
                 }
                 self.respond(|c| c.active_scene(REQUEST_TIMEOUT))
             }
@@ -452,19 +453,19 @@ impl Daemon {
                 timeout_seconds,
             } => {
                 let catalog = self.catalog();
-                if self.cache_is_usable() {
-                    if let Some(preset) = self.state.current_preset() {
-                        let view = cortex_rs::view::Preset::from_binary(
-                            &preset.value,
-                            catalog.as_ref(),
-                            "(live grid)",
-                            "(live grid)",
-                            with_params,
-                        );
-                        return Response::ok(&view).unwrap_or_else(|e| {
-                            Response::error(format!("serialising live preset: {e}"))
-                        });
-                    }
+                if self.cache_is_usable()
+                    && let Some(preset) = self.state.current_preset()
+                {
+                    let view = cortex_rs::view::Preset::from_binary(
+                        &preset.value,
+                        catalog.as_ref(),
+                        "(live grid)",
+                        "(live grid)",
+                        with_params,
+                    );
+                    return Response::ok(&view).unwrap_or_else(|e| {
+                        Response::error(format!("serialising live preset: {e}"))
+                    });
                 }
                 self.respond(|c| {
                     c.read_current_preset(Duration::from_secs(timeout_seconds))
@@ -518,16 +519,16 @@ impl Daemon {
                 include_empty,
                 timeout_seconds,
             } => {
-                if self.cache_is_usable() {
-                    if let Some(entries) = self.client().cached_presets(&setlist, include_empty) {
-                        let slots: Vec<_> = entries
-                            .iter()
-                            .map(cortex_rs::view::PresetSlot::from)
-                            .collect();
-                        return Response::ok(&slots).unwrap_or_else(|e| {
-                            Response::error(format!("serialising preset listing: {e}"))
-                        });
-                    }
+                if self.cache_is_usable()
+                    && let Some(entries) = self.client().cached_presets(&setlist, include_empty)
+                {
+                    let slots: Vec<_> = entries
+                        .iter()
+                        .map(cortex_rs::view::PresetSlot::from)
+                        .collect();
+                    return Response::ok(&slots).unwrap_or_else(|e| {
+                        Response::error(format!("serialising preset listing: {e}"))
+                    });
                 }
                 self.respond(move |c| {
                     c.list_presets(
@@ -1170,15 +1171,15 @@ impl Daemon {
 /// Explicitly read any state the subscription seed did not provide.
 fn seed_session(session: &Arc<Session>, state: &cortex_rs::DeviceStateCache) {
     let client = QuadCortex::new(session.clone());
-    if state.current_preset().is_none() {
-        if let Err(error) = client.read_current_preset(Duration::from_secs(15)) {
-            eprintln!("cortex session: warning: live-grid cache not seeded ({error})");
-        }
+    if state.current_preset().is_none()
+        && let Err(error) = client.read_current_preset(Duration::from_secs(15))
+    {
+        eprintln!("cortex session: warning: live-grid cache not seeded ({error})");
     }
-    if state.active_scene().is_none() {
-        if let Err(error) = client.active_scene(Duration::from_secs(10)) {
-            eprintln!("cortex session: warning: scene cache not seeded ({error})");
-        }
+    if state.active_scene().is_none()
+        && let Err(error) = client.active_scene(Duration::from_secs(10))
+    {
+        eprintln!("cortex session: warning: scene cache not seeded ({error})");
     }
 }
 

@@ -383,7 +383,7 @@ fn type_name(tag: u16) -> String {
 /// emit.
 fn parse_hex(s: &str) -> Option<Vec<u8>> {
     let clean: String = s.chars().filter(|c| c.is_ascii_hexdigit()).collect();
-    if clean.is_empty() || clean.len() % 2 != 0 {
+    if clean.is_empty() || !clean.len().is_multiple_of(2) {
         return None;
     }
     (0..clean.len())
