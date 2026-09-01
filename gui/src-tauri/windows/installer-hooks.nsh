@@ -8,7 +8,9 @@
   # same-named software is never terminated.
   # Retain each match before stopping it: Path can become unreadable during
   # termination, which must not be mistaken for the process having exited.
-  nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoLogo -NoProfile -NonInteractive -Command "& { $$target = [IO.Path]::GetFullPath($$args[0]); function Find-CortexGui { @(Get-Process -Name cortex-gui -ErrorAction SilentlyContinue | Where-Object { try { [IO.Path]::GetFullPath($$_.Path) -eq $$target } catch { $$false } }) }; $$processes = Find-CortexGui; $$processes | Stop-Process -Force -ErrorAction SilentlyContinue; foreach ($$process in $$processes) { if (-not $$process.WaitForExit(5000)) { exit 1 } }; if (@(Find-CortexGui).Count -ne 0) { exit 1 } }" "$INSTDIR\cortex-gui.exe"'
+  # Retry discovery and fail closed if a same-named process cannot be safely
+  # classified, rather than silently leaving the installed GUI alive.
+  nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoLogo -NoProfile -NonInteractive -Command "& { $$ErrorActionPreference = [System.Management.Automation.ActionPreference]::Stop; $$target = [IO.Path]::GetFullPath($$args[0]); function Find-CortexGui { $$found = @(); foreach ($$process in @(Get-Process -Name cortex-gui -ErrorAction SilentlyContinue)) { $$path = $$null; for ($$attempt = 0; $$attempt -lt 10 -and $$null -eq $$path; $$attempt++) { try { $$path = [IO.Path]::GetFullPath($$process.Path) } catch { if ($$process.HasExited) { break }; Start-Sleep -Milliseconds 100 } }; if ($$process.HasExited) { continue }; if ($$null -eq $$path) { exit 1 }; if ($$path -eq $$target) { $$found += $$process } }; $$found }; $$processes = @(Find-CortexGui); $$processes | Stop-Process -Force; foreach ($$process in $$processes) { if (-not $$process.WaitForExit(5000)) { exit 1 } }; if (@(Find-CortexGui).Count -ne 0) { exit 1 } }" "$INSTDIR\cortex-gui.exe"'
   Pop $0
   StrCmp $0 "0" cortex_gui_stopped
   MessageBox MB_OK|MB_ICONSTOP "Cortex could not close its installed GUI. Close it manually, then run the installer again." /SD IDOK
