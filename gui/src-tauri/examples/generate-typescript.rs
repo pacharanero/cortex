@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use cortex_gui::{DashboardSnapshot, ParameterView};
 use cortex_rs::ParameterInput;
 use cortex_rs::nano::{NanoAmpControl, NanoBypassTarget, NanoFxParameter, NanoFxSlot};
-use ts_rs::TS;
+use ts_rs::{Config, TS};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let output = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../src/shared/ipc/generated");
@@ -21,13 +21,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     std::fs::create_dir_all(&output)?;
 
-    DashboardSnapshot::export_all_to(&output)?;
-    ParameterView::export_all_to(&output)?;
-    ParameterInput::export_all_to(&output)?;
-    NanoAmpControl::export_all_to(&output)?;
-    NanoBypassTarget::export_all_to(&output)?;
-    NanoFxParameter::export_all_to(&output)?;
-    NanoFxSlot::export_all_to(&output)?;
+    let config = Config::new().with_out_dir(&output);
+    DashboardSnapshot::export_all(&config)?;
+    ParameterView::export_all(&config)?;
+    ParameterInput::export_all(&config)?;
+    NanoAmpControl::export_all(&config)?;
+    NanoBypassTarget::export_all(&config)?;
+    NanoFxParameter::export_all(&config)?;
+    NanoFxSlot::export_all(&config)?;
 
     let mut bindings = Vec::new();
     for entry in std::fs::read_dir(&output)? {
