@@ -106,7 +106,7 @@ impl Row {
     /// collection and a write addressed there does nothing.
     #[must_use]
     pub const fn can_branch(self) -> bool {
-        self.0 % 2 == 0
+        self.0.is_multiple_of(2)
     }
 }
 

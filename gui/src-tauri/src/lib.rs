@@ -964,10 +964,9 @@ impl DaemonDashboardSource {
         let cache_key = (status.cache.generation, status.cache.storage_revision);
         if let Some((generation, revision, directory)) =
             self.directory_cache.lock().unwrap().as_ref()
+            && (*generation, *revision) == cache_key
         {
-            if (*generation, *revision) == cache_key {
-                return directory.clone();
-            }
+            return directory.clone();
         }
         let mut keys = status.cache.listed_setlists.clone();
         if keys.is_empty() {
@@ -2205,11 +2204,11 @@ mod tests {
         let mut observed = None;
         for _ in 0..20 {
             std::thread::sleep(std::time::Duration::from_millis(250));
-            if let Some(live) = load_dashboard(&source).unwrap().live {
-                if live.active_scene == target {
-                    observed = Some(live);
-                    break;
-                }
+            if let Some(live) = load_dashboard(&source).unwrap().live
+                && live.active_scene == target
+            {
+                observed = Some(live);
+                break;
             }
         }
         let live = observed.expect("device should report the scene that was requested");
@@ -2223,10 +2222,10 @@ mod tests {
         request_switch_scene(&source, original).unwrap();
         for _ in 0..20 {
             std::thread::sleep(std::time::Duration::from_millis(250));
-            if let Some(live) = load_dashboard(&source).unwrap().live {
-                if live.active_scene == original {
-                    return;
-                }
+            if let Some(live) = load_dashboard(&source).unwrap().live
+                && live.active_scene == original
+            {
+                return;
             }
         }
         panic!("failed to restore the scene the unit started on ({original})");
@@ -2257,11 +2256,11 @@ mod tests {
         let mut seen = false;
         for _ in 0..20 {
             std::thread::sleep(std::time::Duration::from_millis(250));
-            if let Some(live) = load_dashboard(&gui).unwrap().live {
-                if live.active_scene == target {
-                    seen = true;
-                    break;
-                }
+            if let Some(live) = load_dashboard(&gui).unwrap().live
+                && live.active_scene == target
+            {
+                seen = true;
+                break;
             }
         }
         assert!(
@@ -2272,10 +2271,10 @@ mod tests {
         elsewhere.switch_scene(original).unwrap();
         for _ in 0..20 {
             std::thread::sleep(std::time::Duration::from_millis(250));
-            if let Some(live) = load_dashboard(&gui).unwrap().live {
-                if live.active_scene == original {
-                    return;
-                }
+            if let Some(live) = load_dashboard(&gui).unwrap().live
+                && live.active_scene == original
+            {
+                return;
             }
         }
         panic!("failed to restore the scene the unit started on ({original})");
@@ -2320,16 +2319,16 @@ mod tests {
 
         for _ in 0..40 {
             std::thread::sleep(std::time::Duration::from_millis(250));
-            if let Some(live) = load_dashboard(&source).unwrap().live {
-                if live.preset_name == expected_name {
-                    // The recalled preset is live, and it brought a grid with it.
-                    assert!(
-                        !live.blocks.is_empty(),
-                        "a recalled preset should report its blocks"
-                    );
-                    assert_eq!(live.scenes.len(), 8);
-                    return;
-                }
+            if let Some(live) = load_dashboard(&source).unwrap().live
+                && live.preset_name == expected_name
+            {
+                // The recalled preset is live, and it brought a grid with it.
+                assert!(
+                    !live.blocks.is_empty(),
+                    "a recalled preset should report its blocks"
+                );
+                assert_eq!(live.scenes.len(), 8);
+                return;
             }
         }
         panic!("device never reported {expected_name} as the live preset after recall");

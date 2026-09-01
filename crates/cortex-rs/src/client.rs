@@ -2432,7 +2432,7 @@ pub fn build_settings_update(
 ///
 /// Refuses values other than 500, 600, 700, 800, 900, or 1000 ms.
 pub fn build_hold_timing(milliseconds: u32) -> crate::Result<GeneralSettingsMessage> {
-    if !(500..=1000).contains(&milliseconds) || milliseconds % 100 != 0 {
+    if !(500..=1000).contains(&milliseconds) || !milliseconds.is_multiple_of(100) {
         return Err(crate::Error::InvalidParameter(format!(
             "hold timing must be 500-1000 ms in exact 100 ms steps, got {milliseconds}"
         )));
@@ -5096,12 +5096,12 @@ impl QuadCortex {
                 "grid columns are 0-7, got {column}"
             )));
         }
-        if let Some(scene) = scene {
-            if scene > 7 {
-                return Err(crate::Error::InvalidParameter(format!(
-                    "scenes are 0-7, got {scene}"
-                )));
-            }
+        if let Some(scene) = scene
+            && scene > 7
+        {
+            return Err(crate::Error::InvalidParameter(format!(
+                "scenes are 0-7, got {scene}"
+            )));
         }
 
         let ParameterWrite { index, value } =
@@ -7703,7 +7703,7 @@ mod tests {
             })
             .collect::<Vec<_>>();
         assert_eq!(messages.len(), 600);
-        for sequence in messages.chunks_exact(3) {
+        for sequence in messages.as_chunks::<3>().0 {
             assert_eq!(sequence[0].message_type, MessageType::Grid as u16);
             assert_eq!(sequence[1].message_type, MessageType::Scene as u16);
             assert_eq!(sequence[2].message_type, MessageType::Grid as u16);

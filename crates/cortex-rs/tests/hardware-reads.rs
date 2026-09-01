@@ -981,10 +981,10 @@ fn wider_state_reads_answer_without_exposing_device_data() {
         "{} entries",
         items.len()
     ));
-    if let (Some(first), Some(second)) = (&captures, &captures_again) {
-        if first != second {
-            failures.push("repeated capture listings differed".into());
-        }
+    if let (Some(first), Some(second)) = (&captures, &captures_again)
+        && first != second
+    {
+        failures.push("repeated capture listings differed".into());
     }
 
     let _ = read!("IR library", qc.list_irs(None, timeout), |items: &Vec<

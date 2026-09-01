@@ -1054,15 +1054,15 @@ fn run(cli: Cli) -> Result<()> {
     // signatures would otherwise grow an argument that none of them decide.
     let _ = ZERO_BASED.set(cli.zero_based);
 
-    if cli.dry_run {
-        if let Some(plan) = dry_run_plan(cli.command.as_ref())? {
-            return emit(&plan, fmt, |plan| {
-                println!("dry-run {}: {}", plan.action, plan.target);
-                for check in &plan.checks_on_execute {
-                    println!("  on execution: {check}");
-                }
-            });
-        }
+    if cli.dry_run
+        && let Some(plan) = dry_run_plan(cli.command.as_ref())?
+    {
+        return emit(&plan, fmt, |plan| {
+            println!("dry-run {}: {}", plan.action, plan.target);
+            for check in &plan.checks_on_execute {
+                println!("  on execution: {check}");
+            }
+        });
     }
 
     match cli.command {
@@ -3035,11 +3035,11 @@ fn cmd_completions(
 
     // A named shell with no --dir is the packager path: script to stdout,
     // nothing touched on disk.
-    if let Some(shell) = target.as_shell() {
-        if dir.is_none() {
-            clap_complete::generate(shell, &mut command, "cortex", &mut std::io::stdout());
-            return Ok(());
-        }
+    if let Some(shell) = target.as_shell()
+        && dir.is_none()
+    {
+        clap_complete::generate(shell, &mut command, "cortex", &mut std::io::stdout());
+        return Ok(());
     }
 
     let shell = match target.as_shell().or(shell_override).or_else(detect_shell) {
@@ -3423,15 +3423,15 @@ fn print_preset(o: &PresetOut) {
             }
             // Bypass on the ACTIVE scene is scene_bypass[0]; show the whole
             // stored set so a per-scene difference is visible.
-            if let Some(bp) = &b.bypass {
-                if bp.scenes.iter().any(|&x| x) {
-                    let per_scene: String = bp
-                        .scenes
-                        .iter()
-                        .map(|&x| if x { 'x' } else { '.' })
-                        .collect();
-                    println!("      bypass: {per_scene}  (x = bypassed, scenes A-H)");
-                }
+            if let Some(bp) = &b.bypass
+                && bp.scenes.iter().any(|&x| x)
+            {
+                let per_scene: String = bp
+                    .scenes
+                    .iter()
+                    .map(|&x| if x { 'x' } else { '.' })
+                    .collect();
+                println!("      bypass: {per_scene}  (x = bypassed, scenes A-H)");
             }
             for p in &b.params {
                 let label = p
@@ -3696,10 +3696,10 @@ fn cmd_connect(status: bool, stop: bool, device: DeviceKind, fmt: Format) -> Res
             if let Some(auto_managed) = v.get("auto_managed") {
                 println!("auto_managed: {auto_managed}");
             }
-            if let Some(timeout) = v.get("idle_timeout_seconds") {
-                if !timeout.is_null() {
-                    println!("idle_timeout_seconds: {timeout}");
-                }
+            if let Some(timeout) = v.get("idle_timeout_seconds")
+                && !timeout.is_null()
+            {
+                println!("idle_timeout_seconds: {timeout}");
             }
             if let Some(device) = v.get("device") {
                 println!("device: {}", device.get("state").unwrap_or(device));
@@ -3738,10 +3738,10 @@ fn cmd_connect(status: bool, stop: bool, device: DeviceKind, fmt: Format) -> Res
                         println!("{label}: {value}");
                     }
                 }
-                if let Some(error) = cache.get("last_rejection") {
-                    if !error.is_null() {
-                        println!("cache_last_rejection: {error}");
-                    }
+                if let Some(error) = cache.get("last_rejection")
+                    && !error.is_null()
+                {
+                    println!("cache_last_rejection: {error}");
                 }
             }
         });

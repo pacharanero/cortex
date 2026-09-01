@@ -213,11 +213,10 @@ impl Catalog {
         let mut category_id: u32 = 0;
         let mut category_name = String::new();
         let mut current: Option<Model> = None;
-        let mut buf = Vec::new();
 
         loop {
             let event = reader
-                .read_event_into(&mut buf)
+                .read_event()
                 .map_err(|e| crate::Error::Decode(format!("ModelRepo.xml: {e}")))?;
 
             match event {
@@ -225,16 +224,16 @@ impl Catalog {
                 Event::Start(ref e) | Event::Empty(ref e) => {
                     let is_empty = matches!(event, Event::Empty(_));
                     match e.name().as_ref() {
-                        b"Category" => {
-                            let attrs = attributes(e);
+                        "Category" => {
+                            let attrs = attributes(e)?;
                             category_id = attrs
                                 .get("id")
                                 .and_then(|v| v.parse().ok())
                                 .unwrap_or_default();
                             category_name = attrs.get("name").cloned().unwrap_or_default();
                         }
-                        b"Model" => {
-                            let attrs = attributes(e);
+                        "Model" => {
+                            let attrs = attributes(e)?;
                             let Some(id) = attrs.get("id").and_then(|v| v.parse::<u32>().ok())
                             else {
                                 continue;
@@ -258,9 +257,9 @@ impl Catalog {
                                 }
                             }
                         }
-                        b"Parameter" => {
+                        "Parameter" => {
                             if let Some(model) = current.as_mut() {
-                                let attrs = attributes(e);
+                                let attrs = attributes(e)?;
                                 let steps = attrs
                                     .get("stepNames")
                                     .filter(|v| !v.is_empty())
@@ -293,14 +292,13 @@ impl Catalog {
                         _ => {}
                     }
                 }
-                Event::End(ref e) if e.name().as_ref() == b"Model" => {
+                Event::End(ref e) if e.name().as_ref() == "Model" => {
                     if let Some(model) = current.take() {
                         models.insert(model.id, model);
                     }
                 }
                 _ => {}
             }
-            buf.clear();
         }
 
         if let Some(model) = current.take() {
@@ -433,18 +431,19 @@ fn octal(bytes: &[u8]) -> Option<usize> {
 }
 
 /// Collect an element's attributes into a map.
-fn attributes(e: &quick_xml::events::BytesStart<'_>) -> HashMap<String, String> {
+fn attributes(e: &quick_xml::events::BytesStart<'_>) -> crate::Result<HashMap<String, String>> {
     e.attributes()
-        .filter_map(Result::ok)
-        .filter_map(|a| {
-            let key = String::from_utf8_lossy(a.key.as_ref()).to_string();
+        .map(|attribute| {
+            let attribute = attribute
+                .map_err(|e| crate::Error::Decode(format!("ModelRepo.xml attribute: {e}")))?;
+            let key = attribute.key.as_ref().to_owned();
             // XML 1.0 attribute-value normalisation. The catalog declares
             // `<?xml version="1.0" ?>`, so 1.0 is the correct rule set.
-            let value = a
+            let value = attribute
                 .normalized_value(quick_xml::XmlVersion::Explicit1_0)
-                .ok()?
+                .map_err(|e| crate::Error::Decode(format!("ModelRepo.xml attribute: {e}")))?
                 .to_string();
-            Some((key, value))
+            Ok((key, value))
         })
         .collect()
 }
@@ -459,6 +458,21 @@ mod tests {
 
     fn sample() -> Catalog {
         Catalog::from_xml(SAMPLE).expect("sample parses")
+    }
+
+    fn model_repo_payload(xml: &[u8]) -> Vec<u8> {
+        use std::io::Write as _;
+
+        let mut tar = vec![0; 512];
+        tar[.."ModelRepo.xml".len()].copy_from_slice(b"ModelRepo.xml");
+        let size = format!("{:011o}\0", xml.len());
+        tar[124..136].copy_from_slice(size.as_bytes());
+        tar.extend_from_slice(xml);
+        tar.resize(512 + xml.len().div_ceil(512) * 512 + 1024, 0);
+
+        let mut gzip = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        gzip.write_all(&tar).expect("fixture compresses");
+        gzip.finish().expect("fixture finishes")
     }
 
     #[test]
@@ -480,6 +494,17 @@ mod tests {
             c.get(1001).unwrap().based_on.as_deref(),
             Some("Based on Marshall(R) JCM800(R)")
         );
+    }
+
+    #[test]
+    fn decodes_escaped_attribute_values() {
+        let catalog = Catalog::from_xml(
+            r#"<Models><Category id="1" name="A &amp; B"><Model id="1" name="M &amp; M"/></Category></Models>"#,
+        )
+        .unwrap();
+
+        assert_eq!(catalog.get(1).unwrap().name, "M & M");
+        assert_eq!(catalog.get(1).unwrap().category, "A & B");
     }
 
     #[test]
@@ -567,6 +592,22 @@ mod tests {
     #[test]
     fn rejects_a_non_gzip_payload() {
         let err = Catalog::parse(b"not gzip at all").unwrap_err();
+        assert!(matches!(err, crate::Error::Decode(_)));
+    }
+
+    #[test]
+    fn rejects_non_utf8_model_repo_xml() {
+        let payload = model_repo_payload(b"<Models><Model id=\"1\" name=\"\xff\"/></Models>");
+        let err = Catalog::parse(&payload).unwrap_err();
+        assert!(matches!(err, crate::Error::Decode(_)));
+    }
+
+    #[test]
+    fn rejects_duplicate_attributes() {
+        let err = Catalog::from_xml(
+            r#"<Models><Category id="1" name="A"><Model id="1" id="2" name="M"/></Category></Models>"#,
+        )
+        .unwrap_err();
         assert!(matches!(err, crate::Error::Decode(_)));
     }
 

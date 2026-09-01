@@ -1447,12 +1447,11 @@ fn dispatch(msg: &InboundMessage, shared: &Shared) {
         let mut pending = shared.pending.lock().unwrap();
         let mut matched = None;
         // First try: if the message has a request_id, match it to a pending waiter.
-        if let Some(rid) = msg.request_id {
-            if let Some(waiter) = pending.get(&rid) {
-                if waiter.expected_type == msg.message_type {
-                    matched = Some(pending.remove(&rid).unwrap());
-                }
-            }
+        if let Some(rid) = msg.request_id
+            && let Some(waiter) = pending.get(&rid)
+            && waiter.expected_type == msg.message_type
+        {
+            matched = Some(pending.remove(&rid).unwrap());
         }
         // Second try: if no request_id on the message, match the LOWEST-id
         // same-type waiter. This handles READ replies, which carry no
