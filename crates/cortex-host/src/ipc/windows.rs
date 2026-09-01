@@ -15,8 +15,9 @@ use std::num::NonZeroU8;
 use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
 use std::path::{Path, PathBuf};
 use std::ptr;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 use interprocess::os::windows::named_pipe::{
     DuplexPipeStream, PipeListener, PipeListenerOptions, PipeMode, pipe_mode,
@@ -43,6 +44,7 @@ use windows_sys::Win32::System::Threading::{
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(1);
 const RETRY_POLL: Duration = Duration::from_millis(1);
+static PAIR_NONCE: AtomicU64 = AtomicU64::new(0);
 
 type BytePipe = DuplexPipeStream<pipe_mode::Bytes>;
 type BytePipeListener = PipeListener<pipe_mode::Bytes, pipe_mode::Bytes>;
@@ -513,10 +515,7 @@ impl LocalConnection {
     /// Returns a lock, named-pipe creation, connection, or accept error.
     #[doc(hidden)]
     pub fn pair() -> std::io::Result<(Self, Self)> {
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos();
+        let unique = PAIR_NONCE.fetch_add(1, Ordering::Relaxed);
         let endpoint = LocalEndpoint::at(PathBuf::from(format!(
             r"\\.\pipe\cortex-pair-{}-{unique}",
             std::process::id()
