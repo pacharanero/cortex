@@ -249,6 +249,16 @@ impl FrameReassembler {
         self.buffer.clear();
         self.in_progress = false;
     }
+
+    /// Bytes buffered so far for the in-progress message, `0` if none.
+    ///
+    /// Exact regardless of how many reports contributed them or how large
+    /// each report's chunk was - the caller needs this to enforce a byte cap
+    /// without assuming a per-report size no report is obliged to reach.
+    #[must_use]
+    pub fn buffered_len(&self) -> usize {
+        self.buffer.len()
+    }
 }
 
 /// Per-report data capacity: the 128-byte body minus the `[len][flags]`

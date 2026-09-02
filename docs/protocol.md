@@ -66,6 +66,8 @@ There are **no sequence numbers, no offsets, and no total-length field anywhere*
 
 A FIRST frame arriving mid-reassembly means the previous message was lost. The decoder can drop the stale partial and resynchronise, but a subscribed client must invalidate cached continuity because the missing body may have contained state.
 
+Because there is no total-length field, a lost LAST frame leaves a client's reassembly buffer with no way to know it will never complete - it accumulates forever unless the client imposes its own cap and resyncs when a partial exceeds it. `cortex` caps reassembly at 1 MiB (the largest observed message, the ~47 KB gzipped `ModelRepo` catalog, is far under it) and resets the buffer as a stream gap if either an in-progress partial or a just-completed body exceeds it. Enforce the cap against the actual buffered byte count, not a report count multiplied by an assumed per-report size: nothing on the wire obliges a report to fill its declared capacity, so a report-count approximation can reject a legitimate body assembled from many short reports well under the real cap.
+
 ## Quad Cortex message envelope
 
 A reassembled message is `protobuf ++ 8-byte trailer`, and **the message-type tag lives in the trailer, not a header**: a little-endian `uint16` `CortexMessageType`. The generated enum has 70 concrete operational values numbered 1 through 70, bracketed by `Undefined=0` and the terminal `NumberOfMessageTypes=71` sentinel. Neither sentinel is a message. Tags outside the recovered enum must remain numeric unknown values rather than being coerced to `Undefined`.
