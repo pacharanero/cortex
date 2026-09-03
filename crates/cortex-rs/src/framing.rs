@@ -99,13 +99,13 @@ impl Flags {
     /// True if this frame is the first of a message (or the only one).
     #[must_use]
     pub const fn is_first(self) -> bool {
-        self.0 & Self::FIRST != 0
+        self.0 == Self::FIRST || self.0 == Self::COMPLETE
     }
 
     /// True if this frame is the last of a message (or the only one).
     #[must_use]
     pub const fn is_last(self) -> bool {
-        self.0 & Self::LAST != 0
+        self.0 == Self::LAST || self.0 == Self::COMPLETE
     }
 
     /// True if this single frame carries a complete message.
@@ -256,7 +256,7 @@ impl FrameReassembler {
     /// each report's chunk was - the caller needs this to enforce a byte cap
     /// without assuming a per-report size no report is obliged to reach.
     #[must_use]
-    pub fn buffered_len(&self) -> usize {
+    pub(crate) fn buffered_len(&self) -> usize {
         self.buffer.len()
     }
 }
@@ -373,6 +373,19 @@ mod tests {
         assert!(Flags(Flags::LAST).is_last());
         assert!(Flags(Flags::COMPLETE).is_complete());
         assert!(Flags(Flags::MIDDLE).is_middle());
+    }
+
+    #[test]
+    fn unknown_flag_bits_are_not_accepted_as_first_or_last() {
+        for flags in [0x01, 0x41, 0x81, 0xC1] {
+            let mut reassembler = FrameReassembler::new();
+            reassembler.feed(&frame(Flags::FIRST, b"partial")).unwrap();
+            let err = reassembler.feed(&frame(flags, b"unknown")).unwrap_err();
+            assert!(
+                matches!(err, crate::Error::Framing(_)),
+                "flags {flags:#04x}"
+            );
+        }
     }
 
     #[test]

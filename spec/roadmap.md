@@ -70,12 +70,6 @@ This file is the single place to see where the project is up to. Each ID names w
 
 The bottom-up port of the Cortex Control USB HID protocol from `pyquadcortex` (MIT) into a Rust leaf crate.
 
-### PROT-005: Session (zone 140)
-
-- [x] **PROT-005.12**: Added direct fake-link regression coverage for FIRST-over-partial recovery and exact enforcement of the 1 MiB reassembled-body cap. The prior cap bookkeeping counted incomplete reports and multiplied by an assumed `CHUNK_SIZE` (126 bytes) rather than checking actual buffered bytes, and only ran on the incomplete-reassembly branch - so a body built from many short reports could be falsely rejected well under the real cap, and a LAST frame that pushed a body over the cap in one step was never checked before reaching envelope decoding. `FrameReassembler` gained a `buffered_len()` accessor; the RX loop now checks it against the cap for an in-progress partial and checks the completed body's exact length before `handle_message` decodes it.
-
-    **Night: ready, completed offline.** Four new fake-link tests in `crates/cortex-rs/src/session.rs` prove: a FIRST frame abandoning a partial message counts a stream gap, invalidates continuity and still delivers the next valid message; a 9,000-report body of 1-byte chunks (which the old report-count check would have rejected past its 8,321st report) is accepted; a body at exactly the 1 MiB cap is accepted; and a body one byte over the cap is rejected before decoding while the loop recovers to deliver a subsequent valid message. `spec/140-session/spec.md` (FR-15, acceptance criteria) and `design.md` (testing notes, divergence log) record the closed gap and the bug found while closing it; `docs/protocol.md` gained an implementer-facing note on why the cap must be byte-exact. **Hardware follow-up: none** - offline reassembly-cap logic only, no protocol or wire change.
-
 ### PROT-006: Client API (zone 150)
 
 The ergonomic `QuadCortex` struct - the Rust equivalent of pyquadcortex's 60+ methods.
@@ -114,13 +108,16 @@ Status: **deliberate non-feature, not a release blocker.** Capture and IR creati
 
 Do not ship import before export has been round-tripped on hardware: writing a malformed capture to the unit is the most plausible way this project could damage a user's data.
 
-### PROT-009: Correctness gaps found in review, 2026-08-05
+### PROT-009: Correctness gaps found in review
 
-Raised by a review of the state-cache/prepared-save/daemon-routing change (`a603bce`). The tree was green - fmt, clippy, `reuse`, and 149 tests all passed - so every item here is a behavioural gap that the existing tests did not reach. All claims have now been checked; completed items state their verification level.
+Established by the 2026-08-05 review of the state-cache/prepared-save/daemon-routing change (`a603bce`) and retained for later cross-cutting review findings. The original tree was green - fmt, clippy, `reuse`, and 149 tests all passed - so these are behavioural gaps that existing tests did not reach. Completed items state their verification level.
 
 Ordered by what would hurt a user most.
 
 - [~] **PROT-009.14**: **Regression coverage.** Offline coverage now includes explicit link-drop with retained session references; exclusivity-aware responsive-gap reconnect; prepared-save phase matrix and generation/storage epoch; concurrent public-flow File list/save/delete waiters with wrong targets and reply-ordered completion; exhaustive malformed 256-entry listing rejection (missing, negative, 256+, duplicate, wrong action/type/folder and combined malformed shapes); recall/edit/save ordering; stale-empty target backup; partial File invalidation; malformed envelopes; spawned older/newer daemon protocol skew with cross-version shutdown; parameter kinds and real-unit conversion. Tests and protocol docs pin two irreducible limits without claiming a fix: delayed acknowledgements from an earlier identical File operation are wire-indistinguishable because no usable request ID exists, and the final listing-check/write interval has no revision or compare-and-swap guard. No `File SWAP` is implemented absent evidence. **Exact residual:** hardware confirmation that a naturally occurring malformed report or envelope triggers replacement-handshake recovery and a healthy next request. Do not inject malformed traffic into hardware; if no natural fault is observed, retain this as unexercised. Rerun strict concurrent File operations on hardware only if future CorOS behavior suggests broadcasts differ from the measured shapes. Parent remains partial because its original acceptance included hardware fault recovery
+- [ ] **PROT-009.15**: Bound frame-level and `ModelRepo` field-level gzip decompression so a compressed body below the reassembly cap cannot allocate memory without limit.
+
+    **Night: ready.** Add separate explicit 8 MiB decompressed-size limits for `Message::decode` and the catalog's gzip-tar extraction, each comfortably above the hardware-observed 150,008-byte largest reassembled body and 558,592-byte catalog tar. Read through `Read::take(limit + 1)`, retain at most that bounded amount, and return a typed decode error when output exceeds the relevant limit. Tests must prove exact-limit acceptance, one-byte-over rejection, malformed gzip behavior and normal fixture decoding without allocating full-limit vectors where a parameterized private helper can prove the boundary cheaply. Update the transport, session and domain-model specs plus the public protocol reference with the two distinct limits and their evidence; add no dependency and do not alter wire input. **Hardware follow-up: none.**
 
 ## Docs (DOCS)
 

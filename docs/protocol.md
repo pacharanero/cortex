@@ -60,13 +60,13 @@ The editor channel is exclusive across transports. While another Bluetooth clien
 [report_id][len][flags][data ... zero padded]
 ```
 
-`flags` is `0x40` FIRST, `0x80` LAST, `0xC0` complete, `0x00` middle. The data capacity is device-dependent: 126 bytes per Quad report and 62 bytes per Nano report.
+`flags` is `0x40` FIRST, `0x80` LAST, `0xC0` complete, `0x00` middle. These are four exact values, not an open bitmask: reject a byte such as `0x41`, `0x81`, or `0xC1` rather than treating it as FIRST, LAST, or complete because a known bit is present. The data capacity is device-dependent: 126 bytes per Quad report and 62 bytes per Nano report.
 
 There are **no sequence numbers, no offsets, and no total-length field anywhere**. Reassembly is purely flag-driven: a FIRST frame starts a buffer, middles append, a LAST or COMPLETE emits.
 
 A FIRST frame arriving mid-reassembly means the previous message was lost. The decoder can drop the stale partial and resynchronise, but a subscribed client must invalidate cached continuity because the missing body may have contained state.
 
-Because there is no total-length field, a lost LAST frame leaves a client's reassembly buffer with no way to know it will never complete - it accumulates forever unless the client imposes its own cap and resyncs when a partial exceeds it. `cortex` caps reassembly at 1 MiB (the largest observed message, the ~47 KB gzipped `ModelRepo` catalog, is far under it) and resets the buffer as a stream gap if either an in-progress partial or a just-completed body exceeds it. Enforce the cap against the actual buffered byte count, not a report count multiplied by an assumed per-report size: nothing on the wire obliges a report to fill its declared capacity, so a report-count approximation can reject a legitimate body assembled from many short reports well under the real cap.
+Because there is no total-length field, a lost LAST frame leaves a client's reassembly buffer with no way to know it will never complete. A later FIRST resynchronises it, but continuation frames can otherwise keep growing the stale partial. `cortex` therefore caps its long-lived subscribed Quad session at 1 MiB; the largest observed reassembled body is a 150,008-byte `LocalBackup` chunk, far below the cap. The session rejects either an in-progress partial or a just-completed body that exceeds the limit before envelope decoding. Enforce a byte cap against the actual buffered length, not a report count multiplied by an assumed per-report size: nothing on the wire obliges a report to fill its declared capacity, so a count-based approximation can reject a legitimate body assembled from many short reports. The finite one-shot Quad and Nano readers are bounded by their request deadline rather than this subscribed-session cap.
 
 ## Quad Cortex message envelope
 

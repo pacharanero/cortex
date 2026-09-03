@@ -2253,6 +2253,21 @@ mod link_tests {
         msg
     }
 
+    fn wait_for_stream_gap(session: &Session) -> crate::DeviceStateStatus {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let status = session.state_cache().status();
+            if status.counters.stream_gaps > 0 {
+                return status;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "timed out waiting for the RX loop to record a stream gap"
+            );
+            thread::sleep(Duration::from_millis(20));
+        }
+    }
+
     /// [PROT-005.12] A FIRST frame abandoning a partial message must count
     /// as a stream gap and invalidate continuity, but the RX loop must
     /// still reassemble and deliver the next complete message rather than
@@ -2303,7 +2318,7 @@ mod link_tests {
         let session = session_over(&link);
 
         // 9,000 one-byte reports: more reports than `1 MiB / CHUNK_SIZE`
-        // (8,321) would ever allow under a report-count approximation, but
+        // (8,322) would ever allow under a report-count approximation, but
         // under 9 KB of actual buffered data - nowhere near the 1 MiB cap.
         let msg = zero_body(9_000);
         assert!(msg.len() > MAX_MESSAGE_BODY / crate::framing::CHUNK_SIZE);
@@ -2362,28 +2377,37 @@ mod link_tests {
         assert_eq!(status.counters.stream_gaps, 0);
     }
 
-    /// [PROT-005.12] A LAST frame that takes the reassembled body one byte
-    /// over the cap must be rejected as a stream gap before envelope
-    /// decoding is attempted, and the RX loop must recover to deliver the
-    /// next valid message rather than wedging.
+    /// [PROT-005.12] A partial body crossing the cap before LAST must reset
+    /// immediately, without waiting for a completing frame, and the RX loop
+    /// must recover for the next FIRST-delimited message.
     #[test]
-    fn a_last_frame_over_the_cap_is_rejected_before_decoding_and_the_loop_recovers() {
+    fn an_in_progress_body_over_the_cap_is_reset_and_the_loop_recovers() {
         let link = FakeLink::new();
         let session = session_over(&link);
         let oversized = zero_body(MAX_MESSAGE_BODY + 1);
-
-        for report in crate::framing::encode_reports(
+        let mut reports = crate::framing::encode_reports(
             crate::framing::HidReportGeometry::QUAD_CORTEX,
             &oversized,
-        ) {
+        );
+        // Keep the final chunk in-progress so this exercises the partial-body
+        // branch rather than the completed-body check below.
+        reports.last_mut().unwrap()[2] = 0x00;
+
+        for report in reports {
             link.push_inbound(report);
         }
-        let deadline = Instant::now() + Duration::from_secs(10);
-        while Instant::now() < deadline && session.state_cache().status().counters.stream_gaps == 0
-        {
-            thread::sleep(Duration::from_millis(20));
-        }
-        let status_after_oversized = session.state_cache().status();
+        let status_after_oversized = wait_for_stream_gap(&session);
+
+        assert_eq!(status_after_oversized.counters.stream_gaps, 1);
+        assert_eq!(status_after_oversized.phase, crate::CachePhase::Invalidated);
+        assert_eq!(
+            status_after_oversized.last_rejection.as_deref(),
+            Some("reassembled message exceeded cap")
+        );
+        assert!(
+            !session.has_heard_from_device(),
+            "an oversized partial must not be dispatched as device traffic"
+        );
 
         let got = session.await_broadcast(
             MessageType::GlobalTempo,
@@ -2396,11 +2420,55 @@ mod link_tests {
         );
         session.stop();
 
-        assert_eq!(
-            status_after_oversized.counters.stream_gaps, 1,
-            "an over-cap LAST frame must be rejected as a stream gap, not decoded"
+        assert!(
+            got.is_ok(),
+            "the RX loop must recover after an in-progress body breaches the cap"
         );
+    }
+
+    /// [PROT-005.12] A LAST frame that takes the reassembled body one byte
+    /// over the cap must be rejected as a stream gap before envelope
+    /// decoding is attempted, and the RX loop must recover to deliver the
+    /// next valid message rather than wedging.
+    #[test]
+    fn a_last_frame_over_the_cap_is_rejected_before_decoding_and_the_loop_recovers() {
+        let link = FakeLink::new();
+        let session = session_over(&link);
+        let mut oversized = zero_body(MAX_MESSAGE_BODY + 1);
+        // If decoding moves ahead of the cap check, this invalid gzip prefix
+        // changes the rejection reason and the test catches the ordering bug.
+        oversized[..2].copy_from_slice(&[0x1f, 0x8b]);
+
+        for report in crate::framing::encode_reports(
+            crate::framing::HidReportGeometry::QUAD_CORTEX,
+            &oversized,
+        ) {
+            link.push_inbound(report);
+        }
+        let status_after_oversized = wait_for_stream_gap(&session);
+
+        assert_eq!(status_after_oversized.counters.stream_gaps, 1);
         assert_eq!(status_after_oversized.phase, crate::CachePhase::Invalidated);
+        assert_eq!(
+            status_after_oversized.last_rejection.as_deref(),
+            Some("reassembled message exceeded cap")
+        );
+        assert!(
+            !session.has_heard_from_device(),
+            "an over-cap completed body must be rejected before dispatch"
+        );
+
+        let got = session.await_broadcast(
+            MessageType::GlobalTempo,
+            || {
+                link.push_inbound(inbound(MessageType::GlobalTempo as u16, &[]));
+                Ok(())
+            },
+            Duration::from_secs(3),
+            |_| true,
+        );
+        session.stop();
+
         assert!(
             got.is_ok(),
             "the RX loop must recover and deliver the next valid message after a cap breach"

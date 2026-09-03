@@ -302,7 +302,21 @@ impl Daemon {
 
     /// Explain why a device request cannot currently run.
     fn unavailable(&self) -> Option<(DaemonErrorCode, String)> {
-        match self.health.lock().unwrap().clone() {
+        let health = self.health.lock().unwrap().clone();
+        let state = self.state.status();
+        match health {
+            RuntimeHealth::Connected if state.phase == cortex_rs::CachePhase::Invalidated => {
+                Some((
+                    DaemonErrorCode::Reconnecting,
+                    format!(
+                        "{}; reconnecting",
+                        state
+                            .last_rejection
+                            .as_deref()
+                            .unwrap_or("subscribed state continuity was lost")
+                    ),
+                ))
+            }
             RuntimeHealth::Connected => None,
             RuntimeHealth::Reconnecting {
                 attempts,
@@ -1066,6 +1080,15 @@ impl Daemon {
         let state = self.state.status();
         let runtime_health = self.health.lock().unwrap().clone();
         let device = match runtime_health {
+            RuntimeHealth::Connected if state.phase == cortex_rs::CachePhase::Invalidated => {
+                DeviceHealth::Reconnecting {
+                    attempts: 0,
+                    last_error: state
+                        .last_rejection
+                        .clone()
+                        .unwrap_or_else(|| "subscribed state continuity was lost".into()),
+                }
+            }
             RuntimeHealth::Connected if session.is_responsive() => DeviceHealth::Connected {
                 serial: identity.as_ref().and_then(|d| d.serial_number.clone()),
                 coros_version: identity.as_ref().and_then(|d| d.coros_version.clone()),
@@ -3405,6 +3428,32 @@ mod tests {
         };
         assert_eq!(data, true);
         assert!(daemon.reconnect.retry_now.load(Ordering::Acquire));
+        daemon.shutdown();
+    }
+
+    #[test]
+    fn an_invalidated_stream_refuses_device_requests_before_reconnect_health_catches_up() {
+        let (daemon, link) = fake_daemon_with_link();
+        daemon.state.invalidate("fictional stream gap");
+
+        let Response::Error { code, message } = daemon.handle(Request::ActiveScene) else {
+            panic!("an invalidated stream must refuse new device work");
+        };
+        assert_eq!(code, DaemonErrorCode::Reconnecting);
+        assert!(
+            message.contains("fictional stream gap"),
+            "unexpected error: {message}"
+        );
+        assert_eq!(
+            link.write_count(),
+            0,
+            "the request reached device I/O before reconnect health caught up"
+        );
+        let Response::Ok { data } = daemon.handle(Request::Status) else {
+            panic!("status must remain available after a stream gap");
+        };
+        assert_eq!(data["device"]["state"], "reconnecting");
+        assert_eq!(data["device"]["last_error"], "fictional stream gap");
         daemon.shutdown();
     }
 
