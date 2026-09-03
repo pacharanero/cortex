@@ -93,7 +93,7 @@ The transport layer (`100`), the message/domain layers (`120`/`130`), the CLI (`
 | ID | Requirement | Priority |
 | --- | --- | --- |
 | FR-1 | `ReportId` enum has two variants: `Input = 0x01` (device-to-host) and `Output = 0x02` (host-to-device, via `SET_REPORT`). `ReportId::from_raw(u8) -> Option<ReportId>` returns `None` for any other byte. | Must Have |
-| FR-2 | `Flags(u8)` struct exposes constants `FIRST = 0x40`, `LAST = 0x80`, `COMPLETE = 0xC0`, `MIDDLE = 0x00` and predicates `is_first`, `is_last`, `is_complete`, `is_middle`. `is_complete` is exact equality to `0xC0`; `is_middle` is exact equality to `0x00`; `is_first`/`is_last` are bit tests. | Must Have |
+| FR-2 | `Flags(u8)` exposes constants `FIRST = 0x40`, `LAST = 0x80`, `COMPLETE = 0xC0`, `MIDDLE = 0x00` and exact predicates `is_first`, `is_last`, `is_complete`, `is_middle`. `is_first` accepts only `FIRST` or `COMPLETE`; `is_last` accepts only `LAST` or `COMPLETE`; extra or reserved bits do not make an unknown byte valid. | Must Have |
 | FR-3 | `Frame` struct has `flags: Flags` and `data: Vec<u8>` (the valid payload bytes, after the report-ID and `[len][flags]` prefix are stripped). | Must Have |
 | FR-4 | `Frame::parse(&[u8]) -> Result<Frame>` reads byte 0 as report ID (not validated here), byte 1 as `len`, byte 2 as `flags`, and takes `report[3..3+len]` as `data`. Returns `Error::Framing` if the report is shorter than 3 bytes or if `3 + len` exceeds the report length. | Must Have |
 | FR-5 | `FrameReassembler::new() -> FrameReassembler` creates a fresh state machine with an empty buffer and `in_progress = false`. `FrameReassembler` implements `Default` delegating to `new`. | Must Have |
@@ -121,7 +121,7 @@ The transport layer (`100`), the message/domain layers (`120`/`130`), the CLI (`
 | NFR-2 | `Frame::parse` and `FrameReassembler::feed` are `O(n)` in the frame data length and allocate only for the returned `Vec<u8>`. | Review-enforced |
 | NFR-3 | `encode_message` pre-allocates the body `Vec` and the reports `Vec` from computed capacities; no re-allocation mid-loop. | Review-enforced |
 | NFR-4 | `ReportId` and `Flags` are `Copy`, `Debug`, `Clone`, `PartialEq`, `Eq`, `Serialize`, `Deserialize`. `Frame` is `Debug`, `Clone`, `PartialEq`, `Eq`. | Code invariant |
-| NFR-5 | Unit tests cover: single-frame round-trip, multi-frame in-order assembly, middle-without-first error, last-without-first error, flag decode of all four flag values, encode-then-decode symmetry, single-frame encode is `COMPLETE`, multi-frame encode sets `FIRST` on the first and `LAST` on the last. Tests run in `cargo test` with no hardware. | CI-enforced |
+| NFR-5 | Unit tests cover single-frame round-trip, multi-frame in-order assembly, middle/last without first, all four exact flag values, rejection of unknown flag bits, encode/decode symmetry, and single- and multi-frame output flags. Tests run in `cargo test` with no hardware. | CI-enforced |
 | NFR-6 | No other module hard-codes the report IDs (`0x01`/`0x02`), the flag bits (`0x40`/`0x80`/`0xC0`/`0x00`), the chunk size (`126`), or the trailer length (`8`). All go through this zone's or the transport/message zone's exported constants. | Review-enforced |
 | NFR-7 | Leaf-crate discipline: framing pulls in no host app, async runtime, or `hidapi`, and remains available without default features. | Architectural invariant |
 
@@ -135,6 +135,7 @@ The transport layer (`100`), the message/domain layers (`120`/`130`), the CLI (`
 - [x] `FrameReassembler::feed` on a `COMPLETE` frame returns `Ok(Some(data))` and leaves the state machine idle.
 - [x] `FrameReassembler::feed` on a `FIRST` + `MIDDLE` + `LAST` sequence returns `Ok(None)`, `Ok(None)`, `Ok(Some(concatenated))`.
 - [x] `FrameReassembler::feed` on a `MIDDLE` or `LAST` frame with no preceding `FIRST` returns `Error::Framing`.
+- [x] `FrameReassembler::feed` rejects every flag byte other than exact `MIDDLE`, `FIRST`, `LAST`, or `COMPLETE`, including values that merely contain FIRST/LAST bits alongside unknown bits.
 - [x] `FrameReassembler::feed` on a `FIRST` frame arriving mid-partial silently drops the stale buffer and starts a new message (returns `Ok(None)`).
 - [x] `encode_message(10, b"short")` returns one report whose parsed `Frame` has `is_complete() == true`.
 - [x] `encode_message(10, &[0xAB; CHUNK_SIZE + 10])` returns more than one report; the first parsed `Frame` has `is_first()` and not `is_last()`; the last parsed `Frame` has `is_last()` and not `is_first()`.
@@ -193,4 +194,4 @@ The Python project is prior art and an offline conformance reference. Current me
 
 | Owned file | Local anchors | Key functions / types | Tests | Dependencies | Out of scope |
 | --- | --- | --- | --- | --- | --- |
-| `crates/cortex-rs/src/framing.rs` | [FR-1]-[FR-17], [NFR-1]-[NFR-7] | `ReportId`, `Flags`, `Frame`, `FrameReassembler`, `encode_message`, HID size constants | Eight in-file unit tests | `serde`, `crate::message::TRAILER_LEN` | hidapi I/O, gzip, protobuf decode, session correlation and continuity policy |
+| `crates/cortex-rs/src/framing.rs` | [FR-1]-[FR-17], [NFR-1]-[NFR-7] | `ReportId`, `Flags`, `Frame`, `FrameReassembler`, `encode_message`, HID size constants | In-file unit tests | `serde`, `crate::message::TRAILER_LEN` | hidapi I/O, gzip, protobuf decode, session correlation and continuity policy |

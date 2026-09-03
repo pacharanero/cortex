@@ -121,7 +121,7 @@ This is because:
 - **Frame-level gzip** (`1f 8b` prefix) is decompressed before protobuf decode. Field-level gzip inside `bytes` fields is a domain-layer concern (zone 130).
 - **Write serialization.** A `write_lock` serializes the reports of a single logical message so a keepalive cannot interleave. Encoding happens outside the lock to keep the critical section to device I/O only. The `state_lock` is never held across blocking I/O.
 - **State observation precedes consumption.** The reducer sees a message after liveness is stamped and before collectors/pending/type waiters. An explicit read therefore repairs the same cache before its caller returns.
-- **A broken stream invalidates continuity.** A malformed report, stale partial abandoned by a new FIRST, reassembly error, or cap breach means a complete state update may have been lost. The RX loop continues, but the cache is cleared rather than serving the pre-gap snapshot. Continuing heartbeats do not repair that proof: the daemon drains active operations and replaces the physical session so a complete subscribed handshake establishes a new generation.
+- **A broken stream invalidates continuity.** A malformed report, stale partial abandoned by a new FIRST, reassembly error, or cap breach means a complete state update may have been lost. The RX loop continues, but the cache is cleared rather than serving the pre-gap snapshot. Continuing heartbeats do not repair that proof: request admission checks the cache phase before and after the exclusive operation gate, reports reconnecting immediately even before the health poll catches up, drains any operation already in flight, and replaces the physical session so a complete subscribed handshake establishes a new generation.
 
 ### Subscribed state reducer
 
@@ -154,7 +154,7 @@ The keepalive loop runs a background thread that sends `KeepAlive{UPDATE}` every
 | Race-window grace on timeout | 0.5 s wait after a timeout if the RX thread already popped | Avoids dropping a reply that landed in the microsecond window between the wait() timeout and the pending-entry removal. |
 | Write lock separate from state lock | Two `Mutex<()>` | The state lock guards waiter maps; the write lock serializes I/O. Never hold state across blocking I/O. |
 | Waiting writers stop the RX loop reacquiring | `writers_waiting` + RAII `WriteIntent` | The device mutex is unfair; merely shortening or yielding after a read still starves writes. A declared writer gets priority until its logical message is sent. |
-| Reassembly cap at 1 MiB | `MAX_MESSAGE_BODY = 1 << 20` | The envelope has no total-length field; a lost LAST flag would wedge the buffer. The cap resets it. Largest observed message (ModelRepo, ~47 KB) is far under. |
+| Reassembly cap at 1 MiB | `MAX_MESSAGE_BODY = 1 << 20` | The envelope has no total-length field; continuation frames after a lost LAST could keep growing a partial until the next FIRST. The cap resets it. The largest observed body is a 150,008-byte `LocalBackup` chunk. |
 | Keepalive failures swallowed | Thread continues after a send error | A dead device shows up through read silence and `DeviceSilent` on a request. The benign write STALL makes a keepalive write error unusable as a health verdict. |
 | State reducer before waiters | Non-consuming synchronous observation | A correlated read and the cache must see the same message; putting observation after an early return silently misses replies. |
 | Invalidate instead of generic protobuf merge | Narrow keyed reducer | Repeated proto fields append under generic merge, while full presets are positional and deltas are keyed. Guessing silently corrupts the grid. |
@@ -168,7 +168,7 @@ The keepalive loop runs a background thread that sends `KeepAlive{UPDATE}` every
 
 - Correlation tests cover id-less type-first matching, id consistency, cascade rejection, broadcast predicates, oldest-first fallback and the timeout race grace.
 - Fake-link tests cover reassembled delivery, continuity invalidation with continued RX, writer priority under a saturated reader, keepalive cadence and never-heard liveness.
-- Direct frame injection for the 1 MiB cap and FIRST-over-partial branches remains the narrow coverage gap.
+- Direct frame injection proves FIRST-over-partial recovery and exact byte-level 1 MiB cap enforcement: a body at exactly the cap is accepted; partial and LAST branches that exceed it in their final chunk are rejected before envelope decoding; a body assembled from many short reports well under the cap is not rejected by a report-count approximation; and the loop recovers to deliver a subsequent valid message after every gap.
 - State reducer tests cover full seeding, global/per-scene parameter and bypass updates, promotion, removal, malformed and structural invalidation, folder mutation invalidation, old-generation rejection, explicit invalidation, empty-Version protection, and a 135-message knob burst.
 - Dispatch tests prove one `Scene` message updates the cache and satisfies its pending waiter; fake-link tests prove a malformed report invalidates the cache while RX continues.
 
@@ -205,4 +205,4 @@ The correlation tests cover type-first matching, the id-less oldest-first fallba
 
 **One of them is worth calling out, because the first version of it did not work.** `id_less_replies_drain_waiters_oldest_first` guards the HashMap-iteration-order bug. Written with two waiters, reintroducing the bug made it fail only 4 times in 12 runs - Rust randomises HashMap iteration per process, so a two-way choice comes out right about half the time. A guard that waves the regression through two runs in three is worse than none, because it looks like coverage. It now registers six waiters and asserts the whole drain ORDER, which fails 12/12 with the bug present and 0/12 without. Both figures were measured, not assumed.
 
-The later `HidLink`/`FakeLink` seam covers the RX loop and writer gate without hardware: reassembled delivery, malformed-report recovery plus cache invalidation, writer priority under a saturated reader, one-second keepalives, and the never-heard liveness guard. The 1 MiB cap and FIRST-over-partial branches remain the narrow unexercised frame-injection cases.
+The later `HidLink`/`FakeLink` seam covers the RX loop and writer gate without hardware: reassembled delivery, malformed-report recovery plus cache invalidation, writer priority under a saturated reader, one-second keepalives, the never-heard liveness guard, FIRST-over-partial recovery, and exact cap enforcement for incomplete and completed bodies.

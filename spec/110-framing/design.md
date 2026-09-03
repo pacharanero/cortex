@@ -65,7 +65,7 @@ pub fn parse(report: &[u8]) -> crate::Result<Self> {
 
 ### Design choice: `Flags` is a `u8` newtype, not an enum
 
-The flag byte is a bit field, not an enumeration: `COMPLETE = FIRST | LAST = 0xC0`. An enum would force a match arm for every possible `u8` value or a fallthrough default, and would lose the bit-test semantics. A `u8` newtype with constants and bit-test predicates is the honest model:
+The wire uses four exact byte values, with `COMPLETE = FIRST | LAST = 0xC0`. A `u8` newtype preserves an unknown byte for a useful framing error while the predicates accept only the four observed values; reserved or stray bits never turn an unknown value into FIRST or LAST:
 
 ```rust
 pub struct Flags(pub u8);
@@ -74,14 +74,18 @@ impl Flags {
     pub const LAST: u8 = 0x80;
     pub const COMPLETE: u8 = 0xC0;
     pub const MIDDLE: u8 = 0x00;
-    pub const fn is_first(self) -> bool { self.0 & Self::FIRST != 0 }
-    pub const fn is_last(self) -> bool { self.0 & Self::LAST != 0 }
+    pub const fn is_first(self) -> bool {
+        self.0 == Self::FIRST || self.0 == Self::COMPLETE
+    }
+    pub const fn is_last(self) -> bool {
+        self.0 == Self::LAST || self.0 == Self::COMPLETE
+    }
     pub const fn is_complete(self) -> bool { self.0 == Self::COMPLETE }
     pub const fn is_middle(self) -> bool { self.0 == Self::MIDDLE }
 }
 ```
 
-`is_first` and `is_last` are bit tests (`&`), so `Flags(0xC0).is_first()` and `Flags(0xC0).is_last()` are both true - a `COMPLETE` frame is both first and last. `is_complete` and `is_middle` are exact equality, because `0x40` is not "complete" even though it is "first". The reassembler checks `is_complete` first, then `is_first`, so a `COMPLETE` frame is handled as a single-frame message before the `is_first` branch fires.
+`Flags(0xC0).is_first()` and `Flags(0xC0).is_last()` are both true because a `COMPLETE` frame is conceptually both first and last, but all predicates use exact-value comparisons. For example, `0x41`, `0x81`, and `0xC1` are unknown rather than FIRST, LAST, or COMPLETE. The reassembler checks `is_complete` first so a single-frame message takes the direct path before the broader exact `is_first` predicate.
 
 ### Design choice: `ReportId::from_raw` returns `Option`, not `Result`
 
@@ -90,7 +94,7 @@ impl Flags {
 ### Alternatives considered
 
 - **Parse the report ID in `Frame::parse` and store it on `Frame`.** Rejected: the frame codec is report-ID-agnostic so it can be used in tests with arbitrary report IDs, and the transport already knows which direction it read from. Storing the report ID on `Frame` would couple the frame to the transport direction.
-- **Make `Flags` an enum with `First`, `Last`, `Complete`, `Middle` variants.** Rejected: it would lose the bit-test semantics (`COMPLETE` is `FIRST | LAST`), force a fallthrough default for unknown `u8` values, and complicate the reassembler's dispatch. The newtype with constants is the closer model of the wire.
+- **Make `Flags` an enum with `First`, `Last`, `Complete`, `Middle` variants.** Rejected: the newtype preserves the offending raw byte for diagnostics and serialisation while exact predicates still enforce the closed set of observed values.
 
 ## [DES-REASSEMBLY] Flag-Driven Reassembly
 
@@ -117,7 +121,7 @@ pub struct FrameReassembler {
 4. **`LAST`** (`0x80`): if `!in_progress`, return `Error::Framing("last frame without a preceding first frame")`; otherwise append, take the buffer as the body, set `in_progress = false`, return `Ok(Some(body))`.
 5. **Any other flag value**: return `Error::Framing("unknown flags byte: {:#04x}")`.
 
-The `is_complete` check comes *before* `is_first` because `Flags(0xC0)` satisfies both `is_complete()` (exact equality) and `is_first()` (bit test). Ordering the dispatch this way makes a single-frame message a single-step path.
+The `is_complete` check comes *before* `is_first` because `Flags(0xC0)` satisfies both exact predicates. Ordering the dispatch this way makes a single-frame message a single-step path.
 
 ### Design choice: `FIRST` mid-partial drops the stale buffer
 

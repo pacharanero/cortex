@@ -1326,7 +1326,14 @@ fn rx_loop(device: Arc<Mutex<Option<Box<dyn crate::link::HidLink>>>>, shared: Ar
                     );
                 }
                 report_count = 0;
-                if let Err(e) = handle_message(&body, &shared) {
+                // A LAST/COMPLETE frame can push the body over the cap in
+                // one step; check the exact byte count before decoding
+                // rather than only catching a wedged partial (below).
+                if body.len() > MAX_MESSAGE_BODY {
+                    shared
+                        .state
+                        .stream_gap(shared.generation, "reassembled message exceeded cap");
+                } else if let Err(e) = handle_message(&body, &shared) {
                     // Routine, not exceptional: the device pushes types we do
                     // not decode (License and CloudLogin carry non-protobuf
                     // bodies). An envelope decode failure is different: its
@@ -1342,7 +1349,11 @@ fn rx_loop(device: Arc<Mutex<Option<Box<dyn crate::link::HidLink>>>>, shared: Ar
                     partial_started = Instant::now();
                 }
                 report_count += 1;
-                if report_count > MAX_MESSAGE_BODY / crate::framing::CHUNK_SIZE {
+                // Byte-exact, not report-count-based: a report is never
+                // obliged to carry a full `CHUNK_SIZE` chunk, so counting
+                // reports against an assumed chunk size rejected legitimate
+                // bodies built from many short reports well under the cap.
+                if reassembler.buffered_len() > MAX_MESSAGE_BODY {
                     reassembler.reset();
                     report_count = 0;
                     shared
@@ -2199,5 +2210,268 @@ mod link_tests {
             "a bad envelope stopped the loop delivering good ones"
         );
         assert_eq!(cache_phase, crate::CachePhase::Invalidated);
+    }
+
+    /// Frame a message as reports carrying exactly `chunk_len` data bytes
+    /// each, regardless of the device's real per-report capacity.
+    ///
+    /// [`crate::framing::encode_reports`] always fills each report to a
+    /// fixed geometry's capacity, which cannot reproduce a device sending
+    /// many reports that carry far less than they are allowed to - the
+    /// exact shape that exposed the report-count cap-check bug.
+    fn short_chunk_reports(msg: &[u8], chunk_len: usize) -> Vec<Vec<u8>> {
+        assert!(chunk_len > 0);
+        let chunks: Vec<&[u8]> = msg.chunks(chunk_len).collect();
+        chunks
+            .iter()
+            .enumerate()
+            .map(|(i, chunk)| {
+                let is_first = i == 0;
+                let is_last = i == chunks.len() - 1;
+                let flags = match (is_first, is_last) {
+                    (true, true) => 0xC0,
+                    (true, false) => 0x40,
+                    (false, true) => 0x80,
+                    (false, false) => 0x00,
+                };
+                let mut report = vec![0x01, u8::try_from(chunk.len()).unwrap(), flags];
+                report.extend_from_slice(chunk);
+                report
+            })
+            .collect()
+    }
+
+    /// A `GlobalTempo`-tagged body of `len` zero bytes (the last 8 forming
+    /// the trailer), which passes envelope decode and correlation without
+    /// exercising the state reducer (`GlobalTempo` is a heartbeat type the
+    /// reducer ignores), keeping these cap tests focused on the RX loop.
+    fn zero_body(len: usize) -> Vec<u8> {
+        assert!(len >= 8);
+        let mut msg = vec![0u8; len - 8];
+        msg.extend_from_slice(&(MessageType::GlobalTempo as u16).to_le_bytes());
+        msg.extend_from_slice(&[0u8; 6]);
+        msg
+    }
+
+    fn wait_for_stream_gap(session: &Session) -> crate::DeviceStateStatus {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let status = session.state_cache().status();
+            if status.counters.stream_gaps > 0 {
+                return status;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "timed out waiting for the RX loop to record a stream gap"
+            );
+            thread::sleep(Duration::from_millis(20));
+        }
+    }
+
+    /// [PROT-005.12] A FIRST frame abandoning a partial message must count
+    /// as a stream gap and invalidate continuity, but the RX loop must
+    /// still reassemble and deliver the next complete message rather than
+    /// wedging on the abandoned bytes.
+    #[test]
+    fn a_first_frame_abandoning_a_partial_message_invalidates_continuity_and_still_delivers_the_next()
+     {
+        let link = FakeLink::new();
+        let session = session_over(&link);
+
+        // FIRST + MIDDLE with no LAST: an abandoned partial message.
+        link.push_inbound(vec![0x01, 1, 0x40, 0xAA]);
+        link.push_inbound(vec![0x01, 1, 0x00, 0xBB]);
+
+        let got = session.await_broadcast(
+            MessageType::GlobalTempo,
+            || {
+                // This FIRST must discard the stale partial above rather
+                // than append to it or refuse to start a new message.
+                link.push_inbound(inbound(MessageType::GlobalTempo as u16, &[]));
+                Ok(())
+            },
+            Duration::from_secs(3),
+            |_| true,
+        );
+        let status = session.state_cache().status();
+        session.stop();
+
+        assert!(
+            got.is_ok(),
+            "a FIRST frame abandoning a partial message must still deliver the next valid one"
+        );
+        assert_eq!(status.phase, crate::CachePhase::Invalidated);
+        assert!(
+            status.counters.stream_gaps >= 1,
+            "abandoning a partial message must be counted as a stream gap"
+        );
+    }
+
+    /// [PROT-005.12] The cap must be enforced against actual buffered
+    /// bytes, not `report_count * an assumed per-report size`: a body built
+    /// from many reports that each carry far less than the device's real
+    /// per-report capacity must not be rejected while still well under the
+    /// 1 MiB cap.
+    #[test]
+    fn many_short_reports_well_under_the_cap_are_not_rejected() {
+        let link = FakeLink::new();
+        let session = session_over(&link);
+
+        // 9,000 one-byte reports: more reports than `1 MiB / CHUNK_SIZE`
+        // (8,322) would ever allow under a report-count approximation, but
+        // under 9 KB of actual buffered data - nowhere near the 1 MiB cap.
+        let msg = zero_body(9_000);
+        assert!(msg.len() > MAX_MESSAGE_BODY / crate::framing::CHUNK_SIZE);
+
+        let got = session.await_broadcast(
+            MessageType::GlobalTempo,
+            || {
+                for report in short_chunk_reports(&msg, 1) {
+                    link.push_inbound(report);
+                }
+                Ok(())
+            },
+            Duration::from_secs(10),
+            |_| true,
+        );
+        let status = session.state_cache().status();
+        session.stop();
+
+        assert!(
+            got.is_ok(),
+            "a body under the cap must not be rejected solely because it used many short reports"
+        );
+        assert_eq!(
+            status.counters.stream_gaps, 0,
+            "no stream gap should be recorded for a body under the cap"
+        );
+    }
+
+    /// [PROT-005.12] A body of exactly `MAX_MESSAGE_BODY` bytes must not be
+    /// rejected: the cap excludes bodies strictly larger than the limit,
+    /// not bodies at it.
+    #[test]
+    fn a_body_at_exactly_the_byte_cap_is_not_rejected() {
+        let link = FakeLink::new();
+        let session = session_over(&link);
+        let msg = zero_body(MAX_MESSAGE_BODY);
+
+        let got = session.await_broadcast(
+            MessageType::GlobalTempo,
+            || {
+                for report in crate::framing::encode_reports(
+                    crate::framing::HidReportGeometry::QUAD_CORTEX,
+                    &msg,
+                ) {
+                    link.push_inbound(report);
+                }
+                Ok(())
+            },
+            Duration::from_secs(10),
+            |_| true,
+        );
+        let status = session.state_cache().status();
+        session.stop();
+
+        assert!(got.is_ok(), "a body exactly at the cap must be accepted");
+        assert_eq!(status.counters.stream_gaps, 0);
+    }
+
+    /// [PROT-005.12] A partial body crossing the cap before LAST must reset
+    /// immediately, without waiting for a completing frame, and the RX loop
+    /// must recover for the next FIRST-delimited message.
+    #[test]
+    fn an_in_progress_body_over_the_cap_is_reset_and_the_loop_recovers() {
+        let link = FakeLink::new();
+        let session = session_over(&link);
+        let oversized = zero_body(MAX_MESSAGE_BODY + 1);
+        let mut reports = crate::framing::encode_reports(
+            crate::framing::HidReportGeometry::QUAD_CORTEX,
+            &oversized,
+        );
+        // Keep the final chunk in-progress so this exercises the partial-body
+        // branch rather than the completed-body check below.
+        reports.last_mut().unwrap()[2] = 0x00;
+
+        for report in reports {
+            link.push_inbound(report);
+        }
+        let status_after_oversized = wait_for_stream_gap(&session);
+
+        assert_eq!(status_after_oversized.counters.stream_gaps, 1);
+        assert_eq!(status_after_oversized.phase, crate::CachePhase::Invalidated);
+        assert_eq!(
+            status_after_oversized.last_rejection.as_deref(),
+            Some("reassembled message exceeded cap")
+        );
+        assert!(
+            !session.has_heard_from_device(),
+            "an oversized partial must not be dispatched as device traffic"
+        );
+
+        let got = session.await_broadcast(
+            MessageType::GlobalTempo,
+            || {
+                link.push_inbound(inbound(MessageType::GlobalTempo as u16, &[]));
+                Ok(())
+            },
+            Duration::from_secs(3),
+            |_| true,
+        );
+        session.stop();
+
+        assert!(
+            got.is_ok(),
+            "the RX loop must recover after an in-progress body breaches the cap"
+        );
+    }
+
+    /// [PROT-005.12] A LAST frame that takes the reassembled body one byte
+    /// over the cap must be rejected as a stream gap before envelope
+    /// decoding is attempted, and the RX loop must recover to deliver the
+    /// next valid message rather than wedging.
+    #[test]
+    fn a_last_frame_over_the_cap_is_rejected_before_decoding_and_the_loop_recovers() {
+        let link = FakeLink::new();
+        let session = session_over(&link);
+        let mut oversized = zero_body(MAX_MESSAGE_BODY + 1);
+        // If decoding moves ahead of the cap check, this invalid gzip prefix
+        // changes the rejection reason and the test catches the ordering bug.
+        oversized[..2].copy_from_slice(&[0x1f, 0x8b]);
+
+        for report in crate::framing::encode_reports(
+            crate::framing::HidReportGeometry::QUAD_CORTEX,
+            &oversized,
+        ) {
+            link.push_inbound(report);
+        }
+        let status_after_oversized = wait_for_stream_gap(&session);
+
+        assert_eq!(status_after_oversized.counters.stream_gaps, 1);
+        assert_eq!(status_after_oversized.phase, crate::CachePhase::Invalidated);
+        assert_eq!(
+            status_after_oversized.last_rejection.as_deref(),
+            Some("reassembled message exceeded cap")
+        );
+        assert!(
+            !session.has_heard_from_device(),
+            "an over-cap completed body must be rejected before dispatch"
+        );
+
+        let got = session.await_broadcast(
+            MessageType::GlobalTempo,
+            || {
+                link.push_inbound(inbound(MessageType::GlobalTempo as u16, &[]));
+                Ok(())
+            },
+            Duration::from_secs(3),
+            |_| true,
+        );
+        session.stop();
+
+        assert!(
+            got.is_ok(),
+            "the RX loop must recover and deliver the next valid message after a cap breach"
+        );
     }
 }
