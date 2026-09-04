@@ -402,6 +402,18 @@ NANO-001.2 is hardware-verified. The bounded smoke test `nano_transport_geometry
 
 **Measured 2026-08-12 on a Nano Cortex:** 10 reports (FIRST + 8 middle + LAST), 574 reassembled bytes. The original 2026-08-11 probe measured 9 reports / 546 bytes; the state body varies with device content. Quad regression passed immediately after on the same machine: direct version, correlated session version, and full held session (start/status/grid-show/stop) all healthy on CorOS 4.0.1.
 
+For Gate reduction, first use the official editor to make field 53 readable at a known nonzero value, then disconnect Bluetooth. The direct test refuses before any write if the original remains absent; otherwise it changes the decoded integer percentage by one point, reads it back, restores that integer value on a fresh transport and verifies restoration. The official MCP-client smoke requires a held Nano session and sends only same-value writes across amp, Gate reduction, bypass and FX:
+
+```sh
+cargo test -p cortex-rs --test hardware-reads nano_gate_reduction_reads_back_and_restores -- --ignored --exact --nocapture
+cargo run -q -p cortex-cli -- session start --device nano
+cargo test -p cortex-mcp --test server-process hardware_smoke_reads_and_confirms_nano_tools_through_official_client -- --ignored --exact --nocapture
+cargo test -p cortex-gui tests::nano_gate_reduction_reaches_the_daemon_reads_back_and_restores -- --ignored --exact --nocapture
+cargo run -q -p cortex-cli -- session stop --device nano
+```
+
+**Measured 2026-09-04:** an official-editor 49.8% baseline decoded as the integer protocol model's 50%. The direct test changed to 51%, read back 51%, restored encoded integer 50% and read back 50% in 12.22 seconds. The first MCP run exposed an immediate current-state refresh timeout before the FX write; after the daemon waited out the shared five-second state-request interval, the complete official-client smoke passed in 25.33 seconds. The Tauri-backend test also changed by one integer point, read back, restored and verified restoration in 12.22 seconds. No private state was printed.
+
 ## Out of scope
 
 Not covered by this runbook:

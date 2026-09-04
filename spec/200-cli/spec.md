@@ -120,6 +120,7 @@ Linux users with a Quad Cortex, script writers, AI coding agents driving the CLI
 | FR-26 | A host may start the same binary with the hidden `--auto-managed --idle-timeout-seconds N` contract. Only parsed requests count as activity; a request remains in flight through response writing, completion restarts the full timeout, and open sockets, blank lines, and malformed input do not retain the daemon. Idle exit is impossible while any request is in flight. | Must Have |
 | FR-27 | Accepted client connections are served concurrently. A long device request cannot monopolise the listener: status remains available, while another device request fails rather than queueing an operation that could execute after its caller times out. Shutdown stops admission and waits for the exclusive operation gate before closing HID and acknowledging. If the operation remains hung for three seconds, the daemon exits without acknowledging; process exit releases HID but may interrupt that operation. Idle teardown runs only with no request in flight. | Must Have |
 | FR-28 | The initial status request used for protocol compatibility is ordinary valid activity. A mismatched client refuses further work and names explicit stop/restart; it does not silently replace or kill the daemon. Cross-version shutdown remains available. | Must Have |
+| FR-29 | The held Nano daemon spaces current-state requests by at least five seconds, including mandatory pre-mutation model-identity refreshes. A forced refresh waits out the remaining interval under the exclusive operation gate; it does not retry a timed-out uncorrelated request or weaken the fresh-model check. | Must Have |
 
 ### Non-Functional Requirements
 
@@ -147,6 +148,7 @@ Linux users with a Quad Cortex, script writers, AI coding agents driving the CLI
 - [x] An exclusivity-aware reconnect test retains an old `Arc<Session>`, proves its lease drops before the first replacement attempt, fails that attempt, succeeds on the second, swaps the session, and advances the retained cache generation even when the old link remained responsive after continuity invalidation.
 - [x] Fake endpoint/process tests prove auto-managed idle exit, timeout reset after a request, in-flight protection, explicit persistence, endpoint cleanup, and a second client completing while another request is slow.
 - [x] Product-scoped endpoint tests preserve Quad's legacy name, separate Nano's socket/lock/log, and allow one owner per distinct physical product without permitting two owners of either endpoint.
+- [x] A forced Nano current-state refresh waits out the remainder of the measured five-second request interval; the complete official MCP-client hardware smoke passed after this fixed an immediate pre-FX-write refresh timeout on 2026-09-04.
 - [x] The ignored real-device lifecycle test passed on CorOS 4.0.1: idle exit released HID and a replacement direct client completed one non-mutating version read.
 
 ## Non-Goals

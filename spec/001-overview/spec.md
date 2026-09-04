@@ -92,7 +92,7 @@ Maintainers, AI coding agents, and downstream crate consumers.
 
 - Feature requirements (each zone spec owns its own).
 - GUI interaction and presentation requirements (owned by zone `400-gui`).
-- Full Nano Cortex support. Hardware verification covers shared USB HID framing, the Nano-specific envelope/domain, held-daemon runtime, typed state, raw amp, bypass and raw FX parameter operations, but wider operations and untested host surfaces remain active work under NANO-001.
+- Full Nano Cortex support. Hardware verification covers shared USB HID framing, the Nano-specific envelope/domain, held-daemon runtime, typed state, raw amp, Gate reduction, bypass and raw FX parameter operations, but wider operations and untested host surfaces remain active work under NANO-001.
 - On-device builds (the `qc-stomp-tools` ioctl route; not in scope for this USB-first project).
 - Applying the Rust `@see` syntax unchanged to the TypeScript frontend, `s/` scripts, or configuration files. Those surfaces can carry lifecycle, release, interaction and safety behaviour and remain subject to their governing zone specs through the routing index. A future proposal for file-level non-Rust traceability needs its own roadmap item, language-appropriate syntax and automated coverage rather than a narrower rule grafted onto FR-1.
 

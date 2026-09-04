@@ -43,7 +43,7 @@ This zone owns the `Transport` struct that wraps `hidapi::HidDevice` and encodes
 | The benign write STALL (`hid_write` returns `-1` on success) | Hardware-verified | Observed on this machine; documented in `pyquadcortex` |
 | Swallow Quad write errors, detect its dead device via read timeout | Hardware-verified | `cortex device version` succeeds despite `-1` writes; a powered-off Quad surfaces as `Error::ReadTimeout` |
 | `Transport::request` gzip-decompresses frame-level payloads starting `1f 8b` | Hardware-verified | Observed on RecallPreset pushes from `pyquadcortex`; the `version` round-trip does not compress |
-| Nano Cortex transport | Partly hardware-verified and partly implemented | Real Nano on Linux confirmed VID:PID `152A:88E7`, interface 5, 65-byte reports, shared length/flag framing, multi-report state transfer, cross-transport BLE ownership, typed state, amp, bypass and raw FX parameter operations through a separate Nano codec and held daemon. A timeout or malformed response requires the held path to discard and reopen the transport before another request, invalidate the old generation, and complete a fresh state read before serving live data. Gate reduction and wider application operations remain provisional |
+| Nano Cortex transport | Partly hardware-verified and partly implemented | Real Nano on Linux confirmed VID:PID `152A:88E7`, interface 5, 65-byte reports, shared length/flag framing, multi-report state transfer, cross-transport BLE ownership, typed state, amp, Gate reduction, bypass and raw FX parameter operations through a separate Nano codec and held daemon. A timeout or malformed response requires the held path to discard and reopen the transport before another request, invalidate the old generation, and complete a fresh state read before serving live data. Wider application operations remain provisional |
 
 The `pyquadcortex` offline test suite is a conformance reference but not a substitute for a hardware smoke run. Agent-generated tests must not be the sole basis for accepting transport behaviour.
 
@@ -139,12 +139,12 @@ sudo udevadm control --reload-rules
 sudo udevadm trigger --action=add --subsystem-match=hidraw
 ```
 
-Re-plug the device. The interface number's `hidraw` path is assigned dynamically; see the installation guide for checks that do not assume a numbered node. Nano state, raw amp, bypass and raw FX parameter operations use this transport through the held daemon; that does not imply support for the wider Nano application protocol.
+Re-plug the device. The interface number's `hidraw` path is assigned dynamically; see the installation guide for checks that do not assume a numbered node. Nano state, raw amp, Gate reduction, bypass and raw FX parameter operations use this transport through the held daemon; that does not imply support for the wider Nano application protocol.
 
 ## Future
 
 - **Protocol compatibility probe.** Device identity is cached, but the wire exposes no explicit protocol version. A CorOS update can still break compatibility silently.
-- **Wider Nano Cortex application implementation.** Typed current-state, Bluetooth-ownership, raw amp, bypass and raw FX parameter paths are implemented. Save, preset/model replacement, Capture/IR selection and other application operations remain outstanding under NANO-001.
+- **Wider Nano Cortex application implementation.** Typed current-state, Bluetooth-ownership, raw amp, Gate reduction, bypass and raw FX parameter paths are implemented. Save, preset/model replacement, Capture/IR selection and other application operations remain outstanding under NANO-001.
 
 ## Glossary
 

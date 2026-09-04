@@ -64,7 +64,7 @@ Maintainers, AI coding agents, and the CLI/MCP/GUI surfaces that consume the cra
 | --- | --- | --- |
 | FR-1 | `crates/cortex-rs/src/device.rs` exposes `DeviceKind::{QuadCortex, NanoCortex}` with a `vid_pid()` method returning `(u16, u16)`. | Must Have |
 | FR-2 | `DeviceKind::QuadCortex` returns `(0x152A, 0x880A)` and `DeviceKind::NanoCortex` returns hardware-verified `(0x152A, 0x88E7)`. | Must Have |
-| FR-3 | `DeviceKind::NanoCortex` documents the hardware-verified framing, typed state, amp, bypass and raw FX parameter boundary without implying that wider Nano operations are implemented. | Must Have |
+| FR-3 | `DeviceKind::NanoCortex` documents the hardware-verified framing, typed state, amp, Gate reduction, bypass and raw FX parameter boundary without implying that wider Nano operations are implemented. | Must Have |
 | FR-4 | `crates/cortex-rs/src/message.rs` exposes `Message { message_type: u16, body: Bytes }` and a `Message::parse(&[u8])` constructor that splits a reassembled buffer into body + 8-byte trailer. | Must Have |
 | FR-5 | `message.rs` exposes `TRAILER_LEN = 8` as a public constant. | Must Have |
 | FR-6 | `Message::parse` reads the message-type tag as a little-endian `u16` from the first two bytes of the trailer; the remaining 6 bytes are currently unused and undocumented. | Must Have |
@@ -81,7 +81,7 @@ Maintainers, AI coding agents, and the CLI/MCP/GUI surfaces that consume the cra
 | FR-17 | The `input_level_db` conversion (`-12 + 72 * level`, input ports span -12 to +60 dB) is exposed as a helper for the IO-settings surface. | Should Have |
 | FR-18 | All domain types implement `Debug` and `Clone`; the read-only views implement `Serialize`/`Deserialize` for Tauri and MCP transport. | Should Have |
 | FR-19 | All domain source files carry `@see` doc-comments linking to this governing spec and, where a narrower design anchor exists, its `design.md`. | Must Have |
-| FR-20 | `nano.rs` owns the Nano-specific four-byte-footer application envelope, bounded current-state model, Nano-specific FX model-id/display-name resolution, attributed per-model FX parameter labels, and typed amp, bypass and raw FX parameter operations. Host-facing parameters retain an explicit zero-based wire index and normalized value; unknown models and surplus indices remain present without guessed names. Shared HID report framing remains in zone 110; Gate reduction and wider Nano operations remain capability-labelled provisional work. | Must Have |
+| FR-20 | `nano.rs` owns the Nano-specific four-byte-footer application envelope, bounded current-state model, Nano-specific FX model-id/display-name resolution, attributed per-model FX parameter labels, and typed amp, Gate reduction, bypass and raw FX parameter operations. Host-facing parameters retain an explicit zero-based wire index and normalized value; unknown models and surplus indices remain present without guessed names. Shared HID report framing remains in zone 110; wider Nano operations remain capability-labelled provisional work. | Must Have |
 
 ### Non-Functional Requirements
 

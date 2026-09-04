@@ -8,8 +8,9 @@
 //! Cortex. Hardware probing established that the Nano shares the HID frame
 //! shape but uses 65-byte reports and a Nano-specific four-byte application
 //! footer rather than the Quad's 129-byte reports and eight-byte trailer. The
-//! separate Nano codec supports typed current-state, amp, bypass and raw FX
-//! parameter operations; wider application operations remain capability-gated.
+//! separate Nano codec supports typed current-state, amp, Gate reduction,
+//! bypass and raw FX parameter operations; wider application operations remain
+//! capability-gated.
 //!
 //! @see spec/130-domain-model/spec.md
 //! @see spec/100-transport/spec.md [FR-1]
@@ -25,8 +26,8 @@ pub enum DeviceKind {
     #[default]
     QuadCortex,
     /// The Neural DSP Nano Cortex (internal codename `ATMA`). HID framing,
-    /// typed state, amp, bypass and raw FX parameter operations are
-    /// hardware-verified; wider application operations remain provisional.
+    /// typed state, amp, Gate reduction, bypass and raw FX parameter operations
+    /// are hardware-verified; wider application operations remain provisional.
     NanoCortex,
 }
 
