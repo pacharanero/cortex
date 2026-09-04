@@ -3,7 +3,7 @@
 ## Released Linux Install
 
 - **Linux x86_64 only for the currently supported CLI/MCP release channel.** Released CLI/MCP host archives require glibc 2.34 or newer and `libudev.so.1`. Ubuntu 22.04 x86_64 is the verified clean release environment; other recent glibc distributions are expected to work but remain user-tested rather than release-verified. Alpine/musl, ARM/aarch64, Ubuntu 20.04, Debian 11 and RHEL-family 8 do not satisfy this archive contract. Windows x86_64 NSIS and Apple Silicon DMG tester previews are under active development, not supported releases: their native builders exist, Windows IPC is implemented, and their remote package/device smokes remain pending. See the [Windows smoke runbook](gui/windows-smoke.md) before testing the unsigned installer.
-- A **Quad Cortex or Nano Cortex**, connected by USB and powered on. Quad provides the full grid/session surface; Nano provides typed state plus non-persistent amp, bypass and raw FX parameter operations, while Gate reduction remains hardware-provisional.
+- A **Quad Cortex or Nano Cortex**, connected by USB and powered on. Quad provides the full grid/session surface; Nano provides typed state plus non-persistent amp, Gate reduction, bypass and raw FX parameter operations. The core, held-daemon/MCP and Tauri-backend Gate paths are hardware-verified; its rendered GUI control remains provisional.
 
 ```sh
 curl -LsSf https://pacharanero.github.io/cortex/install.sh | sh

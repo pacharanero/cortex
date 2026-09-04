@@ -7,7 +7,7 @@
 //! can own it. This is that process. Everything else talks to it.
 //!
 //! @see spec/200-cli/spec.md [FR-18] [FR-19] [FR-20] [FR-21]
-//! @see spec/200-cli/spec.md [FR-22] [FR-26] [FR-27] [FR-28]
+//! @see spec/200-cli/spec.md [FR-22] [FR-26] [FR-27] [FR-28] [FR-29]
 //! @see spec/200-cli/design.md [DES-CLI]
 //! @see spec/140-session/spec.md
 
@@ -34,10 +34,15 @@ const COPY_DEVICE_STEP_TIMEOUT: Duration = Duration::from_secs(40);
 const SETLIST_DEVICE_TIMEOUT: Duration = Duration::from_secs(60);
 const SESSION_STARTUP_TIMEOUT: Duration = Duration::from_secs(120);
 const NANO_SESSION_STARTUP_TIMEOUT: Duration = Duration::from_secs(245);
+const NANO_STATE_READ_INTERVAL: Duration = Duration::from_secs(5);
 pub const COPY_IPC_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 pub const SETLIST_IPC_TIMEOUT: Duration = Duration::from_secs(3 * 60);
 pub const SAVE_IPC_TIMEOUT: Duration = Duration::from_secs(3 * 60);
 pub const DUPLICATE_IPC_TIMEOUT: Duration = Duration::from_secs(48 * 60 * 60);
+
+fn nano_state_read_delay(elapsed: Duration) -> Duration {
+    NANO_STATE_READ_INTERVAL.saturating_sub(elapsed)
+}
 
 fn string_parameter_at(
     preset: &cortex_rs::proto::BinaryPreset,
@@ -1507,10 +1512,15 @@ impl<T: NanoOperations> NanoDaemon<T> {
     fn state_snapshot_is_fresh(&self) -> bool {
         let cached = self.state.lock().unwrap();
         cached.phase == cortex_rs::CachePhase::Live
-            && cached.last_state_received.elapsed() < Duration::from_secs(5)
+            && cached.last_state_received.elapsed() < NANO_STATE_READ_INTERVAL
     }
 
     fn refresh_state(&self, transport: &mut T) -> cortex_rs::Result<()> {
+        let delay = {
+            let cached = self.state.lock().unwrap();
+            nano_state_read_delay(cached.last_state_attempt.elapsed())
+        };
+        std::thread::sleep(delay);
         self.mark_state_attempted();
         let state = transport.read_state(Duration::from_secs(5))?;
         self.replace_snapshot(state);
@@ -1819,7 +1829,7 @@ impl<T: NanoOperations> NanoDaemon<T> {
                     let should_refresh = {
                         let mut cached = self.state.lock().unwrap();
                         let should_refresh = cached.phase != cortex_rs::CachePhase::Live
-                            || cached.last_state_attempt.elapsed() >= Duration::from_secs(5);
+                            || cached.last_state_attempt.elapsed() >= NANO_STATE_READ_INTERVAL;
                         if should_refresh {
                             cached.last_attempt = Instant::now();
                             cached.last_state_attempt = Instant::now();
@@ -3170,6 +3180,22 @@ mod tests {
         let cached = daemon.state.lock().unwrap();
         assert_eq!(cached.phase, cortex_rs::CachePhase::Live);
         assert_eq!(cached.revision, 3);
+    }
+
+    #[test]
+    fn forced_nano_state_refresh_waits_out_the_measured_interval() {
+        assert_eq!(
+            nano_state_read_delay(Duration::from_secs(3)),
+            Duration::from_secs(2)
+        );
+        assert_eq!(
+            nano_state_read_delay(Duration::from_secs(5)),
+            Duration::ZERO
+        );
+        assert_eq!(
+            nano_state_read_delay(Duration::from_secs(6)),
+            Duration::ZERO
+        );
     }
 
     #[test]

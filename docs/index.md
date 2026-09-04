@@ -51,7 +51,7 @@ The project's central discipline is being honest about what has actually run aga
 | MCP server read, recall, scene management and live-grid tools | <span class="status verified">verified; no save/delete tools</span> |
 | Desktop GUI shell | <span class="status provisional">daemon-backed Rust read/write boundaries verified on Linux; rendered native interaction smokes remain partial</span> |
 | Windows and macOS hardware paths and packaging | <span class="status provisional">native package builders implemented; Windows IPC implemented; remote package runs and real-device smokes pending</span> |
-| Nano Cortex | <span class="status provisional">USB HID, state, amp, bypass and core/daemon/MCP/native-GUI raw FX parameter paths verified on Linux; wider operations and host integrations remain partial</span> |
+| Nano Cortex | <span class="status provisional">USB HID, state, amp, bypass and raw FX plus core/daemon/MCP/Tauri-backend Gate-reduction paths verified on Linux; the rendered Gate control, wider operations and host integrations remain partial</span> |
 
 ## Start here
 

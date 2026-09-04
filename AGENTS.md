@@ -116,8 +116,8 @@ s/             Repo scripts: s/test, s/lint, s/gui-dev, s/version++ ...
   Its BLE application payload maps directly onto HID, but its four-byte footer
   and fixed-chain domain differ from the Quad's eight-byte trailer and grid.
   The separate Nano codec and held-daemon path implement typed state plus
-  hardware-verified amp, bypass and raw FX parameter operations; Gate reduction
-  and wider application operations remain provisional. Quad session entry
+  hardware-verified amp, Gate reduction, bypass and raw FX parameter operations;
+  wider application operations remain provisional. Quad session entry
   points still reject Nano before USB I/O so the envelopes cannot be conflated.
 
 ## Protocol invariants (do not break silently)

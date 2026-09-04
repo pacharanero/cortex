@@ -97,8 +97,9 @@ A copy of the Apache License 2.0 is distributed in
   from this project through the Apache-2.0-licensed `deskop-nano-cortex` Rust
   implementation. The state decoder is tested against fictional data and
   independently hardware-verified over USB. The Gate-reduction writer is
-  byte-tested against licensed vectors but remains hardware-provisional;
-  upstream evidence is not treated as verification of this implementation.
+  byte-tested against licensed vectors and independently hardware-verified over
+  USB; it also passed held-daemon/MCP and Tauri-backend read-back/restoration
+  smokes. Upstream evidence is not treated as verification of this implementation.
 
 ### MIT License (nano-cortex-web-editor)
 

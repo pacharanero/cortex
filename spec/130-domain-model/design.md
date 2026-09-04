@@ -43,7 +43,7 @@ pub enum DeviceKind {
 }
 ```
 
-Hardware confirms Nano VID:PID `152A:88E7`, 65-byte HID reports, shared flag framing, and its separate four-byte-footer codec. Typed state, amp, bypass and raw FX parameter operations are hardware-verified; Gate reduction and wider operations remain provisional and are capability-gated rather than making the device kind itself provisional. `DeviceKind` carries the PID and geometry, while the Quad message request and session paths reject Nano before USB I/O so its four-byte footer can never reach the Quad eight-byte parser.
+Hardware confirms Nano VID:PID `152A:88E7`, 65-byte HID reports, shared flag framing, and its separate four-byte-footer codec. Typed state, amp, Gate reduction, bypass and raw FX parameter operations are hardware-verified; wider operations remain provisional and are capability-gated rather than making the device kind itself provisional. `DeviceKind` carries the PID and geometry, while the Quad message request and session paths reject Nano before USB I/O so its four-byte footer can never reach the Quad eight-byte parser.
 
 The `vid_pid()` method is `const fn` so it can be used in `const` contexts (e.g. a static lookup table in the transport layer).
 

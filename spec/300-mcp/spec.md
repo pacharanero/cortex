@@ -11,7 +11,7 @@ tags: ["mcp", "cortex-mcp", "safety-surface", "agentic", "provisional"]
 
 # 300 MCP - Spec
 
-> The `cortex-mcp` MCP server is a hardware-verified agentic surface over the Quad Cortex for reading, recall, scene switching and unsaved live-grid editing, plus typed Nano Cortex state and non-persistent amp, bypass and raw FX parameter operations. Nano Gate reduction remains hardware-provisional. Destructive saving remains deferred.
+> The `cortex-mcp` MCP server is a hardware-verified agentic surface over the Quad Cortex for reading, recall, scene switching and unsaved live-grid editing, plus typed Nano Cortex state and non-persistent amp, Gate reduction, bypass and raw FX parameter operations. Destructive saving remains deferred.
 
 ## References
 
@@ -117,7 +117,7 @@ AI coding agents editing patches via MCP, and the maintainers who gate what an a
 | FR-34 | `copy_scene(from_scene, to_scene)` copies parameter, bypass, label and colour state, then refreshes the live preset before returning. | Must Have |
 | FR-35 | `swap_scenes(first_scene, second_scene)` exchanges complete scene state and refreshes the live preset before returning. | Must Have |
 | FR-36 | `list_captures()` and `list_irs(folder?)` return one correlated device library listing. `set_capture(row, column, capture, model?)` and `set_ir(row, column, ir, slot, model?, folder?)` accept only an exact `{key,name}` entry from a fresh re-list, edit only the unsaved working grid, and return success only after a fresh live-grid read proves the selected strings. Capture selection passed the official-client MCP hardware smoke on CorOS 4.0.1 with USER `6A` recalled for cleanup; IR selection awaits an available imported IR and on-unit warning-icon inspection. Capture/IR creation, transfer, backup, and cloud processing remain native-device workflows. | Must Have |
-| FR-37 | `read_nano_state`, `set_nano_amp`, `set_nano_bypass`, `read_nano_fx_params` and `set_nano_fx_param` route only through the Nano product endpoint. Writes affect heard working state, save nothing, and require fresh read-back where the device exposes the changed field. FX parameter writes require the caller's expected model id and reject a freshly observed mismatch before mutation. | Must Have |
+| FR-37 | `read_nano_state`, `set_nano_amp`, `set_nano_gate_reduction`, `set_nano_bypass`, `read_nano_fx_params` and `set_nano_fx_param` route only through the Nano product endpoint. Writes affect heard working state, save nothing, and require fresh read-back where the device exposes the changed field. FX parameter writes require the caller's expected model id and reject a freshly observed mismatch before mutation. | Must Have |
 | FR-38 | `get_status(device?)` selects `quad` or `nano` and defaults to `quad` for compatibility. | Must Have |
 
 #### Server lifecycle
@@ -157,6 +157,7 @@ AI coding agents editing patches via MCP, and the maintainers who gate what an a
 - [x] The server runs on bounded stdio via `rmcp` and answers a real official-SDK MCP client.
 - [x] All tools delegate through the selected product-scoped daemon; none reimplement protocol or domain logic.
 - [x] Nano tools route only to the Nano endpoint, while `get_status` accepts a bounded Quad/Nano selector that defaults to Quad.
+- [x] The official MCP client passed Nano Gate-reduction same-value write and fresh read-back against hardware on 2026-09-04; the same smoke exercised all five FX reads and the mandatory paced model refresh before an FX write.
 - [x] The non-persistent tool surface passed hardware smoke on 2026-08-06 against CorOS 4.0.1.
 - [x] A normally installed `cortex-mcp` resolves the sibling `cortex`, starts an auto-managed owner without a separate manual session, and writes no non-MCP data to stdout. Process tests cover two concurrent missing-daemon launches converging on one endpoint and a long-lived MCP process restarting after request-idle release.
 - [x] Typed daemon error codes survive the process boundary and appear in MCP structured tool errors. Tests cover leaf-error classification, a downcastable host error from a real daemon process, daemon reconnect/validation categories, and an official-SDK MCP call receiving `dsp_refused`.
