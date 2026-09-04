@@ -75,7 +75,7 @@ The read side is represented by `view::Preset::{rows,blocks}`. The write side us
 
 ## [DES-CATALOG] Catalog Design
 
-`Catalog::parse` validates bounded gzip input, opens the tar archive, extracts `ModelRepo.xml`, and eagerly parses model/category/parameter metadata. Positional `empty` and `meter` entries remain in each parameter vector because filtering them shifts all later wire indices. The vendor's `tm` attribution is exposed verbatim as `based_on`; this project does not paraphrase it. Tests construct fictional minimal XML/tar fixtures rather than committing a real device catalog.
+`Catalog::parse` gunzips the payload through the same `bounded_gunzip` helper `Message::decode` uses (see [100-transport](../100-transport/design.md#des-request-synchronous-requestresponse)), capping decompressed tar size at `MAX_DECOMPRESSED_CATALOG_LEN` (8 MiB) so a malformed or hostile payload cannot allocate without bound before extraction fails. It then opens the tar archive, extracts `ModelRepo.xml`, and eagerly parses model/category/parameter metadata. Positional `empty` and `meter` entries remain in each parameter vector because filtering them shifts all later wire indices. The vendor's `tm` attribution is exposed verbatim as `based_on`; this project does not paraphrase it. Tests construct fictional minimal XML/tar fixtures rather than committing a real device catalog.
 
 ## [DES-HELPERS] Helper Functions
 

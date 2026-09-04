@@ -79,6 +79,8 @@ Two independent kinds of gzip are in play, and a client needs both in different 
 - **Frame-level**: the reassembled payload starts `1f 8b`. Decompress before protobuf decode.
 - **Field-level**: gzip inside a protobuf `bytes` field. The model catalog is the notable case.
 
+**Bound decompression, not just reassembly.** Capping the *compressed* input (this project's reassembly cap is 1 MiB, see the session layer) does not bound the *decompressed* output - gzip's compression ratio is attacker- or fault-influenced, so a small compressed body can still inflate arbitrarily large. This project's client caps frame-level decompression at 8 MiB (comfortably above the 150,008-byte largest body measured on `CorOS` 4.0.1) and field-level catalog decompression separately at 8 MiB (comfortably above the 558,592-byte catalog tar measured on the same firmware), each read through a bounded reader so a malformed or hostile stream cannot allocate past its limit before decoding returns an error. Implement an equivalent bound in any client that decompresses this wire format.
+
 ## The Quad Cortex connect handshake
 
 The device **will not push state to a client that has merely opened the pipe**:

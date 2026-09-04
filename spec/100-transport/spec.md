@@ -43,6 +43,7 @@ This zone owns the `Transport` struct that wraps `hidapi::HidDevice` and encodes
 | The benign write STALL (`hid_write` returns `-1` on success) | Hardware-verified | Observed on this machine; documented in `pyquadcortex` |
 | Swallow Quad write errors, detect its dead device via read timeout | Hardware-verified | `cortex device version` succeeds despite `-1` writes; a powered-off Quad surfaces as `Error::ReadTimeout` |
 | `Transport::request` gzip-decompresses frame-level payloads starting `1f 8b` | Hardware-verified | Observed on RecallPreset pushes from `pyquadcortex`; the `version` round-trip does not compress |
+| Frame-level decompression is capped at `MAX_DECOMPRESSED_MESSAGE_LEN` (8 MiB) | Implemented, offline-verified | Comfortably above the 150,008-byte largest reassembled body measured on `CorOS` 4.0.1; a stream that would decompress past the limit returns `Error::Decode` rather than allocating without bound |
 | Nano Cortex transport | Partly hardware-verified and partly implemented | Real Nano on Linux confirmed VID:PID `152A:88E7`, interface 5, 65-byte reports, shared length/flag framing, multi-report state transfer, cross-transport BLE ownership, typed state, amp, Gate reduction, bypass and raw FX parameter operations through a separate Nano codec and held daemon. A timeout or malformed response requires the held path to discard and reopen the transport before another request, invalidate the old generation, and complete a fresh state read before serving live data. Wider application operations remain provisional |
 
 The `pyquadcortex` offline test suite is a conformance reference but not a substitute for a hardware smoke run. Agent-generated tests must not be the sole basis for accepting transport behaviour.
@@ -109,6 +110,7 @@ CLI users, the MCP server, the future Tauri GUI backend, and downstream crate co
 - [x] `cargo build --no-default-features -p cortex-rs` succeeds without `hidapi` in the dependency graph.
 - [x] The `hid` feature gates `Transport`; the transport-neutral `Session::over` path and framing/domain layers build without it. `Session::open` legitimately uses transport when `hid` is enabled.
 - [x] A gzip-compressed frame-level body (payload starting `1f 8b`) is transparently decompressed by `Transport::request` before it is returned.
+- [x] A frame-level gzip body that would decompress past `MAX_DECOMPRESSED_MESSAGE_LEN` (8 MiB) is rejected with `Error::Decode` rather than allocated without bound; exact-limit input still decodes.
 - [x] The manual and scripted hardware smoke runbooks exercise this layer.
 
 ## Non-Goals

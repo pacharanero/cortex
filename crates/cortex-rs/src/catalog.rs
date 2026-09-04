@@ -37,6 +37,15 @@
 
 use std::collections::HashMap;
 
+use crate::message::bounded_gunzip;
+
+/// The largest decompressed tar [`Catalog::parse`] will retain from the
+/// `ModelRepo` payload's frame-level gzip, comfortably above the
+/// 558,592-byte tar measured against `CorOS` 4.0.1 hardware. Without this
+/// bound, a malformed or hostile catalog payload could inflate to an
+/// unbounded size before extraction fails.
+pub const MAX_DECOMPRESSED_CATALOG_LEN: usize = 8 * 1024 * 1024;
+
 /// What kind of control a parameter is, as declared by the device.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum ParameterKind {
@@ -364,8 +373,6 @@ impl Catalog {
 /// single file, and the ustar header is a fixed, well-documented layout
 /// (name at 0, size as octal at 124, content at 512, blocks of 512).
 fn extract_model_repo_xml(payload: &[u8]) -> crate::Result<String> {
-    use std::io::Read;
-
     if payload.len() < 2 || payload[0] != 0x1f || payload[1] != 0x8b {
         return Err(crate::Error::Decode(format!(
             "ModelRepo payload is not gzip (leading bytes {:02x?})",
@@ -373,10 +380,7 @@ fn extract_model_repo_xml(payload: &[u8]) -> crate::Result<String> {
         )));
     }
 
-    let mut tar = Vec::new();
-    flate2::read::GzDecoder::new(payload)
-        .read_to_end(&mut tar)
-        .map_err(|e| crate::Error::Decode(format!("ModelRepo gunzip failed: {e}")))?;
+    let tar = bounded_gunzip(payload, MAX_DECOMPRESSED_CATALOG_LEN, "ModelRepo tar")?;
 
     // Walk tar headers until we find ModelRepo.xml.
     let mut offset = 0usize;
@@ -592,6 +596,21 @@ mod tests {
     #[test]
     fn rejects_a_non_gzip_payload() {
         let err = Catalog::parse(b"not gzip at all").unwrap_err();
+        assert!(matches!(err, crate::Error::Decode(_)));
+    }
+
+    #[test]
+    fn rejects_a_tar_over_the_decompressed_size_limit() {
+        use std::io::Write as _;
+
+        // The bound is checked before tar parsing, so the plaintext need not
+        // be a valid tar - it only has to decompress past the limit.
+        let plain = vec![0u8; MAX_DECOMPRESSED_CATALOG_LEN + 1];
+        let mut gzip = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        gzip.write_all(&plain).expect("fixture compresses");
+        let payload = gzip.finish().expect("fixture finishes");
+
+        let err = Catalog::parse(&payload).unwrap_err();
         assert!(matches!(err, crate::Error::Decode(_)));
     }
 

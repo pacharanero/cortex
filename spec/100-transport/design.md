@@ -163,20 +163,30 @@ if let Some(body) = reassembler.feed(&frame)? {
 
 ### Design choice: frame-level gzip decompression here, not in framing
 
-The device compresses some payloads at the frame level (the reassembled body starts with `1f 8b`). Decompression is done in `Transport::request` after `Message::parse` strips the trailer, because the gzip wraps the protobuf body, not the trailer:
+The device compresses some payloads at the frame level (the reassembled body starts with `1f 8b`). Decompression happens in `Message::decode` (`130-domain-model`'s message envelope, not framing), which `Transport::request` calls after reassembly, because the gzip wraps the protobuf body, not the trailer that `Message::parse` strips first.
+
+`Message::decode` bounds the decompressed size at `MAX_DECOMPRESSED_MESSAGE_LEN` (8 MiB, comfortably above the 150,008-byte largest reassembled body measured on `CorOS` 4.0.1). It reads through `Read::take(limit + 1)` so a malformed or hostile gzip stream cannot be inflated past the limit before the bound is checked, and returns `Error::Decode` rather than allocating without bound:
 
 ```rust
-if msg.body.starts_with(&[0x1f, 0x8b]) {
-    use std::io::Read;
-    let mut decoder = flate2::read::GzDecoder::new(&msg.body[..]);
+pub(crate) fn bounded_gunzip(
+    reader: impl std::io::Read,
+    limit: usize,
+    context: &str,
+) -> crate::Result<Vec<u8>> {
+    let mut decoder = flate2::read::GzDecoder::new(reader).take(limit as u64 + 1);
     let mut decompressed = Vec::new();
     decoder.read_to_end(&mut decompressed)
-        .map_err(|e| crate::Error::Decode(format!("gzip: {e}")))?;
-    msg.body = bytes::Bytes::from(decompressed);
+        .map_err(|e| crate::Error::Decode(format!("{context}: gzip: {e}")))?;
+    if decompressed.len() > limit {
+        return Err(crate::Error::Decode(format!(
+            "{context}: decompressed size exceeds {limit}-byte limit"
+        )));
+    }
+    Ok(decompressed)
 }
 ```
 
-Field-level gzip (inside protobuf `bytes` fields) is a separate concern owned by the domain layer (`130`), not here.
+Field-level gzip (inside protobuf `bytes` fields) is a separate concern owned by the domain layer (`130`), and bounds its own decompressed size independently (`Catalog::MAX_DECOMPRESSED_CATALOG_LEN`) using the same `bounded_gunzip` helper - see [`130-domain-model`](../130-domain-model/spec.md).
 
 ### Design choice: return the first reassembled message
 
