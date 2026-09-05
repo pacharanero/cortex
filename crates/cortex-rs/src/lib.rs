@@ -133,9 +133,9 @@ pub enum Error {
     #[error("framing error: {0}")]
     Framing(String),
 
-    /// A reassembled message could not be decoded as a Cortex Control
-    /// protobuf message.
-    #[error("protobuf decode error: {0}")]
+    /// A payload could not be decompressed, extracted, or decoded as a Cortex
+    /// Control message.
+    #[error("decode error: {0}")]
     Decode(String),
 
     /// The Quad Cortex 8-byte trailer was missing or did not contain a recognised

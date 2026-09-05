@@ -100,10 +100,10 @@ impl Message {
 
 /// Gunzip `reader`, rejecting a decompressed size over `limit` bytes.
 ///
-/// Reads through [`Read::take`] set to `limit + 1`, so at most one byte over
-/// the limit is ever pulled through the decoder before this returns - a
-/// malformed or hostile gzip stream cannot allocate memory in proportion to
-/// its (attacker-controlled) claimed size.
+/// Reads all gzip members through [`Read::take`] set to `limit + 1`, so at most
+/// one byte over the limit is ever pulled into the output buffer before this
+/// returns. A malformed or hostile gzip stream therefore cannot make retained
+/// output grow in proportion to its attacker-controlled expanded size.
 ///
 /// `context` names the field being decompressed, for the error message.
 ///
@@ -118,8 +118,13 @@ pub(crate) fn bounded_gunzip(
 ) -> crate::Result<Vec<u8>> {
     use std::io::Read as _;
 
-    let mut decoder = flate2::read::GzDecoder::new(reader)
-        .take(u64::try_from(limit).unwrap_or(u64::MAX).saturating_add(1));
+    let read_limit = u64::try_from(limit)
+        .ok()
+        .and_then(|value| value.checked_add(1))
+        .ok_or_else(|| {
+            crate::Error::Decode(format!("{context}: decompression limit is too large"))
+        })?;
+    let mut decoder = flate2::read::MultiGzDecoder::new(reader).take(read_limit);
     let mut decompressed = Vec::new();
     decoder
         .read_to_end(&mut decompressed)
@@ -182,6 +187,26 @@ mod tests {
     #[test]
     fn bounded_gunzip_rejects_malformed_gzip() {
         let err = bounded_gunzip(&b"not gzip at all"[..], 1024, "test").unwrap_err();
+        assert!(matches!(err, crate::Error::Decode(_)));
+    }
+
+    #[test]
+    fn bounded_gunzip_applies_one_limit_across_all_members() {
+        let mut payload = gzip(&[1u8; 6]);
+        payload.extend(gzip(&[2u8; 4]));
+        let decompressed = bounded_gunzip(&payload[..], 10, "test").unwrap();
+        assert_eq!(decompressed, [vec![1u8; 6], vec![2u8; 4]].concat());
+
+        payload.extend(gzip(&[3u8; 1]));
+        let err = bounded_gunzip(&payload[..], 10, "test").unwrap_err();
+        assert!(matches!(err, crate::Error::Decode(_)));
+    }
+
+    #[test]
+    fn bounded_gunzip_rejects_trailing_non_gzip_data() {
+        let mut payload = gzip(b"valid member");
+        payload.extend_from_slice(b"trailing garbage");
+        let err = bounded_gunzip(&payload[..], 1024, "test").unwrap_err();
         assert!(matches!(err, crate::Error::Decode(_)));
     }
 

@@ -40,7 +40,7 @@ use std::collections::HashMap;
 use crate::message::bounded_gunzip;
 
 /// The largest decompressed tar [`Catalog::parse`] will retain from the
-/// `ModelRepo` payload's frame-level gzip, comfortably above the
+/// `ModelRepo` payload's field-level gzip, comfortably above the
 /// 558,592-byte tar measured against `CorOS` 4.0.1 hardware. Without this
 /// bound, a malformed or hostile catalog payload could inflate to an
 /// unbounded size before extraction fails.
@@ -200,8 +200,9 @@ impl Catalog {
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::Decode`] if the payload is not gzip, does not
-    /// contain a tar holding `ModelRepo.xml`, or the XML cannot be parsed.
+    /// Returns [`crate::Error::Decode`] if the payload is not gzip, expands
+    /// beyond [`MAX_DECOMPRESSED_CATALOG_LEN`], does not contain a tar holding
+    /// `ModelRepo.xml`, or the XML cannot be parsed.
     pub fn parse(payload: &[u8]) -> crate::Result<Self> {
         let xml = extract_model_repo_xml(payload)?;
         Self::from_xml(&xml)
