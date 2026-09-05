@@ -90,7 +90,7 @@ Maintainers, AI coding agents, and the CLI/MCP/GUI surfaces that consume the cra
 | NFR-1 | The domain model builds with `default-features = false` (no `hidapi`). | CI-enforced |
 | NFR-2 | No `async` runtime dependency in this layer; the domain model is synchronous. | Review-enforced |
 | NFR-3 | The row-numbering trap is documented in every helper that takes or returns a row, not just one place. | Review-enforced |
-| NFR-4 | Catalog parsing bounds compressed and expanded input, then eagerly parses the runtime XML once; no real catalog fixture is committed. | Review-enforced |
+| NFR-4 | Catalog parsing bounds decompressed tar input at `MAX_DECOMPRESSED_CATALOG_LEN` (8 MiB, comfortably above the 558,592-byte tar measured on `CorOS` 4.0.1), counting all concatenated gzip members toward one aggregate limit and rejecting anything that would exceed it with `Error::Decode` after a bounded read; tar entry offsets are checked against the archive length before extraction. Compressed input size from a subscribed device session is separately bounded by the session's reassembly cap (140-session FR-15). The runtime XML is eagerly parsed once; no real catalog fixture is committed. | Review-enforced |
 | NFR-5 | Provisional operations, unverified message types and untested helpers are labelled by capability; hardware-verified device and catalog shapes are not described as provisional. | Review-enforced |
 
 ## Acceptance Criteria
@@ -103,6 +103,7 @@ Maintainers, AI coding agents, and the CLI/MCP/GUI surfaces that consume the cra
 - [x] `grid::Row` makes the row-numbering trap explicit and rejects invalid rows.
 - [x] `view::Scene` exposes A-H metadata in every preset view, while each block exposes its per-scene bypass state.
 - [x] `Catalog` parses the `ModelRepo` container and preserves parameter wire positions.
+- [x] A `ModelRepo` gzip payload that would decompress past `MAX_DECOMPRESSED_CATALOG_LEN` (8 MiB) is rejected with `Error::Decode` after at most one excess output byte is read; exact-limit input still decodes and concatenated members share the same aggregate limit.
 - [x] Checked slot conversion, input-level scaling, preset navigation, dynamic-option and semantic comparison helpers are implemented.
 - [x] `UNITY_LEVEL`, `input_level_db`, and `db_to_input_level` are exposed.
 - [x] The Nano application codec and typed working-state operations use the separate four-byte-footer domain and label capability evidence without conflating it with the Quad envelope; FX model and parameter names use Nano-specific attributed tables, preserve unknown ids/indices explicitly, and do not present inferred units or conversions as wire facts.

@@ -159,8 +159,10 @@ impl Transport {
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::ReadTimeout`] if no reply arrives within
-    /// `timeout`, or a framing/trailer error if the reassembled message is
+    /// Returns [`crate::Error::UnsupportedDeviceOperation`] for a non-Quad
+    /// device, [`crate::Error::Hid`] for a read or write failure,
+    /// [`crate::Error::ReadTimeout`] if no reply arrives within `timeout`, or a
+    /// framing, trailer, or decode error if the reassembled message is
     /// malformed.
     pub fn request(
         &self,

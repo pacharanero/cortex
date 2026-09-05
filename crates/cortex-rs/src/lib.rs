@@ -85,7 +85,7 @@ pub mod proto {
     include!(concat!(env!("OUT_DIR"), "/cortex_protobuf_v2.rs"));
 }
 
-pub use catalog::{Catalog, Model, Parameter, ParameterKind};
+pub use catalog::{Catalog, MAX_DECOMPRESSED_CATALOG_LEN, Model, Parameter, ParameterKind};
 pub use client::{
     CAPTURE_FILE_NAME_PARAM, CopyPresetReceipt, DEFAULT_CAPTURE_MODEL, DuplicateSetlistReceipt,
     ExpressionBypassMode, ExpressionPedal, FIRST_IR_LOADER_MODEL, Footswitch, FootswitchModeSlot,
@@ -110,7 +110,7 @@ pub use helpers::{
     params_equal_with_tolerance, preset_load_midi_out, row_status, splits, stomp_assignments,
     tempo_params,
 };
-pub use message::Message;
+pub use message::{MAX_DECOMPRESSED_MESSAGE_LEN, Message};
 pub use safety::{
     RecallConsent, SaveConfirmation, SavePolicy, SavePreparation, SavePreparationView, SaveReceipt,
     SaveReceiptView, SaveTarget, ScratchOverride, ScratchRange,
@@ -133,9 +133,9 @@ pub enum Error {
     #[error("framing error: {0}")]
     Framing(String),
 
-    /// A reassembled message could not be decoded as a Cortex Control
-    /// protobuf message.
-    #[error("protobuf decode error: {0}")]
+    /// A payload could not be decompressed, extracted, or decoded as a Cortex
+    /// Control message.
+    #[error("decode error: {0}")]
     Decode(String),
 
     /// The Quad Cortex 8-byte trailer was missing or did not contain a recognised

@@ -1339,9 +1339,10 @@ fn rx_loop(device: Arc<Mutex<Option<Box<dyn crate::link::HidLink>>>>, shared: Ar
                     // bodies). An envelope decode failure is different: its
                     // type is unrecoverable, so cache continuity is lost.
                     trace!("undecodable inbound message: {e}");
-                    shared
-                        .state
-                        .stream_gap(shared.generation, "malformed message envelope");
+                    shared.state.stream_gap(
+                        shared.generation,
+                        &format!("malformed message envelope: {e}"),
+                    );
                 }
             }
             Ok(None) => {
@@ -2202,14 +2203,21 @@ mod link_tests {
             Duration::from_secs(3),
             |_| true,
         );
-        let cache_phase = session.state_cache().status().phase;
+        let status = session.state_cache().status();
         session.stop();
 
         assert!(
             got.is_ok(),
             "a bad envelope stopped the loop delivering good ones"
         );
-        assert_eq!(cache_phase, crate::CachePhase::Invalidated);
+        assert_eq!(status.phase, crate::CachePhase::Invalidated);
+        assert!(
+            status
+                .last_rejection
+                .as_deref()
+                .is_some_and(|reason| reason.contains("reassembled message too short")),
+            "the cache should preserve the actionable envelope decode cause"
+        );
     }
 
     /// Frame a message as reports carrying exactly `chunk_len` data bytes
