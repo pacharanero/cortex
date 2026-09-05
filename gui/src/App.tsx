@@ -36,9 +36,11 @@ export function App() {
   const [selectedCell, setSelectedCell] = useState<Cell | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [retrying, setRetrying] = useState(false);
-  // Which slot is mid-recall, as "<setlist> <slot>", so only the clicked entry
-  // shows as pending rather than the whole directory.
-  const [recalling, setRecalling] = useState<string | null>(null);
+  // Which slot is mid-recall, as an exact {setlist, slot} identity, so only
+  // the clicked entry shows as pending rather than the whole directory. A
+  // delimiter-joined string risked a setlist key or slot value containing
+  // the delimiter colliding with an unrelated slot.
+  const [recalling, setRecalling] = useState<{ setlist: string; slot: string } | null>(null);
   const [parameters, setParameters] = useState<ParameterView[] | null>(null);
   const [parameterError, setParameterError] = useState<string | null>(null);
   const [nanoOperationError, setNanoOperationError] = useState<string | null>(null);
@@ -168,7 +170,7 @@ export function App() {
   // is followed by a re-read rather than an optimistic update: the grid shown
   // is the one the device reports, not the one that was asked for.
   const recall = async (setlist: string, slot: string) => {
-    setRecalling(`${setlist}\u0000${slot}`);
+    setRecalling({ setlist, slot });
     try {
       await cortexApi.recallPreset(setlist, slot);
       setSelectedCell(null);
@@ -320,7 +322,7 @@ export function App() {
                   // heard, exactly as pressing the preset on the unit does.
                   // Recall is free here because it writes nothing to storage;
                   // saving is the operation that asks first.
-                  description={recalling === `${setlist.key} ${slot.slot}` ? "Recalling..." : undefined}
+                  description={recalling?.setlist === setlist.key && recalling.slot === slot.slot ? "Recalling..." : undefined}
                   disabled={recalling !== null || !connected}
                   key={`${setlist.key}-${slot.index}`}
                   label={`${slot.slot}  ${slot.name}`}

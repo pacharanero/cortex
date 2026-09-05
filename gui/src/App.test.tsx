@@ -34,6 +34,13 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
+function deferredRejectable<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((done, fail) => { resolve = done; reject = fail; });
+  return { promise, resolve, reject };
+}
+
 function snapshot(device: "quad_cortex" | "nano_cortex"): DashboardSnapshot {
   return {
     source: "daemon",
@@ -78,6 +85,23 @@ function snapshot(device: "quad_cortex" | "nano_cortex"): DashboardSnapshot {
 
 function renderApp() {
   return render(<MantineProvider><App /></MantineProvider>);
+}
+
+// Two entries whose old "<setlist> <slot>" delimiter-joined identity collided
+// on the same string ("Live Set 1A") despite naming different presets, so a
+// space-joined pending identity could not tell them apart.
+function directorySnapshot(): DashboardSnapshot {
+  const base = snapshot("quad_cortex");
+  base.live = {
+    generation: 1, revision: 1, storage_revision: 1, preset_name: "Preset One",
+    active_scene: 0, active_scene_label: "A", preset_dirty: false, cpu_load: null,
+    blocks: [], scenes: [],
+  };
+  base.directory = [
+    { key: "Live Set", name: "Live Set", is_factory: false, slots: [{ index: 0, slot: "1A", name: "Preset One" }] },
+    { key: "Live", name: "Live", is_factory: false, slots: [{ index: 0, slot: "Set 1A", name: "Preset Two" }] },
+  ];
+  return base;
 }
 
 async function chooseDevice(name: "Quad Cortex" | "Nano Cortex") {
@@ -175,5 +199,66 @@ describe("device switching", () => {
 
     expect(await screen.findByText("gain applied.")).toBeTruthy();
     expect(screen.queryByText("secondary dashboard refresh failed")).toBeNull();
+  });
+});
+
+describe("preset recall pending state", () => {
+  afterEach(() => {
+    vi.resetAllMocks();
+  });
+
+  it("marks only the invoked slot as Recalling and clears it once the recall resolves", async () => {
+    const recall = deferred<void>();
+    api.dashboard.mockResolvedValue(directorySnapshot());
+    api.recallPreset.mockReturnValue(recall.promise);
+    renderApp();
+
+    fireEvent.click(await screen.findByText("1A Preset One"));
+
+    await screen.findByText("Recalling...");
+    // The other setlist's slot must not also read pending, even though its
+    // space-joined "<setlist> <slot>" identity ("Live Set 1A") collides with
+    // the invoked one.
+    expect(screen.getAllByText("Recalling...")).toHaveLength(1);
+    expect(api.recallPreset).toHaveBeenCalledWith("Live Set", "1A");
+    expect(api.recallPreset).not.toHaveBeenCalledWith("Live", "Set 1A");
+
+    await act(async () => recall.resolve());
+
+    await waitFor(() => expect(screen.queryByText("Recalling...")).toBeNull());
+  });
+
+  it("distinguishes two slots and only shows the second slot's own invocation as pending", async () => {
+    const recall = deferred<void>();
+    api.dashboard.mockResolvedValue(directorySnapshot());
+    api.recallPreset.mockReturnValue(recall.promise);
+    renderApp();
+
+    fireEvent.click(await screen.findByText("Set 1A Preset Two"));
+
+    await screen.findByText("Recalling...");
+    expect(screen.getAllByText("Recalling...")).toHaveLength(1);
+    expect(api.recallPreset).toHaveBeenCalledWith("Live", "Set 1A");
+
+    await act(async () => recall.resolve());
+    await waitFor(() => expect(screen.queryByText("Recalling...")).toBeNull());
+  });
+
+  it("clears the pending indicator and surfaces the error when the recall rejects", async () => {
+    const recall = deferredRejectable<void>();
+    api.dashboard.mockResolvedValue(directorySnapshot());
+    api.recallPreset.mockReturnValue(recall.promise);
+    renderApp();
+
+    fireEvent.click(await screen.findByText("1A Preset One"));
+    await screen.findByText("Recalling...");
+
+    await act(async () => {
+      recall.reject(new Error("recall failed"));
+      await recall.promise.catch(() => {});
+    });
+
+    await waitFor(() => expect(screen.queryByText("Recalling...")).toBeNull());
+    expect(await screen.findByText("recall failed")).toBeTruthy();
   });
 });
