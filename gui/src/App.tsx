@@ -43,6 +43,23 @@ export function App() {
   const [nanoOperationError, setNanoOperationError] = useState<string | null>(null);
   const generation = useRef<number | null>(null);
   const dashboardEpoch = useRef(0);
+  // The poll, scene/label/bypass edits, recall and the Nano write follow-up
+  // each read the dashboard independently, so their replies can settle in a
+  // different order than they were issued in. `dashboardSequence` numbers
+  // every read as it starts; `dashboardCursor` remembers the ticket last
+  // accepted. A reply only applies if its ticket is still for the current
+  // device-selection epoch and newer than the cursor - so a request issued
+  // before a later one that already won cannot overwrite it, whether it
+  // succeeded or failed, once it finally settles.
+  const dashboardSequence = useRef(0);
+  const dashboardCursor = useRef({ epoch: 0, seq: 0 });
+  const issueDashboardTicket = (epoch: number = dashboardEpoch.current) => ({ epoch, seq: ++dashboardSequence.current });
+  const acceptDashboardTicket = (ticket: { epoch: number; seq: number }): boolean => {
+    if (ticket.epoch !== dashboardEpoch.current) return false;
+    if (ticket.epoch === dashboardCursor.current.epoch && ticket.seq <= dashboardCursor.current.seq) return false;
+    dashboardCursor.current = ticket;
+    return true;
+  };
   const pendingDeviceSwitch = useRef<{ device: DeviceKind | null; epoch: number } | null>(null);
   const deviceSwitchRunning = useRef(false);
   const [deviceSwitchInProgress, setDeviceSwitchInProgress] = useState(false);
@@ -57,16 +74,16 @@ export function App() {
     let cancelled = false;
     let timer: number | undefined;
     const refresh = async () => {
-      const requestEpoch = dashboardEpoch.current;
+      const ticket = issueDashboardTicket();
       try {
         const next = await cortexApi.dashboard();
-        if (cancelled || requestEpoch !== dashboardEpoch.current) return;
+        if (cancelled || !acceptDashboardTicket(ticket)) return;
         if (generation.current !== null && generation.current !== next.status.cache.generation) setSelectedCell(null);
         generation.current = next.status.cache.generation;
         setSnapshot(next);
         setError(null);
       } catch (reason) {
-        if (!cancelled && requestEpoch === dashboardEpoch.current) setError(reason instanceof Error ? reason.message : String(reason));
+        if (!cancelled && acceptDashboardTicket(ticket)) setError(reason instanceof Error ? reason.message : String(reason));
       } finally {
         if (!cancelled) timer = window.setTimeout(refresh, 1000);
       }
@@ -122,10 +139,13 @@ export function App() {
   // the poll rather than reported as a failed switch.
   const switchScene = async (scene: number) => {
     await cortexApi.switchScene(scene);
+    const ticket = issueDashboardTicket();
     try {
       const next = await cortexApi.dashboard();
-      generation.current = next.status.cache.generation;
-      setSnapshot(next);
+      if (acceptDashboardTicket(ticket)) {
+        generation.current = next.status.cache.generation;
+        setSnapshot(next);
+      }
     } catch {
       /* the one-second poll re-reads and surfaces any error */
     }
@@ -143,9 +163,12 @@ export function App() {
   // Scene metadata edits follow the same shape as every other write here:
   // act, then re-read, so the panel shows what the device holds.
   const afterDeviceEdit = async () => {
+    const ticket = issueDashboardTicket();
     const next = await cortexApi.dashboard();
-    generation.current = next.status.cache.generation;
-    setSnapshot(next);
+    if (acceptDashboardTicket(ticket)) {
+      generation.current = next.status.cache.generation;
+      setSnapshot(next);
+    }
   };
   // Bypass reaches the active scene only, because that is how the device
   // stores it. Act, then re-read: the grid shows what the unit reports.
@@ -170,13 +193,22 @@ export function App() {
     setRecalling({ setlist, slot });
     try {
       await cortexApi.recallPreset(setlist, slot);
-      setSelectedCell(null);
-      const next = await cortexApi.dashboard();
-      generation.current = next.status.cache.generation;
-      setSnapshot(next);
-      setError(null);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
+      setRecalling(null);
+      return;
+    }
+    setSelectedCell(null);
+    const ticket = issueDashboardTicket();
+    try {
+      const next = await cortexApi.dashboard();
+      if (acceptDashboardTicket(ticket)) {
+        generation.current = next.status.cache.generation;
+        setSnapshot(next);
+        setError(null);
+      }
+    } catch (reason) {
+      if (acceptDashboardTicket(ticket)) setError(reason instanceof Error ? reason.message : String(reason));
     } finally {
       setRecalling(null);
     }
@@ -196,10 +228,12 @@ export function App() {
   };
   const refreshAfterNanoOperation = async (epoch: number) => {
     if (epoch !== dashboardEpoch.current) return;
+    const ticket = issueDashboardTicket(epoch);
     const next = await cortexApi.dashboard();
-    if (epoch !== dashboardEpoch.current) return;
-    generation.current = next.status.cache.generation;
-    setSnapshot(next);
+    if (acceptDashboardTicket(ticket)) {
+      generation.current = next.status.cache.generation;
+      setSnapshot(next);
+    }
   };
   const runNanoOperation = async <T,>(operation: () => Promise<T>, clearError = true): Promise<T> => {
     const epoch = dashboardEpoch.current;

@@ -265,3 +265,69 @@ describe("preset recall pending state", () => {
     expect(await screen.findByText("recall failed")).toBeTruthy();
   });
 });
+
+// GUI-001.9: the poll and a command's own read-back both call
+// `cortexApi.dashboard()` independently, so their replies can settle in a
+// different order than they were issued in. These prove a read issued before
+// one that has already won cannot overwrite it later, whether it eventually
+// succeeds or fails.
+describe("dashboard read ordering", () => {
+  afterEach(() => {
+    vi.resetAllMocks();
+  });
+
+  it("does not let a stale poll reply overwrite a newer recall read-back", async () => {
+    const stalePoll = deferred<DashboardSnapshot>();
+    const initial = directorySnapshot();
+    const recalled = directorySnapshot();
+    recalled.live!.preset_name = "Recalled Preset";
+    api.dashboard
+      .mockResolvedValue(initial)
+      .mockResolvedValueOnce(initial)
+      .mockImplementationOnce(() => stalePoll.promise)
+      .mockResolvedValueOnce(recalled);
+    api.recallPreset.mockResolvedValue(undefined);
+    renderApp();
+
+    await screen.findByText("Preset One");
+    // Let the poll issue its second, stalled request before the recall issues
+    // a third, so the third is the newer of the two in flight.
+    await waitFor(() => expect(api.dashboard).toHaveBeenCalledTimes(2), { timeout: 2_000 });
+
+    fireEvent.click(screen.getByRole("button", { name: "1A Preset One" }));
+    await screen.findByText("Recalled Preset");
+    expect(api.dashboard).toHaveBeenCalledTimes(3);
+
+    await act(async () => stalePoll.resolve(initial));
+
+    expect(screen.getByText("Recalled Preset")).toBeTruthy();
+  });
+
+  it("does not surface a stale poll failure once a newer recall read-back has already succeeded", async () => {
+    const stalePoll = deferred<DashboardSnapshot>();
+    const initial = directorySnapshot();
+    const recalled = directorySnapshot();
+    recalled.live!.preset_name = "Recalled Preset";
+    api.dashboard
+      .mockResolvedValue(initial)
+      .mockResolvedValueOnce(initial)
+      .mockImplementationOnce(() => stalePoll.promise)
+      .mockResolvedValueOnce(recalled);
+    api.recallPreset.mockResolvedValue(undefined);
+    renderApp();
+
+    await screen.findByText("Preset One");
+    await waitFor(() => expect(api.dashboard).toHaveBeenCalledTimes(2), { timeout: 2_000 });
+
+    fireEvent.click(screen.getByRole("button", { name: "1A Preset One" }));
+    await screen.findByText("Recalled Preset");
+
+    await act(async () => {
+      stalePoll.reject(new Error("stale poll failure"));
+      await stalePoll.promise.catch(() => {});
+    });
+
+    expect(screen.getByText("Recalled Preset")).toBeTruthy();
+    expect(screen.queryByText("stale poll failure")).toBeNull();
+  });
+});
