@@ -36,9 +36,8 @@ export function App() {
   const [selectedCell, setSelectedCell] = useState<Cell | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [retrying, setRetrying] = useState(false);
-  // Which slot is mid-recall, as "<setlist> <slot>", so only the clicked entry
-  // shows as pending rather than the whole directory.
-  const [recalling, setRecalling] = useState<string | null>(null);
+  // Keep the identity structured so arbitrary setlist keys cannot collide.
+  const [recalling, setRecalling] = useState<{ setlist: string; slot: string } | null>(null);
   const [parameters, setParameters] = useState<ParameterView[] | null>(null);
   const [parameterError, setParameterError] = useState<string | null>(null);
   const [nanoOperationError, setNanoOperationError] = useState<string | null>(null);
@@ -168,7 +167,7 @@ export function App() {
   // is followed by a re-read rather than an optimistic update: the grid shown
   // is the one the device reports, not the one that was asked for.
   const recall = async (setlist: string, slot: string) => {
-    setRecalling(`${setlist}\u0000${slot}`);
+    setRecalling({ setlist, slot });
     try {
       await cortexApi.recallPreset(setlist, slot);
       setSelectedCell(null);
@@ -312,7 +311,7 @@ export function App() {
         <Text c="dimmed" fw={700} mb="xs" size="xs" tt="uppercase">Preset directory</Text>
         <ScrollArea>
           {snapshot.directory.map((setlist) => (
-            <NavLink defaultOpened key={setlist.key} label={setlist.name}>
+            <NavLink component="button" defaultOpened key={setlist.key} label={setlist.name} type="button">
               {setlist.slots.map((slot) => (
                 <NavLink
                   active={live?.preset_name === slot.name}
@@ -320,11 +319,13 @@ export function App() {
                   // heard, exactly as pressing the preset on the unit does.
                   // Recall is free here because it writes nothing to storage;
                   // saving is the operation that asks first.
-                  description={recalling === `${setlist.key} ${slot.slot}` ? "Recalling..." : undefined}
+                  component="button"
+                  description={recalling?.setlist === setlist.key && recalling.slot === slot.slot ? "Recalling..." : undefined}
                   disabled={recalling !== null || !connected}
                   key={`${setlist.key}-${slot.index}`}
                   label={`${slot.slot}  ${slot.name}`}
                   onClick={() => { setMobileNavOpen(false); void recall(setlist.key, slot.slot); }}
+                  type="button"
                 />
               ))}
             </NavLink>
