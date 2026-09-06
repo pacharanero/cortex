@@ -36,10 +36,7 @@ export function App() {
   const [selectedCell, setSelectedCell] = useState<Cell | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [retrying, setRetrying] = useState(false);
-  // Which slot is mid-recall, as an exact {setlist, slot} identity, so only
-  // the clicked entry shows as pending rather than the whole directory. A
-  // delimiter-joined string risked a setlist key or slot value containing
-  // the delimiter colliding with an unrelated slot.
+  // Keep the identity structured so arbitrary setlist keys cannot collide.
   const [recalling, setRecalling] = useState<{ setlist: string; slot: string } | null>(null);
   const [parameters, setParameters] = useState<ParameterView[] | null>(null);
   const [parameterError, setParameterError] = useState<string | null>(null);
@@ -314,7 +311,7 @@ export function App() {
         <Text c="dimmed" fw={700} mb="xs" size="xs" tt="uppercase">Preset directory</Text>
         <ScrollArea>
           {snapshot.directory.map((setlist) => (
-            <NavLink defaultOpened key={setlist.key} label={setlist.name}>
+            <NavLink component="button" defaultOpened key={setlist.key} label={setlist.name} type="button">
               {setlist.slots.map((slot) => (
                 <NavLink
                   active={live?.preset_name === slot.name}
@@ -322,11 +319,13 @@ export function App() {
                   // heard, exactly as pressing the preset on the unit does.
                   // Recall is free here because it writes nothing to storage;
                   // saving is the operation that asks first.
+                  component="button"
                   description={recalling?.setlist === setlist.key && recalling.slot === slot.slot ? "Recalling..." : undefined}
                   disabled={recalling !== null || !connected}
                   key={`${setlist.key}-${slot.index}`}
                   label={`${slot.slot}  ${slot.name}`}
                   onClick={() => { setMobileNavOpen(false); void recall(setlist.key, slot.slot); }}
+                  type="button"
                 />
               ))}
             </NavLink>

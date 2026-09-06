@@ -30,12 +30,6 @@ import { App } from "./App";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((done) => { resolve = done; });
-  return { promise, resolve };
-}
-
-function deferredRejectable<T>() {
-  let resolve!: (value: T) => void;
   let reject!: (reason: unknown) => void;
   const promise = new Promise<T>((done, fail) => { resolve = done; reject = fail; });
   return { promise, resolve, reject };
@@ -213,13 +207,18 @@ describe("preset recall pending state", () => {
     api.recallPreset.mockReturnValue(recall.promise);
     renderApp();
 
-    fireEvent.click(await screen.findByText("1A Preset One"));
+    const invoked = await screen.findByRole("button", { name: "1A Preset One" });
+    const other = screen.getByRole("button", { name: "Set 1A Preset Two" });
+    expect(invoked.tabIndex).toBe(0);
+    fireEvent.click(invoked);
 
     await screen.findByText("Recalling...");
     // The other setlist's slot must not also read pending, even though its
     // space-joined "<setlist> <slot>" identity ("Live Set 1A") collides with
     // the invoked one.
     expect(screen.getAllByText("Recalling...")).toHaveLength(1);
+    expect(invoked.textContent).toContain("Recalling...");
+    expect(other.textContent).not.toContain("Recalling...");
     expect(api.recallPreset).toHaveBeenCalledWith("Live Set", "1A");
     expect(api.recallPreset).not.toHaveBeenCalledWith("Live", "Set 1A");
 
@@ -234,10 +233,14 @@ describe("preset recall pending state", () => {
     api.recallPreset.mockReturnValue(recall.promise);
     renderApp();
 
-    fireEvent.click(await screen.findByText("Set 1A Preset Two"));
+    const other = await screen.findByRole("button", { name: "1A Preset One" });
+    const invoked = screen.getByRole("button", { name: "Set 1A Preset Two" });
+    fireEvent.click(invoked);
 
     await screen.findByText("Recalling...");
     expect(screen.getAllByText("Recalling...")).toHaveLength(1);
+    expect(invoked.textContent).toContain("Recalling...");
+    expect(other.textContent).not.toContain("Recalling...");
     expect(api.recallPreset).toHaveBeenCalledWith("Live", "Set 1A");
 
     await act(async () => recall.resolve());
@@ -245,7 +248,7 @@ describe("preset recall pending state", () => {
   });
 
   it("clears the pending indicator and surfaces the error when the recall rejects", async () => {
-    const recall = deferredRejectable<void>();
+    const recall = deferred<void>();
     api.dashboard.mockResolvedValue(directorySnapshot());
     api.recallPreset.mockReturnValue(recall.promise);
     renderApp();
