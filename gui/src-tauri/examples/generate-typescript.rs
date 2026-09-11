@@ -8,6 +8,7 @@
 
 use std::path::PathBuf;
 
+use cortex_gui::capability::CapabilityLabel;
 use cortex_gui::{DashboardSnapshot, ParameterView};
 use cortex_rs::ParameterInput;
 use cortex_rs::nano::{NanoAmpControl, NanoBypassTarget, NanoFxParameter, NanoFxSlot};
@@ -29,6 +30,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     NanoBypassTarget::export_all(&config)?;
     NanoFxParameter::export_all(&config)?;
     NanoFxSlot::export_all(&config)?;
+    CapabilityLabel::export_all(&config)?;
 
     let mut bindings = Vec::new();
     for entry in std::fs::read_dir(&output)? {

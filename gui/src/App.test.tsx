@@ -3,11 +3,12 @@
 
 import { MantineProvider } from "@mantine/core";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
-import type { DashboardSnapshot } from "./shared/ipc/types";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { CapabilityLabel, DashboardSnapshot } from "./shared/ipc/types";
 
 const api = vi.hoisted(() => ({
   dashboard: vi.fn(),
+  capabilities: vi.fn(),
   setDevice: vi.fn(),
   reconnectNow: vi.fn(),
   switchScene: vi.fn(),
@@ -27,6 +28,15 @@ const api = vi.hoisted(() => ({
 vi.mock("./shared/ipc/api", () => ({ cortexApi: api }));
 
 import { App } from "./App";
+
+// Every test mounts `App`, which fetches capabilities once on mount; give it a
+// harmless empty default so tests that do not care about evidence labels
+// (the vast majority) do not each have to stub it themselves. Runs after each
+// describe block's own `vi.resetAllMocks()`, so the default is always back in
+// place before the next test's render.
+beforeEach(() => {
+  api.capabilities.mockResolvedValue([]);
+});
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -294,6 +304,44 @@ describe("preset recall pending state", () => {
 // different order than they were issued in. These prove a read issued before
 // one that has already won cannot overwrite it later, whether it eventually
 // succeeds or fails.
+// GUI-004.2: the frontend renders exactly what `cortexApi.capabilities()`
+// returns and holds no independent opinion of its own about which operations
+// are confirmed - these test that end to end through two always-rendered
+// evidence labels (the sidebar's `recall_preset` badge and the scene
+// selector's `switch_scene` badge), rather than duplicating the Rust-side
+// seed-content assertions already covered in `capability.rs`.
+describe("capability evidence labels", () => {
+  afterEach(() => {
+    vi.resetAllMocks();
+  });
+
+  it("renders each operation's fetched status as text", async () => {
+    const labels: CapabilityLabel[] = [
+      { operation: "recall_preset", status: "confirmed-writable" },
+      { operation: "switch_scene", status: "unverified" },
+    ];
+    api.dashboard.mockResolvedValue(directorySnapshot());
+    api.capabilities.mockResolvedValue(labels);
+    renderApp();
+
+    await screen.findByText("Preset One");
+    expect(await screen.findByText("Hardware-verified")).toBeTruthy();
+    expect(screen.getByText("Not yet hardware-verified")).toBeTruthy();
+  });
+
+  it("renders every operation as not-yet-hardware-verified when the fetch fails", async () => {
+    api.dashboard.mockResolvedValue(directorySnapshot());
+    api.capabilities.mockRejectedValue(new Error("capability fetch failed"));
+    renderApp();
+
+    await screen.findByText("Preset One");
+    // recall_preset and switch_scene both fall back to unverified, and
+    // nothing else surfaces a status label in this snapshot (no block or
+    // scene is selected, and no Nano state is present).
+    expect(await screen.findAllByText("Not yet hardware-verified")).toHaveLength(2);
+  });
+});
+
 describe("dashboard read ordering", () => {
   afterEach(() => {
     vi.resetAllMocks();

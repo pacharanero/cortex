@@ -1417,6 +1417,14 @@ async fn recall_preset(
     .map_err(|error| CommandError::daemon(format!("recall task failed: {error}")))?
 }
 
+/// The evidence label for every currently implemented Quad and Nano
+/// operation surface (GUI-004.2). Pure computation over `spec/roadmap.md`'s
+/// recorded evidence - no device I/O, so this needs no `spawn_blocking`.
+#[tauri::command]
+fn capability_matrix() -> Vec<capability::CapabilityLabel> {
+    capability::labels()
+}
+
 pub fn run() {
     tauri::Builder::default()
         .manage(AppState {
@@ -1437,7 +1445,8 @@ pub fn run() {
             set_nano_bypass,
             set_device,
             read_nano_fx_params,
-            set_nano_fx_param
+            set_nano_fx_param,
+            capability_matrix
         ])
         .run(tauri::generate_context!())
         .expect("Tauri application failed");

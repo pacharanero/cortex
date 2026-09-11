@@ -36,3 +36,26 @@ describe("Nano fixture API", () => {
     await expect(fixtureApi.setNanoFxParam("pre_fx1", 99, 0, 0.5)).rejects.toThrow("model changed");
   });
 });
+
+// GUI-004.2: fixture mode must offer the same evidence labels production
+// would, so browser-mode inspection is not exercising a fiction.
+describe("capability evidence labels", () => {
+  it("mirrors the Rust-owned matrix rather than inventing its own", async () => {
+    const labels = await fixtureApi.capabilities();
+    const byOperation = Object.fromEntries(labels.map((label) => [label.operation, label.status]));
+
+    expect(byOperation.switch_scene).toBe("confirmed-writable");
+    expect(byOperation.recall_preset).toBe("confirmed-writable");
+    expect(byOperation.block_parameters).toBe("confirmed-readable");
+    expect(byOperation.set_parameter).toBe("confirmed-writable");
+    expect(byOperation.set_nano_amp).toBe("confirmed-writable");
+    expect(byOperation.read_nano_fx_params).toBe("confirmed-readable");
+    expect(byOperation.set_nano_fx_param).toBe("confirmed-writable");
+
+    // Offline/fixture-verified only, and ambiguous Nano evidence: none of
+    // these may be promoted (see capability.rs's own tests for why).
+    for (const operation of ["set_bypass", "set_scene_label", "set_scene_color", "set_nano_gate_reduction", "set_nano_bypass"]) {
+      expect(byOperation[operation]).toBe("unverified");
+    }
+  });
+});

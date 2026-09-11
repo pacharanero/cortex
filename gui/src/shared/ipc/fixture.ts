@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Dr Marcus Baw
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-import type { CortexApi, DashboardSnapshot, DeviceKind, LiveBlock, NanoCurrentState, NanoFxParameter, NanoFxSlot, ParameterInput, ParameterView, SceneSnapshot } from "./types";
+import type { CapabilityLabel, CortexApi, DashboardSnapshot, DeviceKind, LiveBlock, NanoCurrentState, NanoFxParameter, NanoFxSlot, ParameterInput, ParameterView, SceneSnapshot } from "./types";
 
 /**
  * Parameters per block cell, keyed "row,column".
@@ -164,6 +164,29 @@ function fxParameters(names: (string | null)[]): NanoFxParameter[] {
   }));
 }
 
+/**
+ * Mirrors `gui/src-tauri/src/capability.rs`'s `labels()` exactly, so browser
+ * mode renders the same evidence labels production would. This is fixture
+ * DATA standing in for the real Tauri command, not an independent policy: the
+ * rendering components still only display whatever this list says, never
+ * decide a status themselves. Keep in sync with the Rust seed by hand, since
+ * fixture mode has no Rust to call.
+ */
+const capabilityLabels: CapabilityLabel[] = [
+  { operation: "switch_scene", status: "confirmed-writable" },
+  { operation: "recall_preset", status: "confirmed-writable" },
+  { operation: "block_parameters", status: "confirmed-readable" },
+  { operation: "set_parameter", status: "confirmed-writable" },
+  { operation: "set_bypass", status: "unverified" },
+  { operation: "set_scene_label", status: "unverified" },
+  { operation: "set_scene_color", status: "unverified" },
+  { operation: "set_nano_amp", status: "confirmed-writable" },
+  { operation: "set_nano_gate_reduction", status: "unverified" },
+  { operation: "set_nano_bypass", status: "unverified" },
+  { operation: "read_nano_fx_params", status: "confirmed-readable" },
+  { operation: "set_nano_fx_param", status: "confirmed-writable" },
+];
+
 /** The device answers an edit with a new revision; the header shows it. */
 function bumpRevision() {
   if (!dashboard.live) return;
@@ -183,6 +206,7 @@ export const fixtureApi: CortexApi = {
     return structuredClone(dashboard);
   },
   async reconnectNow() {},
+  async capabilities() { return structuredClone(capabilityLabels); },
   async switchScene(scene: number) {
     // Refuse the same range the Rust boundary refuses, so fixture mode cannot
     // make an interaction look workable that production would reject.

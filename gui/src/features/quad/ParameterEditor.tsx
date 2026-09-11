@@ -3,12 +3,15 @@
 
 import { Alert, Badge, Group, NumberInput, Select, Slider, Stack, Text, TextInput } from "@mantine/core";
 import { useEffect, useRef, useState } from "react";
-import type { ParameterInput, ParameterView } from "../../shared/ipc/types";
+import { CapabilityBadge } from "../../shared/CapabilityBadge";
+import type { CapabilityLabel, ParameterInput, ParameterView } from "../../shared/ipc/types";
 
 interface ParameterEditorProps {
   parameters: ParameterView[];
   disabled: boolean;
   onWrite: (index: number, input: ParameterInput) => Promise<void>;
+  /** Evidence labels for `block_parameters` (read) and `set_parameter` (write). */
+  capabilities?: CapabilityLabel[];
 }
 
 /**
@@ -23,7 +26,7 @@ interface ParameterEditorProps {
  * reported, and the caller re-reads after a write - so a refused or clamped
  * write shows what actually happened rather than what was asked for.
  */
-export function ParameterEditor({ parameters, disabled, onWrite }: ParameterEditorProps) {
+export function ParameterEditor({ parameters, disabled, onWrite, capabilities = [] }: ParameterEditorProps) {
   const [pending, setPending] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -45,6 +48,10 @@ export function ParameterEditor({ parameters, disabled, onWrite }: ParameterEdit
 
   return (
     <Stack aria-busy={pending !== null} gap="md">
+      <Group gap="xs">
+        <CapabilityBadge labels={capabilities} operation="block_parameters" />
+        <CapabilityBadge labels={capabilities} operation="set_parameter" />
+      </Group>
       {error && <Alert color="red" title="Parameter write failed">{error}</Alert>}
       {/* Controls are NOT disabled while a write is in flight. A disabled
           element cannot hold focus, so disabling the control being operated

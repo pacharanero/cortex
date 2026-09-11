@@ -32,6 +32,7 @@ use std::collections::BTreeMap;
     Ord,
     serde::Serialize,
     serde::Deserialize,
+    ts_rs::TS,
 )]
 #[serde(rename_all = "kebab-case")]
 pub enum CapabilityStatus {
@@ -74,6 +75,28 @@ impl CapabilityMatrix {
     }
 }
 
+/// Every currently implemented Quad and Nano operation surface this matrix
+/// labels, keyed by the exact Tauri command name it is exposed as. Extending
+/// this list is how a new rendered control gains an evidence label - an
+/// operation missing from it is simply not shown one, never silently
+/// confirmed. `dashboard` and `reconnect_now` are deliberately absent: they
+/// are the always-on read/health path rather than a discrete user-triggered
+/// operation, and have no single per-operation evidence claim to label.
+pub const OPERATIONS: &[&str] = &[
+    "switch_scene",
+    "recall_preset",
+    "block_parameters",
+    "set_parameter",
+    "set_bypass",
+    "set_scene_label",
+    "set_scene_color",
+    "set_nano_amp",
+    "set_nano_gate_reduction",
+    "set_nano_bypass",
+    "read_nano_fx_params",
+    "set_nano_fx_param",
+];
+
 /// The matrix seeded from what `spec/roadmap.md` records as hardware-verified
 /// today. Extend this only alongside a roadmap entry recording the same
 /// evidence - promoting an operation here without one is exactly the ad-hoc
@@ -95,6 +118,53 @@ pub fn default_matrix() -> CapabilityMatrix {
         // GUI-003.3, hardware-verified 2026-08-17: wrote one parameter, saw
         // the device report the new value back, restored the original.
         .insert("set_parameter", ConfirmedWritable)
+        // NANO-001.5, Tauri backend hardware-verified 2026-08-18: a Tauri amp
+        // write changed Gain by one raw step, independently read it back,
+        // restored it and verified restoration in 12.15 seconds.
+        .insert("set_nano_amp", ConfirmedWritable)
+        // NANO-001.6, hardware-verified 2026-08-21: all five editable slots
+        // returned non-empty normalized vectors, and the rendered native
+        // Linux FX control displayed device-confirmed values.
+        .insert("read_nano_fx_params", ConfirmedReadable)
+        // NANO-001.6, hardware-verified 2026-08-21: the rendered native Linux
+        // FX control changed one Pre FX 2 slider by 0.001, displayed
+        // device-confirmed convergence, and restored through the same
+        // control with matching device/draft values.
+        .insert("set_nano_fx_param", ConfirmedWritable)
+    // set_nano_gate_reduction and set_nano_bypass stay unverified: the
+    // 2026-09-04 Gate-reduction pass explicitly records the Tauri boundary as
+    // hardware-verified while "the rendered Gate control remains
+    // provisional", and the Nano bypass entry (NANO-001.6) never itemises an
+    // exact Tauri/rendered-control pass the way amp and FX do - both are
+    // exactly the ambiguous-evidence case this matrix must not paper over.
+}
+
+/// One operation's evidence label for the typed Tauri/frontend contract.
+///
+/// The frontend renders exactly this - operation name paired with status -
+/// and must not maintain its own copy of which operations are confirmed;
+/// [`labels`] is the one place that decision is made.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, ts_rs::TS)]
+pub struct CapabilityLabel {
+    pub operation: String,
+    pub status: CapabilityStatus,
+}
+
+/// The complete evidence-label list for every operation in [`OPERATIONS`],
+/// looked up against [`default_matrix`]. An operation absent from the seed
+/// still appears here, labelled [`CapabilityStatus::Unverified`] - the
+/// frontend never has to guess which operations exist or invent a status for
+/// one the backend has not labelled.
+#[must_use]
+pub fn labels() -> Vec<CapabilityLabel> {
+    let matrix = default_matrix();
+    OPERATIONS
+        .iter()
+        .map(|&operation| CapabilityLabel {
+            operation: operation.to_owned(),
+            status: matrix.status(operation),
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -135,6 +205,18 @@ mod tests {
             matrix.status("set_parameter"),
             CapabilityStatus::ConfirmedWritable
         );
+        assert_eq!(
+            matrix.status("set_nano_amp"),
+            CapabilityStatus::ConfirmedWritable
+        );
+        assert_eq!(
+            matrix.status("read_nano_fx_params"),
+            CapabilityStatus::ConfirmedReadable
+        );
+        assert_eq!(
+            matrix.status("set_nano_fx_param"),
+            CapabilityStatus::ConfirmedWritable
+        );
     }
 
     /// `set_bypass`, `set_scene_label` and `set_scene_color` are implemented
@@ -151,6 +233,41 @@ mod tests {
                 "{operation} has no recorded hardware pass and must not be promoted"
             );
         }
+    }
+
+    /// `set_nano_gate_reduction` and `set_nano_bypass` each have SOME
+    /// hardware evidence in `spec/roadmap.md` (NANO-001.5/.6), but neither
+    /// citation is the exact rendered-GUI-control pass the matrix requires:
+    /// the Gate entry explicitly says "the rendered Gate control remains
+    /// provisional", and the bypass entry never itemises a Tauri/rendered
+    /// pass at all. Promoting either would be exactly the ambiguous-evidence
+    /// claim this matrix must refuse to make.
+    #[test]
+    fn nano_operations_with_ambiguous_rendered_evidence_stay_unverified() {
+        let matrix = default_matrix();
+        for operation in ["set_nano_gate_reduction", "set_nano_bypass"] {
+            assert_eq!(
+                matrix.status(operation),
+                CapabilityStatus::Unverified,
+                "{operation} has no unambiguous exact-GUI-path hardware pass and must not be promoted"
+            );
+        }
+    }
+
+    #[test]
+    fn labels_covers_every_operation_including_ones_absent_from_the_seed() {
+        let all = labels();
+        assert_eq!(all.len(), OPERATIONS.len());
+        let confirmed = all
+            .iter()
+            .find(|label| label.operation == "set_nano_amp")
+            .expect("set_nano_amp is a known operation");
+        assert_eq!(confirmed.status, CapabilityStatus::ConfirmedWritable);
+        let unverified = all
+            .iter()
+            .find(|label| label.operation == "set_nano_bypass")
+            .expect("set_nano_bypass is a known operation");
+        assert_eq!(unverified.status, CapabilityStatus::Unverified);
     }
 
     #[test]

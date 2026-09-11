@@ -4,6 +4,8 @@ The desktop GUI is one of the toolkit's three user-facing interfaces alongside t
 
 The current first draft supports working Quad and Nano surfaces through one managed Rust backend. Quad mode reads status, grid, active scene, CPU and populated preset slots and exposes non-persistent recall, scene, parameter and bypass controls. Nano mode renders the fixed eight-role signal chain, exposes explicit Apply controls for the five raw amp values and Gate reduction from the typed, paced daemon snapshot, and provides an FX parameter inspector; it deliberately does not force those roles into the Quad grid model. Neither mode opens a second HID connection.
 
+Every operation surface above renders a small text evidence label - "Hardware-verified", "Hardware-verified (read)" or "Not yet hardware-verified" - next to its control. The label comes from one Rust-owned capability matrix (`gui/src-tauri/src/capability.rs`), fetched once over the Tauri boundary and cached like the rest of the honest verified-vs-provisional labelling this project practises; the webview holds no independent opinion about which operations are confirmed, and an operation the matrix does not know about renders unverified rather than silently reading as confirmed.
+
 Linux is the first and only hardware-verified baseline today because Neural DSP has not provided Cortex Control for Linux and this community project began by filling that gap for ourselves. Unix-domain IPC and Windows local-only named-pipe IPC are implemented, and the release pipeline builds native `.deb`, `.dmg` and NSIS `.exe` tester previews. The first native remote package matrix passed on 2026-08-30. Windows and macOS device behavior remains unverified, so their packages remain provisional rather than supported.
 
 Windows and macOS host work is active rather than merely planned. Windows now has a native named-pipe daemon/process boundary and unsigned current-user NSIS package configuration; macOS has Apple Silicon DMG configuration with ad-hoc signing. Release-preview run `33317851191` passed native no-hardware host tests and package verification for Linux, macOS and Windows. The [Windows tester-preview smoke](windows-smoke.md) covers direct hardware and the preferred first-pass QEMU/KVM setup. Windows hardware smoke and a corresponding native macOS package/device smoke remain outstanding.
@@ -56,7 +58,7 @@ Selecting a block on the grid opens its inspector: model name, category, positio
 
 Below that, every editable parameter the block's catalog entry describes gets its own control - a slider and number input in real units (dB, ms, Hz, etc.) where the catalog gives a usable range, a dropdown for a named-step switch, or a text field for a string parameter. Read-only meters are shown but not editable. A write is followed by a device read-back, so a clamped or refused value shows what the unit actually holds rather than what was asked for.
 
-Parameter and bypass edits are hardware-verified for the read/write/read-back cycle itself (2026-08-17); parameter search or grouping for models with many parameters is not yet implemented.
+Parameter edits are hardware-verified for the read/write/read-back cycle itself (2026-08-17). Bypass is offline-verified only - it is exercised by Rust and browser-fixture tests, but no hardware pass has yet confirmed a GUI bypass toggle is audible and matches the unit's own display; the capability evidence label next to the switch reflects this. Parameter search or grouping for models with many parameters is not yet implemented.
 
 ### Nano Cortex surface
 

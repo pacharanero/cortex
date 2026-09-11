@@ -8,9 +8,10 @@ import { ParameterEditor } from "./features/quad/ParameterEditor";
 import { SceneSelector } from "./features/quad/SceneSelector";
 import { ErrorBoundary } from "./shared/ErrorBoundary";
 import { NanoChain } from "./features/nano/NanoChain";
+import { CapabilityBadge } from "./shared/CapabilityBadge";
 import { InspectorPanel } from "./shared/editor/EditorCanvas";
 import { cortexApi } from "./shared/ipc/api";
-import type { DashboardSnapshot, DeviceKind, LiveBlock, NanoAmpControl, NanoBypassTarget, NanoFxSlot, ParameterInput, ParameterView } from "./shared/ipc/types";
+import type { CapabilityLabel, DashboardSnapshot, DeviceKind, LiveBlock, NanoAmpControl, NanoBypassTarget, NanoFxSlot, ParameterInput, ParameterView } from "./shared/ipc/types";
 
 interface Cell { row: number; column: number }
 interface DashboardTicket { epoch: number; seq: number }
@@ -64,6 +65,19 @@ export function App() {
   const [nanoOperationInProgress, setNanoOperationInProgress] = useState(false);
   const nanoOperationsInProgress = useRef(0);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  // Evidence labels for every operation surface (GUI-004.2). Fetched once and
+  // cached, like the catalog, rather than pulled into the one-second poll:
+  // the matrix does not change while the GUI is running. An unresolved fetch
+  // leaves this empty, which every lookup already treats as "unverified".
+  const [capabilities, setCapabilities] = useState<CapabilityLabel[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    cortexApi.capabilities()
+      .then((labels) => { if (!cancelled) setCapabilities(labels); })
+      .catch(() => { /* every lookup already defaults an absent operation to unverified */ });
+    return () => { cancelled = true; };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -339,7 +353,10 @@ export function App() {
         </Group>
       </AppShell.Header>
       <AppShell.Navbar p="sm">
-        <Text c="dimmed" fw={700} mb="xs" size="xs" tt="uppercase">Preset directory</Text>
+        <Group gap="xs" mb="xs">
+          <Text c="dimmed" fw={700} size="xs" tt="uppercase">Preset directory</Text>
+          <CapabilityBadge labels={capabilities} operation="recall_preset" />
+        </Group>
         <ScrollArea>
           {snapshot.directory.map((setlist) => (
             <NavLink component="button" defaultOpened key={setlist.key} label={setlist.name} type="button">
@@ -383,6 +400,7 @@ export function App() {
             </Stack>
           </Alert>}
           {nano && <ErrorBoundary name="Nano editor"><NanoChain
+            capabilities={capabilities}
             key={`nano:${snapshot.status.cache.generation}`}
             onReadFxParams={readNanoFxParams}
             onSetAmp={setNanoAmp}
@@ -397,6 +415,7 @@ export function App() {
               <ErrorBoundary name="Scene selector">
                 <SceneSelector
                   activeScene={live.active_scene}
+                  capabilities={capabilities}
                   disabled={!connected}
                   onRecolour={recolourScene}
                   onRename={renameScene}
@@ -433,14 +452,17 @@ export function App() {
                 </>}
                 title={selected?.name ?? "Select a block"}
               >
-                {selected && <Switch
-                  aria-label={`${selected.name} bypass, ${selected.bypassed ? "bypassed" : "engaged"}`}
-                  checked={selected.bypassed}
-                  description="Applies to the active scene only, as the device stores it"
-                  disabled={!connected}
-                  label={selected.bypassed ? "Bypassed" : "Engaged"}
-                  onChange={(event) => void toggleBypass(event.currentTarget.checked)}
-                />}
+                {selected && <Group align="center" gap="xs">
+                  <Switch
+                    aria-label={`${selected.name} bypass, ${selected.bypassed ? "bypassed" : "engaged"}`}
+                    checked={selected.bypassed}
+                    description="Applies to the active scene only, as the device stores it"
+                    disabled={!connected}
+                    label={selected.bypassed ? "Bypassed" : "Engaged"}
+                    onChange={(event) => void toggleBypass(event.currentTarget.checked)}
+                  />
+                  <CapabilityBadge labels={capabilities} operation="set_bypass" />
+                </Group>}
                 {selected && (
                   <>
                     <Divider label="Parameters" labelPosition="left" my="md" />
@@ -448,6 +470,7 @@ export function App() {
                     {!parameterError && parameters === null && <Text c="dimmed" size="sm">Reading parameters...</Text>}
                     {!parameterError && parameters !== null && (
                       <ParameterEditor
+                        capabilities={capabilities}
                         disabled={!connected}
                         onWrite={writeParameter}
                         parameters={parameters}
