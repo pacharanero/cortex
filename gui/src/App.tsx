@@ -13,6 +13,7 @@ import { cortexApi } from "./shared/ipc/api";
 import type { DashboardSnapshot, DeviceKind, LiveBlock, NanoAmpControl, NanoBypassTarget, NanoFxSlot, ParameterInput, ParameterView } from "./shared/ipc/types";
 
 interface Cell { row: number; column: number }
+interface DashboardTicket { epoch: number; seq: number }
 
 /**
  * Name the active scene as the unit does, by its letter, adding the label when
@@ -43,18 +44,12 @@ export function App() {
   const [nanoOperationError, setNanoOperationError] = useState<string | null>(null);
   const generation = useRef<number | null>(null);
   const dashboardEpoch = useRef(0);
-  // The poll, scene/label/bypass edits, recall and the Nano write follow-up
-  // each read the dashboard independently, so their replies can settle in a
-  // different order than they were issued in. `dashboardSequence` numbers
-  // every read as it starts; `dashboardCursor` remembers the ticket last
-  // accepted. A reply only applies if its ticket is still for the current
-  // device-selection epoch and newer than the cursor - so a request issued
-  // before a later one that already won cannot overwrite it, whether it
-  // succeeded or failed, once it finally settles.
+  // Dashboard reads from polling and user actions can overlap. Number them so
+  // an older same-device reply cannot overwrite a newer accepted result.
   const dashboardSequence = useRef(0);
   const dashboardCursor = useRef({ epoch: 0, seq: 0 });
   const issueDashboardTicket = (epoch: number = dashboardEpoch.current) => ({ epoch, seq: ++dashboardSequence.current });
-  const acceptDashboardTicket = (ticket: { epoch: number; seq: number }): boolean => {
+  const acceptDashboardTicket = (ticket: DashboardTicket): boolean => {
     if (ticket.epoch !== dashboardEpoch.current) return false;
     if (ticket.epoch === dashboardCursor.current.epoch && ticket.seq <= dashboardCursor.current.seq) return false;
     dashboardCursor.current = ticket;
@@ -286,11 +281,13 @@ export function App() {
       while (pendingDeviceSwitch.current) {
         const selection = pendingDeviceSwitch.current;
         pendingDeviceSwitch.current = null;
+        let ticket: DashboardTicket | null = null;
         try {
           await cortexApi.setDevice(selection.device);
           if (selection.epoch !== dashboardEpoch.current) continue;
+          ticket = issueDashboardTicket(selection.epoch);
           const next = await cortexApi.dashboard();
-          if (selection.epoch !== dashboardEpoch.current) continue;
+          if (!acceptDashboardTicket(ticket)) continue;
           generation.current = next.status.cache.generation;
           setSnapshot(next);
           setSelectedCell(null);
@@ -298,7 +295,7 @@ export function App() {
           setError(null);
           setNanoOperationError(null);
         } catch (reason) {
-          if (selection.epoch === dashboardEpoch.current) {
+          if (selection.epoch === dashboardEpoch.current && (!ticket || acceptDashboardTicket(ticket))) {
             setError(reason instanceof Error ? reason.message : String(reason));
           }
         }

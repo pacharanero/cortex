@@ -151,6 +151,29 @@ describe("device switching", () => {
     expect(screen.getByRole("button", { name: "Select device, current Nano Cortex" })).toBeTruthy();
   });
 
+  it("does not let an action started during a switch restore the old dashboard", async () => {
+    const setDevice = deferred<void>();
+    const staleRecallRead = deferred<DashboardSnapshot>();
+    api.dashboard
+      .mockResolvedValue(snapshot("nano_cortex"))
+      .mockResolvedValueOnce(directorySnapshot())
+      .mockImplementationOnce(() => staleRecallRead.promise);
+    api.setDevice.mockReturnValue(setDevice.promise);
+    api.recallPreset.mockResolvedValue(undefined);
+    renderApp();
+    await screen.findByRole("button", { name: "Select device, current Quad Cortex" });
+
+    await chooseDevice("Nano Cortex");
+    fireEvent.click(screen.getByRole("button", { name: "1A Preset One" }));
+    await waitFor(() => expect(api.dashboard).toHaveBeenCalledTimes(2));
+
+    await act(async () => setDevice.resolve());
+    await screen.findByRole("button", { name: "Select device, current Nano Cortex" });
+
+    await act(async () => staleRecallRead.resolve(directorySnapshot()));
+    expect(screen.getByRole("button", { name: "Select device, current Nano Cortex" })).toBeTruthy();
+  });
+
   it("keeps Nano identity and exposes its failure when state is unavailable", async () => {
     const unavailable = snapshot("nano_cortex");
     unavailable.nano = null;
