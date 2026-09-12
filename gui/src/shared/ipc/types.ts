@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 import type {
+  CapabilityLabel,
+  CapabilityStatus,
   DashboardSnapshot,
   DeviceKind,
   NanoAmpControl,
@@ -12,6 +14,8 @@ import type {
   ParameterView,
 } from "./generated";
 
+export type { CapabilityLabel };
+export type { CapabilityStatus };
 export type { DashboardSnapshot };
 export type { DeviceKind };
 export type { LiveBlock } from "./generated";
@@ -28,6 +32,15 @@ export type { SceneSnapshot } from "./generated";
 /** The bounded command surface implemented by both the Tauri and fixture adapters. */
 export interface CortexApi {
   dashboard(): Promise<DashboardSnapshot>;
+  /**
+   * Host-aware evidence labels for implemented Quad and Nano device-operation
+   * surfaces (GUI-004.2). Rust owns which operations are hardware-confirmed;
+   * the frontend only renders what this returns and keeps no matrix of its
+   * own. Fixture mode returns no labels and therefore fails closed to
+   * unverified. Fetched once and cached like the catalog, never pulled into the
+   * one-second dashboard poll.
+   */
+  capabilities(): Promise<CapabilityLabel[]>;
   reconnectNow(): Promise<void>;
   /**
    * Switch the active scene. Takes the zero-based index, never the letter.

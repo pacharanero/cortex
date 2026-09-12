@@ -1,10 +1,11 @@
 // SPDX-FileCopyrightText: 2026 Dr Marcus Baw
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-import { Alert, Badge, Button, Group, NumberInput, Paper, SimpleGrid, Slider, Stack, Switch, Text, Title } from "@mantine/core";
+import { Alert, Button, Group, NumberInput, Paper, SimpleGrid, Slider, Stack, Switch, Text, Title } from "@mantine/core";
 import { useEffect, useRef, useState } from "react";
+import { CapabilityBadge } from "../../shared/CapabilityBadge";
 import { EditorBlockCard, EditorCanvas, InspectorPanel } from "../../shared/editor/EditorCanvas";
-import type { NanoAmpControl, NanoBypassTarget, NanoCurrentState, NanoFxParameter, NanoFxSlot, NanoSlotRole } from "../../shared/ipc/types";
+import type { CapabilityLabel, NanoAmpControl, NanoBypassTarget, NanoCurrentState, NanoFxParameter, NanoFxSlot, NanoSlotRole } from "../../shared/ipc/types";
 
 const roleNames: Record<NanoSlotRole, string> = {
   gate: "Gate", pre_fx1: "Pre FX 1", pre_fx2: "Pre FX 2", capture: "Capture",
@@ -39,9 +40,11 @@ interface NanoChainProps {
   onSetBypass: (target: NanoBypassTarget, bypassed: boolean) => Promise<void>;
   onReadFxParams: (slot: NanoFxSlot) => Promise<NanoFxParameter[]>;
   onSetFxParam: (slot: NanoFxSlot, expectedModelId: number, paramIndex: number, value: number) => Promise<NanoFxParameter[]>;
+  /** Evidence labels for every Nano operation surface (GUI-004.2). */
+  capabilities?: CapabilityLabel[];
 }
 
-export function NanoChain({ state, onSetAmp, onSetGateReduction, onSetBypass, onReadFxParams, onSetFxParam }: NanoChainProps) {
+export function NanoChain({ state, onSetAmp, onSetGateReduction, onSetBypass, onReadFxParams, onSetFxParam, capabilities = [] }: NanoChainProps) {
   const [draft, setDraft] = useState(state.amp);
   const [dirtyAmpControls, setDirtyAmpControls] = useState<Set<NanoAmpControl>>(new Set());
   const [gateDraft, setGateDraft] = useState<number | string>(state.gate_reduction ?? "");
@@ -276,7 +279,6 @@ export function NanoChain({ state, onSetAmp, onSetGateReduction, onSetBypass, on
   return <Stack gap="md">
     <Group justify="space-between">
       <div><Text c="dimmed" size="sm">Fixed signal chain</Text><Title order={3}>Nano Cortex</Title></div>
-      <Badge color="orange" variant="outline">Amp, bypass and FX paths hardware verified</Badge>
     </Group>
     <Paper p="md" withBorder>
       <EditorCanvas label="Nano Cortex fixed signal chain" topology="nano-chain">
@@ -335,11 +337,18 @@ export function NanoChain({ state, onSetAmp, onSetGateReduction, onSetBypass, on
             >{busy === `fx-write:${selectedFxSlot}:${parameter.index}` ? "Applying..." : "Apply"}</Button>
           </Group>)}
         </SimpleGrid>
-        <Text c="dimmed" size="xs">The normalized 0.0-1.0 path and this rendered Linux control are hardware-verified with device read-back and restoration. Values vary by loaded model.</Text>
+        <Group gap="xs" mt="xs">
+          <CapabilityBadge labels={capabilities} operation="read_nano_fx_params" subject="FX parameter read" />
+          <CapabilityBadge labels={capabilities} operation="set_nano_fx_param" subject="FX parameter write" />
+        </Group>
+        <Text c="dimmed" size="xs">The normalized 0.0-1.0 path. Values vary by loaded model.</Text>
       </>}
     </InspectorPanel>
     <Paper p="md" withBorder>
-      <Text c="dimmed" fw={700} size="xs" tt="uppercase">Amp controls (raw 0-255)</Text>
+      <Group gap="xs">
+        <Text c="dimmed" fw={700} size="xs" tt="uppercase">Amp controls (raw 0-255)</Text>
+        <CapabilityBadge labels={capabilities} operation="set_nano_amp" subject="Amp writes" />
+      </Group>
       <SimpleGrid cols={{ base: 1, sm: 3, lg: 5 }} mt="sm">
         {(Object.keys(state.amp) as NanoAmpControl[]).map((control) => <Group align="flex-end" key={control} wrap="nowrap">
           <NumberInput
@@ -361,7 +370,11 @@ export function NanoChain({ state, onSetAmp, onSetGateReduction, onSetBypass, on
       <Text c="dimmed" mt="sm" size="xs">Changes heard working state and saves nothing. Apply waits about six seconds for fresh device read-back.</Text>
     </Paper>
     <Paper p="md" withBorder>
-      <Text c="dimmed" fw={700} size="xs" tt="uppercase">Gate / FX bypass</Text>
+      <Group gap="xs">
+        <Text c="dimmed" fw={700} size="xs" tt="uppercase">Gate / FX bypass</Text>
+        <CapabilityBadge labels={capabilities} operation="set_nano_gate_reduction" subject="Gate reduction" />
+        <CapabilityBadge labels={capabilities} operation="set_nano_bypass" subject="FX bypass" />
+      </Group>
       <Group align="flex-end" mt="sm">
         <NumberInput
           aria-busy={busy === "gate:reduction"}
@@ -379,7 +392,6 @@ export function NanoChain({ state, onSetAmp, onSetGateReduction, onSetBypass, on
           value={gateDraft}
         />
         <Button aria-busy={busy === "gate:reduction"} aria-label="Apply Gate reduction" disabled={typeof gateDraft !== "number" || !gateDirty || (busy !== null && busy !== "gate:reduction")} onClick={() => void applyGateReduction()}>{busy === "gate:reduction" ? "Applying..." : "Apply"}</Button>
-        <Badge color="yellow" variant="outline">provisional</Badge>
       </Group>
       <SimpleGrid cols={{ base: 2, sm: 3, lg: 6 }} mt="sm">
         {bypassTargets.map(({ role, target }) => {

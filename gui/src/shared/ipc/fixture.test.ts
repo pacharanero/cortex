@@ -36,3 +36,11 @@ describe("Nano fixture API", () => {
     await expect(fixtureApi.setNanoFxParam("pre_fx1", 99, 0, 0.5)).rejects.toThrow("model changed");
   });
 });
+
+// GUI-004.2: fixture mode has no Rust host path or hardware. It must fail
+// closed rather than duplicate production's evidence policy in TypeScript.
+describe("capability evidence labels", () => {
+  it("returns no claimed hardware capabilities", async () => {
+    expect(await fixtureApi.capabilities()).toEqual([]);
+  });
+});

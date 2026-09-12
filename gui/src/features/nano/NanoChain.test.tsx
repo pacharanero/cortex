@@ -4,7 +4,7 @@
 import { MantineProvider } from "@mantine/core";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import type { NanoCurrentState, NanoFxParameter } from "../../shared/ipc/types";
+import type { CapabilityLabel, NanoCurrentState, NanoFxParameter } from "../../shared/ipc/types";
 import { NanoChain } from "./NanoChain";
 
 const state: NanoCurrentState = {
@@ -41,8 +41,8 @@ function props(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function renderNano(current: NanoCurrentState = state, overrides: Record<string, unknown> = {}) {
-  return render(<MantineProvider><NanoChain {...props(overrides)} state={current} /></MantineProvider>);
+function renderNano(current: NanoCurrentState = state, overrides: Record<string, unknown> = {}, capabilities: CapabilityLabel[] = []) {
+  return render(<MantineProvider><NanoChain {...props(overrides)} capabilities={capabilities} state={current} /></MantineProvider>);
 }
 
 describe("NanoChain", () => {
@@ -278,5 +278,30 @@ describe("NanoChain", () => {
 
     await waitFor(() => expect(screen.getByRole("status").textContent).toBe("gain applied."));
     expect(screen.getByRole("status").getAttribute("aria-live")).toBe("polite");
+  });
+
+  // GUI-004.2: NanoChain used to assert its own "Amp, bypass and FX paths
+  // hardware verified" and "provisional" badges regardless of what the
+  // roadmap actually recorded; it now only ever displays what the fetched
+  // capability matrix says, per operation.
+  it("renders each operation's fetched evidence label rather than an invented one", () => {
+    const capabilities: CapabilityLabel[] = [
+      { operation: "set_nano_amp", status: "confirmed-writable" },
+      { operation: "set_nano_gate_reduction", status: "unverified" },
+    ];
+    renderNano(state, {}, capabilities);
+
+    // set_nano_amp is confirmed; set_nano_gate_reduction and set_nano_bypass
+    // (the latter absent from the fetch entirely) both render unverified.
+    expect(screen.getByText("Amp writes: Hardware-verified")).toBeTruthy();
+    expect(screen.getByText("Gate reduction: Not yet hardware-verified")).toBeTruthy();
+    expect(screen.getByText("FX bypass: Not yet hardware-verified")).toBeTruthy();
+  });
+
+  it("falls back to unverified for every operation when no capabilities are supplied", () => {
+    render(<MantineProvider><NanoChain {...props()} state={state} /></MantineProvider>);
+
+    expect(screen.queryByText(/Hardware-verified$/)).toBeNull();
+    expect(screen.getAllByText(/Not yet hardware-verified$/).length).toBeGreaterThan(0);
   });
 });
