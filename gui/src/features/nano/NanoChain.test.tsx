@@ -293,14 +293,15 @@ describe("NanoChain", () => {
 
     // set_nano_amp is confirmed; set_nano_gate_reduction and set_nano_bypass
     // (the latter absent from the fetch entirely) both render unverified.
-    expect(screen.getAllByText("Hardware-verified")).toHaveLength(1);
-    expect(screen.getAllByText("Not yet hardware-verified")).toHaveLength(2);
+    expect(screen.getByText("Amp writes: Hardware-verified")).toBeTruthy();
+    expect(screen.getByText("Gate reduction: Not yet hardware-verified")).toBeTruthy();
+    expect(screen.getByText("FX bypass: Not yet hardware-verified")).toBeTruthy();
   });
 
   it("falls back to unverified for every operation when no capabilities are supplied", () => {
     render(<MantineProvider><NanoChain {...props()} state={state} /></MantineProvider>);
 
-    expect(screen.queryByText("Hardware-verified")).toBeNull();
-    expect(screen.getAllByText("Not yet hardware-verified").length).toBeGreaterThan(0);
+    expect(screen.queryByText(/Hardware-verified$/)).toBeNull();
+    expect(screen.getAllByText(/Not yet hardware-verified$/).length).toBeGreaterThan(0);
   });
 });

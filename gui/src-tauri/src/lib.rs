@@ -1417,9 +1417,9 @@ async fn recall_preset(
     .map_err(|error| CommandError::daemon(format!("recall task failed: {error}")))?
 }
 
-/// The evidence label for every currently implemented Quad and Nano
-/// operation surface (GUI-004.2). Pure computation over `spec/roadmap.md`'s
-/// recorded evidence - no device I/O, so this needs no `spawn_blocking`.
+/// Host-aware evidence labels for implemented Quad and Nano device-operation
+/// surfaces (GUI-004.2). Pure computation over `spec/roadmap.md`'s recorded
+/// evidence - no device I/O, so this needs no `spawn_blocking`.
 #[tauri::command]
 fn capability_matrix() -> Vec<capability::CapabilityLabel> {
     capability::labels()

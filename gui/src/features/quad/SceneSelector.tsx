@@ -129,7 +129,7 @@ export function SceneSelector({ scenes, activeScene, disabled, onSwitch, onRenam
     <Stack gap="xs">
       <Group gap="xs">
         <Text c="dimmed" fw={700} size="xs" tt="uppercase">Scene switching</Text>
-        <CapabilityBadge labels={capabilities} operation="switch_scene" />
+        <CapabilityBadge labels={capabilities} operation="switch_scene" subject="Scene switching" />
       </Group>
       <Radio.Group
         description="Changes what the unit plays now. Nothing is saved."
@@ -247,8 +247,8 @@ function SceneDetails({ scene, disabled, onRename, onRecolour, capabilities }: S
   return (
     <Stack gap="xs">
       <Group gap="xs">
-        <CapabilityBadge labels={capabilities} operation="set_scene_label" />
-        <CapabilityBadge labels={capabilities} operation="set_scene_color" />
+        <CapabilityBadge labels={capabilities} operation="set_scene_label" subject="Scene name" />
+        <CapabilityBadge labels={capabilities} operation="set_scene_color" subject="Scene colour" />
       </Group>
       <Group align="flex-end" gap="sm" wrap="wrap">
         <TextInput

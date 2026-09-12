@@ -65,7 +65,7 @@ export function App() {
   const [nanoOperationInProgress, setNanoOperationInProgress] = useState(false);
   const nanoOperationsInProgress = useRef(0);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
-  // Evidence labels for every operation surface (GUI-004.2). Fetched once and
+  // Evidence labels for every device-operation surface (GUI-004.2). Fetched once and
   // cached, like the catalog, rather than pulled into the one-second poll:
   // the matrix does not change while the GUI is running. An unresolved fetch
   // leaves this empty, which every lookup already treats as "unverified".
@@ -355,7 +355,7 @@ export function App() {
       <AppShell.Navbar p="sm">
         <Group gap="xs" mb="xs">
           <Text c="dimmed" fw={700} size="xs" tt="uppercase">Preset directory</Text>
-          <CapabilityBadge labels={capabilities} operation="recall_preset" />
+          <CapabilityBadge labels={capabilities} operation="recall_preset" subject="Preset recall" />
         </Group>
         <ScrollArea>
           {snapshot.directory.map((setlist) => (
@@ -461,7 +461,7 @@ export function App() {
                     label={selected.bypassed ? "Bypassed" : "Engaged"}
                     onChange={(event) => void toggleBypass(event.currentTarget.checked)}
                   />
-                  <CapabilityBadge labels={capabilities} operation="set_bypass" />
+                  <CapabilityBadge labels={capabilities} operation="set_bypass" subject="Block bypass" />
                 </Group>}
                 {selected && (
                   <>

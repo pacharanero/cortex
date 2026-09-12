@@ -49,8 +49,8 @@ export function ParameterEditor({ parameters, disabled, onWrite, capabilities = 
   return (
     <Stack aria-busy={pending !== null} gap="md">
       <Group gap="xs">
-        <CapabilityBadge labels={capabilities} operation="block_parameters" />
-        <CapabilityBadge labels={capabilities} operation="set_parameter" />
+        <CapabilityBadge labels={capabilities} operation="block_parameters" subject="Parameter read" />
+        <CapabilityBadge labels={capabilities} operation="set_parameter" subject="Parameter write" />
       </Group>
       {error && <Alert color="red" title="Parameter write failed">{error}</Alert>}
       {/* Controls are NOT disabled while a write is in flight. A disabled

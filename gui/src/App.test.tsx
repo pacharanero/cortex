@@ -325,8 +325,8 @@ describe("capability evidence labels", () => {
     renderApp();
 
     await screen.findByText("Preset One");
-    expect(await screen.findByText("Hardware-verified")).toBeTruthy();
-    expect(screen.getByText("Not yet hardware-verified")).toBeTruthy();
+    expect(await screen.findByText("Preset recall: Hardware-verified")).toBeTruthy();
+    expect(screen.getByText("Scene switching: Not yet hardware-verified")).toBeTruthy();
   });
 
   it("renders every operation as not-yet-hardware-verified when the fetch fails", async () => {
@@ -338,7 +338,7 @@ describe("capability evidence labels", () => {
     // recall_preset and switch_scene both fall back to unverified, and
     // nothing else surfaces a status label in this snapshot (no block or
     // scene is selected, and no Nano state is present).
-    expect(await screen.findAllByText("Not yet hardware-verified")).toHaveLength(2);
+    expect(await screen.findAllByText(/Not yet hardware-verified$/)).toHaveLength(2);
   });
 });
 

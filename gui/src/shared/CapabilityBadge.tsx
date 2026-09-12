@@ -39,14 +39,15 @@ export function capabilityStatus(labels: CapabilityLabel[], operation: string): 
 interface CapabilityBadgeProps {
   labels: CapabilityLabel[];
   operation: string;
+  subject: string;
 }
 
 /** Renders one operation's evidence label as text, decorated with colour. */
-export function CapabilityBadge({ labels, operation }: CapabilityBadgeProps) {
+export function CapabilityBadge({ labels, operation, subject }: CapabilityBadgeProps) {
   const status = capabilityStatus(labels, operation);
   return (
     <Badge color={STATUS_COLOR[status]} size="xs" variant="light">
-      {STATUS_TEXT[status]}
+      {subject}: {STATUS_TEXT[status]}
     </Badge>
   );
 }

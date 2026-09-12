@@ -338,8 +338,8 @@ export function NanoChain({ state, onSetAmp, onSetGateReduction, onSetBypass, on
           </Group>)}
         </SimpleGrid>
         <Group gap="xs" mt="xs">
-          <CapabilityBadge labels={capabilities} operation="read_nano_fx_params" />
-          <CapabilityBadge labels={capabilities} operation="set_nano_fx_param" />
+          <CapabilityBadge labels={capabilities} operation="read_nano_fx_params" subject="FX parameter read" />
+          <CapabilityBadge labels={capabilities} operation="set_nano_fx_param" subject="FX parameter write" />
         </Group>
         <Text c="dimmed" size="xs">The normalized 0.0-1.0 path. Values vary by loaded model.</Text>
       </>}
@@ -347,7 +347,7 @@ export function NanoChain({ state, onSetAmp, onSetGateReduction, onSetBypass, on
     <Paper p="md" withBorder>
       <Group gap="xs">
         <Text c="dimmed" fw={700} size="xs" tt="uppercase">Amp controls (raw 0-255)</Text>
-        <CapabilityBadge labels={capabilities} operation="set_nano_amp" />
+        <CapabilityBadge labels={capabilities} operation="set_nano_amp" subject="Amp writes" />
       </Group>
       <SimpleGrid cols={{ base: 1, sm: 3, lg: 5 }} mt="sm">
         {(Object.keys(state.amp) as NanoAmpControl[]).map((control) => <Group align="flex-end" key={control} wrap="nowrap">
@@ -372,8 +372,8 @@ export function NanoChain({ state, onSetAmp, onSetGateReduction, onSetBypass, on
     <Paper p="md" withBorder>
       <Group gap="xs">
         <Text c="dimmed" fw={700} size="xs" tt="uppercase">Gate / FX bypass</Text>
-        <CapabilityBadge labels={capabilities} operation="set_nano_gate_reduction" />
-        <CapabilityBadge labels={capabilities} operation="set_nano_bypass" />
+        <CapabilityBadge labels={capabilities} operation="set_nano_gate_reduction" subject="Gate reduction" />
+        <CapabilityBadge labels={capabilities} operation="set_nano_bypass" subject="FX bypass" />
       </Group>
       <Group align="flex-end" mt="sm">
         <NumberInput
