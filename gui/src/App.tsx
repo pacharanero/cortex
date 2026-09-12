@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Dr Marcus Baw
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-import { Alert, AppShell, Badge, Burger, Button, Divider, Group, Menu, NavLink, Paper, ScrollArea, Stack, Switch, Text, Title } from "@mantine/core";
+import { Alert, AppShell, Badge, Burger, Button, Divider, Group, Menu, NavLink, Paper, ScrollArea, Stack, Switch, Text, TextInput, Title } from "@mantine/core";
 import { useEffect, useRef, useState } from "react";
 import { Grid } from "./features/quad/Grid";
 import { ParameterEditor } from "./features/quad/ParameterEditor";
@@ -40,6 +40,7 @@ export function App() {
   const [retrying, setRetrying] = useState(false);
   // Keep the identity structured so arbitrary setlist keys cannot collide.
   const [recalling, setRecalling] = useState<{ setlist: string; slot: string } | null>(null);
+  const [presetSearch, setPresetSearch] = useState("");
   const [parameters, setParameters] = useState<ParameterView[] | null>(null);
   const [parameterError, setParameterError] = useState<string | null>(null);
   const [nanoOperationError, setNanoOperationError] = useState<string | null>(null);
@@ -140,6 +141,21 @@ export function App() {
     : null;
   const health = healthLabel(snapshot);
   const connected = live !== null || nano !== null;
+  // Local filter only: the directory is already fully loaded, so this never
+  // calls the daemon. Trimmed and case-insensitive, matching either the
+  // preset name or the displayed slot, so "1a" finds slot "1A" too. An
+  // empty query (including one that is only whitespace) restores the
+  // complete current-generation directory rather than an empty result.
+  const trimmedPresetSearch = presetSearch.trim().toLowerCase();
+  const filteredDirectory = trimmedPresetSearch === ""
+    ? snapshot.directory
+    : snapshot.directory
+      .map((setlist) => ({
+        ...setlist,
+        slots: setlist.slots.filter((slot) =>
+          slot.name.toLowerCase().includes(trimmedPresetSearch) || slot.slot.toLowerCase().includes(trimmedPresetSearch)),
+      }))
+      .filter((setlist) => setlist.slots.length > 0);
   const reconnectState = snapshot.source === "daemon" && snapshot.status.device.state === "reconnecting" ? snapshot.status.device : null;
   const failedState = snapshot.source === "daemon" && snapshot.status.device.state === "failed" ? snapshot.status.device : null;
   // Switch, then re-read. The device is the authority on which scene is
@@ -357,8 +373,17 @@ export function App() {
           <Text c="dimmed" fw={700} size="xs" tt="uppercase">Preset directory</Text>
           <CapabilityBadge labels={capabilities} operation="recall_preset" subject="Preset recall" />
         </Group>
+        {snapshot.directory.length > 0 && (
+          <TextInput
+            aria-label="Search presets by name or slot"
+            mb="xs"
+            onChange={(event) => setPresetSearch(event.currentTarget.value)}
+            placeholder="Search presets..."
+            value={presetSearch}
+          />
+        )}
         <ScrollArea>
-          {snapshot.directory.map((setlist) => (
+          {filteredDirectory.map((setlist) => (
             <NavLink component="button" defaultOpened key={setlist.key} label={setlist.name} type="button">
               {setlist.slots.map((slot) => (
                 <NavLink
@@ -379,6 +404,7 @@ export function App() {
             </NavLink>
           ))}
           {snapshot.directory.length === 0 && <Text c="dimmed" size="sm">Unavailable for this session generation.</Text>}
+          {snapshot.directory.length > 0 && filteredDirectory.length === 0 && <Text c="dimmed" size="sm">No presets match.</Text>}
         </ScrollArea>
       </AppShell.Navbar>
       <AppShell.Main>
