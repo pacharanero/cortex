@@ -48,6 +48,8 @@ The clicked slot shows "Recalling..." while in flight; the whole directory is di
 
 A radio group across the unit's eight scenes (A-H) lets you switch which scene is active. Switching a scene is a real, audible change to what the unit is currently playing; nothing is saved. The active selection, letter and label are always read back from the device rather than assumed, so a switch that the unit refuses or redirects elsewhere shows up as the device's actual answer, not the one requested.
 
+A scene change reported by the device - including one made from the unit itself, such as a footswitch press - is announced to a screen reader too, without moving focus away from whatever control you are using (offline-verified only; see GUI-006.3 in [spec/roadmap.md](https://github.com/pacharanero/cortex/blob/main/spec/roadmap.md)).
+
 Renaming and recolouring the active scene are also available, with a full RGB colour picker rather than the unit's fixed eight-colour palette - hardware confirmed accepting and rendering arbitrary RGB on 2026-08-16 (see [spec/roadmap.md](https://github.com/pacharanero/cortex/blob/main/spec/roadmap.md) for the underlying evidence). Both edits are offline-verified only; a GUI rename or recolour appearing correctly on the physical unit has not yet been separately confirmed. A blank name clears the label rather than writing an empty string.
 
 Copy and swap between scenes are not yet implemented.
