@@ -337,6 +337,7 @@ describe("preset directory search", () => {
     expect(screen.getByRole("button", { name: "1A Clean Tone" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "1B Crunch Rock" })).toBeNull();
     expect(screen.queryByText("Backup")).toBeNull();
+    expect(document.querySelector("#preset-search-status")?.textContent).toBe("1 preset matches.");
   });
 
   it("filters by displayed slot", async () => {
@@ -360,11 +361,13 @@ describe("preset directory search", () => {
     fireEvent.change(screen.getByLabelText("Search presets by name or slot"), { target: { value: "zzz-no-such-preset" } });
 
     expect(await screen.findByText("No presets match.")).toBeTruthy();
+    expect(document.querySelector("#preset-search-status")?.getAttribute("role")).toBe("status");
+    expect(document.querySelector("#preset-search-status")?.getAttribute("aria-live")).toBe("polite");
     expect(screen.queryByText("Unavailable for this session generation.")).toBeNull();
     expect(screen.queryByRole("button", { name: "1A Clean Tone" })).toBeNull();
   });
 
-  it("restores the complete directory when the search is cleared", async () => {
+  it("restores the complete directory when the search is blank or whitespace-only", async () => {
     api.dashboard.mockResolvedValue(searchDirectorySnapshot());
     renderApp();
 
@@ -372,9 +375,12 @@ describe("preset directory search", () => {
     fireEvent.change(search, { target: { value: "clean" } });
     expect(screen.queryByRole("button", { name: "1B Crunch Rock" })).toBeNull();
 
-    fireEvent.change(search, { target: { value: "" } });
+    fireEvent.change(search, { target: { value: "   " } });
     expect(await screen.findByRole("button", { name: "1B Crunch Rock" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "2A Ambient Pad" })).toBeTruthy();
+
+    fireEvent.change(search, { target: { value: "" } });
+    expect(screen.getByRole("button", { name: "1A Clean Tone" })).toBeTruthy();
   });
 
   it("preserves the exact setlist key and slot for recall while filtered", async () => {
@@ -387,6 +393,41 @@ describe("preset directory search", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "Set 1A Preset Two" }));
     await waitFor(() => expect(api.recallPreset).toHaveBeenCalledWith("Live", "Set 1A"));
+  });
+
+  it("keeps the pending recall visible and freezes its filter until completion", async () => {
+    const recall = deferred<void>();
+    api.dashboard.mockResolvedValue(directorySnapshot());
+    api.recallPreset.mockReturnValue(recall.promise);
+    renderApp();
+
+    const search = await screen.findByLabelText("Search presets by name or slot") as HTMLInputElement;
+    fireEvent.change(search, { target: { value: "preset one" } });
+    const invoked = screen.getByRole("button", { name: "1A Preset One" });
+    fireEvent.click(invoked);
+
+    await screen.findByText("Recalling...");
+    expect(search.readOnly).toBe(true);
+    fireEvent.change(search, { target: { value: "preset two" } });
+    expect(search.value).toBe("preset one");
+    expect(invoked.textContent).toContain("Recalling...");
+
+    await act(async () => recall.resolve());
+    await waitFor(() => expect(search.readOnly).toBe(false));
+  });
+
+  it("keeps the labelled search control mounted while a Quad directory is unavailable", async () => {
+    api.dashboard
+      .mockResolvedValue(snapshot("quad_cortex"))
+      .mockResolvedValueOnce(searchDirectorySnapshot());
+    renderApp();
+
+    const search = await screen.findByRole("searchbox", { name: "Search presets by name or slot" });
+    search.focus();
+
+    await screen.findByText("Unavailable for this session generation.", {}, { timeout: 2_000 });
+    expect(document.activeElement).toBe(search);
+    expect(document.querySelector("#preset-search-status")?.textContent).toBe("Preset directory unavailable.");
   });
 });
 

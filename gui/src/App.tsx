@@ -156,6 +156,14 @@ export function App() {
           slot.name.toLowerCase().includes(trimmedPresetSearch) || slot.slot.toLowerCase().includes(trimmedPresetSearch)),
       }))
       .filter((setlist) => setlist.slots.length > 0);
+  const filteredPresetCount = filteredDirectory.reduce((count, setlist) => count + setlist.slots.length, 0);
+  const presetSearchStatus = snapshot.directory.length === 0
+    ? "Preset directory unavailable."
+    : trimmedPresetSearch === ""
+      ? `${filteredPresetCount} ${filteredPresetCount === 1 ? "preset" : "presets"} available.`
+      : filteredPresetCount === 0
+        ? "No presets match."
+        : `${filteredPresetCount} ${filteredPresetCount === 1 ? "preset matches" : "presets match"}.`;
   const reconnectState = snapshot.source === "daemon" && snapshot.status.device.state === "reconnecting" ? snapshot.status.device : null;
   const failedState = snapshot.source === "daemon" && snapshot.status.device.state === "failed" ? snapshot.status.device : null;
   // Switch, then re-read. The device is the authority on which scene is
@@ -373,12 +381,15 @@ export function App() {
           <Text c="dimmed" fw={700} size="xs" tt="uppercase">Preset directory</Text>
           <CapabilityBadge labels={capabilities} operation="recall_preset" subject="Preset recall" />
         </Group>
-        {snapshot.directory.length > 0 && (
+        {currentDeviceKind === "quad_cortex" && (
           <TextInput
-            aria-label="Search presets by name or slot"
+            aria-describedby="preset-search-status"
+            label="Search presets by name or slot"
             mb="xs"
-            onChange={(event) => setPresetSearch(event.currentTarget.value)}
-            placeholder="Search presets..."
+            onChange={(event) => { if (recalling === null) setPresetSearch(event.currentTarget.value); }}
+            placeholder="Name or slot"
+            readOnly={recalling !== null}
+            type="search"
             value={presetSearch}
           />
         )}
@@ -404,7 +415,14 @@ export function App() {
             </NavLink>
           ))}
           {snapshot.directory.length === 0 && <Text c="dimmed" size="sm">Unavailable for this session generation.</Text>}
-          {snapshot.directory.length > 0 && filteredDirectory.length === 0 && <Text c="dimmed" size="sm">No presets match.</Text>}
+          {currentDeviceKind === "quad_cortex" && <Text
+            aria-live="polite"
+            c="dimmed"
+            className={snapshot.directory.length > 0 && filteredPresetCount === 0 ? undefined : "visually-hidden"}
+            id="preset-search-status"
+            role="status"
+            size="sm"
+          >{presetSearchStatus}</Text>}
         </ScrollArea>
       </AppShell.Navbar>
       <AppShell.Main>
