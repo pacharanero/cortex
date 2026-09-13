@@ -40,9 +40,9 @@ Everything below is non-persistent: it changes the working copy the unit is curr
 
 ### Preset directory and recall
 
-The sidebar lists every setlist and slot the daemon can read, grouped by setlist. Clicking a slot **recalls** it: the unit loads that preset as the new working copy, replacing whatever was there before, exactly as pressing the preset button on the unit does. Recall is offered without confirmation because, unlike save, it writes nothing to the unit's storage - only the working copy changes, and the previous working copy was itself never saved by the GUI.
+The sidebar lists every setlist and slot the daemon can read, grouped by setlist. The search field filters that already-loaded directory locally by preset name or displayed slot, without another daemon request; matching is case-insensitive, empty setlists disappear from the results, and clearing the query restores the complete current directory. Clicking a slot **recalls** it: the unit loads that preset as the new working copy, replacing whatever was there before, exactly as pressing the preset button on the unit does. Recall is offered without confirmation because, unlike save, it writes nothing to the unit's storage - only the working copy changes, and the previous working copy was itself never saved by the GUI.
 
-The clicked slot shows "Recalling..." while in flight; the whole directory is disabled until it completes so a second click cannot race the first. Nothing is updated optimistically - the sidebar's active-preset highlight and the working-grid title reflect what the device reports back after the recall, not the slot that was clicked. A failed recall surfaces as a refresh error rather than a silent no-op.
+The clicked slot shows "Recalling..." while in flight; the whole directory is disabled and the search query becomes read-only until it completes, so neither a second click nor a changed filter can hide or race the pending operation. Search result changes are announced, and the no-match state is also shown visually. Nothing is updated optimistically - the sidebar's active-preset highlight and the working-grid title reflect what the device reports back after the recall, not the slot that was clicked. A failed recall surfaces as a refresh error rather than a silent no-op.
 
 ### Scene selector
 

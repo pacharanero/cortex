@@ -299,6 +299,138 @@ describe("preset recall pending state", () => {
   });
 });
 
+// GUI-003.1 (Night: slice): a local, already-loaded filter over the
+// directory - no daemon call, no persistence, no favourites. Uses its own
+// fixture rather than `directorySnapshot()` so query strings that
+// deliberately overlap another test's collision-tolerant identities cannot
+// also start matching multiple slots here by accident.
+function searchDirectorySnapshot(): DashboardSnapshot {
+  const base = snapshot("quad_cortex");
+  base.directory = [
+    {
+      key: "Main", name: "Main", is_factory: false,
+      slots: [
+        { index: 0, slot: "1A", name: "Clean Tone" },
+        { index: 1, slot: "1B", name: "Crunch Rock" },
+      ],
+    },
+    {
+      key: "Backup", name: "Backup", is_factory: false,
+      slots: [{ index: 8, slot: "2A", name: "Ambient Pad" }],
+    },
+  ];
+  return base;
+}
+
+describe("preset directory search", () => {
+  afterEach(() => {
+    vi.resetAllMocks();
+  });
+
+  it("filters by preset name, case-insensitively, and omits empty setlist groups", async () => {
+    api.dashboard.mockResolvedValue(searchDirectorySnapshot());
+    renderApp();
+
+    await screen.findByRole("button", { name: "1A Clean Tone" });
+    fireEvent.change(screen.getByLabelText("Search presets by name or slot"), { target: { value: "CLEAN" } });
+
+    expect(screen.getByRole("button", { name: "1A Clean Tone" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "1B Crunch Rock" })).toBeNull();
+    expect(screen.queryByText("Backup")).toBeNull();
+    expect(document.querySelector("#preset-search-status")?.textContent).toBe("1 preset matches.");
+  });
+
+  it("filters by displayed slot", async () => {
+    api.dashboard.mockResolvedValue(searchDirectorySnapshot());
+    renderApp();
+
+    await screen.findByRole("button", { name: "2A Ambient Pad" });
+    fireEvent.change(screen.getByLabelText("Search presets by name or slot"), { target: { value: "2a" } });
+
+    expect(screen.getByRole("button", { name: "2A Ambient Pad" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "1A Clean Tone" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "1B Crunch Rock" })).toBeNull();
+    expect(screen.queryByText("Main")).toBeNull();
+  });
+
+  it("shows a distinct no-match message rather than the unavailable-directory message", async () => {
+    api.dashboard.mockResolvedValue(searchDirectorySnapshot());
+    renderApp();
+
+    await screen.findByRole("button", { name: "1A Clean Tone" });
+    fireEvent.change(screen.getByLabelText("Search presets by name or slot"), { target: { value: "zzz-no-such-preset" } });
+
+    expect(await screen.findByText("No presets match.")).toBeTruthy();
+    expect(document.querySelector("#preset-search-status")?.getAttribute("role")).toBe("status");
+    expect(document.querySelector("#preset-search-status")?.getAttribute("aria-live")).toBe("polite");
+    expect(screen.queryByText("Unavailable for this session generation.")).toBeNull();
+    expect(screen.queryByRole("button", { name: "1A Clean Tone" })).toBeNull();
+  });
+
+  it("restores the complete directory when the search is blank or whitespace-only", async () => {
+    api.dashboard.mockResolvedValue(searchDirectorySnapshot());
+    renderApp();
+
+    const search = await screen.findByLabelText("Search presets by name or slot");
+    fireEvent.change(search, { target: { value: "clean" } });
+    expect(screen.queryByRole("button", { name: "1B Crunch Rock" })).toBeNull();
+
+    fireEvent.change(search, { target: { value: "   " } });
+    expect(await screen.findByRole("button", { name: "1B Crunch Rock" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "2A Ambient Pad" })).toBeTruthy();
+
+    fireEvent.change(search, { target: { value: "" } });
+    expect(screen.getByRole("button", { name: "1A Clean Tone" })).toBeTruthy();
+  });
+
+  it("preserves the exact setlist key and slot for recall while filtered", async () => {
+    api.dashboard.mockResolvedValue(directorySnapshot());
+    api.recallPreset.mockResolvedValue(undefined);
+    renderApp();
+
+    await screen.findByRole("button", { name: "1A Preset One" });
+    fireEvent.change(screen.getByLabelText("Search presets by name or slot"), { target: { value: "preset two" } });
+
+    fireEvent.click(await screen.findByRole("button", { name: "Set 1A Preset Two" }));
+    await waitFor(() => expect(api.recallPreset).toHaveBeenCalledWith("Live", "Set 1A"));
+  });
+
+  it("keeps the pending recall visible and freezes its filter until completion", async () => {
+    const recall = deferred<void>();
+    api.dashboard.mockResolvedValue(directorySnapshot());
+    api.recallPreset.mockReturnValue(recall.promise);
+    renderApp();
+
+    const search = await screen.findByLabelText("Search presets by name or slot") as HTMLInputElement;
+    fireEvent.change(search, { target: { value: "preset one" } });
+    const invoked = screen.getByRole("button", { name: "1A Preset One" });
+    fireEvent.click(invoked);
+
+    await screen.findByText("Recalling...");
+    expect(search.readOnly).toBe(true);
+    fireEvent.change(search, { target: { value: "preset two" } });
+    expect(search.value).toBe("preset one");
+    expect(invoked.textContent).toContain("Recalling...");
+
+    await act(async () => recall.resolve());
+    await waitFor(() => expect(search.readOnly).toBe(false));
+  });
+
+  it("keeps the labelled search control mounted while a Quad directory is unavailable", async () => {
+    api.dashboard
+      .mockResolvedValue(snapshot("quad_cortex"))
+      .mockResolvedValueOnce(searchDirectorySnapshot());
+    renderApp();
+
+    const search = await screen.findByRole("searchbox", { name: "Search presets by name or slot" });
+    search.focus();
+
+    await screen.findByText("Unavailable for this session generation.", {}, { timeout: 2_000 });
+    expect(document.activeElement).toBe(search);
+    expect(document.querySelector("#preset-search-status")?.textContent).toBe("Preset directory unavailable.");
+  });
+});
+
 // GUI-001.9: the poll and a command's own read-back both call
 // `cortexApi.dashboard()` independently, so their replies can settle in a
 // different order than they were issued in. These prove a read issued before
