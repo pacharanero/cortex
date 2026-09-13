@@ -4,7 +4,7 @@
 import { MantineProvider } from "@mantine/core";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import type { CapabilityLabel, NanoCurrentState, NanoFxParameter } from "../../shared/ipc/types";
+import type { NanoCurrentState, NanoFxParameter } from "../../shared/ipc/types";
 import { NanoChain } from "./NanoChain";
 
 const state: NanoCurrentState = {
@@ -41,8 +41,8 @@ function props(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function renderNano(current: NanoCurrentState = state, overrides: Record<string, unknown> = {}, capabilities: CapabilityLabel[] = []) {
-  return render(<MantineProvider><NanoChain {...props(overrides)} capabilities={capabilities} state={current} /></MantineProvider>);
+function renderNano(current: NanoCurrentState = state, overrides: Record<string, unknown> = {}) {
+  return render(<MantineProvider><NanoChain {...props(overrides)} state={current} /></MantineProvider>);
 }
 
 describe("NanoChain", () => {
@@ -61,7 +61,9 @@ describe("NanoChain", () => {
   it("uses the shared editor canvas and gives every control a target-specific name", async () => {
     renderNano(state, { onReadFxParams: vi.fn(async () => [fx(0.25)]) });
 
-    expect(screen.getByLabelText("Nano Cortex fixed signal chain").getAttribute("data-topology")).toBe("nano-chain");
+    const chain = screen.getByLabelText("Nano Cortex fixed signal chain");
+    expect(chain.getAttribute("data-topology")).toBe("nano-chain");
+    expect(chain.querySelectorAll(".editor-block-card")).toHaveLength(8);
     fireEvent.click(screen.getByRole("button", { name: /Position 2: Fictional Drive/ }));
 
     expect(await screen.findByRole("button", { name: "Apply Pre FX 1 Gain" })).toBeDefined();
@@ -113,19 +115,19 @@ describe("NanoChain", () => {
   it("preserves an unsubmitted amp draft across a dashboard refresh", () => {
     const nanoProps = props();
     const view = render(<MantineProvider><NanoChain {...nanoProps} state={state} /></MantineProvider>);
-    const gain = screen.getByLabelText("Gain") as HTMLInputElement;
+    const gain = screen.getByLabelText("Gain numeric input") as HTMLInputElement;
 
     fireEvent.change(gain, { target: { value: "121" } });
     expect(gain.value).toBe("121");
 
     view.rerender(<MantineProvider><NanoChain {...nanoProps} state={{ ...state, amp: { ...state.amp, gain: 99 } }} /></MantineProvider>);
-    expect((screen.getByLabelText("Gain") as HTMLInputElement).value).toBe("121");
+    expect((screen.getByLabelText("Gain numeric input") as HTMLInputElement).value).toBe("121");
   });
 
   it("closes stale FX controls after a model change without discarding amp drafts", async () => {
     const nanoProps = props({ onReadFxParams: vi.fn(async () => [fx(0.5)]) });
     const view = render(<MantineProvider><NanoChain {...nanoProps} state={state} /></MantineProvider>);
-    const gain = screen.getByLabelText("Gain") as HTMLInputElement;
+    const gain = screen.getByLabelText("Gain numeric input") as HTMLInputElement;
     fireEvent.change(gain, { target: { value: "121" } });
     fireEvent.click(screen.getByRole("button", { name: /Position 2: Fictional Drive/ }));
     expect(await screen.findByRole("slider", { name: "Pre FX 1 Gain normalized value" })).toBeTruthy();
@@ -138,7 +140,7 @@ describe("NanoChain", () => {
 
     expect(await screen.findByText("Pre FX 1 model changed; select it again to load the new parameters.")).toBeTruthy();
     expect(screen.queryByRole("slider", { name: "Pre FX 1 Gain normalized value" })).toBeNull();
-    expect((screen.getByLabelText("Gain") as HTMLInputElement).value).toBe("121");
+    expect((screen.getByLabelText("Gain numeric input") as HTMLInputElement).value).toBe("121");
   });
 
   it("exposes FX cards as keyboard-operable native buttons", async () => {
@@ -219,7 +221,7 @@ describe("NanoChain", () => {
     const onSetAmp = vi.fn(() => new Promise<void>((resolve) => { finishWrite = resolve; }));
     const nanoProps = props({ onSetAmp });
     const view = render(<MantineProvider><NanoChain {...nanoProps} state={state} /></MantineProvider>);
-    const gain = screen.getByLabelText("Gain") as HTMLInputElement;
+    const gain = screen.getByLabelText("Gain numeric input") as HTMLInputElement;
 
     fireEvent.change(gain, { target: { value: "121" } });
     const applyGain = screen.getByRole("button", { name: "Apply gain" });
@@ -231,7 +233,7 @@ describe("NanoChain", () => {
     await act(async () => finishWrite());
 
     view.rerender(<MantineProvider><NanoChain {...nanoProps} state={{ ...state, amp: { ...state.amp, gain: 121 } }} /></MantineProvider>);
-    expect((screen.getByLabelText("Gain") as HTMLInputElement).value).toBe("122");
+    expect((screen.getByLabelText("Gain numeric input") as HTMLInputElement).value).toBe("122");
   });
 
   it("preserves a newer FX edit while the submitted value is pending", async () => {
@@ -256,9 +258,39 @@ describe("NanoChain", () => {
   it("names each amp and bypass action for its control", () => {
     renderNano();
 
+    expect(screen.getByRole("slider", { name: "Gain slider" })).toBeTruthy();
+    expect(screen.getByRole("textbox", { name: "Gain numeric input" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Decrease Gain" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Increase Gain" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Apply gain" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Apply treble" })).toBeTruthy();
     expect(screen.getByRole("switch", { name: "Pre FX 1 bypass, on" })).toBeTruthy();
+  });
+
+  it("keeps the Amp slider, stepper, and submitted value synchronized", () => {
+    const onSetAmp = vi.fn(async () => {});
+    renderNano(state, { onSetAmp });
+
+    const slider = screen.getByRole("slider", { name: "Gain slider" });
+    fireEvent.keyDown(slider, { key: "ArrowRight" });
+    expect((screen.getByRole("textbox", { name: "Gain numeric input" }) as HTMLInputElement).value).toBe("101");
+    fireEvent.click(screen.getByRole("button", { name: "Increase Gain" }));
+    expect((screen.getByRole("textbox", { name: "Gain numeric input" }) as HTMLInputElement).value).toBe("102");
+    fireEvent.click(screen.getByRole("button", { name: "Apply gain" }));
+
+    expect(onSetAmp).toHaveBeenCalledWith("gain", 102);
+  });
+
+  it("keeps non-integer Amp values from reaching Apply", () => {
+    const onSetAmp = vi.fn(async () => {});
+    renderNano(state, { onSetAmp });
+
+    const gain = screen.getByRole("textbox", { name: "Gain numeric input" }) as HTMLInputElement;
+    fireEvent.change(gain, { target: { value: "100.5" } });
+    fireEvent.click(screen.getByRole("button", { name: "Apply gain" }));
+
+    expect(gain.value).toBe("100");
+    expect(onSetAmp).toHaveBeenCalledWith("gain", 100);
   });
 
   it("submits Gate reduction as an explicit percentage", () => {
@@ -280,28 +312,4 @@ describe("NanoChain", () => {
     expect(screen.getByRole("status").getAttribute("aria-live")).toBe("polite");
   });
 
-  // GUI-004.2: NanoChain used to assert its own "Amp, bypass and FX paths
-  // hardware verified" and "provisional" badges regardless of what the
-  // roadmap actually recorded; it now only ever displays what the fetched
-  // capability matrix says, per operation.
-  it("renders each operation's fetched evidence label rather than an invented one", () => {
-    const capabilities: CapabilityLabel[] = [
-      { operation: "set_nano_amp", status: "confirmed-writable" },
-      { operation: "set_nano_gate_reduction", status: "unverified" },
-    ];
-    renderNano(state, {}, capabilities);
-
-    // set_nano_amp is confirmed; set_nano_gate_reduction and set_nano_bypass
-    // (the latter absent from the fetch entirely) both render unverified.
-    expect(screen.getByText("Amp writes: Hardware-verified")).toBeTruthy();
-    expect(screen.getByText("Gate reduction: Not yet hardware-verified")).toBeTruthy();
-    expect(screen.getByText("FX bypass: Not yet hardware-verified")).toBeTruthy();
-  });
-
-  it("falls back to unverified for every operation when no capabilities are supplied", () => {
-    render(<MantineProvider><NanoChain {...props()} state={state} /></MantineProvider>);
-
-    expect(screen.queryByText(/Hardware-verified$/)).toBeNull();
-    expect(screen.getAllByText(/Not yet hardware-verified$/).length).toBeGreaterThan(0);
-  });
 });

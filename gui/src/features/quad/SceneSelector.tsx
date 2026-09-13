@@ -3,8 +3,7 @@
 
 import { Alert, ColorInput, Group, Radio, Stack, Text, TextInput } from "@mantine/core";
 import { useEffect, useRef, useState } from "react";
-import { CapabilityBadge } from "../../shared/CapabilityBadge";
-import type { CapabilityLabel, SceneSnapshot } from "../../shared/ipc/types";
+import type { SceneSnapshot } from "../../shared/ipc/types";
 
 interface SceneSelectorProps {
   scenes: SceneSnapshot[];
@@ -13,8 +12,6 @@ interface SceneSelectorProps {
   onSwitch: (scene: number) => Promise<void>;
   onRename: (scene: number, label: string | null) => Promise<void>;
   onRecolour: (scene: number, color: number) => Promise<void>;
-  /** Evidence labels for `switch_scene`/`set_scene_label`/`set_scene_color`. */
-  capabilities?: CapabilityLabel[];
 }
 
 /** `0xAARRGGBB` from the device to the `#rrggbb` an input wants. */
@@ -36,7 +33,7 @@ function toHex(color: number | null): string {
  * saves nothing - so it needs no confirmation, but it is a real audible change
  * and is announced.
  */
-export function SceneSelector({ scenes, activeScene, disabled, onSwitch, onRename, onRecolour, capabilities = [] }: SceneSelectorProps) {
+export function SceneSelector({ scenes, activeScene, disabled, onSwitch, onRename, onRecolour }: SceneSelectorProps) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [announcement, setAnnouncement] = useState("");
@@ -127,10 +124,7 @@ export function SceneSelector({ scenes, activeScene, disabled, onSwitch, onRenam
 
   return (
     <Stack gap="xs">
-      <Group gap="xs">
-        <Text c="dimmed" fw={700} size="xs" tt="uppercase">Scene switching</Text>
-        <CapabilityBadge labels={capabilities} operation="switch_scene" subject="Scene switching" />
-      </Group>
+      <Text c="dimmed" fw={700} size="xs" tt="uppercase">Scene switching</Text>
       <Radio.Group
         description="Changes what the unit plays now. Nothing is saved."
         label="Active scene"
@@ -190,7 +184,6 @@ export function SceneSelector({ scenes, activeScene, disabled, onSwitch, onRenam
       {error && <Alert color="red" title="Scene switch failed">{error}</Alert>}
 
       <SceneDetails
-        capabilities={capabilities}
         disabled={disabled}
         onRecolour={onRecolour}
         onRename={onRename}
@@ -211,7 +204,6 @@ interface SceneDetailsProps {
   disabled: boolean;
   onRename: (scene: number, label: string | null) => Promise<void>;
   onRecolour: (scene: number, color: number) => Promise<void>;
-  capabilities: CapabilityLabel[];
 }
 
 /**
@@ -226,7 +218,7 @@ interface SceneDetailsProps {
  * Both edits are non-persistent: they change the working copy and save
  * nothing.
  */
-function SceneDetails({ scene, disabled, onRename, onRecolour, capabilities }: SceneDetailsProps) {
+function SceneDetails({ scene, disabled, onRename, onRecolour }: SceneDetailsProps) {
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
 
@@ -246,10 +238,6 @@ function SceneDetails({ scene, disabled, onRename, onRecolour, capabilities }: S
 
   return (
     <Stack gap="xs">
-      <Group gap="xs">
-        <CapabilityBadge labels={capabilities} operation="set_scene_label" subject="Scene name" />
-        <CapabilityBadge labels={capabilities} operation="set_scene_color" subject="Scene colour" />
-      </Group>
       <Group align="flex-end" gap="sm" wrap="wrap">
         <TextInput
           // Keyed by scene so switching scenes reloads the field rather than

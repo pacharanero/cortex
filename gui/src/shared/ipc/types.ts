@@ -33,12 +33,9 @@ export type { SceneSnapshot } from "./generated";
 export interface CortexApi {
   dashboard(): Promise<DashboardSnapshot>;
   /**
-   * Host-aware evidence labels for implemented Quad and Nano device-operation
-   * surfaces (GUI-004.2). Rust owns which operations are hardware-confirmed;
-   * the frontend only renders what this returns and keeps no matrix of its
-   * own. Fixture mode returns no labels and therefore fails closed to
-   * unverified. Fetched once and cached like the catalog, never pulled into the
-   * one-second dashboard poll.
+   * Host-aware diagnostic evidence for implemented Quad and Nano operations.
+   * Rust owns which operation contracts are hardware-confirmed; ordinary
+   * player controls do not fetch or render this development metadata.
    */
   capabilities(): Promise<CapabilityLabel[]>;
   reconnectNow(): Promise<void>;

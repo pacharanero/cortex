@@ -77,11 +77,11 @@ impl CapabilityMatrix {
 }
 
 /// Every currently implemented Quad and Nano device-operation surface this
-/// matrix labels, keyed by the exact Tauri command name it is exposed as.
-/// Extending this list is how a new rendered device control gains an evidence
-/// label - an operation missing from it is simply not shown one, never silently
-/// confirmed. Host lifecycle controls (`dashboard`, `reconnect_now`, and
-/// `set_device`) are deliberately outside this read/write device matrix.
+/// evidence matrix records, keyed by its exact Tauri command name. Extending
+/// this list keeps diagnostics complete; an operation absent from the seeded
+/// matrix is never silently confirmed. Host lifecycle controls (`dashboard`,
+/// `reconnect_now`, and `set_device`) are deliberately outside this read/write
+/// device matrix.
 pub const OPERATIONS: &[&str] = &[
     "switch_scene",
     "recall_preset",
@@ -152,22 +152,16 @@ fn matrix_for_host(host: HostPath) -> CapabilityMatrix {
     // field, so it does not confirm the current Tauri read/write contract.
 }
 
-/// One operation's evidence label for the typed Tauri/frontend contract.
-///
-/// The frontend renders exactly this - operation name paired with status -
-/// and must not maintain its own copy of which operations are confirmed;
-/// [`labels`] is the one place that decision is made.
+/// One operation's evidence record for the typed Tauri diagnostic contract.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, ts_rs::TS)]
 pub struct CapabilityLabel {
     pub operation: String,
     pub status: CapabilityStatus,
 }
 
-/// The complete evidence-label list for every operation in [`OPERATIONS`],
+/// The complete evidence list for every operation in [`OPERATIONS`],
 /// looked up against [`default_matrix`]. An operation absent from the seed
-/// still appears here, labelled [`CapabilityStatus::Unverified`] - the
-/// frontend never has to guess which operations exist or invent a status for
-/// one the backend has not labelled.
+/// still appears here as [`CapabilityStatus::Unverified`].
 #[must_use]
 pub fn labels() -> Vec<CapabilityLabel> {
     labels_for_matrix(default_matrix())

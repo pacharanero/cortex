@@ -37,9 +37,8 @@ describe("Nano fixture API", () => {
   });
 });
 
-// GUI-004.2: fixture mode has no Rust host path or hardware. It must fail
-// closed rather than duplicate production's evidence policy in TypeScript.
-describe("capability evidence labels", () => {
+// GUI-004.2/GUI-004.5: fixture diagnostics claim no hardware evidence.
+describe("capability evidence", () => {
   it("returns no claimed hardware capabilities", async () => {
     expect(await fixtureApi.capabilities()).toEqual([]);
   });

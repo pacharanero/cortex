@@ -3,9 +3,9 @@
 
 import { Alert, Button, Group, NumberInput, Paper, SimpleGrid, Slider, Stack, Switch, Text, Title } from "@mantine/core";
 import { useEffect, useRef, useState } from "react";
-import { CapabilityBadge } from "../../shared/CapabilityBadge";
+import { ContinuousControl } from "../../shared/editor/ContinuousControl";
 import { EditorBlockCard, EditorCanvas, InspectorPanel } from "../../shared/editor/EditorCanvas";
-import type { CapabilityLabel, NanoAmpControl, NanoBypassTarget, NanoCurrentState, NanoFxParameter, NanoFxSlot, NanoSlotRole } from "../../shared/ipc/types";
+import type { NanoAmpControl, NanoBypassTarget, NanoCurrentState, NanoFxParameter, NanoFxSlot, NanoSlotRole } from "../../shared/ipc/types";
 
 const roleNames: Record<NanoSlotRole, string> = {
   gate: "Gate", pre_fx1: "Pre FX 1", pre_fx2: "Pre FX 2", capture: "Capture",
@@ -40,11 +40,9 @@ interface NanoChainProps {
   onSetBypass: (target: NanoBypassTarget, bypassed: boolean) => Promise<void>;
   onReadFxParams: (slot: NanoFxSlot) => Promise<NanoFxParameter[]>;
   onSetFxParam: (slot: NanoFxSlot, expectedModelId: number, paramIndex: number, value: number) => Promise<NanoFxParameter[]>;
-  /** Evidence labels for every Nano operation surface (GUI-004.2). */
-  capabilities?: CapabilityLabel[];
 }
 
-export function NanoChain({ state, onSetAmp, onSetGateReduction, onSetBypass, onReadFxParams, onSetFxParam, capabilities = [] }: NanoChainProps) {
+export function NanoChain({ state, onSetAmp, onSetGateReduction, onSetBypass, onReadFxParams, onSetFxParam }: NanoChainProps) {
   const [draft, setDraft] = useState(state.amp);
   const [dirtyAmpControls, setDirtyAmpControls] = useState<Set<NanoAmpControl>>(new Set());
   const [gateDraft, setGateDraft] = useState<number | string>(state.gate_reduction ?? "");
@@ -337,23 +335,17 @@ export function NanoChain({ state, onSetAmp, onSetGateReduction, onSetBypass, on
             >{busy === `fx-write:${selectedFxSlot}:${parameter.index}` ? "Applying..." : "Apply"}</Button>
           </Group>)}
         </SimpleGrid>
-        <Group gap="xs" mt="xs">
-          <CapabilityBadge labels={capabilities} operation="read_nano_fx_params" subject="FX parameter read" />
-          <CapabilityBadge labels={capabilities} operation="set_nano_fx_param" subject="FX parameter write" />
-        </Group>
         <Text c="dimmed" size="xs">The normalized 0.0-1.0 path. Values vary by loaded model.</Text>
       </>}
     </InspectorPanel>
     <Paper p="md" withBorder>
-      <Group gap="xs">
-        <Text c="dimmed" fw={700} size="xs" tt="uppercase">Amp controls (raw 0-255)</Text>
-        <CapabilityBadge labels={capabilities} operation="set_nano_amp" subject="Amp writes" />
-      </Group>
+      <Text c="dimmed" fw={700} size="xs" tt="uppercase">Amp controls (raw 0-255)</Text>
       <SimpleGrid cols={{ base: 1, sm: 3, lg: 5 }} mt="sm">
-        {(Object.keys(state.amp) as NanoAmpControl[]).map((control) => <Group align="flex-end" key={control} wrap="nowrap">
-          <NumberInput
-            aria-busy={busy === `amp:${control}`}
-            clampBehavior="strict"
+        {(Object.keys(state.amp) as NanoAmpControl[]).map((control) => <Stack gap="xs" key={control}>
+          <ContinuousControl
+            allowDecimal={false}
+            busy={busy === `amp:${control}`}
+            disabled={busy !== null && busy !== `amp:${control}`}
             label={control[0].toUpperCase() + control.slice(1)}
             max={255}
             min={0}
@@ -362,19 +354,16 @@ export function NanoChain({ state, onSetAmp, onSetGateReduction, onSetBypass, on
               setDraft((current) => ({ ...current, [control]: typeof value === "number" ? value : null }));
               setDirtyAmpControls((current) => new Set(current).add(control));
             }}
+            step={1}
             value={draft[control] ?? ""}
           />
-          <Button aria-busy={busy === `amp:${control}`} aria-label={`Apply ${control}`} disabled={draft[control] == null || (busy !== null && busy !== `amp:${control}`)} onClick={() => void apply(control)}>{busy === `amp:${control}` ? "Applying..." : "Apply"}</Button>
-        </Group>)}
+          <Button aria-busy={busy === `amp:${control}`} aria-label={`Apply ${control}`} disabled={draft[control] == null || (busy !== null && busy !== `amp:${control}`)} fullWidth onClick={() => void apply(control)}>{busy === `amp:${control}` ? "Applying..." : "Apply"}</Button>
+        </Stack>)}
       </SimpleGrid>
       <Text c="dimmed" mt="sm" size="xs">Changes heard working state and saves nothing. Apply waits about six seconds for fresh device read-back.</Text>
     </Paper>
     <Paper p="md" withBorder>
-      <Group gap="xs">
-        <Text c="dimmed" fw={700} size="xs" tt="uppercase">Gate / FX bypass</Text>
-        <CapabilityBadge labels={capabilities} operation="set_nano_gate_reduction" subject="Gate reduction" />
-        <CapabilityBadge labels={capabilities} operation="set_nano_bypass" subject="FX bypass" />
-      </Group>
+      <Text c="dimmed" fw={700} size="xs" tt="uppercase">Gate / FX bypass</Text>
       <Group align="flex-end" mt="sm">
         <NumberInput
           aria-busy={busy === "gate:reduction"}

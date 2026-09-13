@@ -4,9 +4,7 @@
 body { margin: 0; background: #101113; }
 
 /* Both devices use the same block-card language while retaining honest
-   topologies: a routed 4x8 Quad grid and one fixed eight-role Nano chain. At a
-   narrow window or high zoom they scroll rather than folding into a topology
-   the hardware does not have. */
+   topologies: a routed 4x8 Quad grid and one fixed eight-role Nano chain. */
 .editor-canvas { overflow-x: auto; padding: 2px 2px 8px; }
 .editor-canvas__items { display: grid; gap: 8px; }
 .editor-canvas[data-topology="quad-grid"] .editor-canvas__items {
@@ -14,8 +12,7 @@ body { margin: 0; background: #101113; }
   min-width: 760px;
 }
 .editor-canvas[data-topology="nano-chain"] .editor-canvas__items {
-  grid-template-columns: repeat(8, minmax(120px, 1fr));
-  min-width: 1016px;
+  grid-template-columns: repeat(8, minmax(0, 1fr));
 }
 .editor-block-card {
   appearance: none;
@@ -44,12 +41,31 @@ button.editor-block-card:focus-visible {
 .editor-block-card__position,
 .editor-block-card__eyebrow,
 .editor-block-card__detail { color: var(--mantine-color-dimmed); }
+.editor-block-card__meta { display: flex; flex-direction: column; gap: 2px; }
+.editor-block-card__position { font-variant-numeric: tabular-nums; }
 .editor-block-card__title {
   line-height: 1.2;
   margin: 5px 0;
   overflow-wrap: anywhere;
 }
 .editor-block-card__state { color: var(--mantine-color-gray-4); margin-top: auto; }
+.editor-canvas[data-topology="nano-chain"] .editor-block-card {
+  min-height: 112px;
+  padding-inline: 6px;
+}
+
+@media (max-width: 900px) {
+  .editor-canvas[data-topology="nano-chain"] .editor-block-card {
+    font-size: var(--mantine-font-size-xs);
+    padding-inline: 4px;
+  }
+}
+
+@media (max-width: 767px) {
+  .editor-canvas[data-topology="nano-chain"] .editor-canvas__items {
+    min-width: 696px;
+  }
+}
 .editor-block-card[data-state="bypassed"] { border-style: dashed; }
 .editor-block-card[data-state="bypassed"] .editor-block-card__state { color: var(--mantine-color-orange-4); }
 .editor-block-card[data-state="unknown"] .editor-block-card__state { color: var(--mantine-color-yellow-4); }

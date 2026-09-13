@@ -8,10 +8,9 @@ import { ParameterEditor } from "./features/quad/ParameterEditor";
 import { SceneSelector } from "./features/quad/SceneSelector";
 import { ErrorBoundary } from "./shared/ErrorBoundary";
 import { NanoChain } from "./features/nano/NanoChain";
-import { CapabilityBadge } from "./shared/CapabilityBadge";
 import { InspectorPanel } from "./shared/editor/EditorCanvas";
 import { cortexApi } from "./shared/ipc/api";
-import type { CapabilityLabel, DashboardSnapshot, DeviceKind, LiveBlock, NanoAmpControl, NanoBypassTarget, NanoFxSlot, ParameterInput, ParameterView } from "./shared/ipc/types";
+import type { DashboardSnapshot, DeviceKind, LiveBlock, NanoAmpControl, NanoBypassTarget, NanoFxSlot, ParameterInput, ParameterView } from "./shared/ipc/types";
 
 interface Cell { row: number; column: number }
 interface DashboardTicket { epoch: number; seq: number }
@@ -66,20 +65,6 @@ export function App() {
   const [nanoOperationInProgress, setNanoOperationInProgress] = useState(false);
   const nanoOperationsInProgress = useRef(0);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
-  // Evidence labels for every device-operation surface (GUI-004.2). Fetched once and
-  // cached, like the catalog, rather than pulled into the one-second poll:
-  // the matrix does not change while the GUI is running. An unresolved fetch
-  // leaves this empty, which every lookup already treats as "unverified".
-  const [capabilities, setCapabilities] = useState<CapabilityLabel[]>([]);
-
-  useEffect(() => {
-    let cancelled = false;
-    cortexApi.capabilities()
-      .then((labels) => { if (!cancelled) setCapabilities(labels); })
-      .catch(() => { /* every lookup already defaults an absent operation to unverified */ });
-    return () => { cancelled = true; };
-  }, []);
-
   useEffect(() => {
     let cancelled = false;
     let timer: number | undefined;
@@ -308,6 +293,7 @@ export function App() {
     return runNanoOperation(() => cortexApi.setNanoFxParam(slot, expectedModelId, paramIndex, value));
   };
   const switchDevice = async (device: "quad_cortex" | "nano_cortex" | "auto") => {
+    setMobileNavOpen(false);
     const epoch = dashboardEpoch.current + 1;
     dashboardEpoch.current = epoch;
     pendingDeviceSwitch.current = { device: device === "auto" ? null : device, epoch };
@@ -346,13 +332,14 @@ export function App() {
 
   const currentDeviceKind = snapshot.status.device_kind;
   const currentDeviceLabel = currentDeviceKind === "nano_cortex" ? "Nano Cortex" : "Quad Cortex";
+  const hasPresetDirectory = currentDeviceKind === "quad_cortex";
 
   return (
-    <AppShell header={{ height: 64 }} navbar={{ width: 250, breakpoint: "sm", collapsed: { mobile: !mobileNavOpen } }} padding="md">
+    <AppShell header={{ height: 64 }} navbar={hasPresetDirectory ? { width: 250, breakpoint: "sm", collapsed: { mobile: !mobileNavOpen } } : undefined} padding="md">
       <AppShell.Header p="md">
         <Group justify="space-between">
           <Group gap="xs">
-            <Burger aria-label="Toggle preset directory" hiddenFrom="sm" onClick={() => setMobileNavOpen((open) => !open)} opened={mobileNavOpen} size="sm" />
+            {hasPresetDirectory && <Burger aria-label="Toggle preset directory" hiddenFrom="sm" onClick={() => setMobileNavOpen((open) => !open)} opened={mobileNavOpen} size="sm" />}
             <Title order={2}>cortex</Title>
             <Menu shadow="md" position="bottom-start" width={200}>
               <Menu.Target>
@@ -376,23 +363,18 @@ export function App() {
           <Group gap="xs" visibleFrom="sm"><Badge color={snapshot.source === "fixture" ? "yellow" : connected ? "green" : "orange"}>{health}</Badge><Badge variant="outline">gen {snapshot.status.cache.generation} / rev {snapshot.status.cache.revision}</Badge></Group>
         </Group>
       </AppShell.Header>
-      <AppShell.Navbar p="sm">
-        <Group gap="xs" mb="xs">
-          <Text c="dimmed" fw={700} size="xs" tt="uppercase">Preset directory</Text>
-          <CapabilityBadge labels={capabilities} operation="recall_preset" subject="Preset recall" />
-        </Group>
-        {currentDeviceKind === "quad_cortex" && (
-          <TextInput
-            aria-describedby="preset-search-status"
-            label="Search presets by name or slot"
-            mb="xs"
-            onChange={(event) => { if (recalling === null) setPresetSearch(event.currentTarget.value); }}
-            placeholder="Name or slot"
-            readOnly={recalling !== null}
-            type="search"
-            value={presetSearch}
-          />
-        )}
+      {hasPresetDirectory && <AppShell.Navbar p="sm">
+        <Text c="dimmed" fw={700} mb="xs" size="xs" tt="uppercase">Preset directory</Text>
+        <TextInput
+          aria-describedby="preset-search-status"
+          label="Search presets by name or slot"
+          mb="xs"
+          onChange={(event) => { if (recalling === null) setPresetSearch(event.currentTarget.value); }}
+          placeholder="Name or slot"
+          readOnly={recalling !== null}
+          type="search"
+          value={presetSearch}
+        />
         <ScrollArea>
           {filteredDirectory.map((setlist) => (
             <NavLink component="button" defaultOpened key={setlist.key} label={setlist.name} type="button">
@@ -415,16 +397,16 @@ export function App() {
             </NavLink>
           ))}
           {snapshot.directory.length === 0 && <Text c="dimmed" size="sm">Unavailable for this session generation.</Text>}
-          {currentDeviceKind === "quad_cortex" && <Text
+          <Text
             aria-live="polite"
             c="dimmed"
             className={snapshot.directory.length > 0 && filteredPresetCount === 0 ? undefined : "visually-hidden"}
             id="preset-search-status"
             role="status"
             size="sm"
-          >{presetSearchStatus}</Text>}
+          >{presetSearchStatus}</Text>
         </ScrollArea>
-      </AppShell.Navbar>
+      </AppShell.Navbar>}
       <AppShell.Main>
         <Stack gap="md">
           {snapshot.source === "fixture" && <Alert color="yellow" title="Fixture mode">Browser development data is active. Fixture mode never falls back from a daemon error.</Alert>}
@@ -444,7 +426,6 @@ export function App() {
             </Stack>
           </Alert>}
           {nano && <ErrorBoundary name="Nano editor"><NanoChain
-            capabilities={capabilities}
             key={`nano:${snapshot.status.cache.generation}`}
             onReadFxParams={readNanoFxParams}
             onSetAmp={setNanoAmp}
@@ -459,7 +440,6 @@ export function App() {
               <ErrorBoundary name="Scene selector">
                 <SceneSelector
                   activeScene={live.active_scene}
-                  capabilities={capabilities}
                   disabled={!connected}
                   onRecolour={recolourScene}
                   onRename={renameScene}
@@ -505,7 +485,6 @@ export function App() {
                     label={selected.bypassed ? "Bypassed" : "Engaged"}
                     onChange={(event) => void toggleBypass(event.currentTarget.checked)}
                   />
-                  <CapabilityBadge labels={capabilities} operation="set_bypass" subject="Block bypass" />
                 </Group>}
                 {selected && (
                   <>
@@ -514,7 +493,6 @@ export function App() {
                     {!parameterError && parameters === null && <Text c="dimmed" size="sm">Reading parameters...</Text>}
                     {!parameterError && parameters !== null && (
                       <ParameterEditor
-                        capabilities={capabilities}
                         disabled={!connected}
                         onWrite={writeParameter}
                         parameters={parameters}

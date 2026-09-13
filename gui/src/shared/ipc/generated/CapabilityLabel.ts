@@ -2,10 +2,6 @@
 import type { CapabilityStatus } from "./CapabilityStatus";
 
 /**
- * One operation's evidence label for the typed Tauri/frontend contract.
- *
- * The frontend renders exactly this - operation name paired with status -
- * and must not maintain its own copy of which operations are confirmed;
- * [`labels`] is the one place that decision is made.
+ * One operation's evidence record for the typed Tauri diagnostic contract.
  */
 export type CapabilityLabel = { operation: string, status: CapabilityStatus, };

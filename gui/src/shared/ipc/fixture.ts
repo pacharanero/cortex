@@ -183,9 +183,8 @@ export const fixtureApi: CortexApi = {
     return structuredClone(dashboard);
   },
   async reconnectNow() {},
-  // Fixture mode has no Rust host path or hardware evidence. Returning no
-  // labels exercises the same fail-closed fallback as an unknown operation
-  // without maintaining a second capability policy in TypeScript.
+  // Fixture mode has no Rust host path or hardware evidence, so its diagnostic
+  // adapter claims no confirmed capabilities.
   async capabilities() { return []; },
   async switchScene(scene: number) {
     // Refuse the same range the Rust boundary refuses, so fixture mode cannot
