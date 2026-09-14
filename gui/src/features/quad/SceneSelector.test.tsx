@@ -22,6 +22,7 @@ function props(overrides: Record<string, unknown> = {}) {
     onSwitch: vi.fn(async () => {}),
     onRename: vi.fn(async () => {}),
     onRecolour: vi.fn(async () => {}),
+    onCopySwap: vi.fn(async () => {}),
     ...overrides,
   };
 }
@@ -150,5 +151,66 @@ describe("SceneSelector device-reported transitions", () => {
     );
 
     expect(status().textContent).toBe("Scene B - Lead active");
+  });
+});
+
+describe("SceneSelector copy/swap scenes", () => {
+  const copyButton = () => screen.getByRole("button", { name: "Copy" });
+  const swapButton = () => screen.getByRole("button", { name: "Swap" });
+  const chooseFromTo = (from: string, to: string) => {
+    fireEvent.change(screen.getByLabelText("From scene"), { target: { value: from } });
+    fireEvent.change(screen.getByLabelText("To scene"), { target: { value: to } });
+  };
+
+  it("disables copy and swap until two scenes are chosen", () => {
+    renderWithOutsideControl();
+    expect(copyButton().hasAttribute("disabled")).toBe(true);
+    expect(swapButton().hasAttribute("disabled")).toBe(true);
+  });
+
+  it("stays disabled, with an explanatory note, when the same scene is chosen twice", () => {
+    renderWithOutsideControl();
+    chooseFromTo("0", "0");
+    expect(copyButton().hasAttribute("disabled")).toBe(true);
+    expect(swapButton().hasAttribute("disabled")).toBe(true);
+    expect(screen.getByText("Choose two different scenes.")).toBeTruthy();
+  });
+
+  it("copies the exact zero-based indices chosen, never a letter", async () => {
+    const onCopySwap = vi.fn(async () => {});
+    renderWithOutsideControl({ onCopySwap });
+    chooseFromTo("0", "1");
+    fireEvent.click(copyButton());
+    await waitFor(() => expect(onCopySwap).toHaveBeenCalledWith(0, 1, false));
+  });
+
+  it("swaps with the swap flag set", async () => {
+    const onCopySwap = vi.fn(async () => {});
+    renderWithOutsideControl({ onCopySwap });
+    chooseFromTo("1", "0");
+    fireEvent.click(swapButton());
+    await waitFor(() => expect(onCopySwap).toHaveBeenCalledWith(1, 0, true));
+  });
+
+  it("shows a failure banner rather than pretending success on a mismatched or unverified reply", async () => {
+    const onCopySwap = vi.fn(async () => {
+      throw new Error("asked to copy scene 0 and 1 but the session reported from=0, to=1, swap=false, verified=false");
+    });
+    renderWithOutsideControl({ onCopySwap });
+    chooseFromTo("0", "1");
+    fireEvent.click(copyButton());
+    await waitFor(() => expect(screen.getByText(/verified=false/)).toBeTruthy());
+    // The failed attempt must not clear the operator's selection or disable
+    // retrying: the buttons and note both remain live for the same choice.
+    expect(copyButton().hasAttribute("disabled")).toBe(false);
+  });
+
+  it("does not let a rejected request reach the handler with an incomplete or equal selection", () => {
+    const onCopySwap = vi.fn(async () => {});
+    renderWithOutsideControl({ onCopySwap });
+    chooseFromTo("2", "2");
+    fireEvent.click(copyButton());
+    fireEvent.click(swapButton());
+    expect(onCopySwap).not.toHaveBeenCalled();
   });
 });
