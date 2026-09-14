@@ -1820,7 +1820,7 @@ fn build_midi_settings(
     Ok(message)
 }
 
-/// Resolve a named parameter's typed input into its wire value.
+/// Resolve a catalog parameter's typed input into its wire value.
 fn parameter_value(parameter: &Parameter, input: ParameterInput) -> crate::Result<Value> {
     match (parameter.kind, input) {
         (ParameterKind::Str, ParameterInput::Text(value)) => Ok(Value::Text(value)),
@@ -1879,6 +1879,80 @@ fn parameter_value(parameter: &Parameter, input: ParameterInput) -> crate::Resul
     }
 }
 
+fn identified_parameter<'a>(
+    model: &'a crate::catalog::Model,
+    identity: &ParameterIdentity,
+    catalog_generation: u64,
+    catalog_revision: u64,
+) -> crate::Result<&'a Parameter> {
+    if (catalog_generation, catalog_revision)
+        != (identity.catalog_generation, identity.catalog_revision)
+    {
+        return Err(crate::Error::InvalidParameter(format!(
+            "model catalog changed before the parameter write: expected generation {} revision {}, got generation {catalog_generation} revision {catalog_revision}",
+            identity.catalog_generation, identity.catalog_revision
+        )));
+    }
+    if model.id != identity.model_id {
+        return Err(crate::Error::InvalidParameter(format!(
+            "block model changed before the parameter write: expected model {}, got {}",
+            identity.model_id, model.id
+        )));
+    }
+    let parameter = model
+        .parameters
+        .iter()
+        .find(|parameter| u32::try_from(parameter.index) == Ok(identity.index))
+        .ok_or_else(|| {
+            crate::Error::InvalidParameter(format!(
+                "model {} has no parameter at wire index {}",
+                model.id, identity.index
+            ))
+        })?;
+    if parameter.name != identity.name {
+        return Err(crate::Error::InvalidParameter(format!(
+            "parameter identity changed at wire index {}: expected {:?}, got {:?}",
+            identity.index, identity.name, parameter.name
+        )));
+    }
+    if parameter_catalog_descriptor(parameter) != identity.catalog_descriptor {
+        return Err(crate::Error::InvalidParameter(format!(
+            "catalog metadata changed for parameter {:?} at wire index {}",
+            identity.name, identity.index
+        )));
+    }
+    Ok(parameter)
+}
+
+fn parameter_catalog_descriptor(parameter: &Parameter) -> String {
+    use std::fmt::Write as _;
+
+    let kind = match parameter.kind {
+        ParameterKind::Float => "float",
+        ParameterKind::Int => "int",
+        ParameterKind::Switch => "switch",
+        ParameterKind::Str => "string",
+        ParameterKind::Fader => "fader",
+        ParameterKind::Meter => "meter",
+        ParameterKind::Empty => "empty",
+        ParameterKind::Unknown => "unknown",
+    };
+    let mut descriptor = format!(
+        "v1:{kind}:{:016x}:{:016x}:{}:",
+        parameter.min.to_bits(),
+        parameter.max.to_bits(),
+        parameter.units.len()
+    );
+    descriptor.push_str(&parameter.units);
+    write!(&mut descriptor, ":{}:", parameter.step_names.len())
+        .expect("writing to a String is infallible");
+    for step in &parameter.step_names {
+        write!(&mut descriptor, "{}:", step.len()).expect("writing to a String is infallible");
+        descriptor.push_str(step);
+    }
+    descriptor
+}
+
 fn option_parameter_write(
     source: &BinaryPreset,
     row: Row,
@@ -1921,6 +1995,12 @@ fn option_parameter_write(
                 crate::Error::InvalidParameter("parameter index does not fit on the wire".into())
             })?
         }
+        ParameterTarget::Identified(identity) => {
+            return Err(crate::Error::InvalidParameter(format!(
+                "identified parameter {} is only supported by set_parameter, which can validate the live cell and catalog",
+                identity.name
+            )));
+        }
     };
     let options = crate::helpers::param_options(source, row.wire(), column, index);
     let value = crate::helpers::option_value(&options, option)?;
@@ -1947,6 +2027,52 @@ pub enum Placement {
     Unverified,
 }
 
+/// Exact catalog identity for one parameter on one Quad Cortex model.
+///
+/// Host surfaces carry this value back unchanged when writing a parameter, so
+/// the client can reject a replaced model or changed catalog payload before
+/// sending the mutating grid update. Generation and revision identify the
+/// payload within one daemon lifecycle; the descriptor protects the relevant
+/// metadata if lifecycle counters repeat after a restart.
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ParameterIdentity {
+    /// Physical-session generation that owns the catalog payload.
+    #[cfg_attr(feature = "typescript", ts(type = "number"))]
+    pub catalog_generation: u64,
+    /// Cache revision at which the catalog payload was accepted.
+    #[cfg_attr(feature = "typescript", ts(type = "number"))]
+    pub catalog_revision: u64,
+    /// Model catalog id observed when the parameter was read.
+    pub model_id: u32,
+    /// Positional wire index within that model.
+    pub index: u32,
+    /// Canonical parameter name from the model catalog.
+    pub name: String,
+    /// Deterministic description of the kind, range, units, and switch steps.
+    pub catalog_descriptor: String,
+}
+
+impl ParameterIdentity {
+    /// Build the identity a host must return for an exact catalog parameter.
+    #[must_use]
+    pub fn from_catalog_parameter(
+        catalog_generation: u64,
+        catalog_revision: u64,
+        model_id: u32,
+        parameter: &Parameter,
+    ) -> Self {
+        Self {
+            catalog_generation,
+            catalog_revision,
+            model_id,
+            index: u32::try_from(parameter.index).unwrap_or(u32::MAX),
+            name: parameter.name.clone(),
+            catalog_descriptor: parameter_catalog_descriptor(parameter),
+        }
+    }
+}
+
 /// How a caller addresses a block parameter.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "by", content = "value", rename_all = "snake_case")]
@@ -1955,6 +2081,10 @@ pub enum ParameterTarget {
     Index(u32),
     /// Display name, resolved case-insensitively through the device catalog.
     Name(String),
+    /// Exact catalog payload, model, wire-index, and canonical-name identity
+    /// from a prior read. Only [`QuadCortex::set_parameter`] accepts this form;
+    /// APIs without a live catalog check reject it.
+    Identified(ParameterIdentity),
 }
 
 /// A parameter value before any catalog conversion.
@@ -4878,7 +5008,9 @@ impl QuadCortex {
     ///
     /// The option list comes from `source`, normally a fresh current-preset
     /// read, because some lists enumerate blocks and change with the preset.
-    /// `target` may be the positional parameter index or its catalog name. The
+    /// `target` may be the positional parameter index or its catalog name. An
+    /// identified target is rejected because this API resolves dynamic options
+    /// from caller-supplied preset state rather than a fresh live read. The
     /// selected option is normalized centrally as `index / (count - 1)`.
     ///
     /// This changes only the active scene in the working copy and does not save.
@@ -4897,6 +5029,12 @@ impl QuadCortex {
         timeout: Duration,
     ) -> crate::Result<ParameterWrite> {
         validate_grid_cell(row, column)?;
+        if let ParameterTarget::Identified(identity) = &target {
+            return Err(crate::Error::InvalidParameter(format!(
+                "identified parameter {} is only supported by set_parameter, which can validate the live cell and catalog",
+                identity.name
+            )));
+        }
         let catalog = if matches!(target, ParameterTarget::Name(_)) {
             let payload = match self.session.captured_model_repo() {
                 Some(payload) => payload,
@@ -5054,24 +5192,29 @@ impl QuadCortex {
         Ok(placement)
     }
 
-    /// Resolve and write a parameter using either its wire index or display name.
+    /// Resolve and write a parameter using its wire index, display name, or
+    /// exact catalog identity.
     ///
     /// This is the host-facing parameter API. Name lookup, read-only-meter
     /// refusal, real-unit conversion, and the scene-write sequence live here
     /// so the CLI, daemon, MCP server, and GUI cannot implement them
     /// differently.
     ///
-    /// Addressing by name reads the live grid to identify the model in the
-    /// cell, then resolves that model through the catalog captured by the
-    /// handshake. A real-unit value therefore requires a named target; a raw
-    /// index has no range metadata to convert against.
+    /// Addressing by name or identity reads the live grid to identify the model
+    /// in the cell, then resolves that model through the catalog captured by
+    /// the handshake. An identified target additionally requires the live
+    /// catalog generation and revision, model, positional index, and canonical
+    /// name to match the prior read. A real-unit value therefore requires a
+    /// named or identified target; a raw index has no range metadata to convert
+    /// against.
     ///
     /// # Errors
     ///
     /// Returns [`crate::Error::InvalidParameter`] for malformed selectors,
     /// out-of-range normalised values, read-only meters, or real-unit writes
-    /// without a named parameter. Returns [`crate::Error::NotFound`] when the
-    /// cell is empty or the model/parameter is absent from the catalog.
+    /// without a named or identified parameter. Returns
+    /// [`crate::Error::NotFound`] when the cell is empty or the model/parameter
+    /// is absent from the catalog.
     /// Returns [`crate::Error::GridWriteUnconfirmed`] when a complete live-grid
     /// read does not contain the requested value on the target scene.
     #[allow(clippy::too_many_arguments)]
@@ -5104,13 +5247,26 @@ impl QuadCortex {
             )));
         }
 
-        let ParameterWrite { index, value } =
-            self.resolve_parameter(row, column, target, input, timeout)?;
+        // Cheap checks that must reject before the active-scene read: the
+        // read can take seconds, and an invalid value must fail fast without
+        // any device I/O at all.
+        if let ParameterInput::Normalised(value) = input {
+            normalised_value(value)?;
+        }
 
         let verification_scene = match scene {
             Some(scene) => scene,
             None => self.active_scene(timeout.max(READ_BACK_TIMEOUT))?,
         };
+        let expected_identity = match &target {
+            ParameterTarget::Identified(identity) => Some(identity.clone()),
+            ParameterTarget::Index(_) | ParameterTarget::Name(_) => None,
+        };
+        let ParameterWrite { index, value } =
+            self.resolve_parameter(row, column, target, input, timeout)?;
+        if let Some(identity) = &expected_identity {
+            self.validate_cached_parameter_identity(identity)?;
+        }
 
         if let Some(scene) = scene {
             self.set_param_in_scene(row, column, index, value.clone(), scene, promote)?;
@@ -5122,6 +5278,21 @@ impl QuadCortex {
         }
 
         let after = self.read_current_preset(timeout.max(READ_BACK_TIMEOUT))?;
+        if let Some(identity) = &expected_identity {
+            let read_back_model = model_id_at(&after, row, column);
+            if read_back_model != Some(identity.model_id) {
+                return Err(crate::Error::GridWriteUnconfirmed(format!(
+                    "block model changed during the parameter write: expected model {}, got {}",
+                    identity.model_id,
+                    read_back_model.map_or_else(|| "empty cell".into(), |model| model.to_string())
+                )));
+            }
+            if let Err(error) = self.validate_cached_parameter_identity(identity) {
+                return Err(crate::Error::GridWriteUnconfirmed(format!(
+                    "model catalog changed during the parameter write: {error}"
+                )));
+            }
+        }
         let Some(parameter) = parameter_at(&after, row, column, index) else {
             return Err(crate::Error::GridWriteUnconfirmed(format!(
                 "parameter {index} is absent at wire row {} column {column}",
@@ -5142,6 +5313,24 @@ impl QuadCortex {
         Ok(ParameterWrite { index, value })
     }
 
+    fn validate_cached_parameter_identity(
+        &self,
+        identity: &ParameterIdentity,
+    ) -> crate::Result<()> {
+        let payload = self.session.state_cache().model_repo().ok_or_else(|| {
+            crate::Error::InvalidParameter("the current model catalog is unavailable".into())
+        })?;
+        let catalog = crate::Catalog::parse(&payload.value)?;
+        let model = catalog.get(identity.model_id).ok_or_else(|| {
+            crate::Error::InvalidParameter(format!(
+                "model {} is not in the current catalog",
+                identity.model_id
+            ))
+        })?;
+        identified_parameter(model, identity, payload.generation, payload.revision)?;
+        Ok(())
+    }
+
     /// Resolve a host-facing selector and input to the wire write.
     fn resolve_parameter(
         &self,
@@ -5158,8 +5347,7 @@ impl QuadCortex {
                     ParameterInput::Text(value) => Value::Text(value),
                     ParameterInput::Real(_) => {
                         return Err(crate::Error::InvalidParameter(
-                            "a real-unit value requires a parameter name so its range is known"
-                                .into(),
+                            "a real-unit value requires a named or identified parameter so its range is known".into(),
                         ));
                     }
                 };
@@ -5178,11 +5366,15 @@ impl QuadCortex {
                         row.screen()
                     ))
                 })?;
-                let payload = match self.session.captured_model_repo() {
-                    Some(payload) => payload,
-                    None => self.fetch_model_repo(timeout)?,
-                };
-                let catalog = crate::Catalog::parse(&payload)?;
+                if self.session.state_cache().model_repo().is_none() {
+                    self.fetch_model_repo(timeout)?;
+                }
+                let payload = self.session.state_cache().model_repo().ok_or_else(|| {
+                    crate::Error::NotFound(
+                        "the current model catalog payload is unavailable".into(),
+                    )
+                })?;
+                let catalog = crate::Catalog::parse(&payload.value)?;
                 let model = catalog.get(model_id).ok_or_else(|| {
                     crate::Error::NotFound(format!(
                         "model {model_id} is not in this unit's catalog"
@@ -5206,8 +5398,62 @@ impl QuadCortex {
                 })?;
                 (index, value)
             }
+            ParameterTarget::Identified(identity) => {
+                return self.resolve_identified_parameter(row, column, identity, input, timeout);
+            }
         };
         Ok(ParameterWrite { index, value })
+    }
+
+    fn resolve_identified_parameter(
+        &self,
+        row: Row,
+        column: u32,
+        identity: ParameterIdentity,
+        input: ParameterInput,
+        timeout: Duration,
+    ) -> crate::Result<ParameterWrite> {
+        let preset = self.read_current_preset(timeout)?;
+        let model_id = model_id_at(&preset, row, column).ok_or_else(|| {
+            crate::Error::NotFound(format!(
+                "screen row {} column {column} is empty",
+                row.screen()
+            ))
+        })?;
+        if model_id != identity.model_id {
+            return Err(crate::Error::InvalidParameter(format!(
+                "block model changed before the parameter write: expected model {}, got {model_id}",
+                identity.model_id
+            )));
+        }
+        if self.session.state_cache().model_repo().is_none() {
+            self.fetch_model_repo(timeout)?;
+        }
+        let payload = self.session.state_cache().model_repo().ok_or_else(|| {
+            crate::Error::NotFound("the current model catalog payload is unavailable".into())
+        })?;
+        if (payload.generation, payload.revision)
+            != (identity.catalog_generation, identity.catalog_revision)
+        {
+            return Err(crate::Error::InvalidParameter(format!(
+                "model catalog changed before the parameter write: expected generation {} revision {}, got generation {} revision {}",
+                identity.catalog_generation,
+                identity.catalog_revision,
+                payload.generation,
+                payload.revision
+            )));
+        }
+        let catalog = crate::Catalog::parse(&payload.value)?;
+        let model = catalog.get(model_id).ok_or_else(|| {
+            crate::Error::NotFound(format!("model {model_id} is not in this unit's catalog"))
+        })?;
+        let parameter =
+            identified_parameter(model, &identity, payload.generation, payload.revision)?;
+        let value = parameter_value(parameter, input)?;
+        Ok(ParameterWrite {
+            index: identity.index,
+            value,
+        })
     }
 
     /// Make a block parameter follow scenes, or stop it following them.
@@ -5515,11 +5761,13 @@ impl QuadCortex {
     /// Minimum may exceed maximum to reverse the pedal. Both endpoints must be
     /// finite and within 0..=1. An index target needs no catalog model; a name
     /// target is resolved case-insensitively through the supplied model.
+    /// Identified targets are rejected because this dispatch-only API has no
+    /// timeout with which to read and validate the live cell and catalog.
     ///
     /// # Errors
     ///
-    /// Returns an invalid row or parameter error before I/O for a bad cell or
-    /// range.
+    /// Returns an invalid row or parameter error before I/O for a bad cell,
+    /// range, or identified target.
     #[allow(clippy::too_many_arguments)]
     pub fn set_expression(
         &self,
@@ -5567,6 +5815,12 @@ impl QuadCortex {
                         parameter.index
                     ))
                 })?
+            }
+            ParameterTarget::Identified(identity) => {
+                return Err(crate::Error::InvalidParameter(format!(
+                    "identified parameter {} is only supported by set_parameter, which can validate the live cell and catalog",
+                    identity.name
+                )));
             }
         };
         self.send_grid(&crate::grid::set_expression(
@@ -6286,6 +6540,21 @@ mod tests {
                 ..Default::default()
             },
         );
+    }
+
+    fn model_repo_payload(xml: &[u8]) -> Vec<u8> {
+        use std::io::Write as _;
+
+        let mut tar = vec![0; 512];
+        tar[.."ModelRepo.xml".len()].copy_from_slice(b"ModelRepo.xml");
+        let size = format!("{:011o}\0", xml.len());
+        tar[124..136].copy_from_slice(size.as_bytes());
+        tar.extend_from_slice(xml);
+        tar.resize(512 + xml.len().div_ceil(512) * 512 + 1024, 0);
+
+        let mut gzip = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        gzip.write_all(&tar).expect("fixture compresses");
+        gzip.finish().expect("fixture finishes")
     }
 
     fn answer_active_scene(link: &FakeLink, request: &[u8], scene: u32) {
@@ -7857,6 +8126,145 @@ mod tests {
                 value: Value::Normalised(1.0)
             }
         );
+    }
+
+    #[test]
+    fn selector_apis_without_live_catalog_checks_reject_identified_targets_before_io() {
+        let link = FakeLink::new();
+        let session = Arc::new(crate::Session::over(link.clone()).unwrap());
+        let qc = QuadCortex::new(session.clone());
+        let identity = ParameterIdentity {
+            catalog_generation: 3,
+            catalog_revision: 17,
+            model_id: 5007,
+            index: 0,
+            name: "GAIN".into(),
+            catalog_descriptor: "test descriptor".into(),
+        };
+
+        assert!(matches!(
+            qc.set_param_option(
+                Row::from_wire(0),
+                0,
+                ParameterTarget::Identified(identity.clone()),
+                "On",
+                &BinaryPreset::default(),
+                Duration::ZERO,
+            ),
+            Err(crate::Error::InvalidParameter(_))
+        ));
+        assert!(matches!(
+            qc.set_expression(
+                Row::from_wire(0),
+                0,
+                ParameterTarget::Identified(identity),
+                ExpressionPedal::One,
+                0.0,
+                1.0,
+                None,
+            ),
+            Err(crate::Error::InvalidParameter(_))
+        ));
+        assert!(link.written().is_empty());
+        session.close();
+    }
+
+    #[test]
+    fn an_identified_write_rejects_a_model_changed_after_its_prewrite_read() {
+        use crate::proto::{
+            Chain, Model, ModelRepoMessage, Param, ParamValue, chain, model, model_repo_message,
+            param, param_value,
+        };
+
+        let link = FakeLink::new();
+        let session = Arc::new(crate::Session::over(link.clone()).unwrap());
+        let qc = QuadCortex::new(session.clone());
+        let catalog_payload = model_repo_payload(
+            br#"<Models><Category id="1" name="Fictional"><Model id="5007" name="Test Amp"><Parameter defaultValue="5" max="10" min="0" name="GAIN" type="float" units="dB"/></Model></Category></Models>"#,
+        );
+        push_proto(
+            &link,
+            MessageType::ModelRepo,
+            &ModelRepoMessage {
+                model_repo_payload: Some(model_repo_message::ModelRepoPayload::ModelRepoPayload(
+                    catalog_payload,
+                )),
+                ..Default::default()
+            },
+        );
+        let deadline = Instant::now() + Duration::from_secs(1);
+        let cached_catalog = loop {
+            if let Some(payload) = session.state_cache().model_repo() {
+                break payload;
+            }
+            assert!(Instant::now() < deadline, "model catalog was not reduced");
+            std::thread::sleep(Duration::from_millis(1));
+        };
+        let catalog = crate::Catalog::parse(&cached_catalog.value).unwrap();
+        let identity = ParameterIdentity::from_catalog_parameter(
+            cached_catalog.generation,
+            cached_catalog.revision,
+            5007,
+            &catalog.get(5007).unwrap().parameters[0],
+        );
+
+        let fake = link.clone();
+        let responder = std::thread::spawn(move || {
+            let (next, scene_request) = wait_for_write(&fake, 0, MessageType::Scene);
+            answer_active_scene(&fake, &scene_request, 0);
+            let (next, preset_request) = wait_for_write(&fake, next, MessageType::RecallPreset);
+            push_current_preset(
+                &fake,
+                &preset_request,
+                one_chain(Chain {
+                    row: Some(chain::Row::Row(0)),
+                    models: vec![Model {
+                        column: Some(model::Column::Column(1)),
+                        hash: Some(model::Hash::Hash(5007)),
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                }),
+            );
+            let (next, _) = wait_for_write(&fake, next, MessageType::Grid);
+            let (_, read_back_request) = wait_for_write(&fake, next, MessageType::RecallPreset);
+            push_current_preset(
+                &fake,
+                &read_back_request,
+                one_chain(Chain {
+                    row: Some(chain::Row::Row(0)),
+                    models: vec![Model {
+                        column: Some(model::Column::Column(1)),
+                        hash: Some(model::Hash::Hash(5008)),
+                        params: vec![Param {
+                            index: Some(param::Index::Index(0)),
+                            param_values: vec![ParamValue {
+                                value: Some(param_value::Value::FloatValue(0.75)),
+                            }],
+                            ..Default::default()
+                        }],
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                }),
+            );
+        });
+
+        let error = qc
+            .set_parameter(
+                Row::from_wire(0),
+                1,
+                ParameterTarget::Identified(identity),
+                ParameterInput::Real(7.5),
+                None,
+                false,
+                Duration::from_secs(1),
+            )
+            .unwrap_err();
+        assert!(matches!(error, crate::Error::GridWriteUnconfirmed(_)));
+        assert!(error.to_string().contains("block model changed during"));
+        responder.join().unwrap();
+        session.close();
     }
 
     #[test]
@@ -9544,6 +9952,58 @@ mod tests {
         }
     }
 
+    #[test]
+    fn identified_parameters_require_the_exact_catalog_model_index_name_and_metadata() {
+        let model = crate::catalog::Model {
+            id: 5007,
+            name: "Test Model".into(),
+            category_id: 1,
+            category: "Fictional".into(),
+            based_on: None,
+            parameters: vec![parameter(ParameterKind::Float)],
+        };
+        let identity = ParameterIdentity::from_catalog_parameter(3, 17, 5007, &model.parameters[0]);
+
+        let resolved = identified_parameter(&model, &identity, 3, 17).unwrap();
+        assert_eq!(resolved.index, 0);
+        assert_eq!(
+            parameter_value(resolved, ParameterInput::Real(7.5)).unwrap(),
+            Value::Normalised(0.75)
+        );
+
+        for stale in [
+            ParameterIdentity {
+                catalog_generation: 4,
+                ..identity.clone()
+            },
+            ParameterIdentity {
+                catalog_revision: 18,
+                ..identity.clone()
+            },
+            ParameterIdentity {
+                model_id: 5008,
+                ..identity.clone()
+            },
+            ParameterIdentity {
+                index: 1,
+                ..identity.clone()
+            },
+            ParameterIdentity {
+                name: "GAIN".into(),
+                ..identity.clone()
+            },
+            ParameterIdentity {
+                catalog_descriptor: "stale descriptor".into(),
+                ..identity.clone()
+            },
+        ] {
+            assert!(matches!(
+                identified_parameter(&model, &stale, 3, 17),
+                Err(crate::Error::InvalidParameter(_))
+            ));
+        }
+    }
+
     // -- listing decode ----------------------------------------------------
 
     use crate::proto::{FolderInfo, ProductData, folder_info, product_data};
@@ -9986,6 +10446,125 @@ mod tests {
             .unwrap();
         assert_eq!(applied.value, Value::Normalised(0.75));
         responder.join().unwrap();
+        session.close();
+    }
+
+    #[test]
+    fn a_stale_identified_parameter_stops_before_mutating_io() {
+        use crate::proto::{Chain, Model, chain, model};
+
+        let link = FakeLink::new();
+        let session = Arc::new(crate::Session::over(link.clone()).unwrap());
+        let qc = QuadCortex::new(session.clone());
+        let fake = link.clone();
+        let responder = std::thread::spawn(move || {
+            let (next, request) = wait_for_write(&fake, 0, MessageType::RecallPreset);
+            push_current_preset(
+                &fake,
+                &request,
+                one_chain(Chain {
+                    row: Some(chain::Row::Row(0)),
+                    models: vec![Model {
+                        column: Some(model::Column::Column(1)),
+                        hash: Some(model::Hash::Hash(5008)),
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                }),
+            );
+            next
+        });
+
+        let error = qc
+            .set_parameter(
+                Row::from_wire(0),
+                1,
+                ParameterTarget::Identified(ParameterIdentity {
+                    catalog_generation: 0,
+                    catalog_revision: 0,
+                    model_id: 5007,
+                    index: 0,
+                    name: "GAIN".into(),
+                    catalog_descriptor: "stale descriptor".into(),
+                }),
+                ParameterInput::Real(7.5),
+                Some(0),
+                false,
+                Duration::from_secs(1),
+            )
+            .unwrap_err();
+        let reports_after_read = responder.join().unwrap();
+        assert!(matches!(error, crate::Error::InvalidParameter(_)));
+        assert_eq!(
+            link.written().len(),
+            reports_after_read,
+            "a stale identity must not send a grid mutation"
+        );
+        session.close();
+    }
+
+    #[test]
+    fn a_stale_catalog_identity_stops_before_conversion_or_mutating_io() {
+        use crate::proto::{Chain, Model, ModelRepoMessage, chain, model, model_repo_message};
+
+        let link = FakeLink::new();
+        let session = Arc::new(crate::Session::over(link.clone()).unwrap());
+        let qc = QuadCortex::new(session.clone());
+        let fake = link.clone();
+        let responder = std::thread::spawn(move || {
+            let (next, request) = wait_for_write(&fake, 0, MessageType::RecallPreset);
+            push_current_preset(
+                &fake,
+                &request,
+                one_chain(Chain {
+                    row: Some(chain::Row::Row(0)),
+                    models: vec![Model {
+                        column: Some(model::Column::Column(1)),
+                        hash: Some(model::Hash::Hash(5007)),
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                }),
+            );
+            let (next, _) = wait_for_write(&fake, next, MessageType::ModelRepo);
+            push_proto(
+                &fake,
+                MessageType::ModelRepo,
+                &ModelRepoMessage {
+                    model_repo_payload: Some(
+                        model_repo_message::ModelRepoPayload::ModelRepoPayload(vec![0xa1]),
+                    ),
+                    ..Default::default()
+                },
+            );
+            next
+        });
+
+        let error = qc
+            .set_parameter(
+                Row::from_wire(0),
+                1,
+                ParameterTarget::Identified(ParameterIdentity {
+                    catalog_generation: u64::MAX,
+                    catalog_revision: u64::MAX,
+                    model_id: 5007,
+                    index: 0,
+                    name: "GAIN".into(),
+                    catalog_descriptor: "stale descriptor".into(),
+                }),
+                ParameterInput::Real(7.5),
+                Some(0),
+                false,
+                Duration::from_secs(1),
+            )
+            .unwrap_err();
+        let reports_after_reads = responder.join().unwrap();
+        assert!(matches!(error, crate::Error::InvalidParameter(_)));
+        assert_eq!(
+            link.written().len(),
+            reports_after_reads,
+            "a stale catalog identity must not be parsed or followed by mutating I/O"
+        );
         session.close();
     }
 

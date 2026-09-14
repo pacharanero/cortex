@@ -39,7 +39,7 @@ use cortex_rs::{DeviceKind, RecallConsent};
 /// Bump this whenever a request or response changes shape. A client that sees
 /// a mismatch refuses with an actionable message rather than exchanging data
 /// either side will misinterpret.
-pub const DAEMON_PROTOCOL_VERSION: u32 = 22;
+pub const DAEMON_PROTOCOL_VERSION: u32 = 23;
 
 /// A request from a client to the daemon.
 ///
@@ -224,7 +224,7 @@ pub enum Request {
         row: u32,
         /// Zero-based column.
         column: u32,
-        /// Parameter index or display name.
+        /// Parameter index, display name, or exact prior-read identity.
         target: cortex_rs::client::ParameterTarget,
         /// Normalised, real-unit, or string input.
         input: cortex_rs::client::ParameterInput,
@@ -841,17 +841,28 @@ mod tests {
                 Request::SetParam {
                     row: 1,
                     column: 2,
-                    target: cortex_rs::ParameterTarget::Name("GAIN".into()),
+                    target: cortex_rs::ParameterTarget::Identified(cortex_rs::ParameterIdentity {
+                        catalog_generation: 3,
+                        catalog_revision: 17,
+                        model_id: 5007,
+                        index: 4,
+                        name: "GAIN".into(),
+                        catalog_descriptor: "v1:test".into(),
+                    }),
                     input: cortex_rs::ParameterInput::Real(7.5),
-                    scene: Some(3),
-                    promote: true,
+                    scene: None,
+                    promote: false,
                     timeout_seconds: 15,
                 },
                 serde_json::json!({
                     "op": "set_param", "row": 1, "column": 2,
-                    "target": { "by": "name", "value": "GAIN" },
-                    "input": { "kind": "real", "value": 7.5 }, "scene": 3,
-                    "promote": true, "timeout_seconds": 15
+                    "target": { "by": "identified", "value": {
+                        "catalog_generation": 3, "catalog_revision": 17,
+                        "model_id": 5007, "index": 4, "name": "GAIN",
+                        "catalog_descriptor": "v1:test"
+                    } },
+                    "input": { "kind": "real", "value": 7.5 }, "scene": null,
+                    "promote": false, "timeout_seconds": 15
                 }),
             ),
             (
@@ -1310,6 +1321,37 @@ mod tests {
                 promote: true,
                 timeout_seconds: 15,
             } if name == "GAIN"
+        ));
+    }
+
+    #[test]
+    fn an_identified_parameter_request_round_trips() {
+        let identity = cortex_rs::ParameterIdentity {
+            catalog_generation: 3,
+            catalog_revision: 17,
+            model_id: 5007,
+            index: 4,
+            name: "GAIN".into(),
+            catalog_descriptor: "v1:test".into(),
+        };
+        let request = Request::SetParam {
+            row: 1,
+            column: 2,
+            target: cortex_rs::ParameterTarget::Identified(identity.clone()),
+            input: cortex_rs::ParameterInput::Real(7.5),
+            scene: None,
+            promote: false,
+            timeout_seconds: 15,
+        };
+        let text = serde_json::to_string(&request).unwrap();
+        let back: Request = serde_json::from_str(&text).unwrap();
+        assert!(matches!(
+            back,
+            Request::SetParam {
+                target: cortex_rs::ParameterTarget::Identified(found),
+                input: cortex_rs::ParameterInput::Real(7.5),
+                ..
+            } if found == identity
         ));
     }
 

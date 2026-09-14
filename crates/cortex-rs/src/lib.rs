@@ -93,12 +93,13 @@ pub use client::{
     GlobalEqBandPatch, GlobalEqFilter, GlobalEqOutputPatch, InputPort, InputPortPatch, Instrument,
     LAST_IR_LOADER_MODEL, LibraryEntry, MasterVolumeAssignment, MasterVolumeAssignmentPatch,
     MetronomeRouting, MetronomeSound, MidiOut, MidiOutType, MidiSource, OutputPairingPatch,
-    OutputPort, OutputPortPatch, ParameterInput, ParameterTarget, ParameterWrite, Placement,
-    QuadCortex, SceneBypassBehavior, TempoParameter, TempoSubdivision, TimeSignature, TunerInput,
-    UsbPortPatch, build_global_bypass, build_global_eq_band, build_global_eq_output,
-    build_hold_timing, build_input_port_updates, build_master_volume_assignment,
-    build_midi_thru_update, build_mode_cycle, build_output_pairing_updates,
-    build_output_port_updates, build_settings_update, build_usb_port_updates, user_setlist_path,
+    OutputPort, OutputPortPatch, ParameterIdentity, ParameterInput, ParameterTarget,
+    ParameterWrite, Placement, QuadCortex, SceneBypassBehavior, TempoParameter, TempoSubdivision,
+    TimeSignature, TunerInput, UsbPortPatch, build_global_bypass, build_global_eq_band,
+    build_global_eq_output, build_hold_timing, build_input_port_updates,
+    build_master_volume_assignment, build_midi_thru_update, build_mode_cycle,
+    build_output_pairing_updates, build_output_port_updates, build_settings_update,
+    build_usb_port_updates, user_setlist_path,
 };
 pub use device::DeviceKind;
 pub use framing::{Flags, Frame, FrameReassembler, HidReportGeometry, ReportId};
