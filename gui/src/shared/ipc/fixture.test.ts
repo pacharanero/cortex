@@ -37,6 +37,40 @@ describe("Nano fixture API", () => {
   });
 });
 
+describe("Quad fixture parameter identity", () => {
+  it("converts a real-unit write carrying the identity returned by Rust", async () => {
+    const [gain] = await fixtureApi.blockParameters(0, 1);
+
+    await fixtureApi.setParameter(0, 1, gain.identity, { kind: "real", value: 7.5 });
+
+    const [updated] = await fixtureApi.blockParameters(0, 1);
+    expect(updated.real).toBe(7.5);
+    expect(updated.normalised).toBe(0.75);
+
+    await fixtureApi.setParameter(0, 1, gain.identity, { kind: "real", value: gain.real! });
+  });
+
+  it("rejects stale or mismatched identities", async () => {
+    const [gain] = await fixtureApi.blockParameters(0, 1);
+
+    await expect(fixtureApi.setParameter(0, 1, { ...gain.identity, model_id: 9999 }, { kind: "real", value: 5 })).rejects.toThrow("block model changed");
+    await expect(fixtureApi.setParameter(0, 1, { ...gain.identity, catalog_revision: 99 }, { kind: "real", value: 5 })).rejects.toThrow("model catalog changed");
+    await expect(fixtureApi.setParameter(0, 1, { ...gain.identity, index: 99 }, { kind: "real", value: 5 })).rejects.toThrow("no parameter 99");
+    await expect(fixtureApi.setParameter(0, 1, { ...gain.identity, name: "LEVEL" }, { kind: "real", value: 5 })).rejects.toThrow("parameter identity changed");
+    await expect(fixtureApi.setParameter(0, 1, { ...gain.identity, catalog_descriptor: "stale descriptor" }, { kind: "real", value: 5 })).rejects.toThrow("catalog metadata changed");
+  });
+
+  it("rejects values and input kinds that production rejects", async () => {
+    const [gain] = await fixtureApi.blockParameters(0, 1);
+    const [mic] = await fixtureApi.blockParameters(0, 3);
+
+    await expect(fixtureApi.setParameter(0, 1, gain.identity, { kind: "normalised", value: 1.1 })).rejects.toThrow("within 0-1");
+    await expect(fixtureApi.setParameter(0, 1, gain.identity, { kind: "normalised", value: Number.NaN })).rejects.toThrow("finite");
+    await expect(fixtureApi.setParameter(0, 1, gain.identity, { kind: "text", value: "wrong kind" })).rejects.toThrow("numeric parameter");
+    await expect(fixtureApi.setParameter(0, 3, mic.identity, { kind: "real", value: 1 })).rejects.toThrow("string parameter");
+  });
+});
+
 // GUI-004.2/GUI-004.5: fixture diagnostics claim no hardware evidence.
 describe("capability evidence", () => {
   it("returns no claimed hardware capabilities", async () => {

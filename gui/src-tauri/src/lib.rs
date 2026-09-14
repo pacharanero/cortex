@@ -194,7 +194,7 @@ trait DashboardSource: Send + Sync {
         &self,
         row: u32,
         column: u32,
-        index: u32,
+        identity: cortex_rs::ParameterIdentity,
         input: cortex_rs::client::ParameterInput,
     ) -> Result<(), CommandError>;
     fn set_nano_amp(
@@ -464,6 +464,13 @@ fn sibling_cortex_binary() -> Result<PathBuf, CommandError> {
 fn sibling_cortex_path(gui_executable: &std::path::Path) -> PathBuf {
     gui_executable.with_file_name(format!("cortex{}", std::env::consts::EXE_SUFFIX))
 }
+struct ParsedCatalog {
+    generation: u64,
+    revision: u64,
+    source: Vec<u8>,
+    catalog: Arc<cortex_rs::Catalog>,
+}
+
 struct DaemonDashboardSource {
     quad_client: DaemonClient,
     nano_client: DaemonClient,
@@ -471,10 +478,8 @@ struct DaemonDashboardSource {
     nano_probe: DaemonClient,
     supervisor: GuiDaemonSupervisor,
     directory_cache: std::sync::Mutex<Option<(u64, u64, Vec<SetlistSnapshot>)>>,
-    /// The parsed model catalog. Fetched once and kept: it is a 46 KB transfer
-    /// describing 533 models, and the models a unit knows do not change while
-    /// it is running.
-    catalog_cache: std::sync::Mutex<Option<Arc<cortex_rs::Catalog>>>,
+    /// Parsed model catalog keyed by the daemon cache payload that produced it.
+    catalog_cache: std::sync::Mutex<Option<ParsedCatalog>>,
 }
 
 impl Default for DaemonDashboardSource {
@@ -795,7 +800,7 @@ impl DashboardSource for DaemonDashboardSource {
     }
 
     fn block_parameters(&self, row: u32, column: u32) -> Result<Vec<ParameterView>, CommandError> {
-        let catalog = self.catalog()?;
+        let (catalog_generation, catalog_revision, catalog) = self.catalog()?;
         let preset: Preset = self
             .quad_client
             .request(&Request::CurrentPreset {
@@ -821,26 +826,31 @@ impl DashboardSource for DaemonDashboardSource {
                 block.model_id
             ),
         })?;
-        Ok(parameter_views(model, &block.params))
+        Ok(parameter_views(
+            model,
+            &block.params,
+            catalog_generation,
+            catalog_revision,
+        ))
     }
 
     fn set_parameter(
         &self,
         row: u32,
         column: u32,
-        index: u32,
+        identity: cortex_rs::ParameterIdentity,
         input: cortex_rs::client::ParameterInput,
     ) -> Result<(), CommandError> {
-        // The daemon answers with the concrete write it performed, after name
-        // and unit resolution. Comparing the echoed index with the one asked
-        // for turns "wrote a different parameter" into an error rather than a
-        // control that appears to work while moving something else.
+        let expected_index = identity.index;
+        // The daemon answers with the concrete write it performed after
+        // validating the live model, catalog name and index and resolving the
+        // input. Keep the echoed-index check as defense in depth.
         let applied: cortex_rs::client::ParameterWrite = self
             .quad_client
             .request(&Request::SetParam {
                 row,
                 column,
-                target: cortex_rs::client::ParameterTarget::Index(index),
+                target: cortex_rs::client::ParameterTarget::Identified(identity),
                 input,
                 // The active scene, and no promotion: changing which scenes a
                 // parameter follows is a different decision from changing its
@@ -851,9 +861,9 @@ impl DashboardSource for DaemonDashboardSource {
                 timeout_seconds: 15,
             })
             .map_err(|error| CommandError::daemon(error.to_string()))?;
-        if applied.index != index {
+        if applied.index != expected_index {
             return Err(CommandError::daemon(format!(
-                "asked to write parameter {index} but the session wrote {}",
+                "asked to write parameter {expected_index} but the session wrote {}",
                 applied.index
             )));
         }
@@ -871,6 +881,8 @@ struct SceneAck {
 /// parses.
 #[derive(Debug, Clone, serde::Deserialize)]
 struct CatalogPayload {
+    generation: u64,
+    revision: u64,
     payload: Vec<u8>,
 }
 
@@ -910,6 +922,8 @@ pub enum ParameterViewKind {
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, ts_rs::TS)]
 pub struct ParameterView {
+    /// Exact Rust-owned model/parameter identity to return on a write.
+    pub identity: cortex_rs::ParameterIdentity,
     /// Positional wire index, which is what a write addresses.
     pub index: u32,
     /// Display name as the unit shows it, e.g. `GAIN`.
@@ -941,23 +955,35 @@ pub struct ParameterView {
 }
 
 impl DaemonDashboardSource {
-    /// The parsed catalog, fetched on first use.
-    fn catalog(&self) -> Result<Arc<cortex_rs::Catalog>, CommandError> {
-        if let Some(catalog) = self.catalog_cache.lock().unwrap().as_ref() {
-            return Ok(Arc::clone(catalog));
-        }
+    /// The parsed catalog matching the daemon's current payload identity.
+    fn catalog(&self) -> Result<(u64, u64, Arc<cortex_rs::Catalog>), CommandError> {
         let payload: CatalogPayload = self
             .quad_client
             .request(&Request::Catalog {
                 timeout_seconds: 30,
             })
             .map_err(|error| CommandError::daemon(error.to_string()))?;
+        if let Some(cached) = self.catalog_cache.lock().unwrap().as_ref()
+            && (cached.generation, cached.revision) == (payload.generation, payload.revision)
+            && cached.source == payload.payload
+        {
+            return Ok((
+                payload.generation,
+                payload.revision,
+                Arc::clone(&cached.catalog),
+            ));
+        }
         let catalog = cortex_rs::Catalog::parse(&payload.payload).map_err(|error| {
             CommandError::daemon(format!("could not parse the device catalog: {error}"))
         })?;
         let catalog = Arc::new(catalog);
-        *self.catalog_cache.lock().unwrap() = Some(Arc::clone(&catalog));
-        Ok(catalog)
+        *self.catalog_cache.lock().unwrap() = Some(ParsedCatalog {
+            generation: payload.generation,
+            revision: payload.revision,
+            source: payload.payload,
+            catalog: Arc::clone(&catalog),
+        });
+        Ok((payload.generation, payload.revision, catalog))
     }
 
     fn directory(&self, status: &Status) -> Vec<SetlistSnapshot> {
@@ -1021,7 +1047,12 @@ fn status_is_live(status: &Status) -> bool {
 /// `Empty` slots are dropped from the result but still consume their index, so
 /// what remains addresses correctly. `Meter` entries are kept and marked
 /// read-only, because they are worth showing and meaningless to write.
-fn parameter_views(model: &cortex_rs::catalog::Model, stored: &[ParamValue]) -> Vec<ParameterView> {
+fn parameter_views(
+    model: &cortex_rs::catalog::Model,
+    stored: &[ParamValue],
+    catalog_generation: u64,
+    catalog_revision: u64,
+) -> Vec<ParameterView> {
     use cortex_rs::catalog::ParameterKind;
 
     model
@@ -1037,6 +1068,12 @@ fn parameter_views(model: &cortex_rs::catalog::Model, stored: &[ParamValue]) -> 
                 None => (None, None),
             };
             ParameterView {
+                identity: cortex_rs::ParameterIdentity::from_catalog_parameter(
+                    catalog_generation,
+                    catalog_revision,
+                    model.id,
+                    parameter,
+                ),
                 index,
                 name: parameter.name.clone(),
                 kind: parameter_kind_name(parameter.kind),
@@ -1246,13 +1283,13 @@ fn request_set_parameter(
     source: &dyn DashboardSource,
     row: u32,
     column: u32,
-    index: u32,
+    identity: cortex_rs::ParameterIdentity,
     input: cortex_rs::client::ParameterInput,
 ) -> Result<(), CommandError> {
     if row >= GRID_ROWS || column >= GRID_COLUMNS {
         return Err(CommandError::invalid_cell(row, column));
     }
-    source.set_parameter(row, column, index, input)
+    source.set_parameter(row, column, identity, input)
 }
 
 #[tauri::command]
@@ -1392,12 +1429,12 @@ async fn set_parameter(
     state: tauri::State<'_, AppState>,
     row: u32,
     column: u32,
-    index: u32,
+    identity: cortex_rs::ParameterIdentity,
     input: cortex_rs::client::ParameterInput,
 ) -> Result<(), CommandError> {
     let source = Arc::clone(&state.source);
     tauri::async_runtime::spawn_blocking(move || {
-        request_set_parameter(source.as_ref(), row, column, index, input)
+        request_set_parameter(source.as_ref(), row, column, identity, input)
     })
     .await
     .map_err(|error| CommandError::daemon(format!("parameter write task failed: {error}")))?
@@ -1686,7 +1723,7 @@ mod tests {
             &self,
             _row: u32,
             _column: u32,
-            _index: u32,
+            _identity: cortex_rs::ParameterIdentity,
             _input: cortex_rs::client::ParameterInput,
         ) -> Result<(), CommandError> {
             Err(CommandError::daemon("fixture must not write parameters"))
@@ -1698,7 +1735,14 @@ mod tests {
     struct RecordingSource {
         switched: std::sync::Mutex<Vec<u32>>,
         recalled: std::sync::Mutex<Vec<(String, String)>>,
-        written: std::sync::Mutex<Vec<(u32, u32, u32, cortex_rs::client::ParameterInput)>>,
+        written: std::sync::Mutex<
+            Vec<(
+                u32,
+                u32,
+                cortex_rs::ParameterIdentity,
+                cortex_rs::client::ParameterInput,
+            )>,
+        >,
         labelled: std::sync::Mutex<Vec<(u32, Option<String>)>>,
         coloured: std::sync::Mutex<Vec<(u32, u32)>>,
         bypassed: std::sync::Mutex<Vec<(u32, u32, bool)>>,
@@ -1766,13 +1810,13 @@ mod tests {
             &self,
             row: u32,
             column: u32,
-            index: u32,
+            identity: cortex_rs::ParameterIdentity,
             input: cortex_rs::client::ParameterInput,
         ) -> Result<(), CommandError> {
             self.written
                 .lock()
                 .unwrap()
-                .push((row, column, index, input));
+                .push((row, column, identity, input));
             Ok(())
         }
     }
@@ -1939,6 +1983,17 @@ mod tests {
         }
     }
 
+    fn parameter_identity(index: u32, name: &str) -> cortex_rs::ParameterIdentity {
+        cortex_rs::ParameterIdentity {
+            catalog_generation: 3,
+            catalog_revision: 17,
+            model_id: 5007,
+            index,
+            name: name.into(),
+            catalog_descriptor: "test descriptor".into(),
+        }
+    }
+
     fn stored_number(index: u32, value: f64) -> ParamValue {
         ParamValue {
             index,
@@ -1954,9 +2009,18 @@ mod tests {
         // Measured on CorOS 4.0.1: the wire holds 0..1, not the displayed
         // figure. A GAIN of 0.5 over a 0..10 range is 5, not 0.5.
         let model = model_with(vec![parameter(0, "GAIN", ParameterKind::Float, 0.0, 10.0)]);
-        let views = parameter_views(&model, &[stored_number(0, 0.5)]);
+        let views = parameter_views(&model, &[stored_number(0, 0.5)], 3, 17);
 
         assert_eq!(views.len(), 1);
+        assert_eq!(
+            views[0].identity,
+            cortex_rs::ParameterIdentity::from_catalog_parameter(
+                3,
+                17,
+                model.id,
+                &model.parameters[0]
+            )
+        );
         assert_eq!(views[0].normalised, Some(0.5));
         assert_eq!(views[0].real, Some(5.0));
         assert!(!views[0].read_only);
@@ -1968,7 +2032,7 @@ mod tests {
         // Some catalog entries declare min == max. There is no conversion to
         // be had, and inventing one would put a confident wrong number on screen.
         let model = model_with(vec![parameter(0, "FIXED", ParameterKind::Float, 1.0, 1.0)]);
-        let views = parameter_views(&model, &[stored_number(0, 0.5)]);
+        let views = parameter_views(&model, &[stored_number(0, 0.5)], 3, 17);
 
         assert_eq!(views[0].normalised, Some(0.5));
         assert_eq!(views[0].real, None);
@@ -1984,7 +2048,12 @@ mod tests {
             parameter(1, "", ParameterKind::Empty, 0.0, 0.0),
             parameter(2, "TONE", ParameterKind::Float, 0.0, 10.0),
         ]);
-        let views = parameter_views(&model, &[stored_number(0, 0.1), stored_number(2, 0.9)]);
+        let views = parameter_views(
+            &model,
+            &[stored_number(0, 0.1), stored_number(2, 0.9)],
+            3,
+            17,
+        );
 
         assert_eq!(views.len(), 2);
         assert_eq!(views[0].index, 0);
@@ -2005,7 +2074,7 @@ mod tests {
             0.0,
             1.0,
         )]);
-        let views = parameter_views(&model, &[stored_number(0, 1.0)]);
+        let views = parameter_views(&model, &[stored_number(0, 1.0)], 3, 17);
 
         assert_eq!(views.len(), 1, "a meter is worth showing");
         assert!(
@@ -2020,7 +2089,7 @@ mod tests {
         // The catalog is the description of the model; a stored list can be
         // shorter. The control still has to appear, without a value.
         let model = model_with(vec![parameter(0, "GAIN", ParameterKind::Float, 0.0, 10.0)]);
-        let views = parameter_views(&model, &[]);
+        let views = parameter_views(&model, &[], 3, 17);
 
         assert_eq!(views.len(), 1);
         assert_eq!(views[0].normalised, None);
@@ -2039,6 +2108,8 @@ mod tests {
                 value: cortex_rs::view::ParamValueKind::Text("SM57".into()),
                 per_scene: Vec::new(),
             }],
+            3,
+            17,
         );
 
         assert_eq!(views[0].text.as_deref(), Some("SM57"));
@@ -2055,7 +2126,7 @@ mod tests {
                 &source,
                 row,
                 column,
-                0,
+                parameter_identity(0, "GAIN"),
                 cortex_rs::client::ParameterInput::Normalised(0.5),
             )
             .unwrap_err();
@@ -2074,13 +2145,18 @@ mod tests {
             &source,
             3,
             7,
-            12,
+            parameter_identity(12, "LEVEL"),
             cortex_rs::client::ParameterInput::Real(6.0),
         )
         .unwrap();
         assert_eq!(
             *source.written.lock().unwrap(),
-            vec![(3, 7, 12, cortex_rs::client::ParameterInput::Real(6.0))]
+            vec![(
+                3,
+                7,
+                parameter_identity(12, "LEVEL"),
+                cortex_rs::client::ParameterInput::Real(6.0)
+            )]
         );
     }
 
@@ -2389,62 +2465,102 @@ mod tests {
             .expect("the block should have at least one writable numeric parameter")
             .clone();
 
-        let original = target.normalised.unwrap();
-        // Move somewhere clearly different, staying inside 0..1.
-        let moved = if original > 0.5 { 0.25 } else { 0.75 };
+        let original = target
+            .real
+            .expect("the selected parameter should have real units");
+        let span = target.max - target.min;
+        let moved = if original > target.min + span / 2.0 {
+            target.min + span / 4.0
+        } else {
+            target.min + span * 3.0 / 4.0
+        };
+        let moved = if matches!(target.kind, ParameterViewKind::Int) {
+            moved.round()
+        } else {
+            moved
+        };
 
-        request_set_parameter(
+        let write_result = request_set_parameter(
             &source,
             row,
             column,
-            target.index,
-            cortex_rs::client::ParameterInput::Normalised(
-                #[allow(clippy::cast_possible_truncation)]
-                {
-                    moved as f32
-                },
-            ),
-        )
-        .unwrap();
+            target.identity.clone(),
+            cortex_rs::client::ParameterInput::Real(moved),
+        );
+        let observed = write_result.as_ref().ok().and_then(|()| {
+            request_block_parameters(&source, row, column)
+                .ok()?
+                .into_iter()
+                .find(|parameter| parameter.identity == target.identity)?
+                .real
+        });
 
-        let after = request_block_parameters(&source, row, column).unwrap();
-        let observed = after
-            .iter()
-            .find(|parameter| parameter.index == target.index)
-            .expect("the parameter should still be there")
-            .normalised
-            .expect("it should still hold a number");
+        // Restore before asserting the exercise result, including when the
+        // changed-value write or read-back failed. A reconnect changes catalog
+        // lifecycle tokens, so every retry obtains a fresh compatible identity.
+        let tolerance = span.abs() / 100.0 + f64::EPSILON;
+        let restore_deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        let mut restore_attempts = Vec::new();
+        let restored = loop {
+            match request_block_parameters(&source, row, column) {
+                Ok(parameters) => {
+                    let current = parameters
+                        .into_iter()
+                        .find(|parameter| parameter.index == target.index)
+                        .expect("refusing restoration because the original parameter disappeared");
+                    assert_eq!(
+                        current.identity.model_id, target.identity.model_id,
+                        "refusing restoration because the block model changed"
+                    );
+                    assert_eq!(
+                        current.identity.name, target.identity.name,
+                        "refusing restoration because the parameter name changed"
+                    );
+                    assert_eq!(
+                        current.identity.catalog_descriptor, target.identity.catalog_descriptor,
+                        "refusing restoration because the parameter metadata changed"
+                    );
+
+                    if let Some(value) = current.real
+                        && (value - original).abs() < tolerance
+                    {
+                        break value;
+                    }
+                    if let Err(error) = request_set_parameter(
+                        &source,
+                        row,
+                        column,
+                        current.identity,
+                        cortex_rs::client::ParameterInput::Real(original),
+                    ) {
+                        restore_attempts.push(format!("{}: {}", error.code, error.message));
+                    }
+                }
+                Err(error) => {
+                    restore_attempts.push(format!("{}: {}", error.code, error.message));
+                }
+            }
+
+            assert!(
+                std::time::Instant::now() < restore_deadline,
+                "failed to restore {} to {original} after recovery attempts: {}",
+                target.name,
+                restore_attempts.join("; ")
+            );
+            std::thread::sleep(std::time::Duration::from_millis(250));
+        };
         assert!(
-            (observed - moved).abs() < 0.02,
+            (restored - original).abs() < tolerance,
+            "failed to restore {} to {original}, it reads {restored}",
+            target.name
+        );
+        write_result.expect("the real-unit parameter write should succeed");
+        let observed = observed.expect("the changed real-unit value should read back");
+        assert!(
+            (observed - moved).abs() < span.abs() / 100.0 + f64::EPSILON,
             "device reported {observed} after writing {moved} to {} (index {})",
             target.name,
             target.index
-        );
-
-        // Put it back.
-        request_set_parameter(
-            &source,
-            row,
-            column,
-            target.index,
-            cortex_rs::client::ParameterInput::Normalised(
-                #[allow(clippy::cast_possible_truncation)]
-                {
-                    original as f32
-                },
-            ),
-        )
-        .unwrap();
-        let restored = request_block_parameters(&source, row, column)
-            .unwrap()
-            .iter()
-            .find(|parameter| parameter.index == target.index)
-            .and_then(|parameter| parameter.normalised)
-            .expect("the parameter should read back after restoring");
-        assert!(
-            (restored - original).abs() < 0.02,
-            "failed to restore {} to {original}, it reads {restored}",
-            target.name
         );
     }
 

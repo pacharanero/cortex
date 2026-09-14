@@ -10,7 +10,7 @@ import { ErrorBoundary } from "./shared/ErrorBoundary";
 import { NanoChain } from "./features/nano/NanoChain";
 import { InspectorPanel } from "./shared/editor/EditorCanvas";
 import { cortexApi } from "./shared/ipc/api";
-import type { DashboardSnapshot, DeviceKind, LiveBlock, NanoAmpControl, NanoBypassTarget, NanoFxSlot, ParameterInput, ParameterView } from "./shared/ipc/types";
+import type { DashboardSnapshot, DeviceKind, LiveBlock, NanoAmpControl, NanoBypassTarget, NanoFxSlot, ParameterIdentity, ParameterInput, ParameterView } from "./shared/ipc/types";
 
 interface Cell { row: number; column: number }
 interface DashboardTicket { epoch: number; seq: number }
@@ -169,9 +169,9 @@ export function App() {
     }
   };
 
-  const writeParameter = async (index: number, input: ParameterInput) => {
+  const writeParameter = async (identity: ParameterIdentity, input: ParameterInput) => {
     if (!selectedCell) return;
-    await cortexApi.setParameter(selectedCell.row, selectedCell.column, index, input);
+    await cortexApi.setParameter(selectedCell.row, selectedCell.column, identity, input);
     // Re-read rather than assume: the device may clamp or refuse, and the
     // control should show what it actually holds.
     const next = await cortexApi.blockParameters(selectedCell.row, selectedCell.column);

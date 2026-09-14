@@ -4,7 +4,7 @@
 import { MantineProvider } from "@mantine/core";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { DashboardSnapshot } from "./shared/ipc/types";
+import type { DashboardSnapshot, ParameterView } from "./shared/ipc/types";
 
 const api = vi.hoisted(() => ({
   dashboard: vi.fn(),
@@ -296,6 +296,45 @@ describe("preset recall pending state", () => {
 
     await waitFor(() => expect(screen.queryByText("Recalling...")).toBeNull());
     expect(await screen.findByText("recall failed")).toBeTruthy();
+  });
+});
+
+describe("Quad parameter writes", () => {
+  afterEach(() => {
+    vi.resetAllMocks();
+  });
+
+  it("forwards the complete Rust-owned parameter identity", async () => {
+    const current = directorySnapshot();
+    current.live!.blocks = [{
+      row: 0, screen_row: 1, column: 1, model_id: 5007, name: "Test Amp",
+      category: "Amplifier", based_on: null, bypassed: false, params: [], family: "amp",
+    }];
+    const identity = {
+      catalog_generation: 3,
+      catalog_revision: 17,
+      model_id: 5007,
+      index: 4,
+      name: "GAIN",
+      catalog_descriptor: "test descriptor",
+    };
+    const parameter: ParameterView = {
+      identity, index: 4, name: "GAIN", kind: "float", units: "dB", min: 0, max: 10,
+      normalised: 0.5, real: 5, text: null, step_names: [], read_only: false, per_scene: false,
+    };
+    api.dashboard.mockResolvedValue(current);
+    api.blockParameters.mockResolvedValue([parameter]);
+    api.setParameter.mockResolvedValue(undefined);
+    renderApp();
+
+    fireEvent.click(await screen.findByRole("button", { name: /Row 1, column 1: Test Amp/ }));
+    const input = await screen.findByLabelText("GAIN (dB) numeric input");
+    fireEvent.change(input, { target: { value: "7.5" } });
+    fireEvent.blur(input);
+
+    await waitFor(() => expect(api.setParameter).toHaveBeenCalledWith(
+      0, 1, identity, { kind: "real", value: 7.5 },
+    ));
   });
 });
 

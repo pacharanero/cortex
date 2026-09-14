@@ -10,6 +10,7 @@ import type {
   NanoBypassTarget,
   NanoFxParameter,
   NanoFxSlot,
+  ParameterIdentity,
   ParameterInput,
   ParameterView,
 } from "./generated";
@@ -25,6 +26,7 @@ export type { NanoFxParameter };
 export type { NanoCurrentState } from "./generated";
 export type { NanoFxSlot };
 export type { NanoSlotRole } from "./generated";
+export type { ParameterIdentity };
 export type { ParameterInput };
 export type { ParameterView };
 export type { SceneSnapshot } from "./generated";
@@ -59,7 +61,7 @@ export interface CortexApi {
    */
   blockParameters(row: number, column: number): Promise<ParameterView[]>;
   /** Edit the working copy and change what is heard without saving it. */
-  setParameter(row: number, column: number, index: number, input: ParameterInput): Promise<void>;
+  setParameter(row: number, column: number, identity: ParameterIdentity, input: ParameterInput): Promise<void>;
   setSceneLabel(scene: number, label: string | null): Promise<void>;
   /** Set a scene colour as 0xRRGGBB; Rust forces its alpha channel opaque. */
   setSceneColor(scene: number, color: number): Promise<void>;

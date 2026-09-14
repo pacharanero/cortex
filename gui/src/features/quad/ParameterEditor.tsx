@@ -3,12 +3,12 @@
 
 import { Alert, Badge, Group, NumberInput, Select, Slider, Stack, Text, TextInput } from "@mantine/core";
 import { useEffect, useRef, useState } from "react";
-import type { ParameterInput, ParameterView } from "../../shared/ipc/types";
+import type { ParameterIdentity, ParameterInput, ParameterView } from "../../shared/ipc/types";
 
 interface ParameterEditorProps {
   parameters: ParameterView[];
   disabled: boolean;
-  onWrite: (index: number, input: ParameterInput) => Promise<void>;
+  onWrite: (identity: ParameterIdentity, input: ParameterInput) => Promise<void>;
 }
 
 /**
@@ -27,11 +27,11 @@ export function ParameterEditor({ parameters, disabled, onWrite }: ParameterEdit
   const [pending, setPending] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const write = async (index: number, input: ParameterInput) => {
-    setPending(index);
+  const write = async (identity: ParameterIdentity, input: ParameterInput) => {
+    setPending(identity.index);
     setError(null);
     try {
-      await onWrite(index, input);
+      await onWrite(identity, input);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
     } finally {
@@ -70,7 +70,7 @@ interface ParameterControlProps {
   parameter: ParameterView;
   busy: boolean;
   disabled: boolean;
-  onWrite: (index: number, input: ParameterInput) => Promise<void>;
+  onWrite: (identity: ParameterIdentity, input: ParameterInput) => Promise<void>;
 }
 
 function ParameterControl({ parameter, busy, disabled, onWrite }: ParameterControlProps) {
@@ -121,7 +121,7 @@ function ParameterControl({ parameter, busy, disabled, onWrite }: ParameterContr
           disabled={disabled}
           onBlur={(event) => {
             const value = event.currentTarget.value;
-            if (value !== (parameter.text ?? "")) void onWrite(parameter.index, { kind: "text", value });
+            if (value !== (parameter.text ?? "")) void onWrite(parameter.identity, { kind: "text", value });
           }}
         />
       </div>
@@ -145,7 +145,7 @@ function ParameterControl({ parameter, busy, disabled, onWrite }: ParameterContr
           onChange={(value) => {
             if (value === null) return;
             const position = Number.parseInt(value, 10);
-            void onWrite(parameter.index, { kind: "real", value: position });
+            void onWrite(parameter.identity, { kind: "real", value: position });
           }}
           value={String(Math.round(current))}
         />
@@ -160,7 +160,7 @@ function ParameterControl({ parameter, busy, disabled, onWrite }: ParameterContr
   const max = usesRealUnits ? parameter.max : 1;
   const step = parameter.kind === "int" ? 1 : (max - min) / 100;
   const commit = (value: number) =>
-    onWrite(parameter.index, usesRealUnits ? { kind: "real", value } : { kind: "normalised", value });
+    onWrite(parameter.identity, usesRealUnits ? { kind: "real", value } : { kind: "normalised", value });
 
   return (
     <div

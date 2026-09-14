@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Dr Marcus Baw
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-import type { CortexApi, DashboardSnapshot, DeviceKind, LiveBlock, NanoCurrentState, NanoFxParameter, NanoFxSlot, ParameterInput, ParameterView, SceneSnapshot } from "./types";
+import type { CortexApi, DashboardSnapshot, DeviceKind, LiveBlock, NanoCurrentState, NanoFxParameter, NanoFxSlot, ParameterIdentity, ParameterInput, ParameterView, SceneSnapshot } from "./types";
 
 /**
  * Parameters per block cell, keyed "row,column".
@@ -14,17 +14,17 @@ import type { CortexApi, DashboardSnapshot, DeviceKind, LiveBlock, NanoCurrentSt
  */
 const blockParameters: Record<string, ParameterView[]> = {
   "0,1": [
-    { index: 0, name: "GAIN", kind: "float", units: "", min: 0, max: 10, normalised: 0.62, real: 6.2, text: null, step_names: [], read_only: false, per_scene: true },
-    { index: 1, name: "BASS", kind: "float", units: "", min: 0, max: 10, normalised: 0.5, real: 5, text: null, step_names: [], read_only: false, per_scene: false },
-    { index: 2, name: "MID", kind: "float", units: "", min: 0, max: 10, normalised: 0.44, real: 4.4, text: null, step_names: [], read_only: false, per_scene: false },
-    { index: 3, name: "TREBLE", kind: "float", units: "", min: 0, max: 10, normalised: 0.7, real: 7, text: null, step_names: [], read_only: false, per_scene: false },
-    { index: 4, name: "MASTER", kind: "fader", units: "dB", min: -60, max: 0, normalised: 0.8, real: -12, text: null, step_names: [], read_only: false, per_scene: false },
-    { index: 5, name: "BRIGHT", kind: "switch", units: "", min: 0, max: 1, normalised: 0, real: 0, text: null, step_names: ["Off", "On"], read_only: false, per_scene: false },
-    { index: 6, name: "OUTPUT LEVEL", kind: "meter", units: "dB", min: -60, max: 0, normalised: 0.55, real: -27, text: null, step_names: [], read_only: true, per_scene: false },
+    { identity: { catalog_generation: 1, catalog_revision: 1, model_id: 1001, index: 0, name: "GAIN", catalog_descriptor: "fixture:float:0:10" }, index: 0, name: "GAIN", kind: "float", units: "", min: 0, max: 10, normalised: 0.62, real: 6.2, text: null, step_names: [], read_only: false, per_scene: true },
+    { identity: { catalog_generation: 1, catalog_revision: 1, model_id: 1001, index: 1, name: "BASS", catalog_descriptor: "fixture:float:0:10" }, index: 1, name: "BASS", kind: "float", units: "", min: 0, max: 10, normalised: 0.5, real: 5, text: null, step_names: [], read_only: false, per_scene: false },
+    { identity: { catalog_generation: 1, catalog_revision: 1, model_id: 1001, index: 2, name: "MID", catalog_descriptor: "fixture:float:0:10" }, index: 2, name: "MID", kind: "float", units: "", min: 0, max: 10, normalised: 0.44, real: 4.4, text: null, step_names: [], read_only: false, per_scene: false },
+    { identity: { catalog_generation: 1, catalog_revision: 1, model_id: 1001, index: 3, name: "TREBLE", catalog_descriptor: "fixture:float:0:10" }, index: 3, name: "TREBLE", kind: "float", units: "", min: 0, max: 10, normalised: 0.7, real: 7, text: null, step_names: [], read_only: false, per_scene: false },
+    { identity: { catalog_generation: 1, catalog_revision: 1, model_id: 1001, index: 4, name: "MASTER", catalog_descriptor: "fixture:fader:-60:0:dB" }, index: 4, name: "MASTER", kind: "fader", units: "dB", min: -60, max: 0, normalised: 0.8, real: -12, text: null, step_names: [], read_only: false, per_scene: false },
+    { identity: { catalog_generation: 1, catalog_revision: 1, model_id: 1001, index: 5, name: "BRIGHT", catalog_descriptor: "fixture:switch:Off:On" }, index: 5, name: "BRIGHT", kind: "switch", units: "", min: 0, max: 1, normalised: 0, real: 0, text: null, step_names: ["Off", "On"], read_only: false, per_scene: false },
+    { identity: { catalog_generation: 1, catalog_revision: 1, model_id: 1001, index: 6, name: "OUTPUT LEVEL", catalog_descriptor: "fixture:meter:-60:0:dB" }, index: 6, name: "OUTPUT LEVEL", kind: "meter", units: "dB", min: -60, max: 0, normalised: 0.55, real: -27, text: null, step_names: [], read_only: true, per_scene: false },
   ],
   "0,3": [
-    { index: 0, name: "MIC", kind: "str", units: "", min: 0, max: 0, normalised: null, real: null, text: "SM57", step_names: [], read_only: false, per_scene: false },
-    { index: 1, name: "DISTANCE", kind: "float", units: "cm", min: 0, max: 30, normalised: 0.2, real: 6, text: null, step_names: [], read_only: false, per_scene: false },
+    { identity: { catalog_generation: 1, catalog_revision: 1, model_id: 2001, index: 0, name: "MIC", catalog_descriptor: "fixture:string" }, index: 0, name: "MIC", kind: "str", units: "", min: 0, max: 0, normalised: null, real: null, text: "SM57", step_names: [], read_only: false, per_scene: false },
+    { identity: { catalog_generation: 1, catalog_revision: 1, model_id: 2001, index: 1, name: "DISTANCE", catalog_descriptor: "fixture:float:0:30:cm" }, index: 1, name: "DISTANCE", kind: "float", units: "cm", min: 0, max: 30, normalised: 0.2, real: 6, text: null, step_names: [], read_only: false, per_scene: false },
   ],
 };
 
@@ -269,17 +269,28 @@ export const fixtureApi: CortexApi = {
     if (!found) throw new Error(`no block at row ${row}, column ${column}`);
     return structuredClone(found);
   },
-  async setParameter(row: number, column: number, index: number, input: ParameterInput) {
+  async setParameter(row: number, column: number, identity: ParameterIdentity, input: ParameterInput) {
     if (row < 0 || row > 3 || column < 0 || column > 7) throw new Error(`row ${row}, column ${column} is outside the grid`);
+    const block = dashboard.live?.blocks.find((candidate) => candidate.row === row && candidate.column === column);
+    if (block?.model_id !== identity.model_id) throw new Error(`block model changed before the parameter write: expected model ${identity.model_id}, got ${block?.model_id ?? "none"}`);
     const params = blockParameters[`${row},${column}`];
-    const target = params?.find((candidate) => candidate.index === index);
-    if (!target) throw new Error(`no parameter ${index} on the block at row ${row}, column ${column}`);
+    const target = params?.find((candidate) => candidate.index === identity.index);
+    if (!target) throw new Error(`no parameter ${identity.index} on the block at row ${row}, column ${column}`);
+    if (target.identity.catalog_generation !== identity.catalog_generation || target.identity.catalog_revision !== identity.catalog_revision) throw new Error("model catalog changed before the parameter write");
+    if (target.identity.name !== identity.name) throw new Error(`parameter identity changed at wire index ${identity.index}: expected ${identity.name}, got ${target.identity.name}`);
+    if (target.identity.catalog_descriptor !== identity.catalog_descriptor) throw new Error(`catalog metadata changed for parameter ${identity.name}`);
     if (target.read_only) throw new Error(`${target.name} is a meter, not a setting`);
     // Apply in the same terms the device stores: normalised is authoritative,
     // and `real` is derived from it, never the other way round.
     if (input.kind === "text") {
+      if (target.kind !== "str") throw new Error(`${target.name} is a numeric parameter; use a normalised or real-unit value`);
       target.text = input.value;
     } else {
+      if (target.kind === "str") throw new Error(`${target.name} is a string parameter; use text input`);
+      if (target.kind === "unknown") throw new Error(`${target.name} has an unsupported parameter type`);
+      if (!Number.isFinite(input.value)) throw new Error(`${input.kind} values must be finite`);
+      if (input.kind === "normalised" && (input.value < 0 || input.value > 1)) throw new Error(`normalised values must be within 0-1, got ${input.value}`);
+      if (input.kind === "real" && target.max === target.min) throw new Error(`${target.name} has a placeholder range; use a normalised value`);
       const normalised = input.kind === "normalised"
         ? input.value
         : (input.value - target.min) / (target.max - target.min);

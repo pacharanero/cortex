@@ -119,7 +119,7 @@ pub fn default_matrix() -> CapabilityMatrix {
 }
 
 fn matrix_for_host(host: HostPath) -> CapabilityMatrix {
-    use CapabilityStatus::{ConfirmedReadable, ConfirmedWritable};
+    use CapabilityStatus::ConfirmedWritable;
 
     if host != HostPath::Linux {
         return CapabilityMatrix::default();
@@ -132,12 +132,9 @@ fn matrix_for_host(host: HostPath) -> CapabilityMatrix {
         // GUI-003.1, hardware-verified 2026-08-17 through the sidebar: the
         // daemon's echoed slot matched and the GUI re-read the working copy.
         .insert("recall_preset", ConfirmedWritable)
-        // GUI-003.3, hardware-verified 2026-08-17: read a real block's
-        // parameters through the catalog join.
-        .insert("block_parameters", ConfirmedReadable)
-        // GUI-003.3, hardware-verified 2026-08-17: wrote one parameter, saw
-        // the device report the new value back, restored the original.
-        .insert("set_parameter", ConfirmedWritable)
+        // The 2026-08-17 parameter read/write pass predates GUI-003.10's exact
+        // catalog-identity contract, so it cannot confirm either current Tauri
+        // path.
         // NANO-001.5, Tauri backend hardware-verified 2026-08-18: a Tauri amp
         // write changed Gain by one raw step, independently read it back,
         // restored it and verified restoration in 12.15 seconds.
@@ -209,12 +206,9 @@ mod tests {
         );
         assert_eq!(
             matrix.status("block_parameters"),
-            CapabilityStatus::ConfirmedReadable
+            CapabilityStatus::Unverified
         );
-        assert_eq!(
-            matrix.status("set_parameter"),
-            CapabilityStatus::ConfirmedWritable
-        );
+        assert_eq!(matrix.status("set_parameter"), CapabilityStatus::Unverified);
         assert_eq!(
             matrix.status("set_nano_amp"),
             CapabilityStatus::ConfirmedWritable
@@ -225,15 +219,21 @@ mod tests {
         );
     }
 
-    /// `set_bypass`, `set_scene_label` and `set_scene_color` are implemented
-    /// and offline-verified (GUI-003.3, GUI-003.4), which is exactly the trap
-    /// this matrix exists to avoid: "it works" is not "hardware confirmed".
-    /// None has a recorded GUI/Tauri hardware pass, so all three stay
-    /// unverified even though lower layers have broader device evidence.
+    /// These operations are implemented and offline-verified, which is exactly
+    /// the trap this matrix exists to avoid: "it works" is not "hardware
+    /// confirmed". `set_parameter` had an older hardware pass, but GUI-003.10
+    /// changed its request contract; the others have no recorded GUI/Tauri
+    /// hardware pass.
     #[test]
     fn offline_verified_operations_are_not_promoted_on_the_strength_of_appearing_to_work() {
         let matrix = default_matrix();
-        for operation in ["set_bypass", "set_scene_label", "set_scene_color"] {
+        for operation in [
+            "block_parameters",
+            "set_parameter",
+            "set_bypass",
+            "set_scene_label",
+            "set_scene_color",
+        ] {
             assert_eq!(
                 matrix.status(operation),
                 CapabilityStatus::Unverified,
