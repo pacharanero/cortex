@@ -461,9 +461,11 @@ export function App() {
                   activeScene={live.active_scene}
                   capabilities={capabilities}
                   disabled={!connected}
+                  generation={live.generation}
                   onRecolour={recolourScene}
                   onRename={renameScene}
                   onSwitch={switchScene}
+                  revision={live.revision}
                   scenes={live.scenes}
                 />
               </ErrorBoundary>
