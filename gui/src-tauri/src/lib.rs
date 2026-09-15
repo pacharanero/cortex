@@ -1547,7 +1547,7 @@ fn capability_matrix() -> Vec<capability::CapabilityLabel> {
 }
 
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .manage(AppState {
             source: Arc::new(DaemonDashboardSource::default()),
         })
@@ -1569,7 +1569,17 @@ pub fn run() {
             read_nano_fx_params,
             set_nano_fx_param,
             capability_matrix
-        ])
+        ]);
+    // Dev-only automation bridge for the Tauri MCP server; release builds are
+    // untouched. Bound to the loopback interface rather than the plugin's
+    // default 0.0.0.0, so the webview driver is not reachable from the network.
+    #[cfg(debug_assertions)]
+    let builder = builder.plugin(
+        tauri_plugin_mcp_bridge::Builder::new()
+            .bind_address("127.0.0.1")
+            .build(),
+    );
+    builder
         .run(tauri::generate_context!())
         .expect("Tauri application failed");
 }

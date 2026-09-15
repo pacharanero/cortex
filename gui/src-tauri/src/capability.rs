@@ -133,10 +133,11 @@ fn matrix_for_host(host: HostPath) -> CapabilityMatrix {
         // GUI-003.1, hardware-verified 2026-08-17 through the sidebar: the
         // daemon's echoed slot matched and the GUI re-read the working copy.
         .insert("recall_preset", ConfirmedWritable)
-        // GUI-003.10, Tauri backend hardware-verified 2026-09-14: the ignored
-        // `editing_a_parameter_is_reflected_by_the_device` smoke passed
-        // against a held protocol-23 daemon - identity-carrying parameter
-        // read, one real-unit write, exact read-back, restoration verified.
+        // GUI-003.10, hardware-verified 2026-09-14 (backend smoke) and
+        // 2026-09-15 (rendered Linux control, driven via the Tauri MCP bridge
+        // without stealing focus): identity-carrying parameter read, real-unit
+        // write through the rendered inspector, exact read-back, restoration
+        // verified through the same rendered control.
         .insert("block_parameters", ConfirmedWritable)
         .insert("set_parameter", ConfirmedWritable)
         // NANO-001.5, Tauri backend hardware-verified 2026-08-18: a Tauri amp
