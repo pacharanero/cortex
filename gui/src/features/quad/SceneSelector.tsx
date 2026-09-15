@@ -17,8 +17,6 @@ interface SceneSelectorProps {
   onRename: (scene: number, label: string | null) => Promise<void>;
   onRecolour: (scene: number, color: number) => Promise<void>;
   onCopySwap: (fromScene: number, toScene: number, swap: boolean) => Promise<void>;
-  /** Evidence labels for `switch_scene`/`set_scene_label`/`set_scene_color`/`copy_scene`. */
-  capabilities?: CapabilityLabel[];
 }
 
 /** `0xAARRGGBB` from the device to the `#rrggbb` an input wants. */
@@ -49,7 +47,7 @@ function toHex(color: number | null): string {
  * that settled late, or a reconnect starting a new generation - none of which
  * name an actual scene transition.
  */
-export function SceneSelector({ scenes, activeScene, generation, revision, disabled, onSwitch, onRename, onRecolour, onCopySwap, capabilities = [] }: SceneSelectorProps) {
+export function SceneSelector({ scenes, activeScene, generation, revision, disabled, onSwitch, onRename, onRecolour, onCopySwap }: SceneSelectorProps) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [announcement, setAnnouncement] = useState("");
@@ -247,7 +245,7 @@ export function SceneSelector({ scenes, activeScene, generation, revision, disab
         scene={scenes.find((candidate) => candidate.index === activeScene) ?? null}
       />
 
-      <SceneCopySwap capabilities={capabilities} disabled={disabled} onCopySwap={onCopySwap} scenes={scenes} />
+      <SceneCopySwap disabled={disabled} onCopySwap={onCopySwap} scenes={scenes} />
 
       {/* Device-originated and command-completion changes are announced here so
           the switch is perceivable without watching the radio group. */}
@@ -338,7 +336,6 @@ interface SceneCopySwapProps {
   scenes: SceneSnapshot[];
   disabled: boolean;
   onCopySwap: (fromScene: number, toScene: number, swap: boolean) => Promise<void>;
-  capabilities: CapabilityLabel[];
 }
 
 /**
@@ -357,7 +354,7 @@ interface SceneCopySwapProps {
  * harmless no-op the CLI would still perform) and an accidental self-swap are
  * both refused here rather than sent.
  */
-function SceneCopySwap({ scenes, disabled, onCopySwap, capabilities }: SceneCopySwapProps) {
+function SceneCopySwap({ scenes, disabled, onCopySwap }: SceneCopySwapProps) {
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const [busy, setBusy] = useState(false);
@@ -390,7 +387,6 @@ function SceneCopySwap({ scenes, disabled, onCopySwap, capabilities }: SceneCopy
     <Stack gap="xs">
       <Group gap="xs">
         <Text c="dimmed" fw={700} size="xs" tt="uppercase">Copy / swap scenes</Text>
-        <CapabilityBadge labels={capabilities} operation="copy_scene" subject="Scene copy/swap" />
       </Group>
       <Text c="dimmed" size="xs">Copy overwrites the destination working scene. Swap exchanges both. Neither saves.</Text>
       <Group align="flex-end" gap="sm" wrap="wrap">
