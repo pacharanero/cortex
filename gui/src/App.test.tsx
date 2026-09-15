@@ -17,6 +17,7 @@ const api = vi.hoisted(() => ({
   setParameter: vi.fn(),
   setSceneLabel: vi.fn(),
   setSceneColor: vi.fn(),
+  copyScene: vi.fn(),
   setBypass: vi.fn(),
   setNanoAmp: vi.fn(),
   setNanoGateReduction: vi.fn(),
@@ -467,10 +468,12 @@ describe("capability evidence labels", () => {
     renderApp();
 
     await screen.findByText("Preset One");
-    // recall_preset and switch_scene both fall back to unverified, and
-    // nothing else surfaces a status label in this snapshot (no block or
-    // scene is selected, and no Nano state is present).
-    expect(await screen.findAllByText(/Not yet hardware-verified$/)).toHaveLength(2);
+    // recall_preset, switch_scene and copy_scene all fall back to unverified;
+    // copy_scene's badge renders unconditionally in the scene manager, unlike
+    // set_scene_label/set_scene_color which need an actual selected scene.
+    // Nothing else surfaces a status label in this snapshot (no block is
+    // selected, and no Nano state is present).
+    expect(await screen.findAllByText(/Not yet hardware-verified$/)).toHaveLength(3);
   });
 });
 

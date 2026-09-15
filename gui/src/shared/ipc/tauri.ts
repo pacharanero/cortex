@@ -27,6 +27,7 @@ export const tauriApi: CortexApi = {
   },
   setSceneLabel(scene: number, label: string | null) { return invokeCommand<void>("set_scene_label", { scene, label }); },
   setSceneColor(scene: number, color: number) { return invokeCommand<void>("set_scene_color", { scene, color }); },
+  copyScene(fromScene: number, toScene: number, swap: boolean) { return invokeCommand<void>("copy_scene", { fromScene, toScene, swap }); },
   setBypass(row: number, column: number, bypass: boolean) { return invokeCommand<void>("set_bypass", { row, column, bypass }); },
   setNanoAmp(control, value) { return invokeCommand<void>("set_nano_amp", { control, value }); },
   setNanoGateReduction(percent) { return invokeCommand<void>("set_nano_gate_reduction", { percent }); },

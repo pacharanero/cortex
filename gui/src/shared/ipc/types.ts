@@ -66,6 +66,12 @@ export interface CortexApi {
   setSceneLabel(scene: number, label: string | null): Promise<void>;
   /** Set a scene colour as 0xRRGGBB; Rust forces its alpha channel opaque. */
   setSceneColor(scene: number, color: number): Promise<void>;
+  /**
+   * Copy one scene onto another, or exchange both. Both indices are
+   * zero-based. Copy overwrites the destination working scene; swap
+   * exchanges both. Neither saves anything.
+   */
+  copyScene(fromScene: number, toScene: number, swap: boolean): Promise<void>;
   /** Set bypass in the active scene using the block's zero-based wire row. */
   setBypass(row: number, column: number, bypass: boolean): Promise<void>;
   /** Set one Nano amp control and wait for exact fresh read-back. */

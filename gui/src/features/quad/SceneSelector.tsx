@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Dr Marcus Baw
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-import { Alert, ColorInput, Group, Radio, Stack, Text, TextInput } from "@mantine/core";
+import { Alert, Button, ColorInput, Group, NativeSelect, Radio, Stack, Text, TextInput } from "@mantine/core";
 import { useEffect, useRef, useState } from "react";
 import { CapabilityBadge } from "../../shared/CapabilityBadge";
 import type { CapabilityLabel, SceneSnapshot } from "../../shared/ipc/types";
@@ -17,7 +17,8 @@ interface SceneSelectorProps {
   onSwitch: (scene: number) => Promise<void>;
   onRename: (scene: number, label: string | null) => Promise<void>;
   onRecolour: (scene: number, color: number) => Promise<void>;
-  /** Evidence labels for `switch_scene`/`set_scene_label`/`set_scene_color`. */
+  onCopySwap: (fromScene: number, toScene: number, swap: boolean) => Promise<void>;
+  /** Evidence labels for `switch_scene`/`set_scene_label`/`set_scene_color`/`copy_scene`. */
   capabilities?: CapabilityLabel[];
 }
 
@@ -49,7 +50,7 @@ function toHex(color: number | null): string {
  * that settled late, or a reconnect starting a new generation - none of which
  * name an actual scene transition.
  */
-export function SceneSelector({ scenes, activeScene, generation, revision, disabled, onSwitch, onRename, onRecolour, capabilities = [] }: SceneSelectorProps) {
+export function SceneSelector({ scenes, activeScene, generation, revision, disabled, onSwitch, onRename, onRecolour, onCopySwap, capabilities = [] }: SceneSelectorProps) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [announcement, setAnnouncement] = useState("");
@@ -251,6 +252,8 @@ export function SceneSelector({ scenes, activeScene, generation, revision, disab
         scene={scenes.find((candidate) => candidate.index === activeScene) ?? null}
       />
 
+      <SceneCopySwap capabilities={capabilities} disabled={disabled} onCopySwap={onCopySwap} scenes={scenes} />
+
       {/* Device-originated and command-completion changes are announced here so
           the switch is perceivable without watching the radio group. */}
       <Text aria-live="polite" className="visually-hidden" role="status">
@@ -337,6 +340,92 @@ function SceneDetails({ scene, disabled, onRename, onRecolour, capabilities }: S
         {busy && <Text c="dimmed" size="xs">writing</Text>}
       </Group>
       {failure && <Alert color="red" title="Scene edit failed">{failure}</Alert>}
+    </Stack>
+  );
+}
+
+interface SceneCopySwapProps {
+  scenes: SceneSnapshot[];
+  disabled: boolean;
+  onCopySwap: (fromScene: number, toScene: number, swap: boolean) => Promise<void>;
+  capabilities: CapabilityLabel[];
+}
+
+/**
+ * Copy or swap two scenes without the footswitch mode dance.
+ *
+ * Reuses the existing hardware-verified `Request::CopyScene`; this slice adds
+ * no protocol, host or MCP operation. Copy overwrites the destination working
+ * scene; swap exchanges both. Neither saves anything.
+ *
+ * Native `<select>`s rather than a custom combobox: choosing two of a fixed
+ * set of eight scenes is exactly what a native select is for, and it comes
+ * with full keyboard and screen-reader support for free (GUI-006.1), unlike
+ * a from-scratch listbox.
+ *
+ * Equal or incomplete selections cannot submit, so a same-scene copy (a
+ * harmless no-op the CLI would still perform) and an accidental self-swap are
+ * both refused here rather than sent.
+ */
+function SceneCopySwap({ scenes, disabled, onCopySwap, capabilities }: SceneCopySwapProps) {
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [failure, setFailure] = useState<string | null>(null);
+
+  const describe = (scene: SceneSnapshot) =>
+    scene.label ? `${scene.letter} - ${scene.label}` : `${scene.letter} - unlabelled`;
+  const options = [
+    { value: "", label: "Choose a scene" },
+    ...scenes.map((scene) => ({ value: String(scene.index), label: describe(scene) })),
+  ];
+  const complete = from !== "" && to !== "";
+  const same = complete && from === to;
+  const canSubmit = complete && !same && !busy && !disabled;
+
+  const run = async (swap: boolean) => {
+    if (!canSubmit) return;
+    setBusy(true);
+    setFailure(null);
+    try {
+      await onCopySwap(Number.parseInt(from, 10), Number.parseInt(to, 10), swap);
+    } catch (reason) {
+      setFailure(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Stack gap="xs">
+      <Group gap="xs">
+        <Text c="dimmed" fw={700} size="xs" tt="uppercase">Copy / swap scenes</Text>
+        <CapabilityBadge labels={capabilities} operation="copy_scene" subject="Scene copy/swap" />
+      </Group>
+      <Text c="dimmed" size="xs">Copy overwrites the destination working scene. Swap exchanges both. Neither saves.</Text>
+      <Group align="flex-end" gap="sm" wrap="wrap">
+        <NativeSelect
+          data={options}
+          disabled={disabled || busy}
+          label="From scene"
+          onChange={(event) => setFrom(event.currentTarget.value)}
+          style={{ minWidth: 180 }}
+          value={from}
+        />
+        <NativeSelect
+          data={options}
+          disabled={disabled || busy}
+          label="To scene"
+          onChange={(event) => setTo(event.currentTarget.value)}
+          style={{ minWidth: 180 }}
+          value={to}
+        />
+        <Button disabled={!canSubmit} onClick={() => void run(false)} variant="default">Copy</Button>
+        <Button disabled={!canSubmit} onClick={() => void run(true)} variant="default">Swap</Button>
+        {busy && <Text c="dimmed" size="xs">writing</Text>}
+      </Group>
+      {complete && same && <Text c="dimmed" size="xs">Choose two different scenes.</Text>}
+      {failure && <Alert color="red" title="Scene copy/swap failed">{failure}</Alert>}
     </Stack>
   );
 }

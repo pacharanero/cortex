@@ -218,6 +218,10 @@ export function App() {
     await cortexApi.setSceneColor(scene, color);
     await afterDeviceEdit();
   };
+  const copySwapScene = async (fromScene: number, toScene: number, swap: boolean) => {
+    await cortexApi.copyScene(fromScene, toScene, swap);
+    await afterDeviceEdit();
+  };
 
   // Recalling replaces the working copy and changes what the unit plays, so it
   // is followed by a re-read rather than an optimistic update: the grid shown
@@ -462,6 +466,7 @@ export function App() {
                   capabilities={capabilities}
                   disabled={!connected}
                   generation={live.generation}
+                  onCopySwap={copySwapScene}
                   onRecolour={recolourScene}
                   onRename={renameScene}
                   onSwitch={switchScene}
