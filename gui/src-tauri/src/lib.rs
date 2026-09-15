@@ -189,6 +189,7 @@ trait DashboardSource: Send + Sync {
     fn set_scene_label(&self, scene: u32, label: Option<String>) -> Result<(), CommandError>;
     fn set_bypass(&self, row: u32, column: u32, bypass: bool) -> Result<(), CommandError>;
     fn set_scene_color(&self, scene: u32, color: u32) -> Result<(), CommandError>;
+    fn copy_scene(&self, from_scene: u32, to_scene: u32, swap: bool) -> Result<(), CommandError>;
     fn block_parameters(&self, row: u32, column: u32) -> Result<Vec<ParameterView>, CommandError>;
     fn set_parameter(
         &self,
@@ -799,6 +800,40 @@ impl DashboardSource for DaemonDashboardSource {
         Ok(())
     }
 
+    fn copy_scene(&self, from_scene: u32, to_scene: u32, swap: bool) -> Result<(), CommandError> {
+        // The daemon answers with the exact operation it performed and whether
+        // it verified the result by reading the grid back (`safety.rs`'s
+        // read-after-write discipline, reused here rather than reimplemented).
+        // Anything short of a complete matching, verified echo is a failure:
+        // a copy/swap that reports success while acting on the wrong scenes,
+        // or without confirming, is exactly the silent-no-op class of fault
+        // this project keeps finding.
+        let acknowledged: CopyAck = self
+            .quad_client
+            .request(&Request::CopyScene {
+                from_scene,
+                to_scene,
+                swap,
+            })
+            .map_err(|error| CommandError::daemon(error.to_string()))?;
+        if acknowledged.from_scene != from_scene
+            || acknowledged.to_scene != to_scene
+            || acknowledged.swap != swap
+            || !acknowledged.verified
+        {
+            return Err(CommandError::daemon(format!(
+                "asked to {} scene {from_scene} and {to_scene} but the session reported \
+                 from={}, to={}, swap={}, verified={}",
+                if swap { "swap" } else { "copy" },
+                acknowledged.from_scene,
+                acknowledged.to_scene,
+                acknowledged.swap,
+                acknowledged.verified
+            )));
+        }
+        Ok(())
+    }
+
     fn block_parameters(&self, row: u32, column: u32) -> Result<Vec<ParameterView>, CommandError> {
         let (catalog_generation, catalog_revision, catalog) = self.catalog()?;
         let preset: Preset = self
@@ -898,6 +933,16 @@ struct BypassAck {
 #[derive(Debug, Clone, serde::Deserialize)]
 struct RecallAck {
     slot: String,
+}
+
+/// The daemon's reply to a scene copy/swap: the exact operation it performed,
+/// and whether it verified the result by reading the grid back.
+#[derive(Debug, Clone, serde::Deserialize)]
+struct CopyAck {
+    from_scene: u32,
+    to_scene: u32,
+    swap: bool,
+    verified: bool,
 }
 
 /// One editable parameter on a block, ready to render.
@@ -1258,6 +1303,30 @@ fn request_set_scene_color(
     source.set_scene_color(scene, 0xFF00_0000 | (color & 0x00FF_FFFF))
 }
 
+/// Copy or swap two scenes on the working copy.
+///
+/// Non-persistent, like every other edit here: it changes the working copy
+/// and saves nothing. Reuses the existing hardware-verified
+/// `Request::CopyScene`; no new protocol, host or MCP operation. Both indices
+/// are range-checked here, before IPC, so an out-of-range scene never reaches
+/// the device. Equal or incomplete selections are refused by the frontend
+/// form rather than here, since a same-scene copy is harmless (a no-op) and
+/// the CLI places no such restriction on the same request.
+fn request_copy_scene(
+    source: &dyn DashboardSource,
+    from_scene: u32,
+    to_scene: u32,
+    swap: bool,
+) -> Result<(), CommandError> {
+    if from_scene >= SCENE_COUNT {
+        return Err(CommandError::invalid_scene(from_scene));
+    }
+    if to_scene >= SCENE_COUNT {
+        return Err(CommandError::invalid_scene(to_scene));
+    }
+    source.copy_scene(from_scene, to_scene, swap)
+}
+
 /// Read the editable parameters of one block.
 ///
 /// `row` is the ZERO-BASED WIRE row, which is what the protocol addresses.
@@ -1411,6 +1480,21 @@ async fn set_scene_color(
 }
 
 #[tauri::command]
+async fn copy_scene(
+    state: tauri::State<'_, AppState>,
+    from_scene: u32,
+    to_scene: u32,
+    swap: bool,
+) -> Result<(), CommandError> {
+    let source = Arc::clone(&state.source);
+    tauri::async_runtime::spawn_blocking(move || {
+        request_copy_scene(source.as_ref(), from_scene, to_scene, swap)
+    })
+    .await
+    .map_err(|error| CommandError::daemon(format!("scene copy/swap task failed: {error}")))?
+}
+
+#[tauri::command]
 async fn block_parameters(
     state: tauri::State<'_, AppState>,
     row: u32,
@@ -1476,6 +1560,7 @@ pub fn run() {
             set_parameter,
             set_scene_label,
             set_scene_color,
+            copy_scene,
             set_bypass,
             set_nano_amp,
             set_nano_gate_reduction,
@@ -1711,6 +1796,15 @@ mod tests {
             Err(CommandError::daemon("fixture must not recolour scenes"))
         }
 
+        fn copy_scene(
+            &self,
+            _from_scene: u32,
+            _to_scene: u32,
+            _swap: bool,
+        ) -> Result<(), CommandError> {
+            Err(CommandError::daemon("fixture must not copy or swap scenes"))
+        }
+
         fn block_parameters(
             &self,
             _row: u32,
@@ -1746,6 +1840,7 @@ mod tests {
         labelled: std::sync::Mutex<Vec<(u32, Option<String>)>>,
         coloured: std::sync::Mutex<Vec<(u32, u32)>>,
         bypassed: std::sync::Mutex<Vec<(u32, u32, bool)>>,
+        copied: std::sync::Mutex<Vec<(u32, u32, bool)>>,
     }
 
     impl RecordingSource {
@@ -1757,6 +1852,7 @@ mod tests {
                 labelled: std::sync::Mutex::new(Vec::new()),
                 coloured: std::sync::Mutex::new(Vec::new()),
                 bypassed: std::sync::Mutex::new(Vec::new()),
+                copied: std::sync::Mutex::new(Vec::new()),
             }
         }
     }
@@ -1795,6 +1891,19 @@ mod tests {
 
         fn set_scene_color(&self, scene: u32, color: u32) -> Result<(), CommandError> {
             self.coloured.lock().unwrap().push((scene, color));
+            Ok(())
+        }
+
+        fn copy_scene(
+            &self,
+            from_scene: u32,
+            to_scene: u32,
+            swap: bool,
+        ) -> Result<(), CommandError> {
+            self.copied
+                .lock()
+                .unwrap()
+                .push((from_scene, to_scene, swap));
             Ok(())
         }
 
@@ -2211,6 +2320,31 @@ mod tests {
         );
         assert!(source.labelled.lock().unwrap().is_empty());
         assert!(source.coloured.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn copy_and_swap_reach_the_device_with_the_exact_indices_and_flag() {
+        let source = RecordingSource::new();
+        request_copy_scene(&source, 0, 3, false).unwrap();
+        request_copy_scene(&source, 2, 5, true).unwrap();
+        assert_eq!(
+            *source.copied.lock().unwrap(),
+            vec![(0, 3, false), (2, 5, true)]
+        );
+    }
+
+    #[test]
+    fn an_out_of_range_scene_is_refused_for_copy_and_swap_too() {
+        let source = RecordingSource::new();
+        assert_eq!(
+            request_copy_scene(&source, 8, 0, false).unwrap_err().code,
+            "invalid_scene"
+        );
+        assert_eq!(
+            request_copy_scene(&source, 0, 8, true).unwrap_err().code,
+            "invalid_scene"
+        );
+        assert!(source.copied.lock().unwrap().is_empty());
     }
 
     #[test]

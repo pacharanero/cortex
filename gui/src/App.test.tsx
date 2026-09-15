@@ -16,6 +16,7 @@ const api = vi.hoisted(() => ({
   setParameter: vi.fn(),
   setSceneLabel: vi.fn(),
   setSceneColor: vi.fn(),
+  copyScene: vi.fn(),
   setBypass: vi.fn(),
   setNanoAmp: vi.fn(),
   setNanoGateReduction: vi.fn(),
@@ -475,6 +476,46 @@ describe("preset directory search", () => {
 // different order than they were issued in. These prove a read issued before
 // one that has already won cannot overwrite it later, whether it eventually
 // succeeds or fails.
+// GUI-004.2: the frontend renders exactly what `cortexApi.capabilities()`
+// returns and holds no independent opinion of its own about which operations
+// are confirmed - these test that end to end through two always-rendered
+// evidence labels (the sidebar's `recall_preset` badge and the scene
+// selector's `switch_scene` badge), rather than duplicating the Rust-side
+// seed-content assertions already covered in `capability.rs`.
+describe("capability evidence labels", () => {
+  afterEach(() => {
+    vi.resetAllMocks();
+  });
+
+  it("renders each operation's fetched status as text", async () => {
+    const labels: CapabilityLabel[] = [
+      { operation: "recall_preset", status: "confirmed-writable" },
+      { operation: "switch_scene", status: "unverified" },
+    ];
+    api.dashboard.mockResolvedValue(directorySnapshot());
+    api.capabilities.mockResolvedValue(labels);
+    renderApp();
+
+    await screen.findByText("Preset One");
+    expect(await screen.findByText("Preset recall: Hardware-verified")).toBeTruthy();
+    expect(screen.getByText("Scene switching: Not yet hardware-verified")).toBeTruthy();
+  });
+
+  it("renders every operation as not-yet-hardware-verified when the fetch fails", async () => {
+    api.dashboard.mockResolvedValue(directorySnapshot());
+    api.capabilities.mockRejectedValue(new Error("capability fetch failed"));
+    renderApp();
+
+    await screen.findByText("Preset One");
+    // recall_preset, switch_scene and copy_scene all fall back to unverified;
+    // copy_scene's badge renders unconditionally in the scene manager, unlike
+    // set_scene_label/set_scene_color which need an actual selected scene.
+    // Nothing else surfaces a status label in this snapshot (no block is
+    // selected, and no Nano state is present).
+    expect(await screen.findAllByText(/Not yet hardware-verified$/)).toHaveLength(3);
+  });
+});
+
 describe("dashboard read ordering", () => {
   afterEach(() => {
     vi.resetAllMocks();

@@ -232,6 +232,35 @@ export const fixtureApi: CortexApi = {
     target.color = 0xff000000 | (color & 0x00ffffff);
     bumpRevision();
   },
+  async copyScene(fromScene: number, toScene: number, swap: boolean) {
+    // Refuse the same range the Rust boundary refuses, so browser mode cannot
+    // make an interaction look workable that production would reject.
+    const source = scenes.find((candidate) => candidate.index === fromScene);
+    if (!source) throw new Error(`scene ${fromScene} is out of range; scenes are zero-based 0-7 and display as A-H`);
+    const destination = scenes.find((candidate) => candidate.index === toScene);
+    if (!destination) throw new Error(`scene ${toScene} is out of range; scenes are zero-based 0-7 and display as A-H`);
+    // The fixture only models scene label/colour (not the full per-scene block
+    // state a real copy/swap moves), so that is what it exchanges here.
+    if (swap) {
+      const sourceLabel = source.label;
+      const sourceColor = source.color;
+      source.label = destination.label;
+      source.color = destination.color;
+      destination.label = sourceLabel;
+      destination.color = sourceColor;
+    } else {
+      destination.label = source.label;
+      destination.color = source.color;
+    }
+    if (dashboard.live) {
+      const live = dashboard.live;
+      const active = scenes.find((candidate) => candidate.index === live.active_scene);
+      if (active && (active.index === source.index || active.index === destination.index)) {
+        live.active_scene_label = active.label ?? active.letter;
+      }
+    }
+    bumpRevision();
+  },
   async setBypass(row: number, column: number, bypass: boolean) {
     const block = dashboard.live?.blocks.find((b) => b.row === row && b.column === column);
     if (!block) throw new Error(`no block at row ${row}, column ${column}`);

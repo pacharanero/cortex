@@ -1,17 +1,24 @@
 // SPDX-FileCopyrightText: 2026 Dr Marcus Baw
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-import { Alert, ColorInput, Group, Radio, Stack, Text, TextInput } from "@mantine/core";
+import { Alert, Button, ColorInput, Group, NativeSelect, Radio, Stack, Text, TextInput } from "@mantine/core";
 import { useEffect, useRef, useState } from "react";
 import type { SceneSnapshot } from "../../shared/ipc/types";
 
 interface SceneSelectorProps {
   scenes: SceneSnapshot[];
   activeScene: number;
+  /** Physical-session generation the current props were read under (`LiveSnapshot.generation`). */
+  generation: number;
+  /** Monotonic state revision within that generation (`LiveSnapshot.revision`). */
+  revision: number;
   disabled: boolean;
   onSwitch: (scene: number) => Promise<void>;
   onRename: (scene: number, label: string | null) => Promise<void>;
   onRecolour: (scene: number, color: number) => Promise<void>;
+  onCopySwap: (fromScene: number, toScene: number, swap: boolean) => Promise<void>;
+  /** Evidence labels for `switch_scene`/`set_scene_label`/`set_scene_color`/`copy_scene`. */
+  capabilities?: CapabilityLabel[];
 }
 
 /** `0xAARRGGBB` from the device to the `#rrggbb` an input wants. */
@@ -32,8 +39,17 @@ function toHex(color: number | null): string {
  * Switching scenes is non-persistent - it changes what the unit is playing and
  * saves nothing - so it needs no confirmation, but it is a real audible change
  * and is announced.
+ *
+ * The device can also change scene on its own - a footswitch press, or
+ * another client - and that has to reach a screen reader too, without moving
+ * focus and without echoing the announcement `change()` already made for a
+ * switch this control itself requested. `generation`/`revision` (as in
+ * DES-SNAPSHOT) let a device-report effect tell a genuinely newer same-session
+ * report apart from an unrelated poll, a metadata-only push, a stale reply
+ * that settled late, or a reconnect starting a new generation - none of which
+ * name an actual scene transition.
  */
-export function SceneSelector({ scenes, activeScene, disabled, onSwitch, onRename, onRecolour }: SceneSelectorProps) {
+export function SceneSelector({ scenes, activeScene, generation, revision, disabled, onSwitch, onRename, onRecolour, onCopySwap, capabilities = [] }: SceneSelectorProps) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [announcement, setAnnouncement] = useState("");
@@ -41,6 +57,41 @@ export function SceneSelector({ scenes, activeScene, disabled, onSwitch, onRenam
   // Set when the user is driving with the keyboard, so focus is only pulled
   // back to the selected radio for them - never while they are using a mouse.
   const followFocus = useRef(false);
+  // The last report this component has seen, so the device-report effect can
+  // tell a newer report from a stale or unrelated one. Starts `null` so the
+  // effect stays silent on mount rather than announcing the initial scene.
+  const lastReport = useRef<{ generation: number; revision: number; activeScene: number } | null>(null);
+  // Set by `change()` just before it awaits `onSwitch`, so the read-back that
+  // follows a successful local switch does not also fire the device-report
+  // announcement `change()` already made itself.
+  const ownTransition = useRef(false);
+
+  const describe = (scene: SceneSnapshot) =>
+    scene.label ? `${scene.letter} - ${scene.label}` : `${scene.letter} - unlabelled`;
+
+  // Announce a scene the *device* reports, never the one requested: a report
+  // is only a transition worth announcing if it is strictly newer within the
+  // same generation the previous report belonged to, and it actually changed
+  // `active_scene` - guarding out unchanged polls, metadata-only revisions,
+  // a stale/replayed report, and a reconnect's replacement generation.
+  useEffect(() => {
+    const previous = lastReport.current;
+    lastReport.current = { generation, revision, activeScene };
+    if (!previous) return;
+    if (generation !== previous.generation) return;
+    if (revision <= previous.revision) return;
+    if (activeScene === previous.activeScene) return;
+    if (ownTransition.current) {
+      ownTransition.current = false;
+      return;
+    }
+    const scene = scenes.find((candidate) => candidate.index === activeScene);
+    if (!scene) return;
+    setAnnouncement(`Scene ${describe(scene)} active`);
+    // Deliberately no focus change: a device-originated transition must not
+    // steal focus from whatever control the user is actually driving.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [generation, revision, activeScene]);
 
   const focusScene = (index: number) =>
     groupRef.current
@@ -60,9 +111,6 @@ export function SceneSelector({ scenes, activeScene, disabled, onSwitch, onRenam
     focusScene(activeScene);
   }, [activeScene]);
 
-  const describe = (scene: SceneSnapshot) =>
-    scene.label ? `${scene.letter} - ${scene.label}` : `${scene.letter} - unlabelled`;
-
   const change = async (value: string) => {
     // The radio value is a string; the API takes the zero-based index, so the
     // conversion happens once, here, and never turns into a letter.
@@ -71,10 +119,19 @@ export function SceneSelector({ scenes, activeScene, disabled, onSwitch, onRenam
     if (!target || busy) return;
     setBusy(true);
     setError(null);
+    // Set before the await: the read-back this switch causes will change
+    // `activeScene`/`revision` props once it lands, and the device-report
+    // effect above must recognise that transition as this control's own
+    // rather than announcing it a second time.
+    ownTransition.current = true;
     try {
       await onSwitch(scene);
       setAnnouncement(`Scene ${describe(target)} active`);
     } catch (reason) {
+      // The switch was refused, so no read-back is coming to consume the
+      // flag - clear it now, or a later genuine device report would be
+      // silently swallowed as if it were this failed attempt's echo.
+      ownTransition.current = false;
       const message = reason instanceof Error ? reason.message : String(reason);
       setError(message);
       // Say what did not happen, rather than leaving the last success standing.
@@ -190,6 +247,8 @@ export function SceneSelector({ scenes, activeScene, disabled, onSwitch, onRenam
         scene={scenes.find((candidate) => candidate.index === activeScene) ?? null}
       />
 
+      <SceneCopySwap capabilities={capabilities} disabled={disabled} onCopySwap={onCopySwap} scenes={scenes} />
+
       {/* Device-originated and command-completion changes are announced here so
           the switch is perceivable without watching the radio group. */}
       <Text aria-live="polite" className="visually-hidden" role="status">
@@ -271,6 +330,92 @@ function SceneDetails({ scene, disabled, onRename, onRecolour }: SceneDetailsPro
         {busy && <Text c="dimmed" size="xs">writing</Text>}
       </Group>
       {failure && <Alert color="red" title="Scene edit failed">{failure}</Alert>}
+    </Stack>
+  );
+}
+
+interface SceneCopySwapProps {
+  scenes: SceneSnapshot[];
+  disabled: boolean;
+  onCopySwap: (fromScene: number, toScene: number, swap: boolean) => Promise<void>;
+  capabilities: CapabilityLabel[];
+}
+
+/**
+ * Copy or swap two scenes without the footswitch mode dance.
+ *
+ * Reuses the existing hardware-verified `Request::CopyScene`; this slice adds
+ * no protocol, host or MCP operation. Copy overwrites the destination working
+ * scene; swap exchanges both. Neither saves anything.
+ *
+ * Native `<select>`s rather than a custom combobox: choosing two of a fixed
+ * set of eight scenes is exactly what a native select is for, and it comes
+ * with full keyboard and screen-reader support for free (GUI-006.1), unlike
+ * a from-scratch listbox.
+ *
+ * Equal or incomplete selections cannot submit, so a same-scene copy (a
+ * harmless no-op the CLI would still perform) and an accidental self-swap are
+ * both refused here rather than sent.
+ */
+function SceneCopySwap({ scenes, disabled, onCopySwap, capabilities }: SceneCopySwapProps) {
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [failure, setFailure] = useState<string | null>(null);
+
+  const describe = (scene: SceneSnapshot) =>
+    scene.label ? `${scene.letter} - ${scene.label}` : `${scene.letter} - unlabelled`;
+  const options = [
+    { value: "", label: "Choose a scene" },
+    ...scenes.map((scene) => ({ value: String(scene.index), label: describe(scene) })),
+  ];
+  const complete = from !== "" && to !== "";
+  const same = complete && from === to;
+  const canSubmit = complete && !same && !busy && !disabled;
+
+  const run = async (swap: boolean) => {
+    if (!canSubmit) return;
+    setBusy(true);
+    setFailure(null);
+    try {
+      await onCopySwap(Number.parseInt(from, 10), Number.parseInt(to, 10), swap);
+    } catch (reason) {
+      setFailure(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Stack gap="xs">
+      <Group gap="xs">
+        <Text c="dimmed" fw={700} size="xs" tt="uppercase">Copy / swap scenes</Text>
+        <CapabilityBadge labels={capabilities} operation="copy_scene" subject="Scene copy/swap" />
+      </Group>
+      <Text c="dimmed" size="xs">Copy overwrites the destination working scene. Swap exchanges both. Neither saves.</Text>
+      <Group align="flex-end" gap="sm" wrap="wrap">
+        <NativeSelect
+          data={options}
+          disabled={disabled || busy}
+          label="From scene"
+          onChange={(event) => setFrom(event.currentTarget.value)}
+          style={{ minWidth: 180 }}
+          value={from}
+        />
+        <NativeSelect
+          data={options}
+          disabled={disabled || busy}
+          label="To scene"
+          onChange={(event) => setTo(event.currentTarget.value)}
+          style={{ minWidth: 180 }}
+          value={to}
+        />
+        <Button disabled={!canSubmit} onClick={() => void run(false)} variant="default">Copy</Button>
+        <Button disabled={!canSubmit} onClick={() => void run(true)} variant="default">Swap</Button>
+        {busy && <Text c="dimmed" size="xs">writing</Text>}
+      </Group>
+      {complete && same && <Text c="dimmed" size="xs">Choose two different scenes.</Text>}
+      {failure && <Alert color="red" title="Scene copy/swap failed">{failure}</Alert>}
     </Stack>
   );
 }

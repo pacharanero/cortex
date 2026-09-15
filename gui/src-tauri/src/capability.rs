@@ -90,6 +90,7 @@ pub const OPERATIONS: &[&str] = &[
     "set_bypass",
     "set_scene_label",
     "set_scene_color",
+    "copy_scene",
     "set_nano_amp",
     "set_nano_gate_reduction",
     "set_nano_bypass",
@@ -219,11 +220,16 @@ mod tests {
         );
     }
 
-    /// These operations are implemented and offline-verified, which is exactly
-    /// the trap this matrix exists to avoid: "it works" is not "hardware
-    /// confirmed". `set_parameter` had an older hardware pass, but GUI-003.10
-    /// changed its request contract; the others have no recorded GUI/Tauri
-    /// hardware pass.
+    /// `block_parameters`, `set_parameter`, `set_bypass`, `set_scene_label`,
+    /// `set_scene_color` and `copy_scene` are implemented and offline-verified
+    /// (GUI-003.3, GUI-003.4, GUI-003.10), which is exactly the trap this
+    /// matrix exists to avoid: "it works" is not "hardware confirmed".
+    /// `set_parameter`/`block_parameters` had an older hardware pass, but
+    /// GUI-003.10 changed their request/response contracts; the others have no
+    /// recorded GUI/Tauri hardware pass, so all six stay unverified even though
+    /// lower layers have broader device evidence (`copy_scene`'s underlying
+    /// `Request::CopyScene` is hardware-verified through the CLI, but not
+    /// through this Tauri path).
     #[test]
     fn offline_verified_operations_are_not_promoted_on_the_strength_of_appearing_to_work() {
         let matrix = default_matrix();
@@ -233,6 +239,7 @@ mod tests {
             "set_bypass",
             "set_scene_label",
             "set_scene_color",
+            "copy_scene",
         ] {
             assert_eq!(
                 matrix.status(operation),
