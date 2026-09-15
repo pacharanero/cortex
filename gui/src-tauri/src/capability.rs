@@ -133,9 +133,12 @@ fn matrix_for_host(host: HostPath) -> CapabilityMatrix {
         // GUI-003.1, hardware-verified 2026-08-17 through the sidebar: the
         // daemon's echoed slot matched and the GUI re-read the working copy.
         .insert("recall_preset", ConfirmedWritable)
-        // The 2026-08-17 parameter read/write pass predates GUI-003.10's exact
-        // catalog-identity contract, so it cannot confirm either current Tauri
-        // path.
+        // GUI-003.10, Tauri backend hardware-verified 2026-09-14: the ignored
+        // `editing_a_parameter_is_reflected_by_the_device` smoke passed
+        // against a held protocol-23 daemon - identity-carrying parameter
+        // read, one real-unit write, exact read-back, restoration verified.
+        .insert("block_parameters", ConfirmedWritable)
+        .insert("set_parameter", ConfirmedWritable)
         // NANO-001.5, Tauri backend hardware-verified 2026-08-18: a Tauri amp
         // write changed Gain by one raw step, independently read it back,
         // restored it and verified restoration in 12.15 seconds.
@@ -207,9 +210,12 @@ mod tests {
         );
         assert_eq!(
             matrix.status("block_parameters"),
-            CapabilityStatus::Unverified
+            CapabilityStatus::ConfirmedWritable
         );
-        assert_eq!(matrix.status("set_parameter"), CapabilityStatus::Unverified);
+        assert_eq!(
+            matrix.status("set_parameter"),
+            CapabilityStatus::ConfirmedWritable
+        );
         assert_eq!(
             matrix.status("set_nano_amp"),
             CapabilityStatus::ConfirmedWritable
@@ -220,22 +226,20 @@ mod tests {
         );
     }
 
-    /// `block_parameters`, `set_parameter`, `set_bypass`, `set_scene_label`,
-    /// `set_scene_color` and `copy_scene` are implemented and offline-verified
-    /// (GUI-003.3, GUI-003.4, GUI-003.10), which is exactly the trap this
-    /// matrix exists to avoid: "it works" is not "hardware confirmed".
-    /// `set_parameter`/`block_parameters` had an older hardware pass, but
-    /// GUI-003.10 changed their request/response contracts; the others have no
-    /// recorded GUI/Tauri hardware pass, so all six stay unverified even though
-    /// lower layers have broader device evidence (`copy_scene`'s underlying
-    /// `Request::CopyScene` is hardware-verified through the CLI, but not
-    /// through this Tauri path).
+    /// `set_bypass`, `set_scene_label`, `set_scene_color` and `copy_scene`
+    /// are implemented and offline-verified (GUI-003.3, GUI-003.4), which is
+    /// exactly the trap this matrix exists to avoid: "it works" is not
+    /// "hardware confirmed". None has a recorded GUI/Tauri hardware pass, so
+    /// all four stay unverified even though lower layers have broader device
+    /// evidence (`copy_scene`'s underlying `Request::CopyScene` is
+    /// hardware-verified through the CLI, but not through this Tauri path).
+    /// `block_parameters`/`set_parameter` were promoted only after the
+    /// 2026-09-14 GUI-003.10 backend smoke passed the *current*
+    /// identity-carrying contracts; the 2026-08-17 pass could not.
     #[test]
     fn offline_verified_operations_are_not_promoted_on_the_strength_of_appearing_to_work() {
         let matrix = default_matrix();
         for operation in [
-            "block_parameters",
-            "set_parameter",
             "set_bypass",
             "set_scene_label",
             "set_scene_color",
