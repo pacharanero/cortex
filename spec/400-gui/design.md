@@ -79,6 +79,10 @@ The `capability_matrix` Tauri command returns `labels()` directly - pure computa
 
 `ErrorBoundary.test.tsx` (`gui/vitest.config.ts`, jsdom environment) proves the isolation directly against the component: a thrown test child produces the named fallback and a Reload control, `console.error` is still invoked, and a second boundary rendered alongside a failed one keeps showing its own children. This is the first automated frontend test in the repository; `npm run test` (`vitest run`) is wired into `npm run check`, so `s/lint` and CI exercise it the same way they exercise the TypeScript build.
 
+## [DES-INSPECTOR] Implementation-Only Parameters Stay Out Of The Inspector
+
+`block_parameters`' `parameter_views` (`gui/src-tauri/src/lib.rs`) filters out any parameter `cortex_rs::catalog::Parameter::is_implementation_only()` flags, exactly like the existing `Empty` filter, and the filtered entry still consumes its wire index so later parameters keep their addressable position. The flag itself lives in the catalog module (`crates/cortex-rs/src/catalog.rs`) as Rust-owned metadata - a small constant list of known-internal `Str`-kind names, currently just the capture block's reserved `file_name` reference (wire index [`crate::client::CAPTURE_FILE_NAME_PARAM`]) - rather than a name exception the frontend maintains. The catalog carries no editability attribute today, so there is nothing yet to override this default with; a future catalog flag would need to short-circuit the Rust check, not be reimplemented in TypeScript. Other read/write paths (e.g. `set_capture`) still address the same parameter by its wire index directly and are unaffected - only the ordinary player-facing inspector's response is filtered (GUI-003.11).
+
 ## Known Limits
 
 - The directory currently contains complete setlist listings already known to the daemon; empty and unavailable folders are not represented as empty.
