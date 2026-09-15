@@ -117,7 +117,39 @@ pub struct Parameter {
     pub step_names: Vec<String>,
 }
 
+/// Catalog-reported string-parameter names that hold protocol-internal data
+/// rather than a player-facing setting, so the ordinary parameter inspector
+/// must not show them.
+///
+/// **`file_name`** (`Str`, wire index [`crate::client::CAPTURE_FILE_NAME_PARAM`]
+/// on Neural Capture models 14000/14001) is the exact
+/// `<64-char content-hash><display name>` concatenation `set_capture` writes
+/// when selecting a capture - see `docs/protocol.md`, "Capture and IR
+/// selection". Every observed player-facing parameter name is reported in
+/// the unit's own display casing (`GAIN`, `MIC`, `DISTORTION`); this
+/// lowercase/underscore form matches no on-screen label, and its content is
+/// a hash-prefixed reference, not something a player can meaningfully read
+/// or edit as text.
+const IMPLEMENTATION_ONLY_STRING_PARAMS: &[&str] = &["file_name"];
+
 impl Parameter {
+    /// Whether this parameter holds protocol-internal data that the ordinary
+    /// player parameter inspector must not show, rather than a setting the
+    /// catalog means for a player to read or edit.
+    ///
+    /// Only string parameters are considered: every implementation-only field
+    /// identified so far is an opaque device-internal reference string, never
+    /// a numeric control. This governs the ordinary inspector's presentation
+    /// only - other consumers (capture selection, diagnostics) still read and
+    /// write the underlying parameter by its wire index exactly as before.
+    #[must_use]
+    pub fn is_implementation_only(&self) -> bool {
+        self.kind == ParameterKind::Str
+            && IMPLEMENTATION_ONLY_STRING_PARAMS
+                .iter()
+                .any(|name| self.name.trim().eq_ignore_ascii_case(name))
+    }
+
     /// Convert a value in this parameter's own units to the normalised 0..1
     /// float the wire carries.
     ///
@@ -565,6 +597,60 @@ mod tests {
         assert_eq!(gain.from_normalised(0.5), Some(5.0));
         // Out of range clamps rather than producing a value the device rejects.
         assert_eq!(gain.to_normalised(99.0), Some(1.0));
+    }
+
+    #[test]
+    fn implementation_only_string_parameter_is_flagged() {
+        // Matches case- and whitespace-insensitively, since the device is the
+        // one source of the exact name.
+        for name in ["file_name", "FILE_NAME", " File_Name "] {
+            let p = Parameter {
+                index: 5,
+                name: name.into(),
+                kind: ParameterKind::Str,
+                min: 0.0,
+                max: 0.0,
+                default: 0.0,
+                units: String::new(),
+                step_names: Vec::new(),
+            };
+            assert!(p.is_implementation_only(), "{name:?} should be flagged");
+        }
+    }
+
+    #[test]
+    fn ordinary_string_parameter_is_not_implementation_only() {
+        // A real player-facing string field (e.g. a cab's MIC selection) must
+        // not be caught by the filter.
+        let p = Parameter {
+            index: 0,
+            name: "MIC".into(),
+            kind: ParameterKind::Str,
+            min: 0.0,
+            max: 0.0,
+            default: 0.0,
+            units: String::new(),
+            step_names: Vec::new(),
+        };
+        assert!(!p.is_implementation_only());
+    }
+
+    #[test]
+    fn implementation_only_check_is_string_kind_only() {
+        // A non-Str parameter that happened to share the reserved name is not
+        // what this filter is protecting against; only string kinds carry
+        // opaque device-internal payloads today.
+        let p = Parameter {
+            index: 0,
+            name: "file_name".into(),
+            kind: ParameterKind::Float,
+            min: 0.0,
+            max: 1.0,
+            default: 0.0,
+            units: String::new(),
+            step_names: Vec::new(),
+        };
+        assert!(!p.is_implementation_only());
     }
 
     #[test]

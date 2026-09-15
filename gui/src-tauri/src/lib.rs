@@ -1092,6 +1092,11 @@ fn status_is_live(status: &Status) -> bool {
 /// `Empty` slots are dropped from the result but still consume their index, so
 /// what remains addresses correctly. `Meter` entries are kept and marked
 /// read-only, because they are worth showing and meaningless to write.
+/// Implementation-only string parameters (`Parameter::is_implementation_only`,
+/// e.g. a capture block's `file_name` reference) are also dropped: they hold
+/// protocol-internal data with no player-facing meaning, so the ordinary
+/// inspector must not offer them (GUI-003.11). Like `Empty`, they still
+/// consume their wire index.
 fn parameter_views(
     model: &cortex_rs::catalog::Model,
     stored: &[ParamValue],
@@ -1103,7 +1108,9 @@ fn parameter_views(
     model
         .parameters
         .iter()
-        .filter(|parameter| parameter.kind != ParameterKind::Empty)
+        .filter(|parameter| {
+            parameter.kind != ParameterKind::Empty && !parameter.is_implementation_only()
+        })
         .map(|parameter| {
             let index = u32::try_from(parameter.index).unwrap_or(u32::MAX);
             let held = stored.iter().find(|value| value.index == index);
@@ -2181,6 +2188,50 @@ mod tests {
             "TONE keeps index 2, it does not become 1"
         );
         assert_eq!(views[1].real, Some(9.0));
+    }
+
+    #[test]
+    fn an_implementation_only_string_parameter_is_hidden_from_the_inspector() {
+        use cortex_rs::catalog::ParameterKind;
+        // A capture block's `file_name` reference (GUI-003.11) is protocol-
+        // internal - a hash-prefixed device key, not a player-facing setting -
+        // and must not reach the ordinary parameter inspector. Like `Empty`,
+        // it still occupies its wire index, so what follows must not shift.
+        let model = model_with(vec![
+            parameter(0, "GAIN", ParameterKind::Float, 0.0, 10.0),
+            parameter(5, "file_name", ParameterKind::Str, 0.0, 0.0),
+            parameter(6, "MIC", ParameterKind::Str, 0.0, 0.0),
+        ]);
+        let views = parameter_views(
+            &model,
+            &[
+                stored_number(0, 0.5),
+                ParamValue {
+                    index: 5,
+                    name: None,
+                    value: cortex_rs::view::ParamValueKind::Text("a".repeat(64) + "My Capture"),
+                    per_scene: Vec::new(),
+                },
+                ParamValue {
+                    index: 6,
+                    name: None,
+                    value: cortex_rs::view::ParamValueKind::Text("SM57".into()),
+                    per_scene: Vec::new(),
+                },
+            ],
+            3,
+            17,
+        );
+
+        assert_eq!(views.len(), 2, "file_name must not appear at all");
+        assert!(
+            views.iter().all(|view| view.name != "file_name"),
+            "no view may carry the implementation-only field"
+        );
+        assert_eq!(
+            views[1].index, 6,
+            "MIC keeps wire index 6, it does not become 1"
+        );
     }
 
     #[test]
