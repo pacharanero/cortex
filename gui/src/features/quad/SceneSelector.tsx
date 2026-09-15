@@ -3,8 +3,7 @@
 
 import { Alert, Button, ColorInput, Group, NativeSelect, Radio, Stack, Text, TextInput } from "@mantine/core";
 import { useEffect, useRef, useState } from "react";
-import { CapabilityBadge } from "../../shared/CapabilityBadge";
-import type { CapabilityLabel, SceneSnapshot } from "../../shared/ipc/types";
+import type { SceneSnapshot } from "../../shared/ipc/types";
 
 interface SceneSelectorProps {
   scenes: SceneSnapshot[];
@@ -18,8 +17,6 @@ interface SceneSelectorProps {
   onRename: (scene: number, label: string | null) => Promise<void>;
   onRecolour: (scene: number, color: number) => Promise<void>;
   onCopySwap: (fromScene: number, toScene: number, swap: boolean) => Promise<void>;
-  /** Evidence labels for `switch_scene`/`set_scene_label`/`set_scene_color`/`copy_scene`. */
-  capabilities?: CapabilityLabel[];
 }
 
 /** `0xAARRGGBB` from the device to the `#rrggbb` an input wants. */
@@ -50,7 +47,7 @@ function toHex(color: number | null): string {
  * that settled late, or a reconnect starting a new generation - none of which
  * name an actual scene transition.
  */
-export function SceneSelector({ scenes, activeScene, generation, revision, disabled, onSwitch, onRename, onRecolour, onCopySwap, capabilities = [] }: SceneSelectorProps) {
+export function SceneSelector({ scenes, activeScene, generation, revision, disabled, onSwitch, onRename, onRecolour, onCopySwap }: SceneSelectorProps) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [announcement, setAnnouncement] = useState("");
@@ -182,10 +179,7 @@ export function SceneSelector({ scenes, activeScene, generation, revision, disab
 
   return (
     <Stack gap="xs">
-      <Group gap="xs">
-        <Text c="dimmed" fw={700} size="xs" tt="uppercase">Scene switching</Text>
-        <CapabilityBadge labels={capabilities} operation="switch_scene" subject="Scene switching" />
-      </Group>
+      <Text c="dimmed" fw={700} size="xs" tt="uppercase">Scene switching</Text>
       <Radio.Group
         description="Changes what the unit plays now. Nothing is saved."
         label="Active scene"
@@ -245,14 +239,13 @@ export function SceneSelector({ scenes, activeScene, generation, revision, disab
       {error && <Alert color="red" title="Scene switch failed">{error}</Alert>}
 
       <SceneDetails
-        capabilities={capabilities}
         disabled={disabled}
         onRecolour={onRecolour}
         onRename={onRename}
         scene={scenes.find((candidate) => candidate.index === activeScene) ?? null}
       />
 
-      <SceneCopySwap capabilities={capabilities} disabled={disabled} onCopySwap={onCopySwap} scenes={scenes} />
+      <SceneCopySwap disabled={disabled} onCopySwap={onCopySwap} scenes={scenes} />
 
       {/* Device-originated and command-completion changes are announced here so
           the switch is perceivable without watching the radio group. */}
@@ -268,7 +261,6 @@ interface SceneDetailsProps {
   disabled: boolean;
   onRename: (scene: number, label: string | null) => Promise<void>;
   onRecolour: (scene: number, color: number) => Promise<void>;
-  capabilities: CapabilityLabel[];
 }
 
 /**
@@ -283,7 +275,7 @@ interface SceneDetailsProps {
  * Both edits are non-persistent: they change the working copy and save
  * nothing.
  */
-function SceneDetails({ scene, disabled, onRename, onRecolour, capabilities }: SceneDetailsProps) {
+function SceneDetails({ scene, disabled, onRename, onRecolour }: SceneDetailsProps) {
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
 
@@ -303,10 +295,6 @@ function SceneDetails({ scene, disabled, onRename, onRecolour, capabilities }: S
 
   return (
     <Stack gap="xs">
-      <Group gap="xs">
-        <CapabilityBadge labels={capabilities} operation="set_scene_label" subject="Scene name" />
-        <CapabilityBadge labels={capabilities} operation="set_scene_color" subject="Scene colour" />
-      </Group>
       <Group align="flex-end" gap="sm" wrap="wrap">
         <TextInput
           // Keyed by scene so switching scenes reloads the field rather than
@@ -348,7 +336,6 @@ interface SceneCopySwapProps {
   scenes: SceneSnapshot[];
   disabled: boolean;
   onCopySwap: (fromScene: number, toScene: number, swap: boolean) => Promise<void>;
-  capabilities: CapabilityLabel[];
 }
 
 /**
@@ -367,7 +354,7 @@ interface SceneCopySwapProps {
  * harmless no-op the CLI would still perform) and an accidental self-swap are
  * both refused here rather than sent.
  */
-function SceneCopySwap({ scenes, disabled, onCopySwap, capabilities }: SceneCopySwapProps) {
+function SceneCopySwap({ scenes, disabled, onCopySwap }: SceneCopySwapProps) {
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const [busy, setBusy] = useState(false);
@@ -400,7 +387,6 @@ function SceneCopySwap({ scenes, disabled, onCopySwap, capabilities }: SceneCopy
     <Stack gap="xs">
       <Group gap="xs">
         <Text c="dimmed" fw={700} size="xs" tt="uppercase">Copy / swap scenes</Text>
-        <CapabilityBadge labels={capabilities} operation="copy_scene" subject="Scene copy/swap" />
       </Group>
       <Text c="dimmed" size="xs">Copy overwrites the destination working scene. Swap exchanges both. Neither saves.</Text>
       <Group align="flex-end" gap="sm" wrap="wrap">

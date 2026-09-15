@@ -77,11 +77,11 @@ impl CapabilityMatrix {
 }
 
 /// Every currently implemented Quad and Nano device-operation surface this
-/// matrix labels, keyed by the exact Tauri command name it is exposed as.
-/// Extending this list is how a new rendered device control gains an evidence
-/// label - an operation missing from it is simply not shown one, never silently
-/// confirmed. Host lifecycle controls (`dashboard`, `reconnect_now`, and
-/// `set_device`) are deliberately outside this read/write device matrix.
+/// evidence matrix records, keyed by its exact Tauri command name. Extending
+/// this list keeps diagnostics complete; an operation absent from the seeded
+/// matrix is never silently confirmed. Host lifecycle controls (`dashboard`,
+/// `reconnect_now`, and `set_device`) are deliberately outside this read/write
+/// device matrix.
 pub const OPERATIONS: &[&str] = &[
     "switch_scene",
     "recall_preset",
@@ -120,7 +120,7 @@ pub fn default_matrix() -> CapabilityMatrix {
 }
 
 fn matrix_for_host(host: HostPath) -> CapabilityMatrix {
-    use CapabilityStatus::{ConfirmedReadable, ConfirmedWritable};
+    use CapabilityStatus::ConfirmedWritable;
 
     if host != HostPath::Linux {
         return CapabilityMatrix::default();
@@ -133,11 +133,12 @@ fn matrix_for_host(host: HostPath) -> CapabilityMatrix {
         // GUI-003.1, hardware-verified 2026-08-17 through the sidebar: the
         // daemon's echoed slot matched and the GUI re-read the working copy.
         .insert("recall_preset", ConfirmedWritable)
-        // GUI-003.3, hardware-verified 2026-08-17: read a real block's
-        // parameters through the catalog join.
-        .insert("block_parameters", ConfirmedReadable)
-        // GUI-003.3, hardware-verified 2026-08-17: wrote one parameter, saw
-        // the device report the new value back, restored the original.
+        // GUI-003.10, hardware-verified 2026-09-14 (backend smoke) and
+        // 2026-09-15 (rendered Linux control, driven via the Tauri MCP bridge
+        // without stealing focus): identity-carrying parameter read, real-unit
+        // write through the rendered inspector, exact read-back, restoration
+        // verified through the same rendered control.
+        .insert("block_parameters", ConfirmedWritable)
         .insert("set_parameter", ConfirmedWritable)
         // NANO-001.5, Tauri backend hardware-verified 2026-08-18: a Tauri amp
         // write changed Gain by one raw step, independently read it back,
@@ -153,22 +154,16 @@ fn matrix_for_host(host: HostPath) -> CapabilityMatrix {
     // field, so it does not confirm the current Tauri read/write contract.
 }
 
-/// One operation's evidence label for the typed Tauri/frontend contract.
-///
-/// The frontend renders exactly this - operation name paired with status -
-/// and must not maintain its own copy of which operations are confirmed;
-/// [`labels`] is the one place that decision is made.
+/// One operation's evidence record for the typed Tauri diagnostic contract.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, ts_rs::TS)]
 pub struct CapabilityLabel {
     pub operation: String,
     pub status: CapabilityStatus,
 }
 
-/// The complete evidence-label list for every operation in [`OPERATIONS`],
+/// The complete evidence list for every operation in [`OPERATIONS`],
 /// looked up against [`default_matrix`]. An operation absent from the seed
-/// still appears here, labelled [`CapabilityStatus::Unverified`] - the
-/// frontend never has to guess which operations exist or invent a status for
-/// one the backend has not labelled.
+/// still appears here as [`CapabilityStatus::Unverified`].
 #[must_use]
 pub fn labels() -> Vec<CapabilityLabel> {
     labels_for_matrix(default_matrix())
@@ -216,7 +211,7 @@ mod tests {
         );
         assert_eq!(
             matrix.status("block_parameters"),
-            CapabilityStatus::ConfirmedReadable
+            CapabilityStatus::ConfirmedWritable
         );
         assert_eq!(
             matrix.status("set_parameter"),
@@ -232,13 +227,16 @@ mod tests {
         );
     }
 
-    /// `set_bypass`, `set_scene_label`, `set_scene_color` and `copy_scene` are
-    /// implemented and offline-verified (GUI-003.3, GUI-003.4), which is
+    /// `set_bypass`, `set_scene_label`, `set_scene_color` and `copy_scene`
+    /// are implemented and offline-verified (GUI-003.3, GUI-003.4), which is
     /// exactly the trap this matrix exists to avoid: "it works" is not
     /// "hardware confirmed". None has a recorded GUI/Tauri hardware pass, so
     /// all four stay unverified even though lower layers have broader device
     /// evidence (`copy_scene`'s underlying `Request::CopyScene` is
     /// hardware-verified through the CLI, but not through this Tauri path).
+    /// `block_parameters`/`set_parameter` were promoted only after the
+    /// 2026-09-14 GUI-003.10 backend smoke passed the *current*
+    /// identity-carrying contracts; the 2026-08-17 pass could not.
     #[test]
     fn offline_verified_operations_are_not_promoted_on_the_strength_of_appearing_to_work() {
         let matrix = default_matrix();

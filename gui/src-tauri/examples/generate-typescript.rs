@@ -10,8 +10,8 @@ use std::path::PathBuf;
 
 use cortex_gui::capability::CapabilityLabel;
 use cortex_gui::{DashboardSnapshot, ParameterView};
-use cortex_rs::ParameterInput;
 use cortex_rs::nano::{NanoAmpControl, NanoBypassTarget, NanoFxParameter, NanoFxSlot};
+use cortex_rs::{ParameterIdentity, ParameterInput};
 use ts_rs::{Config, TS};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -25,6 +25,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = Config::new().with_out_dir(&output);
     DashboardSnapshot::export_all(&config)?;
     ParameterView::export_all(&config)?;
+    ParameterIdentity::export_all(&config)?;
     ParameterInput::export_all(&config)?;
     NanoAmpControl::export_all(&config)?;
     NanoBypassTarget::export_all(&config)?;

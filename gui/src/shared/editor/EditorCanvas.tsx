@@ -43,9 +43,11 @@ const stateLabels: Record<BlockOperationalState, string> = {
 export function EditorBlockCard({ positionLabel, eyebrow, title, detail, state, family, selected, inspectorId, disabled = false, busy = false, onSelect }: EditorBlockCardProps) {
   const accessibleName = `${positionLabel}: ${title}, ${eyebrow}, ${stateLabels[state]}`;
   const content = <>
-    <Text className="editor-block-card__position" size="xs">{positionLabel}</Text>
+    <div className="editor-block-card__meta">
+      <Text className="editor-block-card__eyebrow" size="xs">{eyebrow}</Text>
+      <Text className="editor-block-card__position" size="xs">{positionLabel}</Text>
+    </div>
     <Text className="editor-block-card__title" fw={650} size="sm">{title}</Text>
-    <Text className="editor-block-card__eyebrow" size="xs">{eyebrow}</Text>
     {detail && <Text className="editor-block-card__detail" size="xs">{detail}</Text>}
     <Text className="editor-block-card__state" size="xs">{stateLabels[state]}{selected ? " | selected" : ""}</Text>
   </>;

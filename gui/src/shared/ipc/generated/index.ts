@@ -23,6 +23,7 @@ export type { NanoSlotRole } from "./NanoSlotRole";
 export type { NanoSlotState } from "./NanoSlotState";
 export type { ParamValue } from "./ParamValue";
 export type { ParamValueKind } from "./ParamValueKind";
+export type { ParameterIdentity } from "./ParameterIdentity";
 export type { ParameterInput } from "./ParameterInput";
 export type { ParameterView } from "./ParameterView";
 export type { ParameterViewKind } from "./ParameterViewKind";

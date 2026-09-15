@@ -104,12 +104,14 @@ s/             Repo scripts: s/test, s/lint, s/gui-dev, s/version++ ...
 - **Rust owns behaviour; the webview owns interaction.** Tauri commands return
   typed serialisable data; the frontend renders it. See
   [tauri-gui.md](/home/marcus/code/house-style/tauri-gui.md).
-- **Honest verified-vs-provisional labelling.** Borrow the
+- **Honest verified-vs-provisional evidence.** Borrow the
   `deskop-nano-cortex` product-truth discipline: apply evidence per operation
   and host path. The implemented core Quad Cortex paths are hardware-verified
   on CorOS 4.0.1; unimplemented operations, new host integrations, unknown
   message types, and Nano Cortex specifics remain provisional until verified.
-  Label them as such in UI, docs, and release notes.
+  Keep that maturity visible in specs, diagnostics and release notes. The
+  player-facing UI names unavailable or refused actions at the point of use,
+  but does not repeat development-status badges beside ordinary controls.
 - **Nano Cortex transport is partly hardware-verified.** A real Nano on Linux
   confirmed VID:PID `152A:88E7`, HID interface 5, 65-byte reports, the same
   length/flag frame shape as the Quad, and a complete multi-report state read.

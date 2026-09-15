@@ -566,25 +566,32 @@ impl Daemon {
             Request::ListFolders { window_seconds } => {
                 self.respond(|c| c.list_folders(Duration::from_secs(window_seconds)))
             }
-            // Return the raw payload, not a summary. The caller parses it
-            // with the same code the direct path uses, so the two cannot
-            // render different catalogs.
+            // Return the raw payload and its cache identity, not a summary.
+            // The caller parses it with the same code the direct path uses, so
+            // the two cannot render different catalogs or retain one after the
+            // daemon has accepted a replacement.
             //
             // Served from the handshake's own copy; asking twice needlessly
             // transfers the same 46 KB payload again.
             Request::Catalog { timeout_seconds } => {
-                let cached = self.state.model_repo().map(|payload| payload.value);
-                match cached {
-                    Some(payload) => match serde_json::to_value(payload) {
-                        Ok(v) => Response::Ok {
-                            data: serde_json::json!({ "payload": v }),
-                        },
-                        Err(e) => Response::error(format!("catalog payload: {e}")),
+                if self.state.model_repo().is_none()
+                    && let Err(error) = self
+                        .client()
+                        .fetch_model_repo(Duration::from_secs(timeout_seconds))
+                {
+                    return Response::cortex_error(&error);
+                }
+                match self.state.model_repo() {
+                    Some(payload) => Response::Ok {
+                        data: serde_json::json!({
+                            "generation": payload.generation,
+                            "revision": payload.revision,
+                            "payload": payload.value,
+                        }),
                     },
-                    None => self.respond(|c| {
-                        c.fetch_model_repo(Duration::from_secs(timeout_seconds))
-                            .map(|payload| serde_json::json!({ "payload": payload }))
-                    }),
+                    None => {
+                        Response::error("catalog read completed without a cacheable model payload")
+                    }
                 }
             }
             Request::ListCaptures { timeout_seconds } => {
@@ -3299,6 +3306,12 @@ mod tests {
         .expect("catalog A");
         *daemon.catalog.lock().unwrap() = Some((payload.generation, payload.revision, catalog_a));
         assert_eq!(daemon.catalog().unwrap().get(41).unwrap().name, "Catalog A");
+        let Response::Ok { data } = daemon.handle(Request::Catalog { timeout_seconds: 1 }) else {
+            panic!("the cached catalog payload should be returned");
+        };
+        assert_eq!(data["generation"], payload.generation);
+        assert_eq!(data["revision"], payload.revision);
+        assert_eq!(data["payload"], serde_json::json!([0xa1]));
 
         push_state(
             &daemon,

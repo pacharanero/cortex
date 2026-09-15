@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 import { invoke } from "@tauri-apps/api/core";
-import type { CapabilityLabel, CortexApi, DashboardSnapshot, DeviceKind, NanoFxParameter, ParameterInput, ParameterView } from "./types";
+import type { CapabilityLabel, CortexApi, DashboardSnapshot, DeviceKind, NanoFxParameter, ParameterIdentity, ParameterInput, ParameterView } from "./types";
 
 async function invokeCommand<T>(command: string, args?: Record<string, unknown>): Promise<T> {
   try {
@@ -22,8 +22,8 @@ export const tauriApi: CortexApi = {
   switchScene(scene: number) { return invokeCommand<void>("switch_scene", { scene }); },
   recallPreset(setlist: string, slot: string) { return invokeCommand<void>("recall_preset", { setlist, slot }); },
   blockParameters(row: number, column: number) { return invokeCommand<ParameterView[]>("block_parameters", { row, column }); },
-  setParameter(row: number, column: number, index: number, input: ParameterInput) {
-    return invokeCommand<void>("set_parameter", { row, column, index, input });
+  setParameter(row: number, column: number, identity: ParameterIdentity, input: ParameterInput) {
+    return invokeCommand<void>("set_parameter", { row, column, identity, input });
   },
   setSceneLabel(scene: number, label: string | null) { return invokeCommand<void>("set_scene_label", { scene, label }); },
   setSceneColor(scene: number, color: number) { return invokeCommand<void>("set_scene_color", { scene, color }); },
