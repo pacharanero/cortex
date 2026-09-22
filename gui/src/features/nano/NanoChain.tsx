@@ -144,7 +144,11 @@ export function NanoChain({ state, onSetAmp, onSetGateReduction, onSetBypass, on
     setFxModelId(null);
     setFxDraft({});
     fxEditEpoch.current = new Map();
-    setError(null);
+    // A prior success/read status describes controls that are about to stop being
+    // visible; clear it so it can't be misread as describing the new selection.
+    // An unacknowledged write failure is left alone - it is only superseded once a
+    // later operation (the FX read below, or a fresh apply) actually starts.
+    setStatus(null);
     if (!request.slot) {
       pendingFxRead.current = null;
       return;
@@ -272,6 +276,9 @@ export function NanoChain({ state, onSetAmp, onSetGateReduction, onSetBypass, on
     setFxParams(null);
     setFxModelId(null);
     setFxDraft({});
+    // Same rule as selectRole: drop a stale success/read status, keep an
+    // unacknowledged failure visible.
+    setStatus(null);
   };
 
   return <Stack gap="md">
