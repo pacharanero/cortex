@@ -216,6 +216,54 @@ describe("NanoChain", () => {
     expect(screen.getByText(/device: 0\.600/)).toBeTruthy();
   });
 
+  it("clears a stale FX status when the selection moves to a role without FX controls", async () => {
+    renderNano(state, { onReadFxParams: vi.fn(async () => [fx(0.5)]) });
+
+    fireEvent.click(screen.getByRole("button", { name: /Position 2: Fictional Drive/ }));
+    await screen.findByText("Pre FX 1 parameters loaded.");
+
+    fireEvent.click(screen.getByRole("button", { name: /Position 1: Gate/ }));
+
+    expect(screen.queryByText("Pre FX 1 parameters loaded.")).toBeNull();
+    expect(screen.queryByRole("status")).toBeNull();
+  });
+
+  it("preserves an unacknowledged FX write failure across a selection change to a role without FX controls", async () => {
+    renderNano(state, {
+      onReadFxParams: vi.fn(async () => [fx(0.5)]),
+      onSetFxParam: vi.fn(async () => { throw new Error("confirmation failed"); }),
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /Position 2: Fictional Drive/ }));
+    const slider = await screen.findByRole("slider", { name: "Pre FX 1 Gain normalized value" });
+    fireEvent.keyDown(slider, { key: "ArrowRight" });
+    fireEvent.click(screen.getByRole("button", { name: "Apply Pre FX 1 Gain" }));
+    await screen.findByText("confirmation failed");
+
+    fireEvent.click(screen.getByRole("button", { name: /Position 1: Gate/ }));
+
+    expect(screen.getByText("confirmation failed")).toBeTruthy();
+    expect(screen.getByRole("alert").textContent).toContain("Nano operation failed");
+  });
+
+  it("supersedes an unacknowledged FX write failure once a newly selected role's read begins", async () => {
+    renderNano(state, {
+      onReadFxParams: vi.fn(async () => [fx(0.5)]),
+      onSetFxParam: vi.fn(async () => { throw new Error("confirmation failed"); }),
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /Position 2: Fictional Drive/ }));
+    const slider = await screen.findByRole("slider", { name: "Pre FX 1 Gain normalized value" });
+    fireEvent.keyDown(slider, { key: "ArrowRight" });
+    fireEvent.click(screen.getByRole("button", { name: "Apply Pre FX 1 Gain" }));
+    await screen.findByText("confirmation failed");
+
+    fireEvent.click(screen.getByRole("button", { name: /Position 3: Fictional Chorus/ }));
+
+    expect(screen.queryByText("confirmation failed")).toBeNull();
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
   it("preserves a newer amp edit made while the submitted value is pending", async () => {
     let finishWrite: () => void = () => undefined;
     const onSetAmp = vi.fn(() => new Promise<void>((resolve) => { finishWrite = resolve; }));
