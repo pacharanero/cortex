@@ -1,8 +1,9 @@
 // SPDX-FileCopyrightText: 2026 Dr Marcus Baw
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-import { Alert, Badge, Group, NumberInput, Select, Slider, Stack, Text, TextInput } from "@mantine/core";
+import { Alert, Badge, Group, Select, Stack, Text, TextInput } from "@mantine/core";
 import { useEffect, useRef, useState } from "react";
+import { ContinuousControl } from "../../shared/editor/ContinuousControl";
 import type { ParameterIdentity, ParameterInput, ParameterView } from "../../shared/ipc/types";
 
 interface ParameterEditorProps {
@@ -176,39 +177,23 @@ function ParameterControl({ parameter, busy, disabled, onWrite }: ParameterContr
       onPointerDown={() => { interacting.current = true; }}
       onPointerUp={() => { interacting.current = false; }}
     >
-      {label}
-      <Group align="center" gap="sm" wrap="nowrap">
-        <Slider
-          disabled={disabled}
-          label={(value) => value.toFixed(parameter.kind === "int" ? 0 : 2)}
-          max={max}
-          min={min}
-          // Commit on release rather than on every movement: a drag would
-          // otherwise send a write per pixel to a device that answers each one.
-          onChange={setDraft}
-          onChangeEnd={(value) => void commit(value)}
-          step={step}
-          style={{ flex: 1 }}
-          thumbLabel={`${accessibleName} slider`}
-          value={draft ?? min}
-        />
-        <NumberInput
-          aria-label={`${accessibleName} numeric input`}
-          allowDecimal={parameter.kind !== "int"}
-          disabled={disabled}
-          max={max}
-          min={min}
-          onBlur={(event) => {
-            const value = Number.parseFloat(event.currentTarget.value);
-            if (Number.isFinite(value)) void commit(value);
-          }}
-          step={step}
-          style={{ width: 110 }}
-          value={draft ?? ""}
-          onChange={(value) => setDraft(typeof value === "number" ? value : Number.parseFloat(String(value)))}
-        />
-        {busy && <Text aria-live="polite" c="dimmed" role="status" size="xs">writing {name}</Text>}
-      </Group>
+      <ContinuousControl
+        accessibleName={accessibleName}
+        allowDecimal={parameter.kind !== "int"}
+        busy={busy}
+        disabled={disabled}
+        label={label}
+        max={max}
+        min={min}
+        // Commit on release/blur rather than on every movement: a drag or
+        // keystroke would otherwise send a write per pixel to a device that
+        // answers each one.
+        onChange={(value) => setDraft(typeof value === "number" ? value : Number.parseFloat(String(value)))}
+        onCommit={(value) => void commit(value)}
+        step={step}
+        value={draft ?? min}
+      />
+      {busy && <Text aria-live="polite" c="dimmed" role="status" size="xs">writing {name}</Text>}
       {!usesRealUnits && (
         <Text c="dimmed" size="xs">
           Normalised 0-1: the catalog gives no usable range for this parameter.
