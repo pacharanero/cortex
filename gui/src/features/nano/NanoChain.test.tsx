@@ -15,14 +15,14 @@ const state: NanoCurrentState = {
   gate_reduction: null,
   footswitch_assignments: null,
   slots: [
-    { role: "gate", loaded_name: null, model_id: null, model_name: null, bypassed: false },
-    { role: "pre_fx1", loaded_name: null, model_id: 1, model_name: "Fictional Drive", bypassed: false },
-    { role: "pre_fx2", loaded_name: null, model_id: 2, model_name: "Fictional Chorus", bypassed: true },
-    { role: "capture", loaded_name: "Fictional Capture", model_id: null, model_name: null, bypassed: false },
-    { role: "ir_cab", loaded_name: "Fictional IR", model_id: null, model_name: null, bypassed: false },
-    { role: "post_fx1", loaded_name: null, model_id: 3, model_name: "Fictional Delay", bypassed: false },
-    { role: "post_fx2", loaded_name: null, model_id: 4, model_name: "Fictional Reverb", bypassed: false },
-    { role: "post_fx3", loaded_name: null, model_id: 5, model_name: "Fictional EQ", bypassed: false },
+    { role: "gate", loaded_name: null, model_id: null, model_name: null, bypassed: "engaged" },
+    { role: "pre_fx1", loaded_name: null, model_id: 1, model_name: "Fictional Drive", bypassed: "engaged" },
+    { role: "pre_fx2", loaded_name: null, model_id: 2, model_name: "Fictional Chorus", bypassed: "bypassed" },
+    { role: "capture", loaded_name: "Fictional Capture", model_id: null, model_name: null, bypassed: "unknown" },
+    { role: "ir_cab", loaded_name: "Fictional IR", model_id: null, model_name: null, bypassed: "engaged" },
+    { role: "post_fx1", loaded_name: null, model_id: 3, model_name: "Fictional Delay", bypassed: "engaged" },
+    { role: "post_fx2", loaded_name: null, model_id: 4, model_name: "Fictional Reverb", bypassed: "engaged" },
+    { role: "post_fx3", loaded_name: null, model_id: 5, model_name: "Fictional EQ", bypassed: "engaged" },
   ],
 };
 
@@ -69,6 +69,7 @@ describe("NanoChain", () => {
     expect(await screen.findByRole("button", { name: "Apply Pre FX 1 Gain" })).toBeDefined();
     expect(screen.getByRole("button", { name: "Apply gain" })).toBeDefined();
     expect(screen.getByRole("switch", { name: "Gate bypass, on" })).toBeDefined();
+    expect(screen.getByRole("button", { name: "Position 4: Fictional Capture, Capture, state unavailable" })).toBeDefined();
   });
 
   it("renders semantic FX names and preserves an explicit fallback for unknown parameters", async () => {

@@ -3595,9 +3595,11 @@ fn cmd_nano_state(fmt: Format) -> Result<()> {
             let model = slot
                 .model_id
                 .map_or_else(|| "-".into(), |id| id.to_string());
-            let bypass = slot
-                .bypassed
-                .map_or("unknown", |value| if value { "bypassed" } else { "on" });
+            let bypass = match slot.bypassed {
+                cortex_rs::nano::NanoBypassState::Bypassed => "bypassed",
+                cortex_rs::nano::NanoBypassState::Engaged => "on",
+                cortex_rs::nano::NanoBypassState::Unknown => "unknown",
+            };
             println!("  {:?}: {name} model={model} {bypass}", slot.role);
         }
     })

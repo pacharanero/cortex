@@ -692,7 +692,7 @@ async fn hardware_smoke_reads_and_confirms_nano_tools_through_official_client() 
         .slots
         .iter()
         .find(|slot| slot.role == cortex_rs::nano::NanoSlotRole::PreFx1)
-        .and_then(|slot| slot.bypassed)
+        .and_then(|slot| slot.bypassed.known())
         .context("Nano state omitted Pre FX 1 bypass state")?;
     let pre_fx1_model_id = state
         .slots

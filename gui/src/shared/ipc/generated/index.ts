@@ -14,6 +14,7 @@ export type { LiveBlock } from "./LiveBlock";
 export type { LiveSnapshot } from "./LiveSnapshot";
 export type { NanoAmpControl } from "./NanoAmpControl";
 export type { NanoAmpState } from "./NanoAmpState";
+export type { NanoBypassState } from "./NanoBypassState";
 export type { NanoBypassTarget } from "./NanoBypassTarget";
 export type { NanoCurrentState } from "./NanoCurrentState";
 export type { NanoFootswitchAssignments } from "./NanoFootswitchAssignments";
