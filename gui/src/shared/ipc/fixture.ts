@@ -137,14 +137,14 @@ const nanoState: NanoCurrentState = {
   capture_slot: 2, capture_volume: 128, gate_reduction: 42,
   footswitch_assignments: { ia: 1, ib: 2, iia: 3, iib: 4 },
   slots: [
-    { role: "gate", loaded_name: null, model_id: null, model_name: null, bypassed: false },
-    { role: "pre_fx1", loaded_name: null, model_id: 27, model_name: "Green 808", bypassed: false },
-    { role: "pre_fx2", loaded_name: null, model_id: 7024, model_name: "Chief CE2W (ST)", bypassed: true },
-    { role: "capture", loaded_name: "Fictional Capture", model_id: null, model_name: null, bypassed: null },
-    { role: "ir_cab", loaded_name: "Fictional Cabinet", model_id: null, model_name: null, bypassed: false },
-    { role: "post_fx1", loaded_name: null, model_id: 7022, model_name: "Dream Chorus", bypassed: false },
-    { role: "post_fx2", loaded_name: null, model_id: 6010, model_name: "Analog Delay", bypassed: false },
-    { role: "post_fx3", loaded_name: null, model_id: 8000, model_name: "Room", bypassed: false },
+    { role: "gate", loaded_name: null, model_id: null, model_name: null, bypassed: "engaged" },
+    { role: "pre_fx1", loaded_name: null, model_id: 27, model_name: "Green 808", bypassed: "engaged" },
+    { role: "pre_fx2", loaded_name: null, model_id: 7024, model_name: "Chief CE2W (ST)", bypassed: "bypassed" },
+    { role: "capture", loaded_name: "Fictional Capture", model_id: null, model_name: null, bypassed: "unknown" },
+    { role: "ir_cab", loaded_name: "Fictional Cabinet", model_id: null, model_name: null, bypassed: "engaged" },
+    { role: "post_fx1", loaded_name: null, model_id: 7022, model_name: "Dream Chorus", bypassed: "engaged" },
+    { role: "post_fx2", loaded_name: null, model_id: 6010, model_name: "Analog Delay", bypassed: "engaged" },
+    { role: "post_fx3", loaded_name: null, model_id: 8000, model_name: "Room", bypassed: "engaged" },
   ],
 };
 
@@ -278,7 +278,7 @@ export const fixtureApi: CortexApi = {
   },
   async setNanoBypass(target, bypassed) {
     const slot = nanoState.slots.find((s) => s.role === target);
-    if (slot) slot.bypassed = bypassed;
+    if (slot) slot.bypassed = bypassed ? "bypassed" : "engaged";
   },
   async readNanoFxParams(slot) { return structuredClone(nanoFxParameters[slot]); },
   async setNanoFxParam(slot, expectedModelId, paramIndex, value) {

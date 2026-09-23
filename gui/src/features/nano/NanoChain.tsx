@@ -297,7 +297,7 @@ export function NanoChain({ state, onSetAmp, onSetGateReduction, onSetBypass, on
           onSelect={() => selectRole(slot.role)}
           positionLabel={`Position ${index + 1}`}
           selected={selectedRole === slot.role}
-          state={slot.bypassed == null ? "unknown" : slot.bypassed ? "bypassed" : "engaged"}
+          state={slot.bypassed}
           title={slotName(slot)}
         />)}
       </EditorCanvas>
@@ -305,7 +305,7 @@ export function NanoChain({ state, onSetAmp, onSetGateReduction, onSetBypass, on
     <InspectorPanel
       id="nano-slot-inspector"
       onClose={selectedRole ? clearSelection : undefined}
-      summary={selectedState && <Text mt="sm">{roleNames[selectedState.role]} is {selectedState.bypassed == null ? "in an unknown state" : selectedState.bypassed ? "bypassed" : "engaged"}.</Text>}
+      summary={selectedState && <Text mt="sm">{roleNames[selectedState.role]} is {selectedState.bypassed === "unknown" ? "in an unknown state" : selectedState.bypassed}.</Text>}
       title={selectedState ? slotName(selectedState) : "Select a chain block"}
     >
       {!selectedRole && <Text c="dimmed" size="sm">Block details and available controls will appear here.</Text>}
@@ -393,15 +393,16 @@ export function NanoChain({ state, onSetAmp, onSetGateReduction, onSetBypass, on
         {bypassTargets.map(({ role, target }) => {
           const slot = state.slots.find((candidate) => candidate.role === role);
           const bypassed = slot?.bypassed;
-          const stateLabel = bypassed == null ? "state unknown" : bypassed ? "bypassed" : "on";
+          const isUnknown = bypassed == null || bypassed === "unknown";
+          const stateLabel = isUnknown ? "state unknown" : bypassed === "bypassed" ? "bypassed" : "on";
           return <Group justify="space-between" key={target} wrap="nowrap">
             <Text fw={600} size="sm">{roleNames[role]}</Text>
             <Switch
               aria-busy={busy === `bypass:${target}`}
               aria-label={`${roleNames[role]} bypass, ${stateLabel}`}
-              checked={bypassed ?? false}
-              disabled={bypassed == null || (busy !== null && busy !== `bypass:${target}`)}
-              label={bypassed == null ? "unknown" : bypassed ? "bypassed" : "on"}
+              checked={bypassed === "bypassed"}
+              disabled={isUnknown || (busy !== null && busy !== `bypass:${target}`)}
+              label={isUnknown ? "unknown" : bypassed === "bypassed" ? "bypassed" : "on"}
               onChange={(event) => void toggleBypass(target, event.currentTarget.checked)}
             />
           </Group>;
