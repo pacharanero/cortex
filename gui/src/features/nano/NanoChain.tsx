@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Dr Marcus Baw
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-import { Alert, Button, Group, NumberInput, Paper, SimpleGrid, Slider, Stack, Switch, Text, Title } from "@mantine/core";
+import { Alert, Button, Group, Paper, SimpleGrid, Stack, Switch, Text, Title } from "@mantine/core";
 import { useEffect, useRef, useState } from "react";
 import { ContinuousControl } from "../../shared/editor/ContinuousControl";
 import { EditorBlockCard, EditorCanvas, InspectorPanel } from "../../shared/editor/EditorCanvas";
@@ -313,34 +313,42 @@ export function NanoChain({ state, onSetAmp, onSetGateReduction, onSetBypass, on
       {selectedFxSlot && fxParams === null && <Text c="dimmed" size="sm">Reading parameters...</Text>}
       {selectedFxSlot && fxParams != null && <>
         <SimpleGrid cols={{ base: 1, sm: 2, lg: 3 }}>
-          {fxParams.map((parameter) => <Group align="flex-end" key={parameter.index} wrap="nowrap">
-            <div style={{ flex: 1 }}>
-              <Text fw={600} size="xs">{parameter.name ?? `Param ${parameter.index}`}</Text>
-              <Slider
+          {fxParams.map((parameter) => {
+            const accessibleName = `${roleNames[selectedRole ?? "pre_fx1"]} ${parameter.name ?? `parameter ${parameter.index}`} normalized value`;
+            return <Group align="flex-end" key={parameter.index} wrap="nowrap">
+              <div style={{ flex: 1 }}>
+                <ContinuousControl
+                  accessibleName={accessibleName}
+                  busy={busy === `fx-write:${selectedFxSlot}:${parameter.index}`}
+                  disabled={busy !== null && busy !== `fx-write:${selectedFxSlot}:${parameter.index}`}
+                  label={parameter.name ?? `Param ${parameter.index}`}
+                  max={1}
+                  min={0}
+                  onChange={(nextValue) => {
+                    fxEditEpoch.current.set(parameter.index, (fxEditEpoch.current.get(parameter.index) ?? 0) + 1);
+                    setFxDraft((current) => ({ ...current, [parameter.index]: typeof nextValue === "number" ? nextValue : Number.parseFloat(String(nextValue)) }));
+                  }}
+                  // No invented resolution: the protocol gives this value no
+                  // declared step, and an earlier fixed 0.001 slider step was
+                  // found to quantise device-native precision the moment a
+                  // control was touched. 0.0001 is an order of magnitude
+                  // finer as a stopgap, not a claimed real step.
+                  step={0.0001}
+                  value={fxDraft[parameter.index] ?? parameter.normalized}
+                />
+                <Text c="dimmed" size="xs">parameter {parameter.index} | device: {parameter.normalized.toFixed(4)} | draft: {(fxDraft[parameter.index] ?? parameter.normalized).toFixed(4)}</Text>
+              </div>
+              <Button
                 aria-busy={busy === `fx-write:${selectedFxSlot}:${parameter.index}`}
-                disabled={busy !== null && busy !== `fx-write:${selectedFxSlot}:${parameter.index}`}
-                label={(value) => value.toFixed(2)}
-                max={1}
-                min={0}
-                onChange={(nextValue) => {
-                  fxEditEpoch.current.set(parameter.index, (fxEditEpoch.current.get(parameter.index) ?? 0) + 1);
-                  setFxDraft((current) => ({ ...current, [parameter.index]: nextValue }));
-                }}
-                size="sm"
-                step={0.001}
-                thumbLabel={`${roleNames[selectedRole ?? "pre_fx1"]} ${parameter.name ?? `parameter ${parameter.index}`} normalized value`}
-                value={fxDraft[parameter.index] ?? parameter.normalized}
-              />
-              <Text c="dimmed" size="xs">parameter {parameter.index} | device: {parameter.normalized.toFixed(3)} | draft: {(fxDraft[parameter.index] ?? parameter.normalized).toFixed(3)}</Text>
-            </div>
-            <Button
-              aria-busy={busy === `fx-write:${selectedFxSlot}:${parameter.index}`}
-              aria-label={`Apply ${roleNames[selectedRole ?? "pre_fx1"]} ${parameter.name ?? `parameter ${parameter.index}`}`}
-              disabled={fxModelId == null || (busy !== null && busy !== `fx-write:${selectedFxSlot}:${parameter.index}`) || Math.abs((fxDraft[parameter.index] ?? parameter.normalized) - parameter.normalized) < 0.0005}
-              onClick={() => void applyFxParam(selectedFxSlot, parameter.index)}
-              size="xs"
-            >{busy === `fx-write:${selectedFxSlot}:${parameter.index}` ? "Applying..." : "Apply"}</Button>
-          </Group>)}
+                aria-label={`Apply ${roleNames[selectedRole ?? "pre_fx1"]} ${parameter.name ?? `parameter ${parameter.index}`}`}
+                // Half the slider step: enabled once the draft has moved by a
+                // single increment, whatever that increment currently is.
+                disabled={fxModelId == null || (busy !== null && busy !== `fx-write:${selectedFxSlot}:${parameter.index}`) || Math.abs((fxDraft[parameter.index] ?? parameter.normalized) - parameter.normalized) < 0.00005}
+                onClick={() => void applyFxParam(selectedFxSlot, parameter.index)}
+                size="xs"
+              >{busy === `fx-write:${selectedFxSlot}:${parameter.index}` ? "Applying..." : "Apply"}</Button>
+            </Group>;
+          })}
         </SimpleGrid>
         <Text c="dimmed" size="xs">The normalized 0.0-1.0 path. Values vary by loaded model.</Text>
       </>}
@@ -372,21 +380,24 @@ export function NanoChain({ state, onSetAmp, onSetGateReduction, onSetBypass, on
     <Paper p="md" withBorder>
       <Text c="dimmed" fw={700} size="xs" tt="uppercase">Gate / FX bypass</Text>
       <Group align="flex-end" mt="sm">
-        <NumberInput
-          aria-busy={busy === "gate:reduction"}
-          clampBehavior="strict"
-          label="Gate reduction"
-          max={100}
-          min={0}
-          onChange={(value) => {
-            gateEditEpoch.current += 1;
-            setGateDraft(value);
-            setGateDirty(true);
-          }}
-          style={{ flex: "1 1 160px" }}
-          suffix="%"
-          value={gateDraft}
-        />
+        <div style={{ flex: "1 1 160px" }}>
+          <ContinuousControl
+            allowDecimal={false}
+            busy={busy === "gate:reduction"}
+            disabled={busy !== null && busy !== "gate:reduction"}
+            label="Gate reduction"
+            max={100}
+            min={0}
+            onChange={(value) => {
+              gateEditEpoch.current += 1;
+              setGateDraft(typeof value === "number" ? value : Number.parseFloat(String(value)));
+              setGateDirty(true);
+            }}
+            step={1}
+            suffix="%"
+            value={gateDraft}
+          />
+        </div>
         <Button aria-busy={busy === "gate:reduction"} aria-label="Apply Gate reduction" disabled={typeof gateDraft !== "number" || !gateDirty || (busy !== null && busy !== "gate:reduction")} onClick={() => void applyGateReduction()}>{busy === "gate:reduction" ? "Applying..." : "Apply"}</Button>
       </Group>
       <SimpleGrid cols={{ base: 2, sm: 3, lg: 6 }} mt="sm">

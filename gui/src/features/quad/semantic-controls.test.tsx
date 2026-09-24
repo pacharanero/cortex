@@ -86,6 +86,24 @@ describe("Quad semantic controls", () => {
     await waitFor(() => expect(onWrite).toHaveBeenCalledWith(identity, { kind: "real", value: 7.5 }));
   });
 
+  it("commits only the stepped value when leaving a numeric input for a stepper", async () => {
+    const onWrite = vi.fn(async () => {});
+    render(
+      <MantineProvider>
+        <ParameterEditor disabled={false} onWrite={onWrite} parameters={[parameter({})]} />
+      </MantineProvider>,
+    );
+
+    const input = screen.getByLabelText("GAIN (dB) numeric input");
+    const increase = screen.getByRole("button", { name: "Increase GAIN (dB)" });
+    fireEvent.change(input, { target: { value: "7.5" } });
+    fireEvent.blur(input, { relatedTarget: increase });
+    fireEvent.click(increase);
+
+    await waitFor(() => expect(onWrite).toHaveBeenCalledTimes(1));
+    expect(onWrite).toHaveBeenCalledWith(expect.anything(), { kind: "real", value: 7.6 });
+  });
+
   it("exposes ordered grid cells with coordinates and block state", () => {
     const block: LiveBlock = {
       row: 0,
