@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 import { ActionIcon, Group, NumberInput, Slider, Stack, Text } from "@mantine/core";
-import type { ReactNode } from "react";
+import { useRef, type ReactNode } from "react";
 
 interface ContinuousControlProps {
   label: ReactNode;
@@ -28,6 +28,7 @@ interface ContinuousControlProps {
 }
 
 export function ContinuousControl({ label, accessibleName, value, min, max, step, allowDecimal = true, disabled = false, busy = false, suffix, onChange, onCommit }: ContinuousControlProps) {
+  const root = useRef<HTMLDivElement>(null);
   const name = accessibleName ?? (typeof label === "string" ? label : "");
   const hasNumber = typeof value === "number" && Number.isFinite(value);
   const numericValue = hasNumber ? value : min;
@@ -42,7 +43,7 @@ export function ContinuousControl({ label, accessibleName, value, min, max, step
     onChange(nextValue);
   };
 
-  return <Stack aria-busy={busy || undefined} gap={4}>
+  return <Stack aria-busy={busy || undefined} gap={4} ref={root}>
     {/* `component="div"`: `label` may be a rich node (badges, units) built by a
         caller such as the Quad parameter inspector, and Mantine's default `Text`
         element is `<p>`, which cannot legally contain another block element. */}
@@ -68,7 +69,12 @@ export function ContinuousControl({ label, accessibleName, value, min, max, step
         hideControls
         max={max}
         min={min}
-        onBlur={() => { if (hasNumber) onCommit?.(numericValue); }}
+        onBlur={(event) => {
+          // Moving focus to a stepper blurs this input before its click. That
+          // click commits the new value, so committing here too would submit
+          // the old value first and race two device writes.
+          if (hasNumber && !root.current?.contains(event.relatedTarget as Node | null)) onCommit?.(numericValue);
+        }}
         onChange={change}
         step={step}
         suffix={suffix}
