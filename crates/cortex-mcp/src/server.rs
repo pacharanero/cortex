@@ -192,6 +192,7 @@ impl CortexMcp {
                     factory: cortex_rs::client::is_factory_setlist(&setlist),
                     setlist,
                     slot: string_arg(args, "slot")?,
+                    recall_consent: cortex_rs::RecallConsent::DiscardWorkingCopy,
                 }
             }
             "switch_scene" => Request::SwitchScene {

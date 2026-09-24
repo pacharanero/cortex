@@ -106,6 +106,8 @@ pub struct DeviceStateStatus {
     pub active_scene: bool,
     /// Whether dirty state is available.
     pub preset_dirty: bool,
+    /// Device-reported working-copy dirty state, when available.
+    pub preset_dirty_value: Option<bool>,
     /// Whether the selected slot is available.
     pub preset_location: bool,
     /// Whether the model catalog payload is available.
@@ -487,6 +489,7 @@ impl DeviceStateCache {
             current_preset: inner.current_preset.is_some(),
             active_scene: inner.active_scene.is_some(),
             preset_dirty: inner.preset_dirty.is_some(),
+            preset_dirty_value: inner.preset_dirty.as_ref().map(|dirty| dirty.value),
             preset_location: inner.preset_location.is_some(),
             catalog: inner.model_repo.is_some(),
             listed_setlists,
@@ -1620,6 +1623,7 @@ mod tests {
             },
         );
         assert!(!cache.preset_dirty().unwrap().value);
+        assert_eq!(cache.status().preset_dirty_value, Some(false));
     }
 
     #[test]

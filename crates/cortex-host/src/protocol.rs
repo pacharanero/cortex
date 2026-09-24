@@ -39,7 +39,7 @@ use cortex_rs::{DeviceKind, RecallConsent};
 /// Bump this whenever a request or response changes shape. A client that sees
 /// a mismatch refuses with an actionable message rather than exchanging data
 /// either side will misinterpret.
-pub const DAEMON_PROTOCOL_VERSION: u32 = 23;
+pub const DAEMON_PROTOCOL_VERSION: u32 = 24;
 
 /// A request from a client to the daemon.
 ///
@@ -150,6 +150,8 @@ pub enum Request {
         slot: String,
         /// Whether the setlist is the read-only factory library.
         factory: bool,
+        /// Whether the caller has accepted replacing an unsaved working copy.
+        recall_consent: RecallConsent,
     },
     /// List a setlist.
     ListPresets {
@@ -638,6 +640,8 @@ pub struct CacheStatus {
     pub active_scene: bool,
     /// Whether working-copy dirty state is held.
     pub preset_dirty: bool,
+    /// Device-reported working-copy dirty state, when available.
+    pub preset_dirty_value: Option<bool>,
     /// Whether the selected setlist and slot are held.
     pub preset_location: bool,
     /// Setlists whose listing is held.
@@ -773,8 +777,9 @@ mod tests {
                     setlist: "/media/p4/Presets/Fictional".into(),
                     slot: "2B".into(),
                     factory: false,
+                    recall_consent: RecallConsent::DiscardWorkingCopy,
                 },
-                serde_json::json!({ "op": "recall_preset", "setlist": "/media/p4/Presets/Fictional", "slot": "2B", "factory": false }),
+                serde_json::json!({ "op": "recall_preset", "setlist": "/media/p4/Presets/Fictional", "slot": "2B", "factory": false, "recall_consent": "discard_working_copy" }),
             ),
             (
                 Request::ListPresets {
@@ -1292,6 +1297,7 @@ mod tests {
             setlist: "/media/p4/Presets/My Presets".into(),
             slot: "28C".into(),
             factory: false,
+            recall_consent: RecallConsent::DiscardWorkingCopy,
         };
         let text = serde_json::to_string(&request).unwrap();
         assert!(!text.contains('\n'), "a request must serialise to one line");

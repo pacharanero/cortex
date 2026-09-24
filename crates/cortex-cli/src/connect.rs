@@ -529,10 +529,24 @@ impl Daemon {
                 setlist,
                 slot,
                 factory,
-            } => self.respond(move |c| {
-                c.recall_preset(&setlist, &slot, factory, REQUEST_TIMEOUT)
-                    .map(|()| serde_json::json!({ "slot": slot }))
-            }),
+                recall_consent,
+            } => {
+                if recall_consent == cortex_rs::RecallConsent::RequireClean {
+                    let status = self.state.status();
+                    let clean = status.phase == cortex_rs::CachePhase::Live
+                        && self.state.preset_dirty().is_some_and(|dirty| !dirty.value);
+                    if !clean {
+                        return Response::coded_error(
+                            DaemonErrorCode::SafetyRefused,
+                            "recalling the preset replaces the working grid. The live grid is dirty or its dirty state is unavailable; explicitly allow discarding the working copy to continue",
+                        );
+                    }
+                }
+                self.respond(move |c| {
+                    c.recall_preset(&setlist, &slot, factory, REQUEST_TIMEOUT)
+                        .map(|()| serde_json::json!({ "slot": slot }))
+                })
+            }
             Request::ListPresets {
                 setlist,
                 include_empty,
@@ -1138,6 +1152,7 @@ impl Daemon {
                 current_preset: state.current_preset,
                 active_scene: state.active_scene,
                 preset_dirty: state.preset_dirty,
+                preset_dirty_value: state.preset_dirty_value,
                 preset_location: state.preset_location,
                 listed_setlists: state.listed_setlists,
                 pushes_applied: state.counters.applied,
@@ -3280,6 +3295,46 @@ mod tests {
             message.contains("subscrib"),
             "the error should say why there is nothing yet: {message}"
         );
+        daemon.shutdown();
+    }
+
+    #[test]
+    fn a_clean_guard_refuses_recall_when_dirty_state_is_unavailable() {
+        let daemon = fake_daemon();
+        let Response::Error { code, message } = daemon.handle(Request::RecallPreset {
+            setlist: cortex_rs::client::USER_SETLIST.into(),
+            slot: "1A".into(),
+            factory: false,
+            recall_consent: cortex_rs::RecallConsent::RequireClean,
+        }) else {
+            panic!("a recall without a known-clean working grid must be refused");
+        };
+        assert_eq!(code, DaemonErrorCode::SafetyRefused);
+        assert!(
+            message.contains("dirty state is unavailable"),
+            "unexpected error: {message}"
+        );
+        daemon.shutdown();
+    }
+
+    #[test]
+    fn status_carries_the_actual_preset_dirty_value() {
+        use cortex_rs::proto::{PresetDirtyMessage, message_action::Enum as MessageAction};
+
+        let (daemon, link) = fake_daemon_with_link();
+        let generation = daemon.state.status().generation;
+        push_state(
+            &daemon,
+            &link,
+            cortex_rs::proto::cortex_message_type::Enum::PresetDirty,
+            &PresetDirtyMessage {
+                action: MessageAction::Update as i32,
+                is_dirty: true,
+                request_id: None,
+            },
+        );
+        assert_eq!(daemon.state.status().generation, generation);
+        assert_eq!(daemon.status().cache.preset_dirty_value, Some(true));
         daemon.shutdown();
     }
 

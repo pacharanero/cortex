@@ -2367,6 +2367,7 @@ fn cmd_recall(slot: &str, setlist: &str, factory: bool, fmt: Format) -> Result<(
         setlist: setlist.to_string(),
         slot: slot.to_string(),
         factory,
+        recall_consent: cortex_rs::RecallConsent::DiscardWorkingCopy,
     }) {
         result?;
         let out = ActionOut {
