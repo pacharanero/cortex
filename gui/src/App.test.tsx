@@ -55,6 +55,7 @@ function snapshot(device: "quad_cortex" | "nano_cortex"): DashboardSnapshot {
         current_preset: false,
         active_scene: false,
         preset_dirty: false,
+        preset_dirty_value: null,
         preset_location: false,
         listed_setlists: [],
         pushes_applied: 0,
@@ -253,8 +254,8 @@ describe("preset recall pending state", () => {
     expect(screen.getAllByText("Recalling...")).toHaveLength(1);
     expect(invoked.textContent).toContain("Recalling...");
     expect(other.textContent).not.toContain("Recalling...");
-    expect(api.recallPreset).toHaveBeenCalledWith("Live Set", "1A");
-    expect(api.recallPreset).not.toHaveBeenCalledWith("Live", "Set 1A");
+    expect(api.recallPreset).toHaveBeenCalledWith("Live Set", "1A", "require_clean");
+    expect(api.recallPreset).not.toHaveBeenCalledWith("Live", "Set 1A", "require_clean");
 
     await act(async () => recall.resolve());
 
@@ -275,7 +276,7 @@ describe("preset recall pending state", () => {
     expect(screen.getAllByText("Recalling...")).toHaveLength(1);
     expect(invoked.textContent).toContain("Recalling...");
     expect(other.textContent).not.toContain("Recalling...");
-    expect(api.recallPreset).toHaveBeenCalledWith("Live", "Set 1A");
+    expect(api.recallPreset).toHaveBeenCalledWith("Live", "Set 1A", "require_clean");
 
     await act(async () => recall.resolve());
     await waitFor(() => expect(screen.queryByText("Recalling...")).toBeNull());
@@ -297,6 +298,60 @@ describe("preset recall pending state", () => {
 
     await waitFor(() => expect(screen.queryByText("Recalling...")).toBeNull());
     expect(await screen.findByText("recall failed")).toBeTruthy();
+  });
+});
+
+describe("working-copy recall guard", () => {
+  afterEach(() => {
+    vi.resetAllMocks();
+  });
+
+  it("shows the device-reported clean state and recalls with a clean-state guard", async () => {
+    api.dashboard.mockResolvedValue(directorySnapshot());
+    api.recallPreset.mockResolvedValue(undefined);
+    renderApp();
+
+    expect(await screen.findByText("Device reports working copy clean")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "1A Preset One" }));
+
+    await waitFor(() => expect(api.recallPreset).toHaveBeenCalledWith("Live Set", "1A", "require_clean"));
+    expect(screen.queryByRole("dialog", { name: "Discard unsaved changes?" })).toBeNull();
+  });
+
+  it("keeps the working copy until an explicit discard confirmation", async () => {
+    const dirty = directorySnapshot();
+    dirty.live!.preset_dirty = true;
+    api.dashboard.mockResolvedValue(dirty);
+    api.recallPreset.mockResolvedValue(undefined);
+    renderApp();
+
+    fireEvent.click(await screen.findByRole("button", { name: "1A Preset One" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "Discard unsaved changes?" });
+    expect(dialog.textContent).toContain("The device reports unsaved working-copy changes.");
+    expect(api.recallPreset).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Keep working copy" }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Discard unsaved changes?" })).toBeNull());
+    expect(api.recallPreset).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "1A Preset One" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Discard and recall" }));
+    await waitFor(() => expect(api.recallPreset).toHaveBeenCalledWith("Live Set", "1A", "discard_working_copy"));
+  });
+
+  it("requires the same explicit discard decision when dirty state is unavailable", async () => {
+    const unknown = directorySnapshot();
+    unknown.live!.preset_dirty = null;
+    api.dashboard.mockResolvedValue(unknown);
+    renderApp();
+
+    expect(await screen.findByText("Device has not reported working-copy changes")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "1A Preset One" }));
+
+    expect((await screen.findByRole("dialog", { name: "Discard unsaved changes?" })).textContent)
+      .toContain("The device has not reported whether the working copy has unsaved changes.");
+    expect(api.recallPreset).not.toHaveBeenCalled();
   });
 });
 
@@ -432,7 +487,7 @@ describe("preset directory search", () => {
     fireEvent.change(screen.getByLabelText("Search presets by name or slot"), { target: { value: "preset two" } });
 
     fireEvent.click(await screen.findByRole("button", { name: "Set 1A Preset Two" }));
-    await waitFor(() => expect(api.recallPreset).toHaveBeenCalledWith("Live", "Set 1A"));
+    await waitFor(() => expect(api.recallPreset).toHaveBeenCalledWith("Live", "Set 1A", "require_clean"));
   });
 
   it("keeps the pending recall visible and freezes its filter until completion", async () => {

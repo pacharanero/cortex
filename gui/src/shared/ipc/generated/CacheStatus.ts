@@ -38,6 +38,10 @@ active_scene: boolean,
  */
 preset_dirty: boolean,
 /**
+ * Device-reported working-copy dirty state, when available.
+ */
+preset_dirty_value: boolean | null,
+/**
  * Whether the selected setlist and slot are held.
  */
 preset_location: boolean,

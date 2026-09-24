@@ -71,6 +71,19 @@ describe("Quad fixture parameter identity", () => {
   });
 });
 
+describe("Quad fixture recall guard", () => {
+  it("refuses a clean-state recall after an unsaved edit until discard is explicit", async () => {
+    const [gain] = await fixtureApi.blockParameters(0, 1);
+    await fixtureApi.setParameter(0, 1, gain.identity, { kind: "real", value: 7.5 });
+
+    await expect(fixtureApi.recallPreset("/media/p4/Presets/My Presets", "1A", "require_clean"))
+      .rejects.toThrow("dirty or its dirty state is unavailable");
+    await fixtureApi.recallPreset("/media/p4/Presets/My Presets", "1A", "discard_working_copy");
+
+    expect((await fixtureApi.dashboard()).live?.preset_dirty).toBe(false);
+  });
+});
+
 // GUI-004.2/GUI-004.5: fixture diagnostics claim no hardware evidence.
 describe("capability evidence", () => {
   it("returns no claimed hardware capabilities", async () => {

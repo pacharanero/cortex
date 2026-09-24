@@ -13,6 +13,7 @@ import type {
   ParameterIdentity,
   ParameterInput,
   ParameterView,
+  RecallConsent,
 } from "./generated";
 
 export type { CapabilityLabel };
@@ -29,6 +30,7 @@ export type { NanoSlotRole } from "./generated";
 export type { ParameterIdentity };
 export type { ParameterInput };
 export type { ParameterView };
+export type { RecallConsent };
 export type { SceneSnapshot } from "./generated";
 
 /** The bounded command surface implemented by both the Tauri and fixture adapters. */
@@ -54,7 +56,7 @@ export interface CortexApi {
    * Recall writes nothing to storage, but it changes what the unit is playing
    * and replaces the working copy, discarding unsaved edits.
    */
-  recallPreset(setlist: string, slot: string): Promise<void>;
+  recallPreset(setlist: string, slot: string, recallConsent: RecallConsent): Promise<void>;
   /**
    * Read one block using its zero-based wire row, never its 1-4 screen row. A
    * write to the wrong row succeeds silently.
