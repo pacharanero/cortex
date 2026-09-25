@@ -81,7 +81,7 @@ interface InspectorPanelProps {
 }
 
 export function InspectorPanel({ id, title, summary, aside, onClose, children }: InspectorPanelProps) {
-  return <Paper id={id} p="md" withBorder>
+  return <Paper className="console-surface console-workspace" id={id} p="md" withBorder>
     <Stack gap="md">
       <Group align="flex-start" justify="space-between" wrap="wrap">
         <div>

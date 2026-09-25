@@ -11,6 +11,7 @@ import { NanoChain } from "./features/nano/NanoChain";
 import { InspectorPanel } from "./shared/editor/EditorCanvas";
 import { cortexApi } from "./shared/ipc/api";
 import type { DashboardSnapshot, DeviceKind, LiveBlock, NanoAmpControl, NanoBypassTarget, NanoFxSlot, ParameterIdentity, ParameterInput, ParameterView, RecallConsent } from "./shared/ipc/types";
+import { applyWindowSize, windowSizePresets } from "./shared/windowSizing";
 
 interface Cell { row: number; column: number }
 interface DashboardTicket { epoch: number; seq: number }
@@ -66,6 +67,8 @@ export function App() {
   const [nanoOperationInProgress, setNanoOperationInProgress] = useState(false);
   const nanoOperationsInProgress = useRef(0);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [windowSizeError, setWindowSizeError] = useState<string | null>(null);
+  const [resizingWindow, setResizingWindow] = useState(false);
   useEffect(() => {
     let cancelled = false;
     let timer: number | undefined;
@@ -345,17 +348,29 @@ export function App() {
   const currentDeviceKind = snapshot.status.device_kind;
   const currentDeviceLabel = currentDeviceKind === "nano_cortex" ? "Nano Cortex" : "Quad Cortex";
   const hasPresetDirectory = currentDeviceKind === "quad_cortex";
+  const isTauri = import.meta.env.MODE === "tauri";
+  const resizeWindow = async (preset: typeof windowSizePresets[number]) => {
+    setResizingWindow(true);
+    setWindowSizeError(null);
+    try {
+      await applyWindowSize(preset);
+    } catch (reason) {
+      setWindowSizeError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setResizingWindow(false);
+    }
+  };
 
   return (
-    <AppShell header={{ height: 64 }} navbar={hasPresetDirectory ? { width: 250, breakpoint: "sm", collapsed: { mobile: !mobileNavOpen } } : undefined} padding="md">
-      <AppShell.Header p="md">
+    <AppShell header={{ height: 68 }} navbar={hasPresetDirectory ? { width: 272, breakpoint: "sm", collapsed: { mobile: !mobileNavOpen } } : undefined} padding="md">
+      <AppShell.Header className="console-header" p="md">
         <Group justify="space-between">
-          <Group gap="xs">
+          <Group className="console-header__identity" gap="xs">
             {hasPresetDirectory && <Burger aria-label="Toggle preset directory" hiddenFrom="sm" onClick={() => setMobileNavOpen((open) => !open)} opened={mobileNavOpen} size="sm" />}
-            <Title order={2}>cortex</Title>
+            <div><Title className="console-header__title" order={2}>cortex</Title><Text c="dimmed" size="xs">device editor</Text></div>
             <Menu shadow="md" position="bottom-start" width={200}>
               <Menu.Target>
-                <Button aria-label={`Select device, current ${currentDeviceLabel}`} color="orange" size="compact-sm" variant="filled">{deviceSwitchInProgress ? "Switching..." : currentDeviceLabel}</Button>
+                <Button aria-label={`Select device, current ${currentDeviceLabel}`} color="orange" size="compact-sm" variant="light">{deviceSwitchInProgress ? "Switching..." : currentDeviceLabel}</Button>
               </Menu.Target>
               <Menu.Dropdown>
                 <Menu.Label>Device</Menu.Label>
@@ -372,10 +387,19 @@ export function App() {
               </Menu.Dropdown>
             </Menu>
           </Group>
-          <Group gap="xs" visibleFrom="sm"><Badge color={snapshot.source === "fixture" ? "yellow" : connected ? "green" : "orange"}>{health}</Badge><Badge variant="outline">gen {snapshot.status.cache.generation} / rev {snapshot.status.cache.revision}</Badge></Group>
+          <Group gap="xs" visibleFrom="sm">
+            {isTauri && <Menu position="bottom-end" width={190}>
+              <Menu.Target><Button aria-label="Choose window size" loading={resizingWindow} size="compact-sm" variant="subtle">Window size</Button></Menu.Target>
+              <Menu.Dropdown>
+                <Menu.Label>16:10 window size</Menu.Label>
+                {windowSizePresets.map((preset) => <Menu.Item key={preset.label} onClick={() => void resizeWindow(preset)}>{preset.label}</Menu.Item>)}
+              </Menu.Dropdown>
+            </Menu>}
+            <Badge color={snapshot.source === "fixture" ? "yellow" : connected ? "green" : "orange"}>{health}</Badge><Badge variant="outline">gen {snapshot.status.cache.generation} / rev {snapshot.status.cache.revision}</Badge>
+          </Group>
         </Group>
       </AppShell.Header>
-      {hasPresetDirectory && <AppShell.Navbar p="sm">
+       {hasPresetDirectory && <AppShell.Navbar className="console-navigator" p="sm">
         <Text c="dimmed" fw={700} mb="xs" size="xs" tt="uppercase">Preset directory</Text>
         <TextInput
           aria-describedby="preset-search-status"
@@ -419,11 +443,12 @@ export function App() {
           >{presetSearchStatus}</Text>
         </ScrollArea>
       </AppShell.Navbar>}
-      <AppShell.Main>
-        <Stack gap="md">
-          {snapshot.source === "fixture" && <Alert color="yellow" title="Fixture mode">Browser development data is active. Fixture mode never falls back from a daemon error.</Alert>}
-          {error && <Alert color="red" title="Refresh failed">{error}</Alert>}
-          {nanoOperationError && <Alert color="red" title="Nano operation failed">{nanoOperationError}</Alert>}
+       <AppShell.Main className="console-main">
+         <Stack gap="lg">
+           {snapshot.source === "fixture" && <Alert color="yellow" title="Fixture mode">Browser development data is active. Fixture mode never falls back from a daemon error.</Alert>}
+           {error && <Alert color="red" title="Refresh failed">{error}</Alert>}
+           {windowSizeError && <Alert color="red" title="Window resize failed">{windowSizeError}</Alert>}
+           {nanoOperationError && <Alert color="red" title="Nano operation failed">{nanoOperationError}</Alert>}
           {!live && !nano && <Alert color="orange" title={`Device ${snapshot.status.device.state}`}>
             <Stack gap="xs">
               <Text>Live state is hidden until the daemon reports a connected, complete generation.</Text>
@@ -437,7 +462,7 @@ export function App() {
               </>}
             </Stack>
           </Alert>}
-          {nano && <ErrorBoundary name="Nano editor"><NanoChain
+           {nano && <ErrorBoundary name="Nano editor"><NanoChain
             key={`nano:${snapshot.status.cache.generation}`}
             onReadFxParams={readNanoFxParams}
             onSetAmp={setNanoAmp}
@@ -446,78 +471,78 @@ export function App() {
             onSetFxParam={setNanoFxParam}
             state={nano}
           /></ErrorBoundary>}
-           {live && <>
-             <Group justify="space-between"><div><Text c="dimmed" size="sm">Working grid</Text><Title order={3}>{live.preset_name}</Title><Text c={live.preset_dirty === true ? "orange" : "dimmed"} size="sm">{live.preset_dirty === true ? "Device reports unsaved changes" : live.preset_dirty === false ? "Device reports working copy clean" : "Device has not reported working-copy changes"}</Text></div><Text>Scene {activeSceneName(live)}</Text></Group>
-            <Paper p="md" withBorder>
-              <ErrorBoundary name="Scene selector">
-                <SceneSelector
-                  activeScene={live.active_scene}
-                  disabled={!connected}
-                  generation={live.generation}
-                  onCopySwap={copySwapScene}
-                  onRecolour={recolourScene}
-                  onRename={renameScene}
-                  onSwitch={switchScene}
-                  revision={live.revision}
-                  scenes={live.scenes}
-                />
-              </ErrorBoundary>
-            </Paper>
-            {/* Grid first and full width, inspector beneath it. The grid is
-                the thing being read at a glance and benefits from the width;
-                the inspector will grow parameter controls, which need room to
-                lay out horizontally rather than in a narrow column. */}
-            <Paper p="md" withBorder>
-              <ErrorBoundary name="Grid">
-                <Grid blocks={live.blocks} selected={selected} onSelect={(block) => setSelectedCell({ row: block.row, column: block.column })} />
-              </ErrorBoundary>
-            </Paper>
-            <ErrorBoundary name="Inspector">
-              <InspectorPanel
-                aside={<div>
-                    <Text c="dimmed" size="sm">DSP load</Text>
-                    <Text>{live.cpu_load?.total == null ? "awaiting device push" : `${live.cpu_load.total.toFixed(1)}%`}</Text>
-                    {live.cpu_load?.chains.map((chain, row) => (
-                      <Text key={row} size="sm">
-                        Row {row + 1}: {chain.map((column) => `${column.load.toFixed(1)}${column.on_core2 ? "*" : ""}`).join("  ")}
-                      </Text>
-                    ))}
-                  </div>}
-                id="quad-block-inspector"
-                onClose={selected ? () => setSelectedCell(null) : undefined}
-                summary={<>
-                  <Text mt="sm">{selected ? `${selected.category} at row ${selected.screen_row}, column ${selected.column}.` : "Block details will appear here."}</Text>
-                  {selected?.based_on && <Text c="dimmed" mt="xs" size="sm">{selected.based_on}</Text>}
-                </>}
-                title={selected?.name ?? "Select a block"}
-              >
-                {selected && <Group align="center" gap="xs">
-                  <Switch
-                    aria-label={`${selected.name} bypass, ${selected.bypassed ? "bypassed" : "engaged"}`}
-                    checked={selected.bypassed}
-                    description="Applies to the active scene only, as the device stores it"
-                    disabled={!connected}
-                    label={selected.bypassed ? "Bypassed" : "Engaged"}
-                    onChange={(event) => void toggleBypass(event.currentTarget.checked)}
-                  />
-                </Group>}
-                {selected && (
-                  <>
-                    <Divider label="Parameters" labelPosition="left" my="md" />
-                    {parameterError && <Alert color="orange" title="Parameters unavailable">{parameterError}</Alert>}
-                    {!parameterError && parameters === null && <Text c="dimmed" size="sm">Reading parameters...</Text>}
-                    {!parameterError && parameters !== null && (
-                      <ParameterEditor
+            {live && <section aria-label="Quad Cortex editor console" className="device-console quad-console">
+              <Group className="console-context" justify="space-between"><div><Text c="dimmed" size="sm">Working grid</Text><Title order={3}>{live.preset_name}</Title><Text c={live.preset_dirty === true ? "orange" : "dimmed"} size="sm">{live.preset_dirty === true ? "Device reports unsaved changes" : live.preset_dirty === false ? "Device reports working copy clean" : "Device has not reported working-copy changes"}</Text></div><Text>Scene {activeSceneName(live)}</Text></Group>
+              <div className="quad-console__workspace">
+                <div className="quad-console__overview">
+                  <Paper className="console-surface" p="md" withBorder>
+                    <ErrorBoundary name="Scene selector">
+                      <SceneSelector
+                        activeScene={live.active_scene}
                         disabled={!connected}
-                        onWrite={writeParameter}
-                        parameters={parameters}
+                        generation={live.generation}
+                        onCopySwap={copySwapScene}
+                        onRecolour={recolourScene}
+                        onRename={renameScene}
+                        onSwitch={switchScene}
+                        revision={live.revision}
+                        scenes={live.scenes}
                       />
+                    </ErrorBoundary>
+                  </Paper>
+                  <Paper className="console-surface console-topology" p="md" withBorder>
+                    <ErrorBoundary name="Grid">
+                      <Grid blocks={live.blocks} selected={selected} onSelect={(block) => setSelectedCell({ row: block.row, column: block.column })} />
+                    </ErrorBoundary>
+                  </Paper>
+                </div>
+                <ErrorBoundary name="Inspector">
+                  <InspectorPanel
+                    aside={<div>
+                        <Text c="dimmed" size="sm">DSP load</Text>
+                        <Text>{live.cpu_load?.total == null ? "awaiting device push" : `${live.cpu_load.total.toFixed(1)}%`}</Text>
+                        {live.cpu_load?.chains.map((chain, row) => (
+                          <Text key={row} size="sm">
+                            Row {row + 1}: {chain.map((column) => `${column.load.toFixed(1)}${column.on_core2 ? "*" : ""}`).join("  ")}
+                          </Text>
+                        ))}
+                      </div>}
+                    id="quad-block-inspector"
+                    onClose={selected ? () => setSelectedCell(null) : undefined}
+                    summary={<>
+                      <Text mt="sm">{selected ? `${selected.category} at row ${selected.screen_row}, column ${selected.column}.` : "Block details will appear here."}</Text>
+                      {selected?.based_on && <Text c="dimmed" mt="xs" size="sm">{selected.based_on}</Text>}
+                    </>}
+                    title={selected?.name ?? "Select a block"}
+                  >
+                    {selected && <Group align="center" gap="xs">
+                      <Switch
+                        aria-label={`${selected.name} bypass, ${selected.bypassed ? "bypassed" : "engaged"}`}
+                        checked={selected.bypassed}
+                        description="Applies to the active scene only, as the device stores it"
+                        disabled={!connected}
+                        label={selected.bypassed ? "Bypassed" : "Engaged"}
+                        onChange={(event) => void toggleBypass(event.currentTarget.checked)}
+                      />
+                    </Group>}
+                    {selected && (
+                      <>
+                        <Divider label="Parameters" labelPosition="left" my="md" />
+                        {parameterError && <Alert color="orange" title="Parameters unavailable">{parameterError}</Alert>}
+                        {!parameterError && parameters === null && <Text c="dimmed" size="sm">Reading parameters...</Text>}
+                        {!parameterError && parameters !== null && (
+                          <ParameterEditor
+                            disabled={!connected}
+                            onWrite={writeParameter}
+                            parameters={parameters}
+                          />
+                        )}
+                      </>
                     )}
-                  </>
-                )}
-              </InspectorPanel>
-            </ErrorBoundary>
-           </>}
+                  </InspectorPanel>
+                </ErrorBoundary>
+              </div>
+            </section>}
          </Stack>
          <Modal
            centered

@@ -16,12 +16,15 @@ The repos are pinned shallow clones at the parent workspace root and are gitigno
 | `rixrix/deskop-nano-cortex` | Apache-2.0 | **Adapt with attribution.** |
 | `VanIseghemThomas/qc-stomp-tools` | MIT | Adapt with attribution. |
 | `choldy/nano-cortex-web-editor` | MIT | Adapt with attribution. Not vendored; reached via the above. |
+| `grliszas14/NanoDesk-releases` | MIT declared for its release repository; source is separate | Product/UI reference only. No source is available there to import. |
 | `VanIseghemThomas/OpenCortex` | **no repository-wide licence; mixed file notices** | **Read only.** Cite findings in our own words. Copy nothing. |
 | `roelj/qc-extras` | **no repository-wide licence; GPL-3.0-or-later source headers** | Read only until the licensing scope is clarified. |
 | `hsaastamoinen/quad-cortex-usb-re-notes` | **none declared** | Read only. |
 | `vian21/toneparse` | **none declared** | Read only - and see the correction below. |
 
 Anything ported or adapted from the clearly MIT/Apache-2.0-licensed projects carries its upstream copyright and needs a `NOTICE` entry. The four reference-only repositories lack a clear repository-wide licence: `OpenCortex` mixes unlicensed material with file-level GPL notices, `qc-extras` has GPL-3.0-or-later source headers but no root licence, and the other two declare none. No code, scripts, data, or copied prose from those repositories may be committed here; findings may be cited in our own words.
+
+`NanoDesk-releases` is different: it is a public binary-release project that declares MIT but says its source is held separately. Treat its public product workflow as inspiration only, not as code prior art. Do not copy its code, artwork, screenshots, or UI assets; the independent console layout is recorded as a GUI direction in `400-gui/spec.md`.
 
 ---
 

@@ -93,22 +93,23 @@ s/             Repo scripts: s/test, s/lint, s/gui-dev, s/version++ ...
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the workflow, [SECURITY.md](SECURITY.md) to report a vulnerability privately, and [AGENTS.md](AGENTS.md) for the protocol invariants and prior-art licensing boundaries that apply before changing anything.
 
-## Prior art and attribution
+## Prior art and related projects
 
-This project builds on the protocol work established by the MIT-licensed
-[`stokes-audio/pyquadcortex`](https://github.com/stokes-audio/pyquadcortex)
-project, which recovered the Cortex Control protobuf schema and documented the
-USB HID framing, the trailer-tagged message envelope, and the benign write-STALL
-gotcha. The recovered `.proto` files are vendored into
-`crates/cortex-rs/proto/` under the MIT license's distribution terms.
+The project benefits from a small community of independent Cortex developers. Each project has its own scope, licence, and maturity; a link is acknowledgement, not an endorsement or a claim of code sharing.
 
-The Tauri app architecture follows the precedent set by the Apache-2.0-licensed
-[`rixrix/deskop-nano-cortex`](https://github.com/rixrix/deskop-nano-cortex)
-project (Rust device I/O backend, honest verified-vs-provisional labelling, AFX
-spec layout).
+### Protocol and architecture prior art
 
-Full attribution and license texts are in `NOTICE` and
-`THIRD-PARTY-NOTICES.md`.
+- [`stokes-audio/pyquadcortex`](https://github.com/stokes-audio/pyquadcortex) (MIT) recovered the Cortex Control protobuf schema and documents USB HID framing, the trailer-tagged message envelope, and the benign write-STALL behavior. Its recovered `.proto` files are vendored in `crates/cortex-rs/proto/` under the MIT distribution terms.
+- [`rixrix/deskop-nano-cortex`](https://github.com/rixrix/deskop-nano-cortex) (Apache-2.0) informs the managed Rust device-I/O architecture, honest capability evidence, and Nano state decoder design.
+- [`choldy/nano-cortex-web-editor`](https://github.com/choldy/nano-cortex-web-editor) (MIT) is credited by `deskop-nano-cortex` for the Nano BLE field map. Any adapted decoder work carries both projects' attribution.
+
+### Independent editors and experiments
+
+- [`grliszas14/NanoDesk-releases`](https://github.com/grliszas14/NanoDesk-releases) is an independent cross-platform Nano Cortex controller over Bluetooth. Its release repository declares MIT and says its source lives separately, so it is not a source-code dependency here. Its one-screen signal-chain, preset-browser, and selected-block workflow is useful product inspiration for our independent GUI design; no NanoDesk code, artwork, or UI assets are used here.
+- [`VanIseghemThomas/OpenCortex`](https://github.com/VanIseghemThomas/OpenCortex) explores an on-device/rooting route for Quad Cortex. It has no repository-wide licence and remains reference-only; this project uses USB HID instead.
+- [`VanIseghemThomas/qc-stomp-tools`](https://github.com/VanIseghemThomas/qc-stomp-tools) (MIT) investigates on-device footswitch and LED I/O. It is relevant only to any future on-device work, not this desktop transport.
+
+The full research register, licence boundaries, and reference-only restrictions are in [spec/prior-art.md](spec/prior-art.md). Full attribution and licence texts are in `NOTICE` and `THIRD-PARTY-NOTICES.md`.
 
 ## Licensing
 

@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Default capability for the main window. The app's own commands need no capability entries; this grants only the debug-build MCP bridge used for automated UI driving.",
+  "description": "Default capability for the main window. The app's own commands need no capability entries; this grants the native 16:10 size presets and the debug-build MCP bridge used for automated UI driving.",
   "windows": ["main"],
-  "permissions": ["mcp-bridge:default"]
+  "permissions": ["core:window:allow-set-size", "mcp-bridge:default"]
 }
