@@ -21,7 +21,7 @@ use cortex_host::{
 };
 use rmcp::model::{
     CacheScope, CallToolRequestParams, CallToolResponse, CallToolResult, DiscoverResult,
-    Implementation, JsonObject, ListToolsResult, ProtocolVersion, ServerCapabilities, ServerInfo,
+    Implementation, JsonObject, ListToolsResult, ProtocolVersion, ServerCapabilities, ServerConfig,
     Tool, ToolAnnotations,
 };
 use rmcp::service::RequestContext;
@@ -109,8 +109,8 @@ impl ServerHandler for CortexMcp {
         Ok(result.into())
     }
 
-    fn get_info(&self) -> ServerInfo {
-        ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
+    fn get_info(&self) -> ServerConfig {
+        ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
             .with_protocol_version(ProtocolVersion::V_2026_07_28)
             .with_server_info(
                 Implementation::new("cortex-mcp", env!("CARGO_PKG_VERSION"))
