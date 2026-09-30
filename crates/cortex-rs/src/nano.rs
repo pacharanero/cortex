@@ -68,6 +68,62 @@ pub enum NanoSlotRole {
     PostFx3,
 }
 
+/// Bypass/engaged state of one Nano slot as decoded from the current-state
+/// response.
+///
+/// This is a tri-state, not a boolean, because a plain `Option<bool>` cannot
+/// tell apart two different wire situations that both look like "no data":
+/// a role whose current-state message never carries a bypass field at all
+/// (Capture), and Gate's field 54, which `CorOS` omits when Gate is on rather
+/// than sending an explicit "engaged" value. `Unknown` names that ambiguity
+/// instead of silently reusing "absent" for both. **Do not read `Unknown` as
+/// "probably engaged":** whether field-54 omission canonically means Gate is
+/// on remains unverified against hardware. See NANO-001.14.
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NanoBypassState {
+    /// The slot is bypassed (disabled).
+    Bypassed,
+    /// The slot is engaged (enabled).
+    Engaged,
+    /// Presence could not be determined from this response.
+    Unknown,
+}
+
+impl From<bool> for NanoBypassState {
+    fn from(bypassed: bool) -> Self {
+        if bypassed {
+            Self::Bypassed
+        } else {
+            Self::Engaged
+        }
+    }
+}
+
+impl NanoBypassState {
+    /// Decode an optional wire flag, preserving the exact presence/absence
+    /// shape the previous `Option<bool>` model decoded before this type
+    /// existed.
+    fn from_flag(flag: Option<bool>) -> Self {
+        flag.map_or(Self::Unknown, Self::from)
+    }
+
+    /// `Some(true)`/`Some(false)` when known, `None` for [`Self::Unknown`] -
+    /// the same shape callers relied on before this type existed, so a
+    /// write-confirmation guard that refuses to proceed on an unconfirmed
+    /// read (see `nano_fx_bypass_reads_back_and_restores`) keeps working
+    /// unchanged.
+    #[must_use]
+    pub const fn known(self) -> Option<bool> {
+        match self {
+            Self::Bypassed => Some(true),
+            Self::Engaged => Some(false),
+            Self::Unknown => None,
+        }
+    }
+}
+
 /// One role in the fixed Nano signal chain.
 #[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -81,8 +137,9 @@ pub struct NanoSlotState {
     pub model_id: Option<u64>,
     /// Nano-specific display name resolved from the numeric effect model id.
     pub model_name: Option<String>,
-    /// Bypass state when present in the current-state message.
-    pub bypassed: Option<bool>,
+    /// Bypass state when present in the current-state message; `Unknown`
+    /// when the wire field is absent, including Gate's field-54 omission.
+    pub bypassed: NanoBypassState,
 }
 
 /// Resolve a Nano effect model id to its product-facing display name.
@@ -1155,9 +1212,11 @@ pub fn decode_current_state(message: &[u8]) -> Result<NanoCurrentState> {
             loaded_name: None,
             model_id,
             model_name: model_id.and_then(fx_model_name).map(str::to_owned),
-            bypassed: bypass
-                .and_then(|values| values.get(index))
-                .map(|value| *value != 0),
+            bypassed: NanoBypassState::from_flag(
+                bypass
+                    .and_then(|values| values.get(index))
+                    .map(|value| *value != 0),
+            ),
         }
     };
 
@@ -1167,7 +1226,7 @@ pub fn decode_current_state(message: &[u8]) -> Result<NanoCurrentState> {
             loaded_name: None,
             model_id: None,
             model_name: None,
-            bypassed: gate_on.map(|on| !on),
+            bypassed: NanoBypassState::from_flag(gate_on.map(|on| !on)),
         },
         effect(0, NanoSlotRole::PreFx1),
         effect(1, NanoSlotRole::PreFx2),
@@ -1176,14 +1235,14 @@ pub fn decode_current_state(message: &[u8]) -> Result<NanoCurrentState> {
             loaded_name: capture_name,
             model_id: None,
             model_name: None,
-            bypassed: None,
+            bypassed: NanoBypassState::Unknown,
         },
         NanoSlotState {
             role: NanoSlotRole::IrCab,
             loaded_name: ir_name,
             model_id: None,
             model_name: None,
-            bypassed: cab_ir_on.map(|on| !on),
+            bypassed: NanoBypassState::from_flag(cab_ir_on.map(|on| !on)),
         },
         effect(2, NanoSlotRole::PostFx1),
         effect(3, NanoSlotRole::PostFx2),
@@ -1462,6 +1521,14 @@ mod tests {
     }
 
     fn fictional_state() -> Vec<u8> {
+        fictional_state_with_gate_field_54(Some(0))
+    }
+
+    /// Build the same fictional current-state body as [`fictional_state`],
+    /// but with field 54 (Gate) set to the given raw varint, or omitted
+    /// entirely when `None` - reproducing the hardware-observed shape where
+    /// `CorOS` omits field 54 rather than sending an explicit value.
+    fn fictional_state_with_gate_field_54(gate_field_54: Option<u64>) -> Vec<u8> {
         let mut body = Vec::new();
         field_varint(&mut body, 3, 101);
         field_varint(&mut body, 4, 102);
@@ -1487,7 +1554,9 @@ mod tests {
             field_varint(&mut body, field, model);
         }
         field_fixed32(&mut body, 53, f32::from(158_u8) / 255.0);
-        field_varint(&mut body, 54, 0);
+        if let Some(value) = gate_field_54 {
+            field_varint(&mut body, 54, value);
+        }
         body.extend(CURRENT_STATE_RESPONSE_FOOTER.0);
         body
     }
@@ -1699,8 +1768,10 @@ mod tests {
             state.slots[2].model_name.as_deref(),
             Some("Chief CE2W (ST)")
         );
-        assert_eq!(state.slots[1].bypassed, Some(false));
-        assert_eq!(state.slots[2].bypassed, Some(true));
+        assert_eq!(state.slots[0].bypassed, NanoBypassState::Engaged);
+        assert_eq!(state.slots[1].bypassed, NanoBypassState::Engaged);
+        assert_eq!(state.slots[2].bypassed, NanoBypassState::Bypassed);
+        assert_eq!(state.slots[3].bypassed, NanoBypassState::Unknown);
         assert_eq!(
             state.slots[3].loaded_name.as_deref(),
             Some("Fictional Capture")
@@ -1709,6 +1780,34 @@ mod tests {
             state.slots[4].loaded_name.as_deref(),
             Some("Fictional Cabinet")
         );
+    }
+
+    #[test]
+    fn gate_field_54_omission_decodes_to_unknown_not_a_guessed_boolean() {
+        let state = decode_current_state(&fictional_state_with_gate_field_54(None)).unwrap();
+        assert_eq!(state.slots[0].role, NanoSlotRole::Gate);
+        assert_eq!(state.slots[0].bypassed, NanoBypassState::Unknown);
+    }
+
+    #[test]
+    fn gate_field_54_presence_still_decodes_exactly_as_before_this_type_existed() {
+        let engaged = decode_current_state(&fictional_state_with_gate_field_54(Some(0))).unwrap();
+        assert_eq!(engaged.slots[0].bypassed, NanoBypassState::Engaged);
+
+        let bypassed = decode_current_state(&fictional_state_with_gate_field_54(Some(1))).unwrap();
+        assert_eq!(bypassed.slots[0].bypassed, NanoBypassState::Bypassed);
+    }
+
+    #[test]
+    fn unknown_bypass_state_refuses_to_produce_a_boolean_for_a_write_guard() {
+        // Mirrors the shape a write-confirmation guard relies on (compare
+        // `crates/cortex-cli/src/connect.rs`'s `NanoSetBypass` handler and
+        // `nano_fx_bypass_reads_back_and_restores` in `tests/hardware-reads.rs`):
+        // a caller that can only act on a known original value must see
+        // `None`, not a silently guessed `false`, when the wire omitted it.
+        assert_eq!(NanoBypassState::Unknown.known(), None);
+        assert_eq!(NanoBypassState::Bypassed.known(), Some(true));
+        assert_eq!(NanoBypassState::Engaged.known(), Some(false));
     }
 
     #[test]

@@ -1944,7 +1944,7 @@ impl<T: NanoOperations> NanoDaemon<T> {
                             .slots
                             .iter()
                             .find(|slot| slot.role == target.role())
-                            .and_then(|slot| slot.bypassed);
+                            .and_then(|slot| slot.bypassed.known());
                         (actual != Some(bypassed)).then(|| {
                             format!(
                                 "Nano bypass write did not read back: expected {bypassed}, got {actual:?}"
@@ -2604,7 +2604,7 @@ mod tests {
                     model_name: model_id
                         .and_then(cortex_rs::nano::fx_model_name)
                         .map(str::to_owned),
-                    bypassed: Some(bypassed),
+                    bypassed: bypassed.into(),
                 }
             })
             .collect(),

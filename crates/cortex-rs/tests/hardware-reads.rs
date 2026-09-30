@@ -3164,7 +3164,7 @@ fn nano_fx_bypass_reads_back_and_restores() -> cortex_rs::Result<()> {
             .slots
             .iter()
             .find(|slot| slot.role == NanoSlotRole::PreFx1)
-            .and_then(|slot| slot.bypassed)
+            .and_then(|slot| slot.bypassed.known())
     };
     let original = bypass(&read_current_state(&transport, Duration::from_secs(5))?)
         .ok_or_else(|| Error::Decode("Nano state omitted Pre FX 1 bypass".into()))?;

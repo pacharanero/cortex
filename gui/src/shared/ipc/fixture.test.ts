@@ -25,7 +25,7 @@ describe("Nano fixture API", () => {
     expect(snapshot.status.device_kind).toBe("nano_cortex");
     expect(snapshot.nano?.amp.gain).toBe(127);
     expect(snapshot.nano?.gate_reduction).toBe(43);
-    expect(snapshot.nano?.slots.find((slot) => slot.role === "post_fx3")?.bypassed).toBe(true);
+    expect(snapshot.nano?.slots.find((slot) => slot.role === "post_fx3")?.bypassed).toBe("bypassed");
   });
 
   it("rejects invalid Nano values instead of accepting fixture-only state", async () => {
