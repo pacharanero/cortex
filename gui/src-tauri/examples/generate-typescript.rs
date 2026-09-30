@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use cortex_gui::capability::CapabilityLabel;
 use cortex_gui::{DashboardSnapshot, ParameterView};
 use cortex_rs::nano::{NanoAmpControl, NanoBypassTarget, NanoFxParameter, NanoFxSlot};
-use cortex_rs::{ParameterIdentity, ParameterInput};
+use cortex_rs::{ParameterIdentity, ParameterInput, RecallConsent};
 use ts_rs::{Config, TS};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -27,6 +27,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ParameterView::export_all(&config)?;
     ParameterIdentity::export_all(&config)?;
     ParameterInput::export_all(&config)?;
+    RecallConsent::export_all(&config)?;
     NanoAmpControl::export_all(&config)?;
     NanoBypassTarget::export_all(&config)?;
     NanoFxParameter::export_all(&config)?;

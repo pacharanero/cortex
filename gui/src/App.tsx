@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Dr Marcus Baw
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-import { Alert, AppShell, Badge, Burger, Button, Divider, Group, Menu, NavLink, Paper, ScrollArea, Stack, Switch, Text, TextInput, Title } from "@mantine/core";
+import { Alert, AppShell, Badge, Burger, Button, Divider, Group, Menu, Modal, NavLink, Paper, ScrollArea, Stack, Switch, Text, TextInput, Title } from "@mantine/core";
 import { useEffect, useRef, useState } from "react";
 import { Grid } from "./features/quad/Grid";
 import { ParameterEditor } from "./features/quad/ParameterEditor";
@@ -10,7 +10,7 @@ import { ErrorBoundary } from "./shared/ErrorBoundary";
 import { NanoChain } from "./features/nano/NanoChain";
 import { InspectorPanel } from "./shared/editor/EditorCanvas";
 import { cortexApi } from "./shared/ipc/api";
-import type { DashboardSnapshot, DeviceKind, LiveBlock, NanoAmpControl, NanoBypassTarget, NanoFxSlot, ParameterIdentity, ParameterInput, ParameterView } from "./shared/ipc/types";
+import type { DashboardSnapshot, DeviceKind, LiveBlock, NanoAmpControl, NanoBypassTarget, NanoFxSlot, ParameterIdentity, ParameterInput, ParameterView, RecallConsent } from "./shared/ipc/types";
 
 interface Cell { row: number; column: number }
 interface DashboardTicket { epoch: number; seq: number }
@@ -39,6 +39,7 @@ export function App() {
   const [retrying, setRetrying] = useState(false);
   // Keep the identity structured so arbitrary setlist keys cannot collide.
   const [recalling, setRecalling] = useState<{ setlist: string; slot: string } | null>(null);
+  const [recallConfirmation, setRecallConfirmation] = useState<{ setlist: string; slot: string; dirty: boolean | null } | null>(null);
   const [presetSearch, setPresetSearch] = useState("");
   const [parameters, setParameters] = useState<ParameterView[] | null>(null);
   const [parameterError, setParameterError] = useState<string | null>(null);
@@ -211,10 +212,10 @@ export function App() {
   // Recalling replaces the working copy and changes what the unit plays, so it
   // is followed by a re-read rather than an optimistic update: the grid shown
   // is the one the device reports, not the one that was asked for.
-  const recall = async (setlist: string, slot: string) => {
+  const recall = async (setlist: string, slot: string, recallConsent: RecallConsent) => {
     setRecalling({ setlist, slot });
     try {
-      await cortexApi.recallPreset(setlist, slot);
+      await cortexApi.recallPreset(setlist, slot, recallConsent);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
       setRecalling(null);
@@ -234,6 +235,13 @@ export function App() {
     } finally {
       setRecalling(null);
     }
+  };
+  const requestRecall = (setlist: string, slot: string) => {
+    if (live?.preset_dirty === false) {
+      void recall(setlist, slot, "require_clean");
+      return;
+    }
+    setRecallConfirmation({ setlist, slot, dirty: live?.preset_dirty ?? null });
   };
 
   const reconnectNow = async () => {
@@ -394,7 +402,7 @@ export function App() {
                   disabled={recalling !== null || !connected}
                   key={`${setlist.key}-${slot.index}`}
                   label={`${slot.slot}  ${slot.name}`}
-                  onClick={() => { setMobileNavOpen(false); void recall(setlist.key, slot.slot); }}
+                   onClick={() => { setMobileNavOpen(false); requestRecall(setlist.key, slot.slot); }}
                   type="button"
                 />
               ))}
@@ -438,8 +446,8 @@ export function App() {
             onSetFxParam={setNanoFxParam}
             state={nano}
           /></ErrorBoundary>}
-          {live && <>
-            <Group justify="space-between"><div><Text c="dimmed" size="sm">Working grid</Text><Title order={3}>{live.preset_name}{live.preset_dirty ? " *" : ""}</Title></div><Text>Scene {activeSceneName(live)}</Text></Group>
+           {live && <>
+             <Group justify="space-between"><div><Text c="dimmed" size="sm">Working grid</Text><Title order={3}>{live.preset_name}</Title><Text c={live.preset_dirty === true ? "orange" : "dimmed"} size="sm">{live.preset_dirty === true ? "Device reports unsaved changes" : live.preset_dirty === false ? "Device reports working copy clean" : "Device has not reported working-copy changes"}</Text></div><Text>Scene {activeSceneName(live)}</Text></Group>
             <Paper p="md" withBorder>
               <ErrorBoundary name="Scene selector">
                 <SceneSelector
@@ -509,9 +517,30 @@ export function App() {
                 )}
               </InspectorPanel>
             </ErrorBoundary>
-          </>}
-        </Stack>
-      </AppShell.Main>
+           </>}
+         </Stack>
+         <Modal
+           centered
+           onClose={() => setRecallConfirmation(null)}
+           opened={recallConfirmation !== null}
+           title="Discard unsaved changes?"
+         >
+           <Stack gap="md">
+             <Text>{recallConfirmation?.dirty === true
+               ? "The device reports unsaved working-copy changes. Recalling this preset replaces them and changes what the unit is playing."
+               : "The device has not reported whether the working copy has unsaved changes. Recalling this preset may replace audible edits and changes what the unit is playing."}</Text>
+             <Text size="sm">This does not save or change stored presets.</Text>
+             <Group justify="flex-end">
+               <Button onClick={() => setRecallConfirmation(null)} variant="default">Keep working copy</Button>
+               <Button color="red" onClick={() => {
+                 const target = recallConfirmation;
+                 setRecallConfirmation(null);
+                 if (target) void recall(target.setlist, target.slot, "discard_working_copy");
+               }}>Discard and recall</Button>
+             </Group>
+           </Stack>
+         </Modal>
+       </AppShell.Main>
     </AppShell>
   );
 }

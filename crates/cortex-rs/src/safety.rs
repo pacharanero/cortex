@@ -215,8 +215,8 @@ pub enum ScratchOverride {
     AllowOutsideScratch,
 }
 
-/// Whether preparation may discard an existing working copy by recalling an
-/// occupied target.
+/// Whether recall may discard the current working copy.
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RecallConsent {

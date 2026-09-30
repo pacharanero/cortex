@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 import { invoke } from "@tauri-apps/api/core";
-import type { CapabilityLabel, CortexApi, DashboardSnapshot, DeviceKind, NanoFxParameter, ParameterIdentity, ParameterInput, ParameterView } from "./types";
+import type { CapabilityLabel, CortexApi, DashboardSnapshot, DeviceKind, NanoFxParameter, ParameterIdentity, ParameterInput, ParameterView, RecallConsent } from "./types";
 
 async function invokeCommand<T>(command: string, args?: Record<string, unknown>): Promise<T> {
   try {
@@ -20,7 +20,7 @@ export const tauriApi: CortexApi = {
   capabilities() { return invokeCommand<CapabilityLabel[]>("capability_matrix"); },
   reconnectNow() { return invokeCommand<void>("reconnect_now"); },
   switchScene(scene: number) { return invokeCommand<void>("switch_scene", { scene }); },
-  recallPreset(setlist: string, slot: string) { return invokeCommand<void>("recall_preset", { setlist, slot }); },
+  recallPreset(setlist: string, slot: string, recallConsent: RecallConsent) { return invokeCommand<void>("recall_preset", { setlist, slot, recallConsent }); },
   blockParameters(row: number, column: number) { return invokeCommand<ParameterView[]>("block_parameters", { row, column }); },
   setParameter(row: number, column: number, identity: ParameterIdentity, input: ParameterInput) {
     return invokeCommand<void>("set_parameter", { row, column, identity, input });

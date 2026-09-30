@@ -185,7 +185,12 @@ trait DashboardSource: Send + Sync {
     fn dashboard(&self) -> Result<DashboardSnapshot, CommandError>;
     fn reconnect_now(&self) -> Result<(), CommandError>;
     fn switch_scene(&self, scene: u32) -> Result<(), CommandError>;
-    fn recall_preset(&self, setlist: &str, slot: &str) -> Result<(), CommandError>;
+    fn recall_preset(
+        &self,
+        setlist: &str,
+        slot: &str,
+        recall_consent: cortex_rs::RecallConsent,
+    ) -> Result<(), CommandError>;
     fn set_scene_label(&self, scene: u32, label: Option<String>) -> Result<(), CommandError>;
     fn set_bypass(&self, row: u32, column: u32, bypass: bool) -> Result<(), CommandError>;
     fn set_scene_color(&self, scene: u32, color: u32) -> Result<(), CommandError>;
@@ -624,7 +629,7 @@ impl DashboardSource for DaemonDashboardSource {
                 preset_name: preset.name,
                 active_scene,
                 active_scene_label,
-                preset_dirty: None,
+                preset_dirty: after.cache.preset_dirty_value,
                 cpu_load,
                 blocks,
                 scenes,
@@ -728,7 +733,12 @@ impl DashboardSource for DaemonDashboardSource {
         Ok(())
     }
 
-    fn recall_preset(&self, setlist: &str, slot: &str) -> Result<(), CommandError> {
+    fn recall_preset(
+        &self,
+        setlist: &str,
+        slot: &str,
+        recall_consent: cortex_rs::RecallConsent,
+    ) -> Result<(), CommandError> {
         // Whether the target is the read-only factory library is derived here
         // from the path, not taken from the caller: the frontend must not be
         // able to describe a factory setlist as a user one.
@@ -738,6 +748,7 @@ impl DashboardSource for DaemonDashboardSource {
                 setlist: setlist.to_string(),
                 slot: slot.to_string(),
                 factory: is_factory_setlist(setlist),
+                recall_consent,
             })
             .map_err(|error| CommandError::daemon(error.to_string()))?;
         if acknowledged.slot != slot {
@@ -1210,11 +1221,9 @@ fn request_switch_scene(source: &dyn DashboardSource, scene: u32) -> Result<(), 
 
 /// Recall a stored preset into the working copy.
 ///
-/// Recall is free in this project's safety model - MCP-001.1, and what the CLI
-/// and MCP already do - because it writes nothing to storage. It is not without
-/// consequence: it changes what the unit is playing and replaces the working
-/// copy, discarding unsaved edits, exactly as pressing the preset on the unit
-/// does. Saving is the operation that requires confirmation.
+/// Recall writes nothing to storage, but it changes what the unit is playing
+/// and replaces the working copy. A caller must either establish that the live
+/// grid is clean or explicitly accept discarding it.
 ///
 /// Empty setlist or slot is refused here rather than sent, so a frontend bug
 /// cannot turn into a device request.
@@ -1222,6 +1231,7 @@ fn request_recall_preset(
     source: &dyn DashboardSource,
     setlist: &str,
     slot: &str,
+    recall_consent: cortex_rs::RecallConsent,
 ) -> Result<(), CommandError> {
     if setlist.trim().is_empty() || slot.trim().is_empty() {
         return Err(CommandError {
@@ -1229,7 +1239,7 @@ fn request_recall_preset(
             message: "a recall needs both a setlist path and a slot".into(),
         });
     }
-    source.recall_preset(setlist, slot)
+    source.recall_preset(setlist, slot, recall_consent)
 }
 
 #[tauri::command]
@@ -1536,10 +1546,11 @@ async fn recall_preset(
     state: tauri::State<'_, AppState>,
     setlist: String,
     slot: String,
+    recall_consent: cortex_rs::RecallConsent,
 ) -> Result<(), CommandError> {
     let source = Arc::clone(&state.source);
     tauri::async_runtime::spawn_blocking(move || {
-        request_recall_preset(source.as_ref(), &setlist, &slot)
+        request_recall_preset(source.as_ref(), &setlist, &slot, recall_consent)
     })
     .await
     .map_err(|error| CommandError::daemon(format!("recall task failed: {error}")))?
@@ -1797,7 +1808,12 @@ mod tests {
             Err(CommandError::daemon("fixture must not switch scenes"))
         }
 
-        fn recall_preset(&self, _setlist: &str, _slot: &str) -> Result<(), CommandError> {
+        fn recall_preset(
+            &self,
+            _setlist: &str,
+            _slot: &str,
+            _recall_consent: cortex_rs::RecallConsent,
+        ) -> Result<(), CommandError> {
             Err(CommandError::daemon("fixture must not recall"))
         }
 
@@ -1845,7 +1861,7 @@ mod tests {
     /// *not* reach the device.
     struct RecordingSource {
         switched: std::sync::Mutex<Vec<u32>>,
-        recalled: std::sync::Mutex<Vec<(String, String)>>,
+        recalled: std::sync::Mutex<Vec<(String, String, cortex_rs::RecallConsent)>>,
         written: std::sync::Mutex<
             Vec<(
                 u32,
@@ -1888,11 +1904,17 @@ mod tests {
             Ok(())
         }
 
-        fn recall_preset(&self, setlist: &str, slot: &str) -> Result<(), CommandError> {
-            self.recalled
-                .lock()
-                .unwrap()
-                .push((setlist.to_string(), slot.to_string()));
+        fn recall_preset(
+            &self,
+            setlist: &str,
+            slot: &str,
+            recall_consent: cortex_rs::RecallConsent,
+        ) -> Result<(), CommandError> {
+            self.recalled.lock().unwrap().push((
+                setlist.to_string(),
+                slot.to_string(),
+                recall_consent,
+            ));
             Ok(())
         }
 
@@ -2429,7 +2451,13 @@ mod tests {
     fn an_incomplete_recall_target_is_refused_before_it_reaches_the_device() {
         let source = RecordingSource::new();
         for (setlist, slot) in [("", "1A"), ("/x", ""), ("   ", "1A"), ("/x", "  ")] {
-            let error = request_recall_preset(&source, setlist, slot).unwrap_err();
+            let error = request_recall_preset(
+                &source,
+                setlist,
+                slot,
+                cortex_rs::RecallConsent::RequireClean,
+            )
+            .unwrap_err();
             assert_eq!(error.code, "invalid_preset_target");
         }
         assert!(source.recalled.lock().unwrap().is_empty());
@@ -2438,12 +2466,19 @@ mod tests {
     #[test]
     fn a_recall_passes_the_exact_setlist_and_slot_through() {
         let source = RecordingSource::new();
-        request_recall_preset(&source, "/media/p4/Presets/My Presets", "12C").unwrap();
+        request_recall_preset(
+            &source,
+            "/media/p4/Presets/My Presets",
+            "12C",
+            cortex_rs::RecallConsent::RequireClean,
+        )
+        .unwrap();
         assert_eq!(
             *source.recalled.lock().unwrap(),
             vec![(
                 "/media/p4/Presets/My Presets".to_string(),
-                "12C".to_string()
+                "12C".to_string(),
+                cortex_rs::RecallConsent::RequireClean
             )],
             "the slot must not be normalised, reformatted, or renumbered on the way out"
         );
@@ -2595,7 +2630,13 @@ mod tests {
             })
             .expect("the named slot should appear in the directory listing");
 
-        request_recall_preset(&source, &setlist, &slot).unwrap();
+        request_recall_preset(
+            &source,
+            &setlist,
+            &slot,
+            cortex_rs::RecallConsent::DiscardWorkingCopy,
+        )
+        .unwrap();
 
         for _ in 0..40 {
             std::thread::sleep(std::time::Duration::from_millis(250));

@@ -92,7 +92,7 @@ const dashboard: DashboardSnapshot = {
     device: { state: "connected", serial: null, coros_version: null, last_message_seconds: 0 },
     cache: {
       generation: 1, revision: 1, storage_revision: 1, phase: "live", catalog: true,
-      current_preset: true, active_scene: true, preset_dirty: true, preset_location: true,
+      current_preset: true, active_scene: true, preset_dirty: true, preset_dirty_value: false, preset_location: true,
       listed_setlists: [FIXTURE_SETLIST], pushes_applied: 1,
       messages_seen: 1, messages_rejected: 0, stream_gaps: 0, last_rejection: null,
     },
@@ -130,6 +130,11 @@ const dashboard: DashboardSnapshot = {
   }],
   nano: null,
 };
+
+function setFixtureQuadDirty(dirty: boolean) {
+  if (dashboard.live) dashboard.live.preset_dirty = dirty;
+  dashboard.status.cache.preset_dirty_value = dirty;
+}
 
 const nanoState: NanoCurrentState = {
   firmware: "NC-FICTION-1.2.3",
@@ -198,7 +203,7 @@ export const fixtureApi: CortexApi = {
     dashboard.live.revision += 1;
     dashboard.status.cache.revision = dashboard.live.revision;
   },
-  async recallPreset(setlist: string, slot: string) {
+  async recallPreset(setlist: string, slot: string, recallConsent) {
     // Refuse what the Rust boundary refuses, so browser mode cannot make an
     // unworkable interaction look workable.
     if (!setlist.trim() || !slot.trim()) throw new Error("a recall needs both a setlist path and a slot");
@@ -206,13 +211,16 @@ export const fixtureApi: CortexApi = {
     const stored = storedPresets[slot];
     if (!stored) throw new Error(`slot ${slot} is empty in the fixture setlist`);
     if (!dashboard.live) return;
+    if (recallConsent === "require_clean" && dashboard.live.preset_dirty !== false) {
+      throw new Error("recalling the preset replaces the working grid. The live grid is dirty or its dirty state is unavailable; explicitly allow discarding the working copy to continue");
+    }
     // A recall replaces the whole working copy, so the fixture replaces it too
     // rather than patching the name and leaving a stale grid on screen.
     dashboard.live.preset_name = stored.name;
     dashboard.live.blocks = structuredClone(stored.blocks);
     dashboard.live.active_scene = 0;
     dashboard.live.active_scene_label = scenes[0].label ?? scenes[0].letter;
-    dashboard.live.preset_dirty = false;
+    setFixtureQuadDirty(false);
     dashboard.live.revision += 1;
     dashboard.status.cache.revision = dashboard.live.revision;
   },
@@ -225,12 +233,14 @@ export const fixtureApi: CortexApi = {
       dashboard.live.active_scene_label = target.label ?? target.letter;
     }
     bumpRevision();
+    setFixtureQuadDirty(true);
   },
   async setSceneColor(scene: number, color: number) {
     const target = scenes.find((candidate) => candidate.index === scene);
     if (!target) throw new Error(`scene ${scene} is out of range`);
     target.color = 0xff000000 | (color & 0x00ffffff);
     bumpRevision();
+    setFixtureQuadDirty(true);
   },
   async copyScene(fromScene: number, toScene: number, swap: boolean) {
     // Refuse the same range the Rust boundary refuses, so browser mode cannot
@@ -260,12 +270,13 @@ export const fixtureApi: CortexApi = {
       }
     }
     bumpRevision();
+    setFixtureQuadDirty(true);
   },
   async setBypass(row: number, column: number, bypass: boolean) {
     const block = dashboard.live?.blocks.find((b) => b.row === row && b.column === column);
     if (!block) throw new Error(`no block at row ${row}, column ${column}`);
     block.bypassed = bypass;
-    if (dashboard.live) dashboard.live.preset_dirty = true;
+    setFixtureQuadDirty(true);
     bumpRevision();
   },
   async setNanoAmp(control, value) {
@@ -327,7 +338,7 @@ export const fixtureApi: CortexApi = {
       target.real = target.max === target.min ? null : target.min + target.normalised * (target.max - target.min);
     }
     if (dashboard.live) {
-      dashboard.live.preset_dirty = true;
+      setFixtureQuadDirty(true);
       dashboard.live.revision += 1;
       dashboard.status.cache.revision = dashboard.live.revision;
     }

@@ -29,5 +29,6 @@ export type { ParameterInput } from "./ParameterInput";
 export type { ParameterView } from "./ParameterView";
 export type { ParameterViewKind } from "./ParameterViewKind";
 export type { PresetSlot } from "./PresetSlot";
+export type { RecallConsent } from "./RecallConsent";
 export type { SceneSnapshot } from "./SceneSnapshot";
 export type { SetlistSnapshot } from "./SetlistSnapshot";
