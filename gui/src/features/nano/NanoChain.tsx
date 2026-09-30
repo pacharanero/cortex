@@ -281,79 +281,74 @@ export function NanoChain({ state, onSetAmp, onSetGateReduction, onSetBypass, on
     setStatus(null);
   };
 
-  return <Stack gap="md">
-    <Group justify="space-between">
+  return <section aria-label="Nano Cortex editor console" className="device-console nano-console"><Stack gap="lg">
+    <Group className="console-context" justify="space-between">
       <div><Text c="dimmed" size="sm">Fixed signal chain</Text><Title order={3}>Nano Cortex</Title></div>
     </Group>
-    <Paper p="md" withBorder>
-      <EditorCanvas label="Nano Cortex fixed signal chain" topology="nano-chain">
-        {state.slots.map((slot, index) => <EditorBlockCard
-          busy={busy !== null}
-          detail={slot.model_id == null ? undefined : `Model ${slot.model_id}`}
-          disabled={busy !== null && !busy.startsWith("fx-read:")}
-          eyebrow={roleNames[slot.role]}
-          inspectorId="nano-slot-inspector"
-          key={slot.role}
-          onSelect={() => selectRole(slot.role)}
-          positionLabel={`Position ${index + 1}`}
-          selected={selectedRole === slot.role}
-          state={slot.bypassed}
-          title={slotName(slot)}
-        />)}
-      </EditorCanvas>
-    </Paper>
-    <InspectorPanel
-      id="nano-slot-inspector"
-      onClose={selectedRole ? clearSelection : undefined}
-      summary={selectedState && <Text mt="sm">{roleNames[selectedState.role]} is {selectedState.bypassed === "unknown" ? "in an unknown state" : selectedState.bypassed}.</Text>}
-      title={selectedState ? slotName(selectedState) : "Select a chain block"}
-    >
-      {!selectedRole && <Text c="dimmed" size="sm">Block details and available controls will appear here.</Text>}
-      {selectedRole && !selectedFxSlot && <Text c="dimmed" size="sm">No editable parameters are available for this role yet.</Text>}
-      {selectedFxSlot && fxParams === null && <Text c="dimmed" size="sm">Reading parameters...</Text>}
-      {selectedFxSlot && fxParams != null && <>
-        <SimpleGrid cols={{ base: 1, sm: 2, lg: 3 }}>
-          {fxParams.map((parameter) => {
-            const accessibleName = `${roleNames[selectedRole ?? "pre_fx1"]} ${parameter.name ?? `parameter ${parameter.index}`} normalized value`;
-            return <Group align="flex-end" key={parameter.index} wrap="nowrap">
-              <div style={{ flex: 1 }}>
-                <ContinuousControl
-                  accessibleName={accessibleName}
-                  busy={busy === `fx-write:${selectedFxSlot}:${parameter.index}`}
-                  disabled={busy !== null && busy !== `fx-write:${selectedFxSlot}:${parameter.index}`}
-                  label={parameter.name ?? `Param ${parameter.index}`}
-                  max={1}
-                  min={0}
-                  onChange={(nextValue) => {
-                    fxEditEpoch.current.set(parameter.index, (fxEditEpoch.current.get(parameter.index) ?? 0) + 1);
-                    setFxDraft((current) => ({ ...current, [parameter.index]: typeof nextValue === "number" ? nextValue : Number.parseFloat(String(nextValue)) }));
-                  }}
-                  // No invented resolution: the protocol gives this value no
-                  // declared step, and an earlier fixed 0.001 slider step was
-                  // found to quantise device-native precision the moment a
-                  // control was touched. 0.0001 is an order of magnitude
-                  // finer as a stopgap, not a claimed real step.
-                  step={0.0001}
-                  value={fxDraft[parameter.index] ?? parameter.normalized}
-                />
-                <Text c="dimmed" size="xs">parameter {parameter.index} | device: {parameter.normalized.toFixed(4)} | draft: {(fxDraft[parameter.index] ?? parameter.normalized).toFixed(4)}</Text>
-              </div>
-              <Button
-                aria-busy={busy === `fx-write:${selectedFxSlot}:${parameter.index}`}
-                aria-label={`Apply ${roleNames[selectedRole ?? "pre_fx1"]} ${parameter.name ?? `parameter ${parameter.index}`}`}
-                // Half the slider step: enabled once the draft has moved by a
-                // single increment, whatever that increment currently is.
-                disabled={fxModelId == null || (busy !== null && busy !== `fx-write:${selectedFxSlot}:${parameter.index}`) || Math.abs((fxDraft[parameter.index] ?? parameter.normalized) - parameter.normalized) < 0.00005}
-                onClick={() => void applyFxParam(selectedFxSlot, parameter.index)}
-                size="xs"
-              >{busy === `fx-write:${selectedFxSlot}:${parameter.index}` ? "Applying..." : "Apply"}</Button>
-            </Group>;
-          })}
-        </SimpleGrid>
-        <Text c="dimmed" size="xs">The normalized 0.0-1.0 path. Values vary by loaded model.</Text>
-      </>}
-    </InspectorPanel>
-    <Paper p="md" withBorder>
+    <div className="nano-console__workspace">
+      <Paper className="console-surface console-topology" p="md" withBorder>
+        <EditorCanvas label="Nano Cortex fixed signal chain" topology="nano-chain">
+          {state.slots.map((slot, index) => <EditorBlockCard
+            busy={busy !== null}
+            detail={slot.model_id == null ? undefined : `Model ${slot.model_id}`}
+            disabled={busy !== null && !busy.startsWith("fx-read:")}
+            eyebrow={roleNames[slot.role]}
+            inspectorId="nano-slot-inspector"
+            key={slot.role}
+            onSelect={() => selectRole(slot.role)}
+            positionLabel={`Position ${index + 1}`}
+            selected={selectedRole === slot.role}
+            state={slot.bypassed}
+            title={slotName(slot)}
+          />)}
+        </EditorCanvas>
+      </Paper>
+      <InspectorPanel
+        id="nano-slot-inspector"
+        onClose={selectedRole ? clearSelection : undefined}
+        summary={selectedState && <Text mt="sm">{roleNames[selectedState.role]} is {selectedState.bypassed === "unknown" ? "in an unknown state" : selectedState.bypassed}.</Text>}
+        title={selectedState ? slotName(selectedState) : "Select a chain block"}
+      >
+        {!selectedRole && <Text c="dimmed" size="sm">Block details and available controls will appear here.</Text>}
+        {selectedRole && !selectedFxSlot && <Text c="dimmed" size="sm">No editable parameters are available for this role yet.</Text>}
+        {selectedFxSlot && fxParams === null && <Text c="dimmed" size="sm">Reading parameters...</Text>}
+        {selectedFxSlot && fxParams != null && <>
+          <SimpleGrid cols={{ base: 1, sm: 2, lg: 3 }}>
+            {fxParams.map((parameter) => {
+              const accessibleName = `${roleNames[selectedRole ?? "pre_fx1"]} ${parameter.name ?? `parameter ${parameter.index}`} normalized value`;
+              return <Group align="flex-end" key={parameter.index} wrap="nowrap">
+                <div style={{ flex: 1 }}>
+                  <ContinuousControl
+                    accessibleName={accessibleName}
+                    busy={busy === `fx-write:${selectedFxSlot}:${parameter.index}`}
+                    disabled={busy !== null && busy !== `fx-write:${selectedFxSlot}:${parameter.index}`}
+                    label={parameter.name ?? `Param ${parameter.index}`}
+                    max={1}
+                    min={0}
+                    onChange={(nextValue) => {
+                      fxEditEpoch.current.set(parameter.index, (fxEditEpoch.current.get(parameter.index) ?? 0) + 1);
+                      setFxDraft((current) => ({ ...current, [parameter.index]: typeof nextValue === "number" ? nextValue : Number.parseFloat(String(nextValue)) }));
+                    }}
+                    step={0.0001}
+                    value={fxDraft[parameter.index] ?? parameter.normalized}
+                  />
+                  <Text c="dimmed" size="xs">parameter {parameter.index} | device: {parameter.normalized.toFixed(4)} | draft: {(fxDraft[parameter.index] ?? parameter.normalized).toFixed(4)}</Text>
+                </div>
+                <Button
+                  aria-busy={busy === `fx-write:${selectedFxSlot}:${parameter.index}`}
+                  aria-label={`Apply ${roleNames[selectedRole ?? "pre_fx1"]} ${parameter.name ?? `parameter ${parameter.index}`}`}
+                  disabled={fxModelId == null || (busy !== null && busy !== `fx-write:${selectedFxSlot}:${parameter.index}`) || Math.abs((fxDraft[parameter.index] ?? parameter.normalized) - parameter.normalized) < 0.00005}
+                  onClick={() => void applyFxParam(selectedFxSlot, parameter.index)}
+                  size="xs"
+                >{busy === `fx-write:${selectedFxSlot}:${parameter.index}` ? "Applying..." : "Apply"}</Button>
+              </Group>;
+            })}
+          </SimpleGrid>
+          <Text c="dimmed" size="xs">The normalized 0.0-1.0 path. Values vary by loaded model.</Text>
+        </>}
+      </InspectorPanel>
+    </div>
+    <Paper className="console-surface" p="md" withBorder>
       <Text c="dimmed" fw={700} size="xs" tt="uppercase">Amp controls (raw 0-255)</Text>
       <SimpleGrid cols={{ base: 1, sm: 3, lg: 5 }} mt="sm">
         {(Object.keys(state.amp) as NanoAmpControl[]).map((control) => <Stack gap="xs" key={control}>
@@ -377,7 +372,7 @@ export function NanoChain({ state, onSetAmp, onSetGateReduction, onSetBypass, on
       </SimpleGrid>
       <Text c="dimmed" mt="sm" size="xs">Changes heard working state and saves nothing. Apply waits about six seconds for fresh device read-back.</Text>
     </Paper>
-    <Paper p="md" withBorder>
+    <Paper className="console-surface" p="md" withBorder>
       <Text c="dimmed" fw={700} size="xs" tt="uppercase">Gate / FX bypass</Text>
       <Group align="flex-end" mt="sm">
         <div style={{ flex: "1 1 160px" }}>
@@ -423,5 +418,5 @@ export function NanoChain({ state, onSetAmp, onSetGateReduction, onSetBypass, on
     </Paper>
     {status && <Text aria-live="polite" role="status" size="sm">{status}</Text>}
     {error && <Alert color="red" title="Nano operation failed">{error}</Alert>}
-  </Stack>;
+  </Stack></section>;
 }

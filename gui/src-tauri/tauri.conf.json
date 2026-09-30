@@ -14,10 +14,10 @@
     "windows": [
       {
         "title": "Cortex",
-        "width": 1280,
-        "height": 800,
-        "minWidth": 800,
-        "minHeight": 600
+        "width": 1440,
+        "height": 900,
+        "minWidth": 1080,
+        "minHeight": 675
       }
     ]
   },

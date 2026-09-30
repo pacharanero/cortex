@@ -57,25 +57,24 @@ spec/400-gui/     # this zone
 s/gui-dev         # run the Tauri dev server from any working directory
 ```
 
-## Visual Design Goal: Hardware-Faithful Control Surface
+## Visual Design Goal: Device Editor Console
 
-The Quad Cortex front panel has **10 footswitches that double as rotary encoders** - the player presses them to toggle bypass / recall scenes / navigate, and turns them to adjust the parameter of the block in that grid column. This is the primary tactile interface, and the GUI should emulate it graphically so a player who knows the hardware immediately knows where things are.
+The primary desktop workflow is an editor console, not a virtual rendering of either pedal's physical front panel. [NanoDesk](https://github.com/grliszas14/NanoDesk-releases) is useful inspiration for this direction: it puts topology, preset navigation, and the selected block's controls in one focused working surface. Its release repository does not publish source, so this project implements an independent layout and never reuses its code, artwork, screenshots, or UI assets.
 
 The planned visual model:
 
-- **A faithful rendering of the Quad Cortex front panel** - the 10 footswitch/encoder positions, the colour OLED grid display, the scene LEDs, and the context strip along the top. The player sees a virtual Quad Cortex on screen, not a generic "editor window".
-- **Click-to-press and drag-to-turn** on each footswitch/encoder. A click toggles bypass (or recalls a scene, or navigates a menu, depending on mode). A vertical drag or scroll adjusts the encoder value. Keyboard equivalents for accessibility.
-- **The grid display** mirrors the device's OLED - the current signal chain, block icons, bypass state, and active scene. It renders the crate's preset/grid/block/scene views and uses a custom scene label when present, falling back to A-H.
-- **Wrapper layers for common workflows** on top of the hardware-faithful view:
-  - **Patch browser** - a setlist/slot grid for quick preset switching (the `list_presets` + `recall_preset` path), with search and favourites.
-  - **Block palette** - a searchable list of available models (from the `Catalog`) to drag onto a grid cell.
-  - **Parameter inspector** - a form-based editor for the selected block's parameters, showing real units (dB, ms, Hz) via the catalog's range conversion. This is for fine edits where an encoder emulation is too coarse.
-  - **Scene manager** - copy/swap/relabel/recolor scenes without the footswitch mode dance.
-  - **IR / Capture loader** - file-browser-style access to the device's captures and IRs.
-- **Mode-aware footswitch labels** - the footswitches change meaning with the device mode (Preset / Stomp / Scene / Looper / Tuner); the GUI reflects the current mode and labels the switches accordingly, same as the hardware's context strip.
-- **Honest state on the virtual panel** - the GUI shows what the device reports, not what the GUI thinks it sent. Bypass state, active scene, and parameter values come from the crate's read paths (or the device's live pushes via the session layer); the GUI does not optimistically render a write and assume it took.
+- **A quiet session bar** shows the selected device, connection state, current preset when the device reports one, and only the global actions that the active device supports.
+- **A topology overview** directly below the session bar makes the signal path immediately scannable and selects a block. The Quad overview remains its routed 4x8 grid; the Nano overview remains its ordered fixed eight-role chain. Neither is coerced into the other device's model or faked as a physical front panel.
+- **A contextual navigator** keeps the most frequent device-specific browsing action available without leaving the editor. Quad uses the typed preset directory when it is available; Nano gains preset navigation only after its own inventory and recall contracts exist.
+- **A selected-block workspace** is the visual centre: model/role, bypass state, direct controls, and the parameter inspector occupy the main area. Fine numeric edits use the shared control language and exact Rust-owned units/ranges.
+- **Focused utilities** such as block replacement, scene management, IR/capture selection, tuner, and settings are disclosed only where the typed device contract supports them. They use clear standard controls rather than simulated hardware modes.
+- **Honest device state** drives every view. Bypass state, active scene, parameter values, dirty state, and pending work come from the crate's read/reducer paths; the GUI does not optimistically render a write as confirmed.
 
-The hardware-faithful view is the default; the wrapper panels are tabs or sidebars. A player who only wants to recall presets and tweak a knob never leaves the panel view; a player doing a complex edit drops into the parameter inspector or block palette.
+The console must work equally well for both devices while preserving their different capabilities. A hardware-style Quad view may later be offered as an optional companion for players who prefer it, but it is not the default workflow and cannot be the only accessible route to an operation.
+
+### Soft Window Geometry
+
+The native desktop window is resizable, not aspect-ratio-locked. Its reference canvas is 16:10 at 1440x900 logical pixels, with a 1080x675 logical-pixel minimum. The header offers 75%, 100%, 125%, 150%, and 200% 16:10 native-size presets for a predictable editor layout. Window managers and users may still choose arbitrary dimensions, so the console must retain its responsive compact fallback rather than assuming the reference ratio. The presets resize the Tauri window in logical pixels and do not change browser zoom, text size, control targets, or device state.
 
 ## Requirements
 
@@ -83,9 +82,10 @@ The first draft establishes the stack, mockable frontend API boundary, typed Tau
 
 - **Rust owns behaviour.** Tauri commands call `cortex-host` and shared `cortex-rs` APIs, returning typed serialisable data. No protocol/domain logic lives in TypeScript.
 - **The webview owns interaction.** View state, forms, layout, keyboard interaction, copy/paste affordances, and presentation live in the React frontend.
-- **Hardware-faithful control surface.** The default view is a graphical emulation of the Quad Cortex front panel: 10 footswitch/encoder positions, the OLED grid, scene LEDs, and the context strip. Click-to-press, drag-to-turn, with keyboard equivalents.
-- **Wrapper panels for common workflows.** Patch browser, block palette, parameter inspector, scene manager, and IR/capture loader sit alongside the hardware view as tabs or sidebars.
-- **Mode-aware footswitch labels.** The virtual footswitches reflect the current device mode and label themselves accordingly.
+- **Device editor console.** The default view combines a quiet session bar, the device's honest topology overview, a contextual navigator where supported, and a selected-block workspace. It must make the frequent inspect, recall, select, bypass, and adjust path clear without copying any third-party UI.
+- **Focused utilities for common workflows.** Patch browsing, block replacement, parameter editing, scene management, and IR/capture selection are contextual panels or navigators, not simulated hardware modes.
+- **Optional hardware companion.** A future Quad front-panel view may expose familiar footswitch/encoder context, but it is supplementary and any drag interaction has keyboard and standard-control alternatives.
+- **Soft 16:10 geometry.** Use a 1440x900 logical-pixel reference, an 1080x675 minimum, and native 16:10 size presets from 75% through 200%. Support arbitrary resize and high-zoom compact layouts rather than locking the window ratio.
 - **Honest capability presentation.** Hardware evidence remains Rust-owned, host-aware engineering metadata and is documented in the roadmap, diagnostics and release notes. Ordinary player controls do not repeat development-maturity badges; unavailable or refused operations remain explicit at the point of action, and the GUI never presents an unimplemented control as usable.
 - **Live state comes from the reducer.** The Rust backend owns one subscribed session and exposes typed cache snapshots plus generation/revision changes. The frontend does not pollute its interaction state with optimistic device state and never renders a pre-reconnect generation as current.
 - **Reconnect is truthful and actionable.** Reconnecting state shows the daemon's real attempt count and last error. A manual retry interrupts automatic backoff but does not mark the device live before a complete replacement handshake.
@@ -112,10 +112,10 @@ The first draft establishes the stack, mockable frontend API boundary, typed Tau
 - [x] Physical unplug/reconnect hides the old grid and directory within one refresh, then restores the same live preset only under a newer generation.
 - [x] With both products connected, the native selector preserves one live owner per device and switches Quad to Nano and back in under one second after initial startup.
 - [x] Quad and Nano use one semantic editor-canvas component set while preserving their distinct fixed topologies and keyboard-selectable blocks.
-- [ ] The default view is a hardware-faithful rendering of the Quad Cortex front panel (10 footswitch/encoders, OLED grid, scene LEDs, context strip).
-- [ ] Footswitch/encoders are interactive: click-to-press (toggle/recall/navigate), drag-to-turn (adjust parameter), with keyboard equivalents.
-- [ ] The virtual panel reflects the current device mode and labels footswitches accordingly.
-- [ ] Wrapper panels (patch browser, block palette, parameter inspector, scene manager, IR/capture loader) are accessible as tabs or sidebars.
+- [ ] The default view is a device editor console with a session bar, the product's honest topology overview, contextual navigation where available, and a selected-block workspace.
+- [ ] The topology overview supports keyboard-operable selection and keeps selected, active, bypassed, and unavailable state explicit without relying on colour or position alone.
+- [ ] Quad and Nano share the console hierarchy while retaining their distinct topology and only showing operations their typed contracts support.
+- [ ] Focused utilities (patch browser, block palette, parameter inspector, scene manager, IR/capture loader) are accessible without mode simulation or a pointer-only path.
 - [x] Hardware evidence is retained in the Rust capability matrix and engineering documentation without repeated development-maturity badges in the ordinary player workflow.
 - [x] At 800x600, Nano mode reserves no Quad-only preset sidebar and shows all eight fixed roles in one row without horizontal scrolling.
 - [ ] Continuous numeric controls use the shared slider-plus-stepper pattern wherever an honest typed range is available.
@@ -146,7 +146,7 @@ The first draft establishes the stack, mockable frontend API boundary, typed Tau
 
 ## Next
 
-- **Hardware-faithful panel.** Expand the daemon-backed working-state surface into the footswitch/OLED presentation without adding persistent writes.
+- **Editor console.** Establish the shared session bar, topology overview, contextual navigator, and selected-block workspace without adding persistent writes.
 - **E2E tests.** Add browser/Tauri workflow automation as the interaction surface grows; avoid brittle visual snapshots.
 - **Nano Cortex specifics.** Provisional until verified against real hardware; the GUI labels them.
 

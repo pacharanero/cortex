@@ -2,6 +2,56 @@
 /* SPDX-License-Identifier: AGPL-3.0-or-later */
 
 body { margin: 0; background: #101113; }
+#root { min-height: 100dvh; }
+
+/* The shell is deliberately quiet: topology and the selected block carry the
+   visual weight, not a replica of the hardware or a field of floating cards. */
+.console-header {
+  background: #17191d;
+  border-bottom-color: #30343b;
+}
+.console-header__identity { min-width: 0; }
+.console-header__title { font-size: 1.25rem; line-height: 1; }
+.console-navigator {
+  background: #14161a;
+  border-right-color: #30343b;
+}
+.console-main { background: #101113; }
+.device-console { min-width: 0; }
+.console-context {
+  border-bottom: 1px solid #30343b;
+  min-height: 3.5rem;
+  padding: 0 0 0.8rem;
+}
+.console-surface {
+  background: #17191d;
+  border-color: #30343b;
+  box-shadow: none;
+}
+.console-topology { overflow: hidden; }
+.console-workspace {
+  background: #1a1d22;
+  border-color: #454a54;
+  min-height: 16rem;
+}
+.quad-console__workspace,
+.nano-console__workspace {
+  align-items: start;
+  display: grid;
+  gap: var(--mantine-spacing-lg);
+  grid-template-columns: minmax(0, 1.7fr) minmax(19rem, 0.9fr);
+  margin-top: var(--mantine-spacing-md);
+}
+.quad-console__overview { display: grid; gap: var(--mantine-spacing-md); min-width: 0; }
+.nano-console__workspace { grid-template-columns: minmax(0, 1.6fr) minmax(19rem, 0.8fr); }
+
+@media (max-width: 1450px) {
+  .quad-console__workspace { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 1100px) {
+  .nano-console__workspace { grid-template-columns: 1fr; }
+}
 
 /* Both devices use the same block-card language while retaining honest
    topologies: a routed 4x8 Quad grid and one fixed eight-role Nano chain. */

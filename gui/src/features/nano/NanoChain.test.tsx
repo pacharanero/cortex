@@ -46,6 +46,15 @@ function renderNano(current: NanoCurrentState = state, overrides: Record<string,
 }
 
 describe("NanoChain", () => {
+  it("keeps topology and selected-block work together in the editor console", () => {
+    renderNano();
+
+    const console = screen.getByRole("region", { name: "Nano Cortex editor console" });
+    const workspace = console.querySelector(".nano-console__workspace");
+    expect(workspace?.querySelector(".console-topology")).toBeTruthy();
+    expect(workspace?.querySelector("#nano-slot-inspector")).toBeTruthy();
+  });
+
   it("shows resolved effect names and keeps an unknown model explicit", () => {
     const unknown: NanoCurrentState = {
       ...state,
