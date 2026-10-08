@@ -6765,7 +6765,10 @@ mod tests {
             assert_eq!(message.action, MessageAction::Update as i32);
             let settings = io_ports(message);
             assert_eq!(settings.in_port.len(), 1);
-            assert!(settings.out_port.is_empty());
+            assert_eq!(
+                settings.out_port,
+                [] as [crate::proto::OutputPortSettings; 0]
+            );
             assert!(settings.usb_port.is_none());
             assert_eq!(settings.in_port[0].input_port_id, 4);
             let port = &settings.in_port[0];
@@ -7287,7 +7290,7 @@ mod tests {
             qc.set_global_bypass(GlobalBypassPatch::default(), Duration::ZERO)
                 .is_err()
         );
-        assert!(link.written().is_empty());
+        assert_eq!(link.written(), [] as [std::vec::Vec<u8>; 0]);
         session.close();
     }
 
@@ -7336,7 +7339,10 @@ mod tests {
             bypass.bypassed,
             Some(crate::proto::global_eq_message::Bypassed::Bypassed(true))
         ));
-        assert!(bypass.parameters.is_empty());
+        assert_eq!(
+            bypass.parameters,
+            [] as [crate::proto::GlobalEqParameter; 0]
+        );
 
         let (next, body) = wait_for_write(&link, next, MessageType::GlobalEq);
         let band: GlobalEqMessage = prost::Message::decode(body.as_slice()).unwrap();
@@ -7651,7 +7657,7 @@ mod tests {
                 Err(crate::Error::InvalidParameter(_) | crate::Error::InvalidRow(_))
             ));
         }
-        assert!(link.written().is_empty());
+        assert_eq!(link.written(), [] as [std::vec::Vec<u8>; 0]);
         session.close();
     }
 
@@ -7856,7 +7862,7 @@ mod tests {
         assert!(build_midi_settings(0, &allowed, false).is_ok());
         assert!(qc.set_midi_out(MidiSource::Expression2, &messages).is_err());
         assert!(qc.set_preset_load_midi_out(&messages).is_err());
-        assert!(link.written().is_empty());
+        assert_eq!(link.written(), [] as [std::vec::Vec<u8>; 0]);
         session.close();
     }
 
@@ -7893,7 +7899,7 @@ mod tests {
                 parameter.scene_mode,
                 Some(crate::proto::param::SceneMode::SceneMode(true))
             );
-            assert!(parameter.param_values.is_empty());
+            assert_eq!(parameter.param_values, [] as [crate::proto::ParamValue; 0]);
 
             let (after, body) = wait_for_write(&link, next, MessageType::Scene);
             next = after;
@@ -8034,7 +8040,7 @@ mod tests {
             qc.set_input_gate(Row::from_wire(0), 0, 0.5, Some(8), true),
             Err(crate::Error::InvalidScene(_))
         ));
-        assert!(link.written().is_empty());
+        assert_eq!(link.written(), [] as [std::vec::Vec<u8>; 0]);
 
         session.close();
     }
@@ -8165,7 +8171,7 @@ mod tests {
             ),
             Err(crate::Error::InvalidParameter(_))
         ));
-        assert!(link.written().is_empty());
+        assert_eq!(link.written(), [] as [std::vec::Vec<u8>; 0]);
         session.close();
     }
 
@@ -8345,7 +8351,7 @@ mod tests {
             let message: crate::proto::GridMessage =
                 prost::Message::decode(body.as_slice()).unwrap();
             let preset = crate::grid::preset_of(&message).unwrap();
-            assert!(preset.chains.is_empty());
+            assert_eq!(preset.chains, [] as [crate::proto::Chain; 0]);
             assert_eq!(preset.tempo_program_data.len(), 1);
             let tempo = &preset.tempo_program_data[0];
             assert_eq!(
@@ -8400,7 +8406,7 @@ mod tests {
         ] {
             assert!(matches!(result, Err(crate::Error::InvalidParameter(_))));
         }
-        assert!(link.written().is_empty());
+        assert_eq!(link.written(), [] as [std::vec::Vec<u8>; 0]);
 
         session.close();
     }
@@ -8696,7 +8702,10 @@ mod tests {
         });
 
         assert_eq!(qc.recents(Duration::from_secs(1)).unwrap().items.len(), 1);
-        assert!(qc.pinned_models(Duration::from_secs(1)).unwrap().is_empty());
+        assert_eq!(
+            qc.pinned_models(Duration::from_secs(1)).unwrap(),
+            [] as [u32; 0]
+        );
 
         responder.join().unwrap();
         session.close();
@@ -8756,10 +8765,9 @@ mod tests {
             );
         });
 
-        assert!(
-            qc.favorites(Duration::from_millis(400), 2)
-                .unwrap()
-                .is_empty()
+        assert_eq!(
+            qc.favorites(Duration::from_millis(400), 2).unwrap(),
+            [] as [crate::proto::RecentsFavoritesItem; 0]
         );
         responder.join().unwrap();
         session.close();
@@ -8777,7 +8785,7 @@ mod tests {
         let pin: PinnedModelsMessage = prost::Message::decode(body.as_slice()).unwrap();
         assert_eq!(pin.action, MessageAction::Create as i32);
         assert_eq!(pin.models, vec![4006]);
-        assert!(pin.captures.is_empty());
+        assert_eq!(pin.captures, [] as [std::string::String; 0]);
         assert!(pin.request_id.is_none());
 
         qc.unpin_model(4006).unwrap();
@@ -8786,7 +8794,7 @@ mod tests {
         let unpin: PinnedModelsMessage = prost::Message::decode(body.as_slice()).unwrap();
         assert_eq!(unpin.action, MessageAction::Delete as i32);
         assert_eq!(unpin.models, vec![4006]);
-        assert!(unpin.captures.is_empty());
+        assert_eq!(unpin.captures, [] as [std::string::String; 0]);
         assert!(unpin.request_id.is_none());
 
         session.close();
@@ -8893,7 +8901,7 @@ mod tests {
             .add_favorite(&RecentsFavoritesItem::default(), Duration::from_millis(1))
             .unwrap_err();
         assert!(matches!(error, crate::Error::InvalidParameter(_)));
-        assert!(link.written().is_empty());
+        assert_eq!(link.written(), [] as [std::vec::Vec<u8>; 0]);
 
         session.close();
     }
@@ -9002,10 +9010,9 @@ mod tests {
             );
         });
 
-        assert!(
-            qc.list_irs(None, Duration::from_secs(1))
-                .unwrap()
-                .is_empty()
+        assert_eq!(
+            qc.list_irs(None, Duration::from_secs(1)).unwrap(),
+            [] as [crate::client::LibraryEntry; 0]
         );
         assert_eq!(
             qc.captures(Duration::from_secs(1)).unwrap(),
