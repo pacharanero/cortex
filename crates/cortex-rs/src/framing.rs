@@ -392,7 +392,7 @@ mod tests {
     fn encode_then_decode_round_trips() {
         let payload = b"hello world this is a test payload";
         let reports = encode_message(10, payload);
-        assert!(!reports.is_empty());
+        assert_ne!(reports, [] as [std::vec::Vec<u8>; 0]);
         // Reassemble by feeding each report through Frame::parse + reassembler.
         let mut r = FrameReassembler::new();
         let mut body = None;
