@@ -1189,7 +1189,7 @@ mod tests {
         let message = decode(&set_tempo_param(7, 1.0 / 3.0).unwrap());
         assert_eq!(message.action, MessageAction::Update as i32);
         let preset = preset_of(&message).unwrap();
-        assert!(preset.chains.is_empty());
+        assert_eq!(preset.chains, [] as [crate::proto::Chain; 0]);
         assert_eq!(preset.tempo_program_data.len(), 1);
         let tempo = &preset.tempo_program_data[0];
         assert_eq!(tempo.hash, Some(model::Hash::Hash(TEMPO_CONTROL)));
@@ -1288,7 +1288,7 @@ mod tests {
             parameter.expression_max,
             Some(param::ExpressionMax::ExpressionMax(0.1))
         );
-        assert!(parameter.param_values.is_empty());
+        assert_eq!(parameter.param_values, [] as [crate::proto::ParamValue; 0]);
     }
 
     #[test]
@@ -1366,9 +1366,9 @@ mod tests {
         let chain = only_chain(&decode(
             &set_splitter_param(Row::from_wire(0), 3, 0.25).unwrap(),
         ));
-        assert!(chain.splitter.is_empty());
-        assert!(chain.models.is_empty());
-        assert!(chain.mixer.is_empty());
+        assert_eq!(chain.splitter, [] as [crate::proto::Model; 0]);
+        assert_eq!(chain.models, [] as [crate::proto::Model; 0]);
+        assert_eq!(chain.mixer, [] as [crate::proto::Model; 0]);
         assert_eq!(chain.combined_splitter.len(), 1);
         let splitter = &chain.combined_splitter[0];
         assert!(splitter.hash.is_none());
@@ -1403,9 +1403,9 @@ mod tests {
                 selected[0].params[0].param_values[0].value,
                 Some(param_value::Value::FloatValue(0.75))
             );
-            assert!(chain.models.is_empty());
-            assert!(chain.splitter.is_empty());
-            assert!(chain.combined_splitter.is_empty());
+            assert_eq!(chain.models, [] as [crate::proto::Model; 0]);
+            assert_eq!(chain.splitter, [] as [crate::proto::Model; 0]);
+            assert_eq!(chain.combined_splitter, [] as [crate::proto::Model; 0]);
             assert_eq!(chain.mixer.is_empty(), control != SubControl::Mixer);
             assert_eq!(
                 chain.output_control.is_empty(),
@@ -1428,7 +1428,10 @@ mod tests {
             splitter_param.scene_mode,
             Some(param::SceneMode::SceneMode(true))
         );
-        assert!(splitter_param.param_values.is_empty());
+        assert_eq!(
+            splitter_param.param_values,
+            [] as [crate::proto::ParamValue; 0]
+        );
 
         for control in [
             SubControl::Mixer,
@@ -1447,7 +1450,7 @@ mod tests {
                 parameter.scene_mode,
                 Some(param::SceneMode::SceneMode(true))
             );
-            assert!(parameter.param_values.is_empty());
+            assert_eq!(parameter.param_values, [] as [crate::proto::ParamValue; 0]);
         }
     }
 
@@ -1456,7 +1459,7 @@ mod tests {
         for muted in [false, true] {
             let chain = only_chain(&decode(&set_split_mute(Row::from_wire(2), muted).unwrap()));
             assert_eq!(chain.split_bypass, vec![SceneBypass { bypass: muted }]);
-            assert!(chain.mix_bypass.is_empty());
+            assert_eq!(chain.mix_bypass, [] as [crate::proto::SceneBypass; 0]);
         }
     }
 

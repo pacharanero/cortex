@@ -658,7 +658,7 @@ mod tests {
         let preset = fictional_preset();
         assert_eq!(input_chain_rows(&preset, 0), vec![2]);
         assert_eq!(input_chain_rows(&preset, 1), vec![0]);
-        assert!(input_chain_rows(&preset, 9).is_empty());
+        assert_eq!(input_chain_rows(&preset, 9), [] as [u32; 0]);
     }
 
     #[test]
@@ -802,7 +802,10 @@ mod tests {
             vec!["Off", "Fictional Input"]
         );
         assert_eq!(param_options(&preset, 2, 0, 1), vec!["Positional one"]);
-        assert!(param_options(&preset, 2, 7, 6).is_empty());
+        assert_eq!(
+            param_options(&preset, 2, 7, 6),
+            [] as [std::string::String; 0]
+        );
     }
 
     #[test]
@@ -903,7 +906,7 @@ mod tests {
                 },
             ]
         );
-        assert!(free_rows(&preset).is_empty());
+        assert_eq!(free_rows(&preset), [] as [u32; 0]);
     }
 
     #[test]

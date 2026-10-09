@@ -115,7 +115,7 @@ fn block_params(
             Some(param_value::Value::IntValue(v)) => Some(ParamValueKind::Number(f64::from(*v))),
             None => None,
         };
-        let Some(value) = p.param_values.first().and_then(&read) else {
+        let Some(value) = p.param_values.first().and_then(read) else {
             continue;
         };
         // A scene-following parameter stores one value per scene. Showing
