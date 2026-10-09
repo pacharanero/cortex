@@ -112,6 +112,56 @@ jobs:
           cargo check -p cortex-host --target x86_64-pc-windows-gnu
           cargo check -p cortex-mcp --target x86_64-pc-windows-gnu
 
+  workspace-msrv:
+    name: Workspace MSRV (Rust 1.90)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Rust 1.90
+        uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # v1
+        with:
+          toolchain: "1.90"
+
+      - name: Install protoc and Tauri system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libssl-dev \
+            libudev-dev \
+            libwebkit2gtk-4.1-dev \
+            libxdo-dev \
+            protobuf-compiler
+
+      - name: Test workspace at its MSRV
+        run: cargo test --locked --workspace
+
+  cortex-rs-msrv:
+    name: cortex-rs MSRV (Rust 1.88)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Rust 1.88
+        uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # v1
+        with:
+          toolchain: "1.88"
+
+      - name: Install leaf test prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential libudev-dev protobuf-compiler
+
+      - name: Test cortex-rs at its MSRV
+        run: cargo test --locked -p cortex-rs --all-features
+
   audit:
     name: Security audit
     runs-on: ubuntu-latest
@@ -156,7 +206,7 @@ jobs:
 
   tag-release:
     name: Tag and release version bump
-    needs: [test, audit, workflow-security, reuse]
+    needs: [test, workspace-msrv, cortex-rs-msrv, audit, workflow-security, reuse]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     permissions:
       actions: read

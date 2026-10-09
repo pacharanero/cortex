@@ -14,7 +14,8 @@ members = [
 [workspace.package]
 version = "0.2.0"
 edition = "2024"
-rust-version = "1.88"
+# Tauri 2.12 requires Rust 1.90. cortex-rs declares its lower MSRV directly.
+rust-version = "1.90"
 authors = ["Dr Marcus Baw"]
 license = "AGPL-3.0-or-later"
 repository = "https://github.com/pacharanero/cortex"
