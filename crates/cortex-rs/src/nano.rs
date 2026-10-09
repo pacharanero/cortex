@@ -1829,7 +1829,7 @@ mod tests {
         assert_eq!(known_ids.len(), 53);
         for model_id in known_ids {
             let profile = fx_model_profile(model_id).expect("known Nano model needs a profile");
-            assert!(!profile.name.is_empty());
+            assert_ne!(profile.name, "");
             assert!(!profile.parameter_names.is_empty(), "model {model_id}");
             assert!(profile.parameter_names.iter().all(|name| !name.is_empty()));
         }
