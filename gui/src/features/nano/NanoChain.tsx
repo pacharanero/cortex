@@ -1,9 +1,10 @@
 // SPDX-FileCopyrightText: 2026 Dr Marcus Baw
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-import { Alert, Button, Group, Paper, SimpleGrid, Stack, Switch, Text, Title } from "@mantine/core";
+import { Button, Group, Paper, SimpleGrid, Stack, Switch, Text, Title } from "@mantine/core";
 import { useEffect, useRef, useState } from "react";
 import { ContinuousControl } from "../../shared/editor/ContinuousControl";
+import { ConsumerErrorAlert } from "../../shared/ConsumerErrorAlert";
 import { EditorBlockCard, EditorCanvas, InspectorPanel } from "../../shared/editor/EditorCanvas";
 import type { NanoAmpControl, NanoBypassTarget, NanoCurrentState, NanoFxParameter, NanoFxSlot, NanoSlotRole } from "../../shared/ipc/types";
 
@@ -417,6 +418,6 @@ export function NanoChain({ state, onSetAmp, onSetGateReduction, onSetBypass, on
       <Text c="dimmed" mt="sm" size="xs">Toggling bypass changes heard working state and saves nothing. Each toggle waits about six seconds for fresh device read-back. The Gate&apos;s &quot;on&quot; state may read back as unknown because the device represents it by omitting the field.</Text>
     </Paper>
     {status && <Text aria-live="polite" role="status" size="sm">{status}</Text>}
-    {error && <Alert color="red" title="Nano operation failed">{error}</Alert>}
+    {error && <ConsumerErrorAlert error={error} title="Nano Cortex change not applied">Nano Cortex did not confirm the change. Its device state has not been updated.</ConsumerErrorAlert>}
   </Stack></section>;
 }

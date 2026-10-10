@@ -1,9 +1,10 @@
 // SPDX-FileCopyrightText: 2026 Dr Marcus Baw
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-import { Alert, Button, ColorInput, Group, NativeSelect, Radio, Stack, Text, TextInput } from "@mantine/core";
+import { Button, ColorInput, Group, NativeSelect, Radio, Stack, Text, TextInput } from "@mantine/core";
 import { useEffect, useRef, useState } from "react";
 import type { SceneSnapshot } from "../../shared/ipc/types";
+import { ConsumerErrorAlert } from "../../shared/ConsumerErrorAlert";
 
 interface SceneSelectorProps {
   scenes: SceneSnapshot[];
@@ -130,10 +131,9 @@ export function SceneSelector({ scenes, activeScene, generation, revision, disab
       // flag - clear it now, or a later genuine device report would be
       // silently swallowed as if it were this failed attempt's echo.
       ownTransition.current = false;
-      const message = reason instanceof Error ? reason.message : String(reason);
-      setError(message);
+      setError(reason instanceof Error ? reason.message : String(reason));
       // Say what did not happen, rather than leaving the last success standing.
-      setAnnouncement(`Scene ${target.letter} was refused: ${message}`);
+      setAnnouncement(`Scene ${target.letter} was not changed.`);
     } finally {
       setBusy(false);
     }
@@ -236,7 +236,7 @@ export function SceneSelector({ scenes, activeScene, generation, revision, disab
         </div>
       </Radio.Group>
 
-      {error && <Alert color="red" title="Scene switch failed">{error}</Alert>}
+      {error && <ConsumerErrorAlert error={error} title="Scene unchanged">Cortex did not confirm the scene change. The active scene has not been updated.</ConsumerErrorAlert>}
 
       <SceneDetails
         disabled={disabled}
@@ -327,7 +327,7 @@ function SceneDetails({ scene, disabled, onRename, onRecolour }: SceneDetailsPro
         />
         {busy && <Text c="dimmed" size="xs">writing</Text>}
       </Group>
-      {failure && <Alert color="red" title="Scene edit failed">{failure}</Alert>}
+      {failure && <ConsumerErrorAlert error={failure} title="Scene details unchanged">Cortex did not confirm the scene name or colour change.</ConsumerErrorAlert>}
     </Stack>
   );
 }
@@ -411,7 +411,7 @@ function SceneCopySwap({ scenes, disabled, onCopySwap }: SceneCopySwapProps) {
         {busy && <Text c="dimmed" size="xs">writing</Text>}
       </Group>
       {complete && same && <Text c="dimmed" size="xs">Choose two different scenes.</Text>}
-      {failure && <Alert color="red" title="Scene copy/swap failed">{failure}</Alert>}
+      {failure && <ConsumerErrorAlert error={failure} title="Scenes unchanged">Cortex did not confirm the copy or swap. The working scenes have not been updated.</ConsumerErrorAlert>}
     </Stack>
   );
 }

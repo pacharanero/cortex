@@ -204,7 +204,7 @@ describe("NanoChain", () => {
 
     await act(async () => rejectWrite(new Error("confirmation failed")));
     expect(await screen.findByText("confirmation failed")).toBeTruthy();
-    expect(screen.getByRole("alert").textContent).toContain("Nano operation failed");
+    expect(screen.getByRole("alert").textContent).toContain("Nano Cortex change not applied");
   });
 
   it("refreshes device values after an unconfirmed FX write", async () => {
@@ -253,7 +253,7 @@ describe("NanoChain", () => {
     fireEvent.click(screen.getByRole("button", { name: /Position 1: Gate/ }));
 
     expect(screen.getByText("confirmation failed")).toBeTruthy();
-    expect(screen.getByRole("alert").textContent).toContain("Nano operation failed");
+    expect(screen.getByRole("alert").textContent).toContain("Nano Cortex change not applied");
   });
 
   it("supersedes an unacknowledged FX write failure once a newly selected role's read begins", async () => {

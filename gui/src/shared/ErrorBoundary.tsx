@@ -1,9 +1,10 @@
 // SPDX-FileCopyrightText: 2026 Dr Marcus Baw
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-import { Alert, Button, Group, Stack, Text } from "@mantine/core";
+import { Button, Group } from "@mantine/core";
 import { Component } from "react";
 import type { ErrorInfo, ReactNode } from "react";
+import { ConsumerErrorAlert } from "./ConsumerErrorAlert";
 
 interface ErrorBoundaryProps {
   /** Named in the fallback so the failure points at one panel, not the whole app. */
@@ -42,16 +43,13 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
     const { error } = this.state;
     if (!error) return this.props.children;
     return (
-      <Alert color="red" title={`${this.props.name} failed`}>
-        <Stack gap="xs">
-          <Text size="sm">{error.message}</Text>
-          <Group>
-            <Button color="red" onClick={() => window.location.reload()} size="xs" variant="outline">
-              Reload
-            </Button>
-          </Group>
-        </Stack>
-      </Alert>
+      <ConsumerErrorAlert
+        action={<Group><Button color="red" onClick={() => window.location.reload()} size="xs" variant="outline">Reload</Button></Group>}
+        error={error}
+        title={`${this.props.name} needs to reload`}
+      >
+        This part of Cortex stopped working. Reload Cortex to continue.
+      </ConsumerErrorAlert>
     );
   }
 }

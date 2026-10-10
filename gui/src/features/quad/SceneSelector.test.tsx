@@ -139,7 +139,7 @@ describe("SceneSelector device-reported transitions", () => {
     const { rerender } = renderWithOutsideControl({ onSwitch });
 
     fireEvent.click(screen.getByRole("radio", { name: "B - Lead" }));
-    await waitFor(() => expect(status().textContent).toBe("Scene B was refused: refused"));
+    await waitFor(() => expect(status().textContent).toBe("Scene B was not changed."));
 
     // Nothing was switched, so activeScene/revision are unchanged - a later,
     // genuinely newer report must still be able to announce.

@@ -1,9 +1,10 @@
 // SPDX-FileCopyrightText: 2026 Dr Marcus Baw
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-import { Alert, Badge, Group, Select, Stack, Text, TextInput } from "@mantine/core";
+import { Badge, Group, Select, Stack, Text, TextInput } from "@mantine/core";
 import { useEffect, useRef, useState } from "react";
 import { ContinuousControl } from "../../shared/editor/ContinuousControl";
+import { ConsumerErrorAlert } from "../../shared/ConsumerErrorAlert";
 import type { ParameterIdentity, ParameterInput, ParameterView } from "../../shared/ipc/types";
 
 interface ParameterEditorProps {
@@ -46,7 +47,7 @@ export function ParameterEditor({ parameters, disabled, onWrite }: ParameterEdit
 
   return (
     <Stack aria-busy={pending !== null} gap="md">
-      {error && <Alert color="red" title="Parameter write failed">{error}</Alert>}
+      {error && <ConsumerErrorAlert error={error} title="Parameter unchanged">Cortex did not confirm this parameter change. The device value has not been updated.</ConsumerErrorAlert>}
       {/* Controls are NOT disabled while a write is in flight. A disabled
           element cannot hold focus, so disabling the control being operated
           throws focus onto the document and kills keyboard interaction from

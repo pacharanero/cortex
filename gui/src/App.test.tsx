@@ -188,6 +188,20 @@ describe("device switching", () => {
     expect(screen.getByText("Nano Cortex editor channel is owned by another transport")).toBeTruthy();
   });
 
+  it("explains a missing Cortex without making daemon output the default message", async () => {
+    const detail = "could not start a session: device not found";
+    api.dashboard.mockRejectedValue(new Error(detail));
+
+    renderApp();
+
+    expect(await screen.findByText("Connect a Cortex")).toBeTruthy();
+    expect(screen.getByText("Connect your Quad Cortex or Nano Cortex by USB, then try again. If it is already connected, check that no other app is using it.")).toBeTruthy();
+    const details = screen.getByText(detail).closest("details");
+    expect(details?.open).toBe(false);
+    fireEvent.click(screen.getByText("Show technical details"));
+    expect(details?.open).toBe(true);
+  });
+
   it("does not reserve the Quad preset directory in Nano mode", async () => {
     api.dashboard.mockResolvedValue(snapshot("nano_cortex"));
 

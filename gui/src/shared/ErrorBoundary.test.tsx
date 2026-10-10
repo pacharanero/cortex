@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 import { MantineProvider } from "@mantine/core";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import type { ReactElement } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ErrorBoundary } from "./ErrorBoundary";
@@ -44,15 +44,19 @@ describe("ErrorBoundary", () => {
     expect(screen.getByText("fine")).toBeDefined();
   });
 
-  it("names the failed panel and offers a reload instead of going blank", () => {
+  it("offers a consumer-facing recovery action and keeps the render error collapsed", () => {
     renderWithMantine(
       <ErrorBoundary name="Grid">
         <Thrower />
       </ErrorBoundary>,
     );
-    expect(screen.getByText("Grid failed")).toBeDefined();
-    expect(screen.getByText("boom from Thrower")).toBeDefined();
+    expect(screen.getByText("Grid needs to reload")).toBeDefined();
+    expect(screen.getByText("This part of Cortex stopped working. Reload Cortex to continue.")).toBeDefined();
     expect(screen.getByRole("button", { name: "Reload" })).toBeDefined();
+    const details = screen.getByText("boom from Thrower").closest("details");
+    expect(details?.open).toBe(false);
+    fireEvent.click(screen.getByText("Show technical details"));
+    expect(details?.open).toBe(true);
   });
 
   it("does not swallow the error from the console", () => {
@@ -75,7 +79,7 @@ describe("ErrorBoundary", () => {
         </ErrorBoundary>
       </>,
     );
-    expect(screen.getByText("Grid failed")).toBeDefined();
+    expect(screen.getByText("Grid needs to reload")).toBeDefined();
     expect(screen.getByText("fine")).toBeDefined();
   });
 });
