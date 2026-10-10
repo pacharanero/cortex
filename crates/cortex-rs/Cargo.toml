@@ -5,7 +5,8 @@
 name = "cortex-rs"
 version.workspace = true
 edition.workspace = true
-rust-version.workspace = true
+# Keep the reusable protocol crate compatible with its documented lower MSRV.
+rust-version = "1.88"
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
