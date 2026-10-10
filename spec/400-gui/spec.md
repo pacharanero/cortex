@@ -88,7 +88,8 @@ The first draft establishes the stack, mockable frontend API boundary, typed Tau
 - **Soft 16:10 geometry.** Use a 1440x900 logical-pixel reference, an 1080x675 minimum, and native 16:10 size presets from 75% through 200%. Support arbitrary resize and high-zoom compact layouts rather than locking the window ratio.
 - **Honest capability presentation.** Hardware evidence remains Rust-owned, host-aware engineering metadata and is documented in the roadmap, diagnostics and release notes. Ordinary player controls do not repeat development-maturity badges; unavailable or refused operations remain explicit at the point of action, and the GUI never presents an unimplemented control as usable.
 - **Live state comes from the reducer.** The Rust backend owns one subscribed session and exposes typed cache snapshots plus generation/revision changes. The frontend does not pollute its interaction state with optimistic device state and never renders a pre-reconnect generation as current.
-- **Reconnect is truthful and actionable.** Reconnecting state shows the daemon's real attempt count and last error. A manual retry interrupts automatic backoff but does not mark the device live before a complete replacement handshake.
+- **Reconnect is truthful and actionable.** Reconnecting state shows the daemon's real attempt count, clear recovery guidance, and a manual retry. Its raw diagnostic stays behind the consumer-error disclosure. A manual retry interrupts automatic backoff but does not mark the device live before a complete replacement handshake.
+- **Consumer-facing errors.** Every player-visible error names the affected outcome and the next safe action in plain language. IPC, daemon, and render diagnostics remain available only behind an explicit "Show technical details" disclosure; raw error strings are never the default alert body.
 - **Bounded host-use release.** The GUI holds only short-lived request sockets, so window/process close releases its host use without stopping a shared daemon. A request already accepted remains daemon-side in flight through completion; the GUI never sends global `Shutdown` merely because its window closed.
 - **Fast dual-device selection.** Quad and Nano use product-scoped local endpoints and may remain warm concurrently when both physical devices are connected. Switching views never kills an explicit daemon or gives either physical HID interface a second owner.
 - **Shared editor language, honest topology.** Quad's routed 4x8 grid and Nano's fixed eight-role chain use the same semantic block cards, selection states and inspector framing without coercing either product into the other's domain model.
@@ -123,6 +124,7 @@ The first draft establishes the stack, mockable frontend API boundary, typed Tau
 - [x] `gui/package.json`, `package-lock.json`, and `tauri.conf.json` versions move with `s/version++`.
 - [x] `docs/gui/` explains explicit fixture and daemon run modes, state freshness, non-persistent working-state edits, and the absent save boundary.
 - [x] A thrown error in the scene selector, grid, or inspector renders a visible per-panel failure (naming the panel, offering a reload) instead of silently unmounting, proven by an automated test that throws.
+- [x] Connection, refresh, reconnect, edit, and render failures use the shared consumer-facing alert: clear recovery copy is visible by default and the raw diagnostic begins collapsed behind "Show technical details".
 
 ## Non-Goals
 

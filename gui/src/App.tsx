@@ -7,6 +7,7 @@ import { Grid } from "./features/quad/Grid";
 import { ParameterEditor } from "./features/quad/ParameterEditor";
 import { SceneSelector } from "./features/quad/SceneSelector";
 import { ErrorBoundary } from "./shared/ErrorBoundary";
+import { ConsumerErrorAlert } from "./shared/ConsumerErrorAlert";
 import { NanoChain } from "./features/nano/NanoChain";
 import { InspectorPanel } from "./shared/editor/EditorCanvas";
 import { cortexApi } from "./shared/ipc/api";
@@ -121,7 +122,7 @@ export function App() {
   }, [selectedCellKey, liveRevision]);
 
   if (!snapshot && !error) return <Text p="xl">Loading Cortex state...</Text>;
-  if (!snapshot) return <Alert color="red" m="xl" title="Cortex session unavailable">{error}</Alert>;
+  if (!snapshot) return <Stack m="xl"><ConsumerErrorAlert error={error} title="Connect a Cortex">Connect your Quad Cortex or Nano Cortex by USB, then try again. If it is already connected, check that no other app is using it.</ConsumerErrorAlert></Stack>;
 
   const live = snapshot.live;
   const nano = snapshot.nano;
@@ -446,22 +447,22 @@ export function App() {
        <AppShell.Main className="console-main">
          <Stack gap="lg">
            {snapshot.source === "fixture" && <Alert color="yellow" title="Fixture mode">Browser development data is active. Fixture mode never falls back from a daemon error.</Alert>}
-           {error && <Alert color="red" title="Refresh failed">{error}</Alert>}
-           {windowSizeError && <Alert color="red" title="Window resize failed">{windowSizeError}</Alert>}
-           {nanoOperationError && <Alert color="red" title="Nano operation failed">{nanoOperationError}</Alert>}
-          {!live && !nano && <Alert color="orange" title={`Device ${snapshot.status.device.state}`}>
-            <Stack gap="xs">
-              <Text>Live state is hidden until the daemon reports a connected, complete generation.</Text>
-              {reconnectState && <>
-                <Text size="sm">Attempt {reconnectState.attempts}: {reconnectState.last_error}</Text>
-                <Group gap="sm"><Button color="orange" loading={retrying} onClick={() => void reconnectNow()} size="xs">Reconnect now</Button><Text c="dimmed" size="sm">Automatic retries continue in the background.</Text></Group>
-              </>}
-              {failedState && <>
-                <Text size="sm">{failedState.error}</Text>
-                <Button color="orange" loading={retrying} onClick={() => void reconnectNow()} size="xs">Reconnect now</Button>
-              </>}
-            </Stack>
-          </Alert>}
+           {error && <ConsumerErrorAlert error={error} title="Cortex needs attention">Cortex could not refresh its current state. Check the USB connection, then try again.</ConsumerErrorAlert>}
+           {windowSizeError && <ConsumerErrorAlert error={windowSizeError} title="Window size unchanged">Cortex could not change the window size. You can keep using the current size.</ConsumerErrorAlert>}
+           {nanoOperationError && <ConsumerErrorAlert error={nanoOperationError} title="Nano Cortex change not applied">Nano Cortex did not confirm the change. Its device state has not been updated.</ConsumerErrorAlert>}
+           {!live && !nano && reconnectState && <ConsumerErrorAlert
+             action={<Group gap="sm"><Button color="orange" loading={retrying} onClick={() => void reconnectNow()} size="xs">Reconnect now</Button><Text c="dimmed" size="sm">Automatic retries continue in the background.</Text></Group>}
+             color="orange"
+             error={reconnectState.last_error}
+             title="Reconnecting to Cortex"
+           >Cortex is trying to reconnect. Live state will return when it has a complete update.</ConsumerErrorAlert>}
+           {!live && !nano && failedState && <ConsumerErrorAlert
+             action={<Button color="orange" loading={retrying} onClick={() => void reconnectNow()} size="xs">Reconnect now</Button>}
+             color="orange"
+             error={failedState.error}
+             title="Cortex is not connected"
+           >Check the USB connection and try reconnecting. Live state is unavailable until Cortex connects.</ConsumerErrorAlert>}
+           {!live && !nano && !reconnectState && !failedState && <Alert color="orange" title={`Device ${snapshot.status.device.state}`}>Live state is hidden until Cortex reports a connected, complete update.</Alert>}
            {nano && <ErrorBoundary name="Nano editor"><NanoChain
             key={`nano:${snapshot.status.cache.generation}`}
             onReadFxParams={readNanoFxParams}
@@ -528,7 +529,7 @@ export function App() {
                     {selected && (
                       <>
                         <Divider label="Parameters" labelPosition="left" my="md" />
-                        {parameterError && <Alert color="orange" title="Parameters unavailable">{parameterError}</Alert>}
+                        {parameterError && <ConsumerErrorAlert color="orange" error={parameterError} title="Parameters unavailable">Cortex could not read parameters for this block. Select it again or refresh Cortex to try again.</ConsumerErrorAlert>}
                         {!parameterError && parameters === null && <Text c="dimmed" size="sm">Reading parameters...</Text>}
                         {!parameterError && parameters !== null && (
                           <ParameterEditor
