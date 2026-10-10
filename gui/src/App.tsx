@@ -396,7 +396,7 @@ export function App() {
                 {windowSizePresets.map((preset) => <Menu.Item key={preset.label} onClick={() => void resizeWindow(preset)}>{preset.label}</Menu.Item>)}
               </Menu.Dropdown>
             </Menu>}
-            <Badge color={snapshot.source === "fixture" ? "yellow" : connected ? "green" : "orange"}>{health}</Badge><Badge variant="outline">gen {snapshot.status.cache.generation} / rev {snapshot.status.cache.revision}</Badge>
+            <Badge color={snapshot.source === "fixture" ? "yellow" : connected ? "green" : "orange"}>{health}</Badge>
           </Group>
         </Group>
       </AppShell.Header>

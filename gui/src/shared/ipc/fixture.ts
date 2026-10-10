@@ -169,7 +169,7 @@ function fxParameters(names: (string | null)[]): NanoFxParameter[] {
   }));
 }
 
-/** The device answers an edit with a new revision; the header shows it. */
+/** The device answers an edit with a new revision. */
 function bumpRevision() {
   if (!dashboard.live) return;
   dashboard.live.revision += 1;
@@ -199,7 +199,7 @@ export const fixtureApi: CortexApi = {
     if (!dashboard.live) return;
     dashboard.live.active_scene = target.index;
     dashboard.live.active_scene_label = target.label ?? target.letter;
-    // The device answers a switch with a new revision; the header shows it.
+    // The device answers a switch with a new revision.
     dashboard.live.revision += 1;
     dashboard.status.cache.revision = dashboard.live.revision;
   },
