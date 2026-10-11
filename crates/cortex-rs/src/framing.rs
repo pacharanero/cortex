@@ -265,6 +265,83 @@ impl FrameReassembler {
 /// prefix, i.e. 126 bytes of payload per report.
 pub const CHUNK_SIZE: usize = HidReportGeometry::QUAD_CORTEX.data_capacity();
 
+/// Hard upper bound on a [`BoundedReassembler`]'s reassembled body.
+///
+/// The long-lived subscribed session also uses this cap:
+/// the largest observed reassembled body is a 150,008-byte `LocalBackup`
+/// chunk, far below this limit.
+pub const MAX_REASSEMBLED_LEN: usize = 1 << 20; // 1 MiB
+
+/// A [`FrameReassembler`] with a hard byte cap on reassembled state.
+///
+/// Reassembly is flag-driven and the wire carries no total-length field, so
+/// nothing stops a stream of `MIDDLE` frames - genuine or from a malfunctioning
+/// device - from growing a buffer forever. The long-lived subscribed session
+/// already guards against this with its own inline 1 MiB check, but every
+/// other caller that reassembles frames from a source outside that session -
+/// the finite one-shot reader in [`crate::link::read_message`], and the
+/// direction-specific offline capture decoder - fed the pure, uncapped
+/// `FrameReassembler` directly. This type gives those callers the same
+/// protection as one shared implementation, rather than each re-deriving the
+/// check, while leaving the pure reassembler's caller-owned `reset`/
+/// `buffered_len` API untouched for callers (such as the session) that
+/// already enforce their own policy.
+pub struct BoundedReassembler {
+    inner: FrameReassembler,
+}
+
+impl Default for BoundedReassembler {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl BoundedReassembler {
+    /// Create a fresh reassembler bounded at [`MAX_REASSEMBLED_LEN`].
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            inner: FrameReassembler::new(),
+        }
+    }
+
+    /// Feed one frame, as [`FrameReassembler::feed`], but reject a frame that
+    /// would push the reassembled body over [`MAX_REASSEMBLED_LEN`] before
+    /// retaining its bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`crate::Error::Framing`] if this frame would complete or
+    /// extend a body beyond the cap, leaving the reassembler reset and ready
+    /// for the next message. Errors from [`FrameReassembler::feed`] retain
+    /// that state machine's behaviour.
+    pub fn feed(&mut self, frame: &Frame) -> crate::Result<Option<Vec<u8>>> {
+        // A FIRST (or COMPLETE, which `is_first` also satisfies) frame
+        // starts a fresh body, so the stale buffer it is about to discard
+        // must not count against this frame's own contribution. Checking
+        // the prospective length - what `FrameReassembler::feed` is about to
+        // produce - before calling it means a frame that would exceed the
+        // cap is rejected without ever being retained in the buffer.
+        let prospective_len = if frame.flags.is_first() {
+            frame.data.len()
+        } else {
+            self.inner.buffered_len() + frame.data.len()
+        };
+        if prospective_len > MAX_REASSEMBLED_LEN {
+            self.inner.reset();
+            return Err(crate::Error::Framing(format!(
+                "reassembled message exceeded {MAX_REASSEMBLED_LEN}-byte cap"
+            )));
+        }
+        self.inner.feed(frame)
+    }
+
+    /// Reset the state machine, discarding any in-progress partial.
+    pub fn reset(&mut self) {
+        self.inner.reset();
+    }
+}
+
 /// Wrap an already-formed application body in device-sized HID reports.
 ///
 /// This function does not add or interpret a Quad or Nano application
@@ -512,5 +589,84 @@ mod tests {
             }
         }
         assert_eq!(decoded_body.as_deref(), Some(body.as_slice()));
+    }
+
+    /// [PROT-009.16] A single `COMPLETE` frame at exactly the cap is
+    /// accepted: the cap excludes bodies strictly larger than the limit, not
+    /// bodies at it.
+    #[test]
+    fn bounded_reassembler_accepts_a_complete_frame_at_exactly_the_cap() {
+        let mut r = BoundedReassembler::new();
+        let body = vec![0xAB; MAX_REASSEMBLED_LEN];
+        assert_eq!(
+            r.feed(&frame(Flags::COMPLETE, &body)).unwrap().as_deref(),
+            Some(body.as_slice())
+        );
+    }
+
+    /// [PROT-009.16] A `FIRST` + `MIDDLE` sequence whose buffered bytes alone
+    /// exceed the cap is rejected before a `LAST` ever arrives - the whole
+    /// point of bounding the partial, not just the completed body.
+    #[test]
+    fn bounded_reassembler_rejects_a_partial_over_the_cap() {
+        let mut r = BoundedReassembler::new();
+        assert!(
+            r.feed(&frame(Flags::FIRST, &vec![0u8; MAX_REASSEMBLED_LEN]))
+                .unwrap()
+                .is_none()
+        );
+        let err = r.feed(&frame(Flags::MIDDLE, &[0u8; 1])).unwrap_err();
+        assert!(matches!(err, crate::Error::Framing(_)));
+    }
+
+    /// [PROT-009.16] A `LAST` frame that would push an in-progress body over
+    /// the cap in one step is rejected too: the cap must be checked against
+    /// the frame's prospective contribution, not only against an
+    /// already-wedged partial.
+    #[test]
+    fn bounded_reassembler_rejects_a_completing_frame_over_the_cap() {
+        let mut r = BoundedReassembler::new();
+        assert!(
+            r.feed(&frame(Flags::FIRST, &vec![0u8; MAX_REASSEMBLED_LEN - 1]))
+                .unwrap()
+                .is_none()
+        );
+        let err = r.feed(&frame(Flags::LAST, &[0u8; 2])).unwrap_err();
+        assert!(matches!(err, crate::Error::Framing(_)));
+    }
+
+    /// [PROT-009.16] Rejecting an over-cap message must not wedge the
+    /// reassembler: the next legitimate message, starting with its own
+    /// `FIRST`, must decode normally.
+    #[test]
+    fn bounded_reassembler_recovers_after_rejection() {
+        let mut r = BoundedReassembler::new();
+        assert!(
+            r.feed(&frame(Flags::FIRST, &vec![0u8; MAX_REASSEMBLED_LEN]))
+                .unwrap()
+                .is_none()
+        );
+        assert!(r.feed(&frame(Flags::MIDDLE, &[0u8; 1])).is_err());
+
+        let body = r.feed(&frame(Flags::COMPLETE, b"hello")).unwrap();
+        assert_eq!(body.as_deref(), Some(b"hello".as_slice()));
+    }
+
+    /// [PROT-009.16] A `FIRST` frame arriving mid-partial must not count the
+    /// stale buffer it is about to discard against the new message's cap
+    /// check - otherwise an abandoned over-cap partial would wrongly poison
+    /// every subsequent message.
+    #[test]
+    fn bounded_reassembler_first_frame_does_not_inherit_a_stale_partial_s_size() {
+        let mut r = BoundedReassembler::new();
+        assert!(
+            r.feed(&frame(Flags::FIRST, &vec![0u8; MAX_REASSEMBLED_LEN - 10]))
+                .unwrap()
+                .is_none()
+        );
+        // A fresh FIRST abandons the partial above; its own small payload
+        // must be judged on its own, not added to the abandoned bytes.
+        let body = r.feed(&frame(Flags::COMPLETE, b"hello")).unwrap();
+        assert_eq!(body.as_deref(), Some(b"hello".as_slice()));
     }
 }

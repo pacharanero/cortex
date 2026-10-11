@@ -157,6 +157,57 @@ If the reassembler is idle (`in_progress == false`) and receives a `MIDDLE` or `
 - **Return the partial buffer on `reset()` so the caller can salvage it.** Rejected: a partial message with no `LAST` is not useful to any caller, and salvaging it would invite the caller to treat truncated data as complete. Drop it silently.
 - **Use a `nom`-style parser combinator.** Rejected: the state machine is four branches and a buffer, not a grammar. A combinator would add a dependency and obscure the logic.
 
+## [DES-BOUNDED] `BoundedReassembler`
+
+### Problem
+
+`FrameReassembler` itself is deliberately uncapped (see [DES-LIMITS] in spec.md): nothing on the wire stops a stream of `MIDDLE` frames from growing a buffer forever. The long-lived subscribed session (`140-session`) already guards against this with its own inline 1 MiB check against `buffered_len()`, applied in two places - after a completing frame and after every `Ok(None)`. Before PROT-009.16, every *other* caller that reassembles frames outside that session fed the pure reassembler directly and had no byte bound at all: the one-shot reader in `link::read_message` (bounded only by its request deadline, which limits elapsed time, not bytes from a continuously responding faulty device) and the direction-specific offline capture decoder (`cortex-cli/src/decode.rs`, decoding an arbitrary file with no deadline whatsoever).
+
+### Design: one wrapper, not a duplicated check
+
+`BoundedReassembler` wraps a private `FrameReassembler` and re-derives the session's own check once, rather than asking `link.rs` and `decode.rs` to each copy it correctly:
+
+```rust
+pub struct BoundedReassembler {
+    inner: FrameReassembler,
+}
+
+impl BoundedReassembler {
+    pub fn feed(&mut self, frame: &Frame) -> crate::Result<Option<Vec<u8>>> {
+        let prospective_len = if frame.flags.is_first() {
+            frame.data.len()
+        } else {
+            self.inner.buffered_len() + frame.data.len()
+        };
+        if prospective_len > MAX_REASSEMBLED_LEN {
+            self.inner.reset();
+            return Err(crate::Error::Framing(...));
+        }
+        self.inner.feed(frame)
+    }
+}
+```
+
+`MAX_REASSEMBLED_LEN` (1 MiB) is also used by the subscribed session, so a message that is legal on one path is legal on all of them.
+
+### Design choice: compute the frame's prospective contribution, not just `buffered_len()`
+
+The session's own check runs the real `feed` first and inspects the result afterwards (comparing `body.len()` or `buffered_len()` against the cap *after* the state machine has already accepted the frame). `BoundedReassembler` instead computes what `feed` is about to produce and checks that first, so an over-cap frame is rejected without ever being copied into the buffer - the roadmap's "reject a frame that would exceed the cap before retaining its bytes". The two are equivalent for a `MIDDLE`/`LAST` frame (`buffered_len() + frame.data.len()`); the difference matters for a `FIRST` or `COMPLETE` frame, where `is_first()` is used to recognise that `FrameReassembler::feed` is about to call its own `reset()` and discard whatever was buffered. Checking `frame.data.len()` alone for that case - rather than `buffered_len() + frame.data.len()` - is what stops an abandoned over-cap partial from wrongly poisoning the next, unrelated message.
+
+### Design choice: a fixed cap, not a per-instance limit
+
+`MAX_REASSEMBLED_LEN` is a crate constant, not a constructor parameter. The roadmap scope is one shared 1 MiB bound matching the existing session cap; a configurable limit would let a careless caller quietly pick a weaker one; a caller that genuinely needs different policy can still use `FrameReassembler` directly with its own enforcement, exactly as the session does.
+
+### Design choice: the pure `FrameReassembler` is untouched
+
+`BoundedReassembler` composes `FrameReassembler` rather than adding a limit field to it. Every existing caller - the session's own inline check, and every test module that exercises reassembly without a cap - keeps working unchanged. `buffered_len()` stays `pub(crate)`; `BoundedReassembler` can see it because both live in the same crate, but a downstream caller only ever gets `new`/`feed`/`reset`.
+
+### Alternatives considered
+
+- **Add the cap directly to `FrameReassembler`.** Rejected: would force every existing caller, including the session's own differently-shaped inline check, to adopt one hard-coded policy. The spec already names the pure reassembler's unbounded behaviour as a documented limitation, not a defect to remove.
+- **Check only `buffered_len()` after calling the inner `feed`, mirroring the session exactly.** Rejected: that order retains an over-cap frame's bytes in the buffer for one call before rejecting them. Checking the prospective length first means the cap is enforced before retention, matching the roadmap wording precisely.
+- **Give `BoundedReassembler::new` a `limit: usize` parameter.** Rejected: no current caller needs a different limit, and a parameter invites a future caller to quietly pick a smaller or larger one without the same scrutiny this constant received.
+
 ## [DES-ENCODE] Message Encoding
 
 ### Envelope: trailer-tagged, not header-tagged
@@ -265,13 +316,20 @@ The framing unit tests cover the behaviour, not the implementation:
 | `closed_geometries_have_measured_dimensions` | Quad and Nano dimensions match their report descriptors. |
 | `raw_report_boundaries_follow_selected_geometry` | 126/127 and 62/63 bytes split at the correct device boundary. |
 | `nano_state_sized_body_reassembles_from_nine_reports` | A fictional 546-byte body reproduces the measured Nano nine-report geometry and reassembles exactly. |
+| `bounded_reassembler_accepts_a_complete_frame_at_exactly_the_cap` | A body of exactly `MAX_REASSEMBLED_LEN` bytes is not rejected. |
+| `bounded_reassembler_rejects_a_partial_over_the_cap` | A `FIRST` + `MIDDLE` whose buffered bytes alone exceed the cap errors before any `LAST` arrives. |
+| `bounded_reassembler_rejects_a_completing_frame_over_the_cap` | A `LAST` frame that would push an in-progress body over the cap in one step is rejected, not just an already-wedged partial. |
+| `bounded_reassembler_recovers_after_rejection` | Rejecting an over-cap message does not wedge the reassembler; the next message, starting with its own `FIRST`, decodes normally. |
+| `bounded_reassembler_first_frame_does_not_inherit_a_stale_partial_s_size` | A `FIRST` arriving after an abandoned over-cap partial is judged on its own bytes, not the discarded buffer's size. |
+
+`link.rs` additionally covers `a_message_exceeding_the_shared_cap_fails_closed_rather_than_growing_unbounded`, proving the one-shot `read_message` reader now fails closed with `Error::Framing` on an over-cap stream rather than relying solely on its deadline.
 
 These run in `cargo test -p cortex-rs` with no hardware. They are the CI gate for this zone. Hardware verification is a manual runbook owned by `500-dx-tooling` and is not a substitute for the unit tests - the unit tests guard the pure logic, the runbook guards the wire format.
 
 ## [DES-LIMITS] Known Limitations
 
 - **No detection of a lost `MIDDLE` or `LAST` frame.** Without sequence numbers, a dropped `MIDDLE` frame produces a shorter-but-plausible reassembled body that `Message::parse` may accept. The only signal is a protobuf decode failure downstream (zone `130`), not a framing error here. This is a wire-protocol limitation, not a code defect.
-- **The pure reassembler is uncapped.** The live session enforces a 1 MiB body cap and invalidates continuity on breach; offline callers must provide their own input bound.
+- **The pure `FrameReassembler` remains uncapped.** The live session enforces its own inline 1 MiB body cap and invalidates continuity on breach. Every other caller that reassembles frames outside that session - the one-shot reader in `link::read_message` and the direction-specific offline capture decoder - now uses `BoundedReassembler`, a thin wrapper enforcing the same 1 MiB limit (`MAX_REASSEMBLED_LEN`) before retaining a frame's bytes, added under PROT-009.16. A caller that wants a different policy can still use the pure `FrameReassembler` directly.
 - **No streaming encode.** `encode_message` returns a `Vec<Vec<u8>>` holding all reports. For the CLI's short commands this is fine; a streaming encoder for very large writes is a future concern for the session layer (`140`).
 - **`Frame::parse` does not validate the report ID.** The caller (transport) is responsible for classifying the report direction. A test feeding a report with an arbitrary report ID byte to `Frame::parse` will succeed; this is deliberate.
 - **Nano Cortex application coverage remains partial.** Geometry and raw framing are shared, while the implemented Nano codec parses its four-byte footer separately from `Message::parse`'s Quad-specific eight-byte trailer. Typed state plus hardware-verified amp, Gate reduction, bypass and raw FX parameter operations are implemented; wider application operations remain provisional. A timeout or malformed response causes the held path to discard and reopen the transport before another request, invalidate the old generation, and require a fresh state read before serving live data. Quad request/session entry points reject Nano before USB I/O so the envelopes cannot be conflated.

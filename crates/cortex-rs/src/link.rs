@@ -59,7 +59,7 @@ pub(crate) fn read_message(
     timeout: std::time::Duration,
 ) -> crate::Result<Vec<u8>> {
     let deadline = std::time::Instant::now() + timeout;
-    let mut reassembler = crate::framing::FrameReassembler::new();
+    let mut reassembler = crate::framing::BoundedReassembler::new();
     loop {
         let remaining = deadline.saturating_duration_since(std::time::Instant::now());
         if remaining.is_zero() {
@@ -250,5 +250,27 @@ mod tests {
             read_message(&link, HidReportGeometry::QUAD_CORTEX, timeout),
             Err(crate::Error::ReadTimeout(actual)) if actual == timeout
         ));
+    }
+
+    /// [PROT-009.16] A one-shot read has only a time deadline, not a byte
+    /// cap, until the device actually sends a `LAST`/`COMPLETE` frame. A
+    /// stream of `MIDDLE` frames that never completes but grows past the
+    /// shared bound must fail closed with a framing error rather than
+    /// retaining the oversized partial for the remainder of the deadline.
+    #[test]
+    fn a_message_exceeding_the_shared_cap_fails_closed_rather_than_growing_unbounded() {
+        let link = FakeLink::new();
+        let oversized = vec![0x5a; crate::framing::MAX_REASSEMBLED_LEN + 1];
+        for report in encode_reports(HidReportGeometry::NANO_CORTEX, &oversized) {
+            link.push_inbound(report);
+        }
+
+        let err = read_message(
+            &link,
+            HidReportGeometry::NANO_CORTEX,
+            Duration::from_secs(5),
+        )
+        .unwrap_err();
+        assert!(matches!(err, crate::Error::Framing(_)));
     }
 }

@@ -27,7 +27,7 @@ use std::time::{Duration, Instant};
 #[cfg(feature = "hid")]
 use crate::DeviceKind;
 use crate::framing::HID_REPORT_LEN;
-use crate::framing::{Frame, FrameReassembler, encode_message};
+use crate::framing::{Frame, FrameReassembler, MAX_REASSEMBLED_LEN, encode_message};
 use crate::proto::cortex_message_type::Enum as MessageType;
 use crate::proto::message_action::Enum as MessageAction;
 use crate::proto::reset_comms_buffers_message::SessionId as RcbSessionId;
@@ -98,10 +98,6 @@ enum WaitOutcome {
     /// The owning session was closed while waiting.
     Closed,
 }
-
-/// Hard upper bound on reassembled body size. A legitimate message never
-/// reaches this (the `ModelRepo` reply, ~47 KB, is the largest observed).
-const MAX_MESSAGE_BODY: usize = 1 << 20; // 1 MiB
 
 /// How long the RX thread blocks in a single `read_timeout` call.
 ///
@@ -1329,7 +1325,7 @@ fn rx_loop(device: Arc<Mutex<Option<Box<dyn crate::link::HidLink>>>>, shared: Ar
                 // A LAST/COMPLETE frame can push the body over the cap in
                 // one step; check the exact byte count before decoding
                 // rather than only catching a wedged partial (below).
-                if body.len() > MAX_MESSAGE_BODY {
+                if body.len() > MAX_REASSEMBLED_LEN {
                     shared
                         .state
                         .stream_gap(shared.generation, "reassembled message exceeded cap");
@@ -1354,7 +1350,7 @@ fn rx_loop(device: Arc<Mutex<Option<Box<dyn crate::link::HidLink>>>>, shared: Ar
                 // obliged to carry a full `CHUNK_SIZE` chunk, so counting
                 // reports against an assumed chunk size rejected legitimate
                 // bodies built from many short reports well under the cap.
-                if reassembler.buffered_len() > MAX_MESSAGE_BODY {
+                if reassembler.buffered_len() > MAX_REASSEMBLED_LEN {
                     reassembler.reset();
                     report_count = 0;
                     shared
@@ -2329,7 +2325,7 @@ mod link_tests {
         // (8,322) would ever allow under a report-count approximation, but
         // under 9 KB of actual buffered data - nowhere near the 1 MiB cap.
         let msg = zero_body(9_000);
-        assert!(msg.len() > MAX_MESSAGE_BODY / crate::framing::CHUNK_SIZE);
+        assert!(msg.len() > MAX_REASSEMBLED_LEN / crate::framing::CHUNK_SIZE);
 
         let got = session.await_broadcast(
             MessageType::GlobalTempo,
@@ -2355,14 +2351,14 @@ mod link_tests {
         );
     }
 
-    /// [PROT-005.12] A body of exactly `MAX_MESSAGE_BODY` bytes must not be
+    /// [PROT-005.12] A body of exactly `MAX_REASSEMBLED_LEN` bytes must not be
     /// rejected: the cap excludes bodies strictly larger than the limit,
     /// not bodies at it.
     #[test]
     fn a_body_at_exactly_the_byte_cap_is_not_rejected() {
         let link = FakeLink::new();
         let session = session_over(&link);
-        let msg = zero_body(MAX_MESSAGE_BODY);
+        let msg = zero_body(MAX_REASSEMBLED_LEN);
 
         let got = session.await_broadcast(
             MessageType::GlobalTempo,
@@ -2392,7 +2388,7 @@ mod link_tests {
     fn an_in_progress_body_over_the_cap_is_reset_and_the_loop_recovers() {
         let link = FakeLink::new();
         let session = session_over(&link);
-        let oversized = zero_body(MAX_MESSAGE_BODY + 1);
+        let oversized = zero_body(MAX_REASSEMBLED_LEN + 1);
         let mut reports = crate::framing::encode_reports(
             crate::framing::HidReportGeometry::QUAD_CORTEX,
             &oversized,
@@ -2442,7 +2438,7 @@ mod link_tests {
     fn a_last_frame_over_the_cap_is_rejected_before_decoding_and_the_loop_recovers() {
         let link = FakeLink::new();
         let session = session_over(&link);
-        let mut oversized = zero_body(MAX_MESSAGE_BODY + 1);
+        let mut oversized = zero_body(MAX_REASSEMBLED_LEN + 1);
         // If decoding moves ahead of the cap check, this invalid gzip prefix
         // changes the rejection reason and the test catches the ordering bug.
         oversized[..2].copy_from_slice(&[0x1f, 0x8b]);

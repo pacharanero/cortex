@@ -17,7 +17,7 @@
 use std::io::BufRead;
 
 use anyhow::Result;
-use cortex_rs::framing::{Frame, FrameReassembler};
+use cortex_rs::framing::{BoundedReassembler, Frame};
 use cortex_rs::message::Message;
 use cortex_rs::proto::cortex_message_type::Enum as MessageType;
 
@@ -72,7 +72,7 @@ struct Stream {
 /// skipped: a capture is a recording of reality, and reality includes noise
 /// from other devices and reports truncated by the end of the capture.
 pub fn decode_stream(reader: impl BufRead, quiet: bool, verbose: bool) -> Result<()> {
-    let mut reassemblers = [FrameReassembler::new(), FrameReassembler::new()];
+    let mut reassemblers = [BoundedReassembler::new(), BoundedReassembler::new()];
     let mut streams = [Stream::default(), Stream::default()];
     let mut messages = 0usize;
     let mut skipped = 0usize;
@@ -456,5 +456,43 @@ mod tests {
 
     fn hex(bytes: &[u8]) -> String {
         bytes.iter().map(|b| format!("{b:02x}")).collect()
+    }
+
+    /// [PROT-009.16] Before this change, `decode_stream` fed a bare,
+    /// uncapped `FrameReassembler`: a stream of `MIDDLE` reports that never
+    /// completes grows its buffer without limit, which a malformed or
+    /// truncated capture can trigger just as easily as a malfunctioning
+    /// device. `decode_stream` now shares `BoundedReassembler` with every
+    /// other non-session caller, so this must terminate promptly rather than
+    /// exhausting memory, and a valid message on the same direction
+    /// afterwards must still decode - proving the rejection reset the stream
+    /// rather than wedging it.
+    #[test]
+    fn a_direction_exceeding_the_shared_cap_is_skipped_without_wedging_the_decoder() {
+        let chunk_len = 126usize;
+        // Comfortably more reports than `MAX_REASSEMBLED_LEN / chunk_len`
+        // allows, so the cap is exceeded partway through, before any LAST.
+        let frames_over_cap = cortex_rs::framing::MAX_REASSEMBLED_LEN / chunk_len + 2;
+
+        let mut input = String::new();
+        for i in 0..frames_over_cap {
+            let mut report = [0u8; HID_REPORT_LEN];
+            report[0] = 0x01; // input report ID
+            report[1] = u8::try_from(chunk_len).unwrap();
+            report[2] = if i == 0 { 0x40 } else { 0x00 }; // FIRST, then MIDDLE
+            input.push_str(&format!("{i}\t0x81\t{}\t\n", hex(&report)));
+        }
+
+        // One valid, unrelated single-frame message on the same direction
+        // (endpoint `0x81`) afterwards. If the rejection above left the
+        // reassembler wedged, this report would be fed to an already
+        // `in_progress` state and misread as a stray MIDDLE/LAST rather than
+        // decoding on its own.
+        let mut valid = [0u8; HID_REPORT_LEN];
+        valid[0] = 0x01;
+        valid[2] = 0xC0; // COMPLETE, zero-length body
+        input.push_str(&format!("{frames_over_cap}\t0x81\t{}\t\n", hex(&valid)));
+
+        decode_stream(input.as_bytes(), true, false).unwrap();
     }
 }

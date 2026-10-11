@@ -112,6 +112,7 @@ The transport layer (`100`), the message/domain layers (`120`/`130`), the CLI (`
 | FR-18 | `HidReportGeometry` exposes closed `QUAD_CORTEX` (128-byte body, 129-byte report, 126-byte data capacity) and `NANO_CORTEX` (64, 65, 62) values. | Must Have |
 | FR-19 | `encode_reports(geometry, body)` adds no application envelope; it splits an already-formed body at the selected geometry's data capacity and emits fixed-size reports with the same flags as `encode_message`. | Must Have |
 | FR-20 | Existing `HID_BODY_LEN`, `HID_REPORT_LEN`, `CHUNK_SIZE` and `encode_message` remain Quad compatibility APIs. | Must Have |
+| FR-21 | `BoundedReassembler` wraps a `FrameReassembler` and exposes `new`, `feed`, and `reset`. `feed` rejects, without retaining, any frame whose prospective contribution would push the reassembled body over `MAX_REASSEMBLED_LEN` (1 MiB, also used by the subscribed session), returning `Error::Framing` and leaving the reassembler reset; any frame within the cap behaves exactly as the wrapped `FrameReassembler::feed`. | Must Have |
 
 ### Non-Functional Requirements
 
@@ -143,6 +144,9 @@ The transport layer (`100`), the message/domain layers (`120`/`130`), the CLI (`
 - [x] `cargo build --no-default-features -p cortex-rs` compiles `framing.rs` with no `hidapi` in the dependency graph.
 - [x] The eight in-file unit tests pass under `cargo test -p cortex-rs` with no hardware.
 - [x] The hardware smoke runbook exercises full encode/decode round trips.
+- [x] `BoundedReassembler` accepts a body of exactly `MAX_REASSEMBLED_LEN` bytes and rejects a partial or completing frame that would exceed it, in both cases without retaining the rejected bytes.
+- [x] After `BoundedReassembler` rejects an over-cap message, the next message - starting with its own `FIRST` - decodes normally, and a `FIRST` frame abandoning an over-cap partial is judged on its own bytes, not the discarded buffer's size.
+- [x] `link::read_message` and `cortex decode-trace` (`cortex-cli/src/decode.rs`) both use `BoundedReassembler` rather than the pure `FrameReassembler`, so a message exceeding the cap fails closed instead of growing an unbounded buffer.
 
 ## Non-Goals
 
@@ -194,4 +198,4 @@ The Python project is prior art and an offline conformance reference. Current me
 
 | Owned file | Local anchors | Key functions / types | Tests | Dependencies | Out of scope |
 | --- | --- | --- | --- | --- | --- |
-| `crates/cortex-rs/src/framing.rs` | [FR-1]-[FR-17], [NFR-1]-[NFR-7] | `ReportId`, `Flags`, `Frame`, `FrameReassembler`, `encode_message`, HID size constants | In-file unit tests | `serde`, `crate::message::TRAILER_LEN` | hidapi I/O, gzip, protobuf decode, session correlation and continuity policy |
+| `crates/cortex-rs/src/framing.rs` | [FR-1]-[FR-21], [NFR-1]-[NFR-7] | `ReportId`, `Flags`, `Frame`, `FrameReassembler`, `BoundedReassembler`, `encode_message`, HID size constants | In-file unit tests | `serde`, `crate::message::TRAILER_LEN` | hidapi I/O, gzip, protobuf decode, session correlation and continuity policy |
