@@ -88,6 +88,12 @@ button.editor-block-card:focus-visible {
 .editor-block-card[data-selected="true"] {
   box-shadow: inset 0 0 0 2px var(--mantine-color-orange-5);
 }
+/* The device's latest report changed exactly this cell since its previous
+   report (GUI-003.6). The "| changed" state text carries the same
+   information, so this border is reinforcing, not colour-only. */
+.editor-block-card[data-changed="true"] {
+  border-color: var(--mantine-color-teal-4);
+}
 .editor-block-card__position,
 .editor-block-card__eyebrow,
 .editor-block-card__detail { color: var(--mantine-color-dimmed); }

@@ -30,6 +30,14 @@ interface EditorBlockCardProps {
   inspectorId: string;
   disabled?: boolean;
   busy?: boolean;
+  /**
+   * The device's own latest report changed exactly this cell since the
+   * previous report in the same session (GUI-003.6). Purely indicative: it
+   * never changes selection or focus, and nothing about the change is
+   * labelled external, since the GUI cannot tell its own write apart from
+   * someone else's.
+   */
+  changed?: boolean;
   onSelect?: () => void;
 }
 
@@ -40,8 +48,8 @@ const stateLabels: Record<BlockOperationalState, string> = {
   empty: "empty",
 };
 
-export function EditorBlockCard({ positionLabel, eyebrow, title, detail, state, family, selected, inspectorId, disabled = false, busy = false, onSelect }: EditorBlockCardProps) {
-  const accessibleName = `${positionLabel}: ${title}, ${eyebrow}, ${stateLabels[state]}`;
+export function EditorBlockCard({ positionLabel, eyebrow, title, detail, state, family, selected, inspectorId, disabled = false, busy = false, changed = false, onSelect }: EditorBlockCardProps) {
+  const accessibleName = `${positionLabel}: ${title}, ${eyebrow}, ${stateLabels[state]}${changed ? ", changed" : ""}`;
   const content = <>
     <div className="editor-block-card__meta">
       <Text className="editor-block-card__eyebrow" size="xs">{eyebrow}</Text>
@@ -49,10 +57,11 @@ export function EditorBlockCard({ positionLabel, eyebrow, title, detail, state, 
     </div>
     <Text className="editor-block-card__title" fw={650} size="sm">{title}</Text>
     {detail && <Text className="editor-block-card__detail" size="xs">{detail}</Text>}
-    <Text className="editor-block-card__state" size="xs">{stateLabels[state]}{selected ? " | selected" : ""}</Text>
+    <Text className="editor-block-card__state" size="xs">{stateLabels[state]}{selected ? " | selected" : ""}{changed ? " | changed" : ""}</Text>
   </>;
   const common = {
     className: "editor-block-card",
+    "data-changed": changed ? "true" : undefined,
     "data-family": family,
     "data-selected": selected ? "true" : undefined,
     "data-state": state,
