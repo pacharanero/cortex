@@ -267,7 +267,7 @@ pub const CHUNK_SIZE: usize = HidReportGeometry::QUAD_CORTEX.data_capacity();
 
 /// Hard upper bound on a [`BoundedReassembler`]'s reassembled body.
 ///
-/// Matches the long-lived subscribed session's own cap (`session::rx_loop`):
+/// The long-lived subscribed session also uses this cap:
 /// the largest observed reassembled body is a 150,008-byte `LocalBackup`
 /// chunk, far below this limit.
 pub const MAX_REASSEMBLED_LEN: usize = 1 << 20; // 1 MiB
@@ -312,9 +312,9 @@ impl BoundedReassembler {
     /// # Errors
     ///
     /// Returns [`crate::Error::Framing`] if this frame would complete or
-    /// extend a body beyond the cap, or any error [`FrameReassembler::feed`]
-    /// itself returns. Either error leaves the reassembler reset and ready
-    /// for the next message.
+    /// extend a body beyond the cap, leaving the reassembler reset and ready
+    /// for the next message. Errors from [`FrameReassembler::feed`] retain
+    /// that state machine's behaviour.
     pub fn feed(&mut self, frame: &Frame) -> crate::Result<Option<Vec<u8>>> {
         // A FIRST (or COMPLETE, which `is_first` also satisfies) frame
         // starts a fresh body, so the stale buffer it is about to discard

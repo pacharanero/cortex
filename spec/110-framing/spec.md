@@ -112,7 +112,7 @@ The transport layer (`100`), the message/domain layers (`120`/`130`), the CLI (`
 | FR-18 | `HidReportGeometry` exposes closed `QUAD_CORTEX` (128-byte body, 129-byte report, 126-byte data capacity) and `NANO_CORTEX` (64, 65, 62) values. | Must Have |
 | FR-19 | `encode_reports(geometry, body)` adds no application envelope; it splits an already-formed body at the selected geometry's data capacity and emits fixed-size reports with the same flags as `encode_message`. | Must Have |
 | FR-20 | Existing `HID_BODY_LEN`, `HID_REPORT_LEN`, `CHUNK_SIZE` and `encode_message` remain Quad compatibility APIs. | Must Have |
-| FR-21 | `BoundedReassembler` wraps a `FrameReassembler` and exposes `new`, `feed`, and `reset`. `feed` rejects, without retaining, any frame whose prospective contribution would push the reassembled body over `MAX_REASSEMBLED_LEN` (1 MiB, matching `session::MAX_MESSAGE_BODY`), returning `Error::Framing` and leaving the reassembler reset; any frame within the cap behaves exactly as the wrapped `FrameReassembler::feed`. | Must Have |
+| FR-21 | `BoundedReassembler` wraps a `FrameReassembler` and exposes `new`, `feed`, and `reset`. `feed` rejects, without retaining, any frame whose prospective contribution would push the reassembled body over `MAX_REASSEMBLED_LEN` (1 MiB, also used by the subscribed session), returning `Error::Framing` and leaving the reassembler reset; any frame within the cap behaves exactly as the wrapped `FrameReassembler::feed`. | Must Have |
 
 ### Non-Functional Requirements
 

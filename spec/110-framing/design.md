@@ -188,7 +188,7 @@ impl BoundedReassembler {
 }
 ```
 
-`MAX_REASSEMBLED_LEN` (1 MiB) matches `session::MAX_MESSAGE_BODY` exactly, so a message that is legal on one path is legal on all of them.
+`MAX_REASSEMBLED_LEN` (1 MiB) is also used by the subscribed session, so a message that is legal on one path is legal on all of them.
 
 ### Design choice: compute the frame's prospective contribution, not just `buffered_len()`
 
