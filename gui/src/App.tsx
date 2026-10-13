@@ -493,7 +493,7 @@ export function App() {
                   </Paper>
                   <Paper className="console-surface console-topology" p="md" withBorder>
                     <ErrorBoundary name="Grid">
-                      <Grid blocks={live.blocks} selected={selected} onSelect={(block) => setSelectedCell({ row: block.row, column: block.column })} />
+                      <Grid blocks={live.blocks} generation={live.generation} onSelect={(block) => setSelectedCell({ row: block.row, column: block.column })} revision={live.revision} selected={selected} />
                     </ErrorBoundary>
                   </Paper>
                 </div>

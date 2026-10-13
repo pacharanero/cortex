@@ -119,7 +119,7 @@ describe("Quad semantic controls", () => {
     };
     render(
       <MantineProvider>
-        <Grid blocks={[block]} onSelect={vi.fn()} selected={block} />
+        <Grid blocks={[block]} generation={1} onSelect={vi.fn()} revision={1} selected={block} />
       </MantineProvider>,
     );
 
