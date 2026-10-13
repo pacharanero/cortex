@@ -42,16 +42,15 @@ export function Grid({ blocks, selected, onSelect, generation, revision }: GridP
     lastReport.current = { generation, revision, blocks };
     if (!previous || previous.generation !== generation || revision <= previous.revision) {
       setChangedCell(null);
+      setAnnouncement("");
       return;
     }
     const cell = diffSingleChangedCell(previous.blocks, blocks);
     setChangedCell(cell);
-    if (cell) {
-      const occupant = blocks.find((candidate) => candidate.row === cell.row && candidate.column === cell.column);
-      // Matches `positionLabel` below: row is shown 1-based, column 0-based,
-      // exactly as every other on-screen grid position in this component.
-      setAnnouncement(`Row ${cell.row + 1}, column ${cell.column} changed${occupant ? ` to ${occupant.name}` : ", now empty"}.`);
-    }
+    const occupant = cell ? blocks.find((candidate) => candidate.row === cell.row && candidate.column === cell.column) : null;
+    // Matches `positionLabel` below: row is shown 1-based, column 0-based,
+    // exactly as every other on-screen grid position in this component.
+    setAnnouncement(cell ? `Row ${cell.row + 1}, column ${cell.column} changed${occupant ? ` to ${occupant.name}` : ", now empty"}.` : "");
     // Deliberately no focus change and no selection change: the device-reported
     // snapshot is the sole source of truth and must not steal focus from
     // whatever control the user is actually driving.

@@ -128,6 +128,7 @@ describe("Grid", () => {
         <Grid blocks={changedBlocks} generation={1} onSelect={vi.fn()} revision={3} selected={null} />
       </MantineProvider>);
       expect(document.querySelector('[data-changed="true"]')).toBeNull();
+      expect(screen.getByRole("status").textContent).toBe("");
     });
   });
 });
