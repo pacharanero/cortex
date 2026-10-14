@@ -14,7 +14,6 @@ members = [
 [workspace.package]
 version = "0.2.0"
 edition = "2024"
-# Tauri 2.12 requires Rust 1.90. cortex-rs declares its lower MSRV directly.
 rust-version = "1.90"
 authors = ["Dr Marcus Baw"]
 license = "AGPL-3.0-or-later"
@@ -33,8 +32,7 @@ quick-xml = "0.42"
 flate2 = "1.1.9"
 thiserror = "2"
 once_cell = "1.21.4"
-# uuid 1.27+ requires Rust 1.89; cortex-rs supports Rust 1.88.
-uuid = { version = "1.24.0, <1.27.0", features = ["v4"] }
+uuid = { version = "1.24.0", features = ["v4"] }
 fs4 = { version = "1.1.0", features = ["sync"] }
 ts-rs = "=12.0.1"
 windows-sys = "0.61.2"
