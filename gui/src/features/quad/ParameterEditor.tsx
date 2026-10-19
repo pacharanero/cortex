@@ -28,6 +28,7 @@ interface ParameterEditorProps {
 export function ParameterEditor({ parameters, disabled, onWrite }: ParameterEditorProps) {
   const [pending, setPending] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
 
   const write = async (identity: ParameterIdentity, input: ParameterInput) => {
     setPending(identity.index);
@@ -45,9 +46,29 @@ export function ParameterEditor({ parameters, disabled, onWrite }: ParameterEdit
     return <Text c="dimmed" size="sm">This block has no editable parameters.</Text>;
   }
 
+  const trimmedQuery = query.trim().toLowerCase();
+  // Keep an in-flight control visible even if its name no longer matches: a
+  // filter must not make an unconfirmed device write disappear.
+  const visibleParameters = parameters.filter((parameter) =>
+    trimmedQuery === "" || parameter.index === pending || parameter.name.toLowerCase().includes(trimmedQuery));
+  const filterStatus = trimmedQuery === ""
+    ? `${parameters.length} ${parameters.length === 1 ? "parameter" : "parameters"} available.`
+    : visibleParameters.length === 0
+      ? "No parameters match."
+      : `${visibleParameters.length} of ${parameters.length} ${parameters.length === 1 ? "parameter" : "parameters"} shown.`;
+
   return (
     <Stack aria-busy={pending !== null} gap="md">
       {error && <ConsumerErrorAlert error={error} title="Parameter unchanged">Cortex did not confirm this parameter change. The device value has not been updated.</ConsumerErrorAlert>}
+      <TextInput
+        aria-describedby="parameter-search-status"
+        label="Search parameters"
+        onChange={(event) => setQuery(event.currentTarget.value)}
+        placeholder="Parameter name"
+        type="search"
+        value={query}
+      />
+      <Text aria-live="polite" c="dimmed" id="parameter-search-status" role="status" size="xs">{filterStatus}</Text>
       {/* Controls are NOT disabled while a write is in flight. A disabled
           element cannot hold focus, so disabling the control being operated
           throws focus onto the document and kills keyboard interaction from
@@ -55,7 +76,7 @@ export function ParameterEditor({ parameters, disabled, onWrite }: ParameterEdit
           slider one step. The same fault cost three rounds on the scene
           selector. Busy state is announced with aria-busy instead, and
           re-entry is guarded in `write`. */}
-      {parameters.map((parameter) => (
+      {visibleParameters.map((parameter) => (
         <ParameterControl
           busy={pending === parameter.index}
           disabled={disabled}

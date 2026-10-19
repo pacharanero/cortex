@@ -20,9 +20,8 @@ interface ContinuousControlProps {
   /**
    * Fired once per gesture - slider release, numeric-input blur, or a
    * stepper click - rather than once per `onChange`. A caller with its own
-   * explicit confirm step (an Apply button, as the Nano controls use) omits
-   * this and keeps writing only from that button, unchanged from before this
-   * prop existed.
+   * explicit confirm step can omit this and keep writing only from that
+   * confirmation action.
    */
   onCommit?: (value: number) => void;
 }

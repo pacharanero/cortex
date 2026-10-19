@@ -3181,6 +3181,23 @@ mod tests {
     }
 
     #[test]
+    fn nano_gate_engaged_readback_confirms_bypass_write() {
+        let operations = FakeNanoOperations::default();
+        let mut engaged = nano_state(10, false);
+        engaged.slots[0].bypassed = cortex_rs::nano::NanoBypassState::Engaged;
+        operations.states.lock().unwrap().push_back(Ok(engaged));
+        let daemon = fake_nano_daemon(operations);
+
+        assert!(matches!(
+            daemon.handle(Request::NanoSetBypass {
+                target: cortex_rs::nano::NanoBypassTarget::Gate,
+                bypassed: false,
+            }),
+            Response::Ok { .. }
+        ));
+    }
+
+    #[test]
     fn confirmed_nano_fx_write_refreshes_model_identity_and_restores_live_state() {
         let operations = FakeNanoOperations::default();
         operations

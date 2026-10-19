@@ -75,8 +75,8 @@ describe("NanoChain", () => {
     expect(chain.querySelectorAll(".editor-block-card")).toHaveLength(8);
     fireEvent.click(screen.getByRole("button", { name: /Position 2: Fictional Drive/ }));
 
-    expect(await screen.findByRole("button", { name: "Apply Pre FX 1 Gain" })).toBeDefined();
-    expect(screen.getByRole("button", { name: "Apply gain" })).toBeDefined();
+    expect(await screen.findByRole("slider", { name: "Pre FX 1 Gain normalized value slider" })).toBeDefined();
+    expect(screen.queryByRole("button", { name: "Apply gain" })).toBeNull();
     expect(screen.getByRole("switch", { name: "Gate bypass, on" })).toBeDefined();
     expect(screen.getByRole("button", { name: "Position 4: Fictional Capture, Capture, state unavailable" })).toBeDefined();
   });
@@ -96,16 +96,34 @@ describe("NanoChain", () => {
     const onSetAmp = vi.fn(() => new Promise<void>((resolve) => { finishWrite = resolve; }));
     renderNano(state, { onSetAmp });
 
-    const applyGain = screen.getByRole("button", { name: "Apply gain" });
-    applyGain.focus();
-    fireEvent.click(applyGain);
-    expect(onSetAmp).toHaveBeenCalledWith("gain", 100);
-    expect(document.activeElement).toBe(applyGain);
-    expect(applyGain.hasAttribute("disabled")).toBe(false);
-    expect(applyGain.getAttribute("aria-busy")).toBe("true");
+    const increaseGain = screen.getByRole("button", { name: "Increase Gain" });
+    increaseGain.focus();
+    fireEvent.click(increaseGain);
+    expect(onSetAmp).toHaveBeenCalledWith("gain", 101);
+    expect(document.activeElement).toBe(increaseGain);
+    expect(increaseGain.hasAttribute("disabled")).toBe(false);
+    expect(increaseGain.closest("[aria-busy]")?.getAttribute("aria-busy")).toBe("true");
 
     await act(async () => finishWrite());
-    expect(document.activeElement).toBe(applyGain);
+    expect(document.activeElement).toBe(increaseGain);
+  });
+
+  it("serializes automatic commits and keeps only the newest queued value", async () => {
+    const writes: Array<() => void> = [];
+    const onSetAmp = vi.fn(() => new Promise<void>((resolve) => { writes.push(resolve); }));
+    renderNano(state, { onSetAmp });
+
+    const increaseGain = screen.getByRole("button", { name: "Increase Gain" });
+    fireEvent.click(increaseGain);
+    fireEvent.click(increaseGain);
+
+    expect(onSetAmp).toHaveBeenCalledOnce();
+    expect(onSetAmp).toHaveBeenLastCalledWith("gain", 101);
+
+    await act(async () => writes.shift()?.());
+
+    await waitFor(() => expect(onSetAmp).toHaveBeenCalledTimes(2));
+    expect(onSetAmp).toHaveBeenLastCalledWith("gain", 102);
   });
 
   it("disables block selection while a write is pending", async () => {
@@ -113,7 +131,7 @@ describe("NanoChain", () => {
     const onSetAmp = vi.fn(() => new Promise<void>((resolve) => { finishWrite = resolve; }));
     renderNano(state, { onSetAmp });
 
-    fireEvent.click(screen.getByRole("button", { name: "Apply gain" }));
+    fireEvent.click(screen.getByRole("button", { name: "Increase Gain" }));
     const drive = screen.getByRole("button", { name: /Position 2: Fictional Drive/ });
     expect(drive.hasAttribute("disabled")).toBe(true);
     expect(drive.getAttribute("aria-busy")).toBe("true");
@@ -165,7 +183,7 @@ describe("NanoChain", () => {
 
     expect(onReadFxParams).toHaveBeenCalledWith("pre_fx1");
     expect(await screen.findByRole("slider", { name: "Pre FX 1 Gain normalized value slider" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Apply Pre FX 1 Gain" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Increase Pre FX 1 Gain normalized value" })).toBeTruthy();
   });
 
   it("serializes uncorrelated FX reads and applies only the latest selection", async () => {
@@ -181,10 +199,10 @@ describe("NanoChain", () => {
     await act(async () => finishReads[0]([fx(0.25)]));
     await waitFor(() => expect(onReadFxParams).toHaveBeenCalledTimes(2));
     expect(onReadFxParams).toHaveBeenLastCalledWith("pre_fx2");
-    expect(screen.queryByRole("button", { name: "Apply Pre FX 1 Gain" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Increase Pre FX 1 Gain normalized value" })).toBeNull();
 
     await act(async () => finishReads[1]([fx(0.75, "Mix")]));
-    expect(await screen.findByRole("button", { name: "Apply Pre FX 2 Mix" })).toBeTruthy();
+    expect(await screen.findByRole("button", { name: "Increase Pre FX 2 Mix normalized value" })).toBeTruthy();
   });
 
   it("reports an FX write failure even if the inspector closes", async () => {
@@ -196,9 +214,8 @@ describe("NanoChain", () => {
     });
 
     fireEvent.click(screen.getByRole("button", { name: /Position 2: Fictional Drive/ }));
-    const slider = await screen.findByRole("slider", { name: "Pre FX 1 Gain normalized value slider" });
-    fireEvent.keyDown(slider, { key: "ArrowRight" });
-    fireEvent.click(screen.getByRole("button", { name: "Apply Pre FX 1 Gain" }));
+    await screen.findByRole("slider", { name: "Pre FX 1 Gain normalized value slider" });
+    fireEvent.click(screen.getByRole("button", { name: "Increase Pre FX 1 Gain normalized value" }));
     expect(onSetFxParam).toHaveBeenCalledWith("pre_fx1", 1, 0, 0.5001);
     fireEvent.click(screen.getByRole("button", { name: "Clear selection" }));
 
@@ -217,9 +234,8 @@ describe("NanoChain", () => {
     });
 
     fireEvent.click(screen.getByRole("button", { name: /Position 2: Fictional Drive/ }));
-    const slider = await screen.findByRole("slider", { name: "Pre FX 1 Gain normalized value slider" });
-    fireEvent.keyDown(slider, { key: "ArrowRight" });
-    fireEvent.click(screen.getByRole("button", { name: "Apply Pre FX 1 Gain" }));
+    await screen.findByRole("slider", { name: "Pre FX 1 Gain normalized value slider" });
+    fireEvent.click(screen.getByRole("button", { name: "Increase Pre FX 1 Gain normalized value" }));
 
     expect(await screen.findByText("confirmation failed")).toBeTruthy();
     expect(onReadFxParams).toHaveBeenCalledTimes(2);
@@ -245,9 +261,8 @@ describe("NanoChain", () => {
     });
 
     fireEvent.click(screen.getByRole("button", { name: /Position 2: Fictional Drive/ }));
-    const slider = await screen.findByRole("slider", { name: "Pre FX 1 Gain normalized value slider" });
-    fireEvent.keyDown(slider, { key: "ArrowRight" });
-    fireEvent.click(screen.getByRole("button", { name: "Apply Pre FX 1 Gain" }));
+    await screen.findByRole("slider", { name: "Pre FX 1 Gain normalized value slider" });
+    fireEvent.click(screen.getByRole("button", { name: "Increase Pre FX 1 Gain normalized value" }));
     await screen.findByText("confirmation failed");
 
     fireEvent.click(screen.getByRole("button", { name: /Position 1: Gate/ }));
@@ -263,9 +278,8 @@ describe("NanoChain", () => {
     });
 
     fireEvent.click(screen.getByRole("button", { name: /Position 2: Fictional Drive/ }));
-    const slider = await screen.findByRole("slider", { name: "Pre FX 1 Gain normalized value slider" });
-    fireEvent.keyDown(slider, { key: "ArrowRight" });
-    fireEvent.click(screen.getByRole("button", { name: "Apply Pre FX 1 Gain" }));
+    await screen.findByRole("slider", { name: "Pre FX 1 Gain normalized value slider" });
+    fireEvent.click(screen.getByRole("button", { name: "Increase Pre FX 1 Gain normalized value" }));
     await screen.findByText("confirmation failed");
 
     fireEvent.click(screen.getByRole("button", { name: /Position 3: Fictional Chorus/ }));
@@ -282,11 +296,8 @@ describe("NanoChain", () => {
     const gain = screen.getByLabelText("Gain numeric input") as HTMLInputElement;
 
     fireEvent.change(gain, { target: { value: "121" } });
-    const applyGain = screen.getByRole("button", { name: "Apply gain" });
-    applyGain.focus();
-    fireEvent.click(applyGain);
-    expect(document.activeElement).toBe(applyGain);
-    expect(applyGain.hasAttribute("disabled")).toBe(false);
+    fireEvent.blur(gain);
+    expect(onSetAmp).toHaveBeenCalledWith("gain", 121);
     fireEvent.change(gain, { target: { value: "122" } });
     await act(async () => finishWrite());
 
@@ -303,10 +314,10 @@ describe("NanoChain", () => {
     });
 
     fireEvent.click(screen.getByRole("button", { name: /Position 2: Fictional Drive/ }));
-    const slider = await screen.findByRole("slider", { name: "Pre FX 1 Gain normalized value slider" });
-    fireEvent.keyDown(slider, { key: "ArrowRight" });
-    fireEvent.click(screen.getByRole("button", { name: "Apply Pre FX 1 Gain" }));
-    fireEvent.keyDown(slider, { key: "ArrowRight" });
+    await screen.findByRole("slider", { name: "Pre FX 1 Gain normalized value slider" });
+    const increase = screen.getByRole("button", { name: "Increase Pre FX 1 Gain normalized value" });
+    fireEvent.click(increase);
+    fireEvent.click(increase);
     await act(async () => finishWrite([fx(0.501)]));
 
     expect(screen.getByText(/device: 0\.501/)).toBeTruthy();
@@ -320,8 +331,8 @@ describe("NanoChain", () => {
     expect(screen.getByRole("textbox", { name: "Gain numeric input" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Decrease Gain" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Increase Gain" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Apply gain" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Apply treble" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Apply gain" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Apply treble" })).toBeNull();
     expect(screen.getByRole("switch", { name: "Pre FX 1 bypass, on" })).toBeTruthy();
   });
 
@@ -329,34 +340,30 @@ describe("NanoChain", () => {
     const onSetAmp = vi.fn(async () => {});
     renderNano(state, { onSetAmp });
 
-    const slider = screen.getByRole("slider", { name: "Gain slider" });
-    fireEvent.keyDown(slider, { key: "ArrowRight" });
-    expect((screen.getByRole("textbox", { name: "Gain numeric input" }) as HTMLInputElement).value).toBe("101");
     fireEvent.click(screen.getByRole("button", { name: "Increase Gain" }));
-    expect((screen.getByRole("textbox", { name: "Gain numeric input" }) as HTMLInputElement).value).toBe("102");
-    fireEvent.click(screen.getByRole("button", { name: "Apply gain" }));
+    expect((screen.getByRole("textbox", { name: "Gain numeric input" }) as HTMLInputElement).value).toBe("101");
 
-    expect(onSetAmp).toHaveBeenCalledWith("gain", 102);
+    expect(onSetAmp).toHaveBeenCalledWith("gain", 101);
   });
 
-  it("keeps non-integer Amp values from reaching Apply", () => {
+  it("keeps non-integer Amp values from reaching the device", () => {
     const onSetAmp = vi.fn(async () => {});
     renderNano(state, { onSetAmp });
 
     const gain = screen.getByRole("textbox", { name: "Gain numeric input" }) as HTMLInputElement;
     fireEvent.change(gain, { target: { value: "100.5" } });
-    fireEvent.click(screen.getByRole("button", { name: "Apply gain" }));
+    fireEvent.blur(gain);
 
     expect(gain.value).toBe("100");
-    expect(onSetAmp).toHaveBeenCalledWith("gain", 100);
+    expect(onSetAmp).not.toHaveBeenCalled();
   });
 
-  it("submits Gate reduction as an explicit percentage", () => {
+  it("submits Gate reduction when the numeric edit finishes", () => {
     const onSetGateReduction = vi.fn(async () => {});
     renderNano({ ...state, gate_reduction: 42 }, { onSetGateReduction });
 
     fireEvent.change(screen.getByLabelText("Gate reduction numeric input"), { target: { value: "43" } });
-    fireEvent.click(screen.getByRole("button", { name: "Apply Gate reduction" }));
+    fireEvent.blur(screen.getByLabelText("Gate reduction numeric input"));
 
     expect(onSetGateReduction).toHaveBeenCalledWith(43);
   });
@@ -364,7 +371,7 @@ describe("NanoChain", () => {
   it("announces operation progress and completion", async () => {
     renderNano();
 
-    fireEvent.click(screen.getByRole("button", { name: "Apply gain" }));
+    fireEvent.click(screen.getByRole("button", { name: "Increase Gain" }));
 
     await waitFor(() => expect(screen.getByRole("status").textContent).toBe("gain applied."));
     expect(screen.getByRole("status").getAttribute("aria-live")).toBe("polite");

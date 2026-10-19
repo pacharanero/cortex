@@ -23,7 +23,7 @@ model_id: number | null,
  */
 model_name: string | null,
 /**
- * Bypass state when present in the current-state message; `Unknown`
- * when the wire field is absent, including Gate's field-54 omission.
+ * Bypass state reported by the current-state message. `Unknown` means
+ * the role or response has no usable bypass representation.
  */
 bypassed: NanoBypassState, };

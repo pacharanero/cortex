@@ -148,10 +148,13 @@ fn matrix_for_host(host: HostPath) -> CapabilityMatrix {
         // retained Gate value, independently read it back, restored it, and
         // verified restoration through the current integer command contract.
         .insert("set_nano_gate_reduction", ConfirmedWritable)
-    // Nano bypass stays unverified because its hardware record does not
-    // itemise the Tauri command path. The 2026-08-21 FX smoke predates
-    // NANO-001.9's descriptor response and mandatory expected-model safety
-    // field, so it does not confirm the current Tauri read/write contract.
+        // NANO-001.14, hardware-verified 2026-10-19: the current Tauri
+        // command engaged Gate, read back its omitted field 54 as engaged,
+        // then restored and confirmed the bypassed baseline.
+        .insert("set_nano_bypass", ConfirmedWritable)
+    // The 2026-08-21 FX smoke predates NANO-001.9's descriptor response and
+    // mandatory expected-model safety field, so it does not confirm the
+    // current Tauri read/write contracts.
 }
 
 /// One operation's evidence record for the typed Tauri diagnostic contract.
@@ -225,6 +228,10 @@ mod tests {
             matrix.status("set_nano_gate_reduction"),
             CapabilityStatus::ConfirmedWritable
         );
+        assert_eq!(
+            matrix.status("set_nano_bypass"),
+            CapabilityStatus::ConfirmedWritable
+        );
     }
 
     /// `set_bypass`, `set_scene_label`, `set_scene_color` and `copy_scene`
@@ -254,18 +261,13 @@ mod tests {
         }
     }
 
-    /// Nano bypass has no itemised Tauri pass. The FX operations were tested
-    /// through Tauri and the rendered control before NANO-001.9 changed their
-    /// response and write-safety contracts, so the old smoke cannot promote
-    /// the current operations.
+    /// The FX operations were tested through Tauri and the rendered control
+    /// before NANO-001.9 changed their response and write-safety contracts, so
+    /// the old smoke cannot promote the current operations.
     #[test]
     fn nano_operations_without_current_tauri_evidence_stay_unverified() {
         let matrix = matrix_for_host(HostPath::Linux);
-        for operation in [
-            "set_nano_bypass",
-            "read_nano_fx_params",
-            "set_nano_fx_param",
-        ] {
+        for operation in ["read_nano_fx_params", "set_nano_fx_param"] {
             assert_eq!(
                 matrix.status(operation),
                 CapabilityStatus::Unverified,
@@ -293,11 +295,11 @@ mod tests {
             .find(|label| label.operation == "set_nano_gate_reduction")
             .expect("set_nano_gate_reduction is a known operation");
         assert_eq!(confirmed.status, CapabilityStatus::ConfirmedWritable);
-        let unverified = all
+        let confirmed_bypass = all
             .iter()
             .find(|label| label.operation == "set_nano_bypass")
             .expect("set_nano_bypass is a known operation");
-        assert_eq!(unverified.status, CapabilityStatus::Unverified);
+        assert_eq!(confirmed_bypass.status, CapabilityStatus::ConfirmedWritable);
     }
 
     #[test]

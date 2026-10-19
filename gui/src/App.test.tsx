@@ -222,7 +222,7 @@ describe("device switching", () => {
     api.setNanoAmp.mockRejectedValue(new Error("write outcome was not confirmed"));
     renderApp();
 
-    fireEvent.click(await screen.findByRole("button", { name: "Apply gain" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Increase Gain" }));
     await screen.findAllByText("write outcome was not confirmed");
     await waitFor(() => expect(api.dashboard.mock.calls.length).toBeGreaterThan(1), { timeout: 2_000 });
     await waitFor(() => expect(screen.getAllByText("write outcome was not confirmed")).toHaveLength(1));
@@ -238,7 +238,7 @@ describe("device switching", () => {
     api.setNanoAmp.mockResolvedValue(undefined);
     renderApp();
 
-    fireEvent.click(await screen.findByRole("button", { name: "Apply gain" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Increase Gain" }));
 
     expect(await screen.findByText("gain applied.")).toBeTruthy();
     expect(screen.queryByText("secondary dashboard refresh failed")).toBeNull();
@@ -405,6 +405,81 @@ describe("Quad parameter writes", () => {
     await waitFor(() => expect(api.setParameter).toHaveBeenCalledWith(
       0, 1, identity, { kind: "real", value: 7.5 },
     ));
+  });
+});
+
+describe("Quad live-grid selection reconciliation", () => {
+  afterEach(() => {
+    vi.resetAllMocks();
+  });
+
+  function snapshotWithBlock(revision: number, generation = 1): DashboardSnapshot {
+    const current = directorySnapshot();
+    current.status.cache.generation = generation;
+    current.live!.generation = generation;
+    current.live!.revision = revision;
+    current.live!.blocks = [{
+      row: 0, screen_row: 1, column: 1, model_id: 5007, name: "Test Amp",
+      category: "Amplifier", based_on: null, bypassed: false, params: [], family: "amp",
+    }];
+    return current;
+  }
+
+  it("keeps a selection through a stale report, then clears it and its parameter error when a newer report removes the block", async () => {
+    const initial = snapshotWithBlock(1);
+    const stale = snapshotWithBlock(1);
+    stale.live!.blocks = [];
+    const removed = snapshotWithBlock(2);
+    removed.live!.blocks = [];
+    api.dashboard
+      .mockResolvedValue(removed)
+      .mockResolvedValueOnce(initial)
+      .mockResolvedValueOnce(stale);
+    api.blockParameters.mockRejectedValue(new Error("parameter read failed"));
+    renderApp();
+
+    fireEvent.click(await screen.findByRole("button", { name: /Row 1, column 1: Test Amp/ }));
+    expect(await screen.findByText("parameter read failed")).toBeTruthy();
+
+    await waitFor(() => expect(api.dashboard).toHaveBeenCalledTimes(2), { timeout: 2_000 });
+    expect(screen.getByRole("heading", { level: 4, name: "Test Amp" })).toBeTruthy();
+    expect(screen.getByText("parameter read failed")).toBeTruthy();
+
+    await waitFor(() => expect(api.dashboard).toHaveBeenCalledTimes(3), { timeout: 2_000 });
+    expect(await screen.findByText("Selected block at row 1, column 1 is no longer available.")).toBeTruthy();
+    expect(screen.getByText("Select a block")).toBeTruthy();
+    expect(screen.queryByText("parameter read failed")).toBeNull();
+  });
+
+  it("does not announce a removal when the device generation changes", async () => {
+    const initial = snapshotWithBlock(1);
+    const replacement = snapshotWithBlock(1, 2);
+    replacement.live!.blocks = [];
+    api.dashboard.mockResolvedValue(replacement).mockResolvedValueOnce(initial);
+    api.blockParameters.mockResolvedValue([]);
+    renderApp();
+
+    fireEvent.click(await screen.findByRole("button", { name: /Row 1, column 1: Test Amp/ }));
+    await screen.findByText("This block has no editable parameters.");
+    await waitFor(() => expect(api.dashboard).toHaveBeenCalledTimes(2), { timeout: 2_000 });
+
+    expect(screen.getByText("Select a block")).toBeTruthy();
+    expect(screen.queryByText("Selected block at row 1, column 1 is no longer available.")).toBeNull();
+  });
+
+  it("keeps a selection when a newer report still contains its coordinate", async () => {
+    const initial = snapshotWithBlock(1);
+    const retained = snapshotWithBlock(2);
+    api.dashboard.mockResolvedValue(retained).mockResolvedValueOnce(initial);
+    api.blockParameters.mockResolvedValue([]);
+    renderApp();
+
+    fireEvent.click(await screen.findByRole("button", { name: /Row 1, column 1: Test Amp/ }));
+    await screen.findByText("This block has no editable parameters.");
+    await waitFor(() => expect(api.dashboard).toHaveBeenCalledTimes(2), { timeout: 2_000 });
+
+    expect(screen.getByRole("heading", { level: 4, name: "Test Amp" })).toBeTruthy();
+    expect(screen.queryByText("Selected block at row 1, column 1 is no longer available.")).toBeNull();
   });
 });
 
