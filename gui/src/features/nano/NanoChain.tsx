@@ -67,16 +67,32 @@ export function NanoChain({ state, onSetAmp, onSetGateReduction, onSetBypass, on
   const pendingFxRead = useRef<{ slot: NanoFxSlot; modelId: number | null; epoch: number } | null>(null);
   const selectedModel = useRef<{ role: NanoSlotRole; modelId: number | null } | null>(null);
   const automaticWrites = useRef<AutomaticWrite[]>([]);
-  const [queuedWriteCount, setQueuedWriteCount] = useState(0);
+  const inFlightAutomaticWrite = useRef<AutomaticWrite | null>(null);
+  const [writeQueueRevision, setWriteQueueRevision] = useState(0);
 
-  const queueAutomaticWrite = (next: AutomaticWrite) => {
+  const sameAutomaticWriteTarget = (current: AutomaticWrite, next: AutomaticWrite) =>
+    current.kind === next.kind
+    && (current.kind !== "amp" || next.kind !== "amp" || current.control === next.control)
+    && (current.kind !== "fx" || next.kind !== "fx" || (current.slot === next.slot && current.paramIndex === next.paramIndex));
+
+  const queueAutomaticWrite = (next: AutomaticWrite, deviceValue: number | null) => {
     const existing = automaticWrites.current.findIndex((current) =>
-      current.kind === next.kind
-      && (current.kind !== "amp" || next.kind !== "amp" || current.control === next.control)
-      && (current.kind !== "fx" || next.kind !== "fx" || (current.slot === next.slot && current.paramIndex === next.paramIndex)));
-    if (existing === -1) automaticWrites.current.push(next);
-    else automaticWrites.current[existing] = next;
-    setQueuedWriteCount(automaticWrites.current.length);
+      sameAutomaticWriteTarget(current, next));
+    const inFlight = inFlightAutomaticWrite.current;
+    const matchesInFlight = inFlight !== null && sameAutomaticWriteTarget(inFlight, next);
+
+    if (existing !== -1) {
+      if (matchesInFlight && inFlight.value === next.value) automaticWrites.current.splice(existing, 1);
+      else if (!matchesInFlight && next.value === deviceValue) automaticWrites.current.splice(existing, 1);
+      else automaticWrites.current[existing] = next;
+    } else if (!matchesInFlight && next.value === deviceValue) {
+      return;
+    } else if (!matchesInFlight || inFlight.value !== next.value) {
+      automaticWrites.current.push(next);
+    } else {
+      return;
+    }
+    setWriteQueueRevision((revision) => revision + 1);
   };
 
   useEffect(() => {
@@ -291,14 +307,19 @@ export function NanoChain({ state, onSetAmp, onSetGateReduction, onSetBypass, on
   };
 
   useEffect(() => {
-    if (busy || queuedWriteCount === 0) return;
+    if (busy || inFlightAutomaticWrite.current || automaticWrites.current.length === 0) return;
     const next = automaticWrites.current.shift();
     if (!next) return;
-    setQueuedWriteCount(automaticWrites.current.length);
-    if (next.kind === "amp") void apply(next.control, next.value, next.editEpoch);
-    else if (next.kind === "gate") void applyGateReduction(next.value, next.editEpoch);
-    else void applyFxParam(next.slot, next.expectedModelId, next.paramIndex, next.value, next.selectionEpoch, next.editEpoch);
-  }, [busy, queuedWriteCount]);
+    inFlightAutomaticWrite.current = next;
+    setWriteQueueRevision((revision) => revision + 1);
+    void (async () => {
+      if (next.kind === "amp") await apply(next.control, next.value, next.editEpoch);
+      else if (next.kind === "gate") await applyGateReduction(next.value, next.editEpoch);
+      else await applyFxParam(next.slot, next.expectedModelId, next.paramIndex, next.value, next.selectionEpoch, next.editEpoch);
+      if (inFlightAutomaticWrite.current === next) inFlightAutomaticWrite.current = null;
+      setWriteQueueRevision((revision) => revision + 1);
+    })();
+  }, [busy, writeQueueRevision]);
 
   return <section aria-label="Nano Cortex editor console" className="device-console nano-console"><Stack gap="lg">
     <Group className="console-context" justify="space-between">
@@ -348,8 +369,8 @@ export function NanoChain({ state, onSetAmp, onSetGateReduction, onSetBypass, on
                     setFxDraft((current) => ({ ...current, [parameter.index]: typeof nextValue === "number" ? nextValue : Number.parseFloat(String(nextValue)) }));
                   }}
                   onCommit={(nextValue) => {
-                    if (fxModelId == null || Math.abs(nextValue - parameter.normalized) < 0.00005) return;
-                    queueAutomaticWrite({ kind: "fx", slot: selectedFxSlot, expectedModelId: fxModelId, paramIndex: parameter.index, value: nextValue, selectionEpoch: selectionEpoch.current, editEpoch: fxEditEpoch.current.get(parameter.index) ?? 0 });
+                    if (fxModelId == null) return;
+                    queueAutomaticWrite({ kind: "fx", slot: selectedFxSlot, expectedModelId: fxModelId, paramIndex: parameter.index, value: nextValue, selectionEpoch: selectionEpoch.current, editEpoch: fxEditEpoch.current.get(parameter.index) ?? 0 }, parameter.normalized);
                   }}
                   step={0.0001}
                   value={fxDraft[parameter.index] ?? parameter.normalized}
@@ -385,8 +406,7 @@ export function NanoChain({ state, onSetAmp, onSetGateReduction, onSetBypass, on
               });
             }}
             onCommit={(value) => {
-              if (value === state.amp[control]) return;
-              queueAutomaticWrite({ kind: "amp", control, value, editEpoch: ampEditEpoch.current.get(control) ?? 0 });
+              queueAutomaticWrite({ kind: "amp", control, value, editEpoch: ampEditEpoch.current.get(control) ?? 0 }, state.amp[control]);
             }}
             step={1}
             value={draft[control] ?? ""}
@@ -413,8 +433,7 @@ export function NanoChain({ state, onSetAmp, onSetGateReduction, onSetBypass, on
               setGateDirty(nextValue !== state.gate_reduction);
             }}
             onCommit={(value) => {
-              if (value === state.gate_reduction) return;
-              queueAutomaticWrite({ kind: "gate", value, editEpoch: gateEditEpoch.current });
+              queueAutomaticWrite({ kind: "gate", value, editEpoch: gateEditEpoch.current }, state.gate_reduction);
             }}
             step={1}
             suffix="%"

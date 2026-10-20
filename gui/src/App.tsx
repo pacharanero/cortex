@@ -338,6 +338,8 @@ export function App() {
     setMobileNavOpen(false);
     const epoch = dashboardEpoch.current + 1;
     dashboardEpoch.current = epoch;
+    newestLiveReport.current = null;
+    displayedLiveReport.current = null;
     pendingDeviceSwitch.current = { device: device === "auto" ? null : device, epoch };
     if (deviceSwitchRunning.current) return;
 

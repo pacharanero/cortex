@@ -126,6 +126,21 @@ describe("NanoChain", () => {
     expect(onSetAmp).toHaveBeenLastCalledWith("gain", 102);
   });
 
+  it("queues an Amp reversal made while its first write is pending", async () => {
+    const writes: Array<() => void> = [];
+    const onSetAmp = vi.fn(() => new Promise<void>((resolve) => { writes.push(resolve); }));
+    renderNano(state, { onSetAmp });
+
+    fireEvent.click(screen.getByRole("button", { name: "Increase Gain" }));
+    fireEvent.click(screen.getByRole("button", { name: "Decrease Gain" }));
+    expect(onSetAmp).toHaveBeenCalledWith("gain", 101);
+
+    await act(async () => writes.shift()?.());
+
+    await waitFor(() => expect(onSetAmp).toHaveBeenCalledTimes(2));
+    expect(onSetAmp).toHaveBeenLastCalledWith("gain", 100);
+  });
+
   it("disables block selection while a write is pending", async () => {
     let finishWrite: () => void = () => undefined;
     const onSetAmp = vi.fn(() => new Promise<void>((resolve) => { finishWrite = resolve; }));
@@ -366,6 +381,41 @@ describe("NanoChain", () => {
     fireEvent.blur(screen.getByLabelText("Gate reduction numeric input"));
 
     expect(onSetGateReduction).toHaveBeenCalledWith(43);
+  });
+
+  it("queues a Gate reversal made while its first write is pending", async () => {
+    const writes: Array<() => void> = [];
+    const onSetGateReduction = vi.fn(() => new Promise<void>((resolve) => { writes.push(resolve); }));
+    renderNano({ ...state, gate_reduction: 42 }, { onSetGateReduction });
+
+    fireEvent.click(screen.getByRole("button", { name: "Increase Gate reduction" }));
+    fireEvent.click(screen.getByRole("button", { name: "Decrease Gate reduction" }));
+    expect(onSetGateReduction).toHaveBeenCalledWith(43);
+
+    await act(async () => writes.shift()?.());
+
+    await waitFor(() => expect(onSetGateReduction).toHaveBeenCalledTimes(2));
+    expect(onSetGateReduction).toHaveBeenLastCalledWith(42);
+  });
+
+  it("queues an FX reversal made while its first write is pending", async () => {
+    const writes: Array<(values: NanoFxParameter[]) => void> = [];
+    const onSetFxParam = vi.fn(() => new Promise<NanoFxParameter[]>((resolve) => { writes.push(resolve); }));
+    renderNano(state, {
+      onReadFxParams: vi.fn(async () => [fx(0.5)]),
+      onSetFxParam,
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /Position 2: Fictional Drive/ }));
+    await screen.findByRole("slider", { name: "Pre FX 1 Gain normalized value slider" });
+    fireEvent.click(screen.getByRole("button", { name: "Increase Pre FX 1 Gain normalized value" }));
+    fireEvent.click(screen.getByRole("button", { name: "Decrease Pre FX 1 Gain normalized value" }));
+    expect(onSetFxParam).toHaveBeenCalledWith("pre_fx1", 1, 0, 0.5001);
+
+    await act(async () => writes.shift()?.([fx(0.5001)]));
+
+    await waitFor(() => expect(onSetFxParam).toHaveBeenCalledTimes(2));
+    expect(onSetFxParam).toHaveBeenLastCalledWith("pre_fx1", 1, 0, 0.5);
   });
 
   it("announces operation progress and completion", async () => {

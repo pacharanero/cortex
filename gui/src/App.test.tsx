@@ -176,6 +176,46 @@ describe("device switching", () => {
     expect(screen.getByRole("button", { name: "Select device, current Nano Cortex" })).toBeTruthy();
   });
 
+  it("accepts a fresh Quad live report after returning from Nano", async () => {
+    const initial = directorySnapshot();
+    initial.live!.revision = 5;
+    const refreshed = directorySnapshot();
+    refreshed.live!.revision = 5;
+    let selected: "quad_cortex" | "nano_cortex" = "quad_cortex";
+    let initialRead = true;
+    let returnedWithoutLive = false;
+    api.setDevice.mockImplementation(async (device) => {
+      selected = device;
+      returnedWithoutLive = device === "quad_cortex";
+    });
+    api.dashboard.mockImplementation(async () => {
+      if (initialRead) {
+        initialRead = false;
+        return initial;
+      }
+      if (selected === "nano_cortex") return snapshot("nano_cortex");
+      if (returnedWithoutLive) {
+        returnedWithoutLive = false;
+        return snapshot("quad_cortex");
+      }
+      return refreshed;
+    });
+    renderApp();
+
+    await screen.findByRole("button", { name: "1A Preset One" });
+    await chooseDevice("Nano Cortex");
+    await screen.findByRole("button", { name: "Select device, current Nano Cortex" });
+    // Mantine keeps the closing menu portal mounted but hidden in JSDOM.
+    const quadOption = [...document.querySelectorAll<HTMLElement>("[role=menuitem]")]
+      .find((candidate) => candidate.textContent?.includes("Quad Cortex"));
+    if (!quadOption) throw new Error("Missing Quad Cortex device option");
+    fireEvent.click(quadOption);
+    await screen.findByRole("button", { name: "Select device, current Quad Cortex" });
+
+    await waitFor(() => expect(api.dashboard.mock.calls.length).toBeGreaterThanOrEqual(5), { timeout: 2_000 });
+    expect(await screen.findByRole("button", { name: "1A Preset One" })).toBeTruthy();
+  });
+
   it("keeps Nano identity and exposes its failure when state is unavailable", async () => {
     const unavailable = snapshot("nano_cortex");
     unavailable.nano = null;
