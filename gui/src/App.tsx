@@ -45,6 +45,7 @@ export function App() {
   const [presetSearch, setPresetSearch] = useState("");
   const [parameters, setParameters] = useState<ParameterView[] | null>(null);
   const [parameterError, setParameterError] = useState<string | null>(null);
+  const [selectionAnnouncement, setSelectionAnnouncement] = useState("");
   const [nanoOperationError, setNanoOperationError] = useState<string | null>(null);
   const generation = useRef<number | null>(null);
   const dashboardEpoch = useRef(0);
@@ -52,6 +53,8 @@ export function App() {
   // an older same-device reply cannot overwrite a newer accepted result.
   const dashboardSequence = useRef(0);
   const dashboardCursor = useRef({ epoch: 0, seq: 0 });
+  const newestLiveReport = useRef<{ generation: number; revision: number } | null>(null);
+  const displayedLiveReport = useRef<{ generation: number; revision: number } | null>(null);
   const issueDashboardTicket = (epoch: number = dashboardEpoch.current) => ({ epoch, seq: ++dashboardSequence.current });
   const acceptDashboardTicket = (ticket: DashboardTicket): boolean => {
     if (ticket.epoch !== dashboardEpoch.current) return false;
@@ -78,6 +81,11 @@ export function App() {
       try {
         const next = await cortexApi.dashboard();
         if (cancelled || !acceptDashboardTicket(ticket)) return;
+        if (next.live) {
+          const previousLive = newestLiveReport.current;
+          if (previousLive && previousLive.generation === next.live.generation && next.live.revision <= previousLive.revision) return;
+          newestLiveReport.current = { generation: next.live.generation, revision: next.live.revision };
+        }
         if (generation.current !== null && generation.current !== next.status.cache.generation) setSelectedCell(null);
         generation.current = next.status.cache.generation;
         setSnapshot(next);
@@ -120,6 +128,24 @@ export function App() {
     // originated change refreshes the values on show.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedCellKey, liveRevision]);
+
+  // A selected coordinate is interaction state, not a second source of device
+  // truth. If a newer report removes that block, discard its stale inspector
+  // state without treating a reconnect or an old reply as a removal.
+  useEffect(() => {
+    const live = snapshot?.live;
+    if (!live) return;
+
+    const previous = displayedLiveReport.current;
+    displayedLiveReport.current = { generation: live.generation, revision: live.revision };
+    if (!selectedCell || !previous || previous.generation !== live.generation || live.revision <= previous.revision) return;
+    if (live.blocks.some((block) => block.row === selectedCell.row && block.column === selectedCell.column)) return;
+
+    setSelectedCell(null);
+    setParameters(null);
+    setParameterError(null);
+    setSelectionAnnouncement(`Selected block at row ${selectedCell.row + 1}, column ${selectedCell.column} is no longer available.`);
+  }, [selectedCell, snapshot?.live]);
 
   if (!snapshot && !error) return <Text p="xl">Loading Cortex state...</Text>;
   if (!snapshot) return <Stack m="xl"><ConsumerErrorAlert error={error} title="Connect a Cortex">Connect your Quad Cortex or Nano Cortex by USB, then try again. If it is already connected, check that no other app is using it.</ConsumerErrorAlert></Stack>;
@@ -312,6 +338,8 @@ export function App() {
     setMobileNavOpen(false);
     const epoch = dashboardEpoch.current + 1;
     dashboardEpoch.current = epoch;
+    newestLiveReport.current = null;
+    displayedLiveReport.current = null;
     pendingDeviceSwitch.current = { device: device === "auto" ? null : device, epoch };
     if (deviceSwitchRunning.current) return;
 
@@ -493,7 +521,10 @@ export function App() {
                   </Paper>
                   <Paper className="console-surface console-topology" p="md" withBorder>
                     <ErrorBoundary name="Grid">
-                      <Grid blocks={live.blocks} generation={live.generation} onSelect={(block) => setSelectedCell({ row: block.row, column: block.column })} revision={live.revision} selected={selected} />
+                      <Grid blocks={live.blocks} generation={live.generation} onSelect={(block) => {
+                        setSelectionAnnouncement("");
+                        setSelectedCell({ row: block.row, column: block.column });
+                      }} revision={live.revision} selected={selected} />
                     </ErrorBoundary>
                   </Paper>
                 </div>
@@ -534,6 +565,7 @@ export function App() {
                         {!parameterError && parameters !== null && (
                           <ParameterEditor
                             disabled={!connected}
+                            key={selectedCellKey}
                             onWrite={writeParameter}
                             parameters={parameters}
                           />
@@ -542,9 +574,10 @@ export function App() {
                     )}
                   </InspectorPanel>
                 </ErrorBoundary>
-              </div>
-            </section>}
-         </Stack>
+               </div>
+             </section>}
+            <Text aria-live="polite" className="visually-hidden" role="status">{selectionAnnouncement}</Text>
+          </Stack>
          <Modal
            centered
            onClose={() => setRecallConfirmation(null)}

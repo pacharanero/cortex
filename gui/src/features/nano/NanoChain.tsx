@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Dr Marcus Baw
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-import { Button, Group, Paper, SimpleGrid, Stack, Switch, Text, Title } from "@mantine/core";
+import { Group, Paper, SimpleGrid, Stack, Switch, Text, Title } from "@mantine/core";
 import { useEffect, useRef, useState } from "react";
 import { ContinuousControl } from "../../shared/editor/ContinuousControl";
 import { ConsumerErrorAlert } from "../../shared/ConsumerErrorAlert";
@@ -29,6 +29,11 @@ const fxSlots: { role: NanoSlotRole; slot: NanoFxSlot }[] = [
   { role: "post_fx2", slot: "post_fx2" },
   { role: "post_fx3", slot: "post_fx3" },
 ];
+
+type AutomaticWrite =
+  | { kind: "amp"; control: NanoAmpControl; value: number; editEpoch: number }
+  | { kind: "gate"; value: number; editEpoch: number }
+  | { kind: "fx"; slot: NanoFxSlot; expectedModelId: number; paramIndex: number; value: number; selectionEpoch: number; editEpoch: number };
 
 function slotName(slot: NanoCurrentState["slots"][number]): string {
   return slot.loaded_name ?? slot.model_name ?? (slot.model_id == null ? roleNames[slot.role] : `Unknown model ${slot.model_id}`);
@@ -61,6 +66,34 @@ export function NanoChain({ state, onSetAmp, onSetGateReduction, onSetBypass, on
   const fxEditEpoch = useRef(new Map<number, number>());
   const pendingFxRead = useRef<{ slot: NanoFxSlot; modelId: number | null; epoch: number } | null>(null);
   const selectedModel = useRef<{ role: NanoSlotRole; modelId: number | null } | null>(null);
+  const automaticWrites = useRef<AutomaticWrite[]>([]);
+  const inFlightAutomaticWrite = useRef<AutomaticWrite | null>(null);
+  const [writeQueueRevision, setWriteQueueRevision] = useState(0);
+
+  const sameAutomaticWriteTarget = (current: AutomaticWrite, next: AutomaticWrite) =>
+    current.kind === next.kind
+    && (current.kind !== "amp" || next.kind !== "amp" || current.control === next.control)
+    && (current.kind !== "fx" || next.kind !== "fx" || (current.slot === next.slot && current.paramIndex === next.paramIndex));
+
+  const queueAutomaticWrite = (next: AutomaticWrite, deviceValue: number | null) => {
+    const existing = automaticWrites.current.findIndex((current) =>
+      sameAutomaticWriteTarget(current, next));
+    const inFlight = inFlightAutomaticWrite.current;
+    const matchesInFlight = inFlight !== null && sameAutomaticWriteTarget(inFlight, next);
+
+    if (existing !== -1) {
+      if (matchesInFlight && inFlight.value === next.value) automaticWrites.current.splice(existing, 1);
+      else if (!matchesInFlight && next.value === deviceValue) automaticWrites.current.splice(existing, 1);
+      else automaticWrites.current[existing] = next;
+    } else if (!matchesInFlight && next.value === deviceValue) {
+      return;
+    } else if (!matchesInFlight || inFlight.value !== next.value) {
+      automaticWrites.current.push(next);
+    } else {
+      return;
+    }
+    setWriteQueueRevision((revision) => revision + 1);
+  };
 
   useEffect(() => {
     if (busy) return;
@@ -162,11 +195,8 @@ export function NanoChain({ state, onSetAmp, onSetGateReduction, onSetBypass, on
     void runFxReads(fxRequest);
   };
 
-  const apply = async (control: NanoAmpControl) => {
+  const apply = async (control: NanoAmpControl, value: number, editEpoch: number) => {
     if (busy) return;
-    const value = draft[control];
-    if (value == null) return;
-    const editEpoch = ampEditEpoch.current.get(control) ?? 0;
     setBusy(`amp:${control}`);
     setError(null);
     setStatus(`Applying ${control}...`);
@@ -188,14 +218,13 @@ export function NanoChain({ state, onSetAmp, onSetGateReduction, onSetBypass, on
     }
   };
 
-  const applyGateReduction = async () => {
-    if (busy || typeof gateDraft !== "number") return;
-    const editEpoch = gateEditEpoch.current;
+  const applyGateReduction = async (value: number, editEpoch: number) => {
+    if (busy) return;
     setBusy("gate:reduction");
     setError(null);
     setStatus("Applying Gate reduction...");
     try {
-      await onSetGateReduction(gateDraft);
+      await onSetGateReduction(value);
       if (gateEditEpoch.current === editEpoch) setGateDirty(false);
       setStatus("Gate reduction applied.");
     } catch (reason) {
@@ -222,13 +251,8 @@ export function NanoChain({ state, onSetAmp, onSetGateReduction, onSetBypass, on
     }
   };
 
-  const applyFxParam = async (slot: NanoFxSlot, paramIndex: number) => {
-    if (busy) return;
-    const value = fxDraft[paramIndex];
-    const expectedModelId = fxModelId;
-    if (value == null || expectedModelId == null) return;
-    const epoch = selectionEpoch.current;
-    const editEpoch = fxEditEpoch.current.get(paramIndex) ?? 0;
+  const applyFxParam = async (slot: NanoFxSlot, expectedModelId: number, paramIndex: number, value: number, epoch: number, editEpoch: number) => {
+    if (busy || fxModelId !== expectedModelId || selectionEpoch.current !== epoch) return;
     const operation = `fx-write:${slot}:${paramIndex}`;
     setBusy(operation);
     setError(null);
@@ -282,6 +306,21 @@ export function NanoChain({ state, onSetAmp, onSetGateReduction, onSetBypass, on
     setStatus(null);
   };
 
+  useEffect(() => {
+    if (busy || inFlightAutomaticWrite.current || automaticWrites.current.length === 0) return;
+    const next = automaticWrites.current.shift();
+    if (!next) return;
+    inFlightAutomaticWrite.current = next;
+    setWriteQueueRevision((revision) => revision + 1);
+    void (async () => {
+      if (next.kind === "amp") await apply(next.control, next.value, next.editEpoch);
+      else if (next.kind === "gate") await applyGateReduction(next.value, next.editEpoch);
+      else await applyFxParam(next.slot, next.expectedModelId, next.paramIndex, next.value, next.selectionEpoch, next.editEpoch);
+      if (inFlightAutomaticWrite.current === next) inFlightAutomaticWrite.current = null;
+      setWriteQueueRevision((revision) => revision + 1);
+    })();
+  }, [busy, writeQueueRevision]);
+
   return <section aria-label="Nano Cortex editor console" className="device-console nano-console"><Stack gap="lg">
     <Group className="console-context" justify="space-between">
       <div><Text c="dimmed" size="sm">Fixed signal chain</Text><Title order={3}>Nano Cortex</Title></div>
@@ -317,35 +356,30 @@ export function NanoChain({ state, onSetAmp, onSetGateReduction, onSetBypass, on
           <SimpleGrid cols={{ base: 1, sm: 2, lg: 3 }}>
             {fxParams.map((parameter) => {
               const accessibleName = `${roleNames[selectedRole ?? "pre_fx1"]} ${parameter.name ?? `parameter ${parameter.index}`} normalized value`;
-              return <Group align="flex-end" key={parameter.index} wrap="nowrap">
-                <div style={{ flex: 1 }}>
-                  <ContinuousControl
-                    accessibleName={accessibleName}
-                    busy={busy === `fx-write:${selectedFxSlot}:${parameter.index}`}
-                    disabled={busy !== null && busy !== `fx-write:${selectedFxSlot}:${parameter.index}`}
-                    label={parameter.name ?? `Param ${parameter.index}`}
-                    max={1}
-                    min={0}
-                    onChange={(nextValue) => {
-                      fxEditEpoch.current.set(parameter.index, (fxEditEpoch.current.get(parameter.index) ?? 0) + 1);
-                      setFxDraft((current) => ({ ...current, [parameter.index]: typeof nextValue === "number" ? nextValue : Number.parseFloat(String(nextValue)) }));
-                    }}
-                    step={0.0001}
-                    value={fxDraft[parameter.index] ?? parameter.normalized}
-                  />
-                  <Text c="dimmed" size="xs">parameter {parameter.index} | device: {parameter.normalized.toFixed(4)} | draft: {(fxDraft[parameter.index] ?? parameter.normalized).toFixed(4)}</Text>
-                </div>
-                <Button
-                  aria-busy={busy === `fx-write:${selectedFxSlot}:${parameter.index}`}
-                  aria-label={`Apply ${roleNames[selectedRole ?? "pre_fx1"]} ${parameter.name ?? `parameter ${parameter.index}`}`}
-                  disabled={fxModelId == null || (busy !== null && busy !== `fx-write:${selectedFxSlot}:${parameter.index}`) || Math.abs((fxDraft[parameter.index] ?? parameter.normalized) - parameter.normalized) < 0.00005}
-                  onClick={() => void applyFxParam(selectedFxSlot, parameter.index)}
-                  size="xs"
-                >{busy === `fx-write:${selectedFxSlot}:${parameter.index}` ? "Applying..." : "Apply"}</Button>
-              </Group>;
+              return <div key={parameter.index}>
+                <ContinuousControl
+                  accessibleName={accessibleName}
+                  busy={busy === `fx-write:${selectedFxSlot}:${parameter.index}`}
+                  disabled={busy !== null && busy !== `fx-write:${selectedFxSlot}:${parameter.index}`}
+                  label={parameter.name ?? `Param ${parameter.index}`}
+                  max={1}
+                  min={0}
+                  onChange={(nextValue) => {
+                    fxEditEpoch.current.set(parameter.index, (fxEditEpoch.current.get(parameter.index) ?? 0) + 1);
+                    setFxDraft((current) => ({ ...current, [parameter.index]: typeof nextValue === "number" ? nextValue : Number.parseFloat(String(nextValue)) }));
+                  }}
+                  onCommit={(nextValue) => {
+                    if (fxModelId == null) return;
+                    queueAutomaticWrite({ kind: "fx", slot: selectedFxSlot, expectedModelId: fxModelId, paramIndex: parameter.index, value: nextValue, selectionEpoch: selectionEpoch.current, editEpoch: fxEditEpoch.current.get(parameter.index) ?? 0 }, parameter.normalized);
+                  }}
+                  step={0.0001}
+                  value={fxDraft[parameter.index] ?? parameter.normalized}
+                />
+                <Text c="dimmed" size="xs">parameter {parameter.index} | device: {parameter.normalized.toFixed(4)} | draft: {(fxDraft[parameter.index] ?? parameter.normalized).toFixed(4)}</Text>
+              </div>;
             })}
           </SimpleGrid>
-          <Text c="dimmed" size="xs">The normalized 0.0-1.0 path. Values vary by loaded model.</Text>
+          <Text c="dimmed" size="xs">The normalized 0.0-1.0 path. Values vary by loaded model and apply when a gesture finishes.</Text>
         </>}
       </InspectorPanel>
     </div>
@@ -362,16 +396,24 @@ export function NanoChain({ state, onSetAmp, onSetGateReduction, onSetBypass, on
             min={0}
             onChange={(value) => {
               ampEditEpoch.current.set(control, (ampEditEpoch.current.get(control) ?? 0) + 1);
-              setDraft((current) => ({ ...current, [control]: typeof value === "number" ? value : null }));
-              setDirtyAmpControls((current) => new Set(current).add(control));
+              const nextValue = typeof value === "number" ? value : null;
+              setDraft((current) => ({ ...current, [control]: nextValue }));
+              setDirtyAmpControls((current) => {
+                const next = new Set(current);
+                if (nextValue === state.amp[control]) next.delete(control);
+                else next.add(control);
+                return next;
+              });
+            }}
+            onCommit={(value) => {
+              queueAutomaticWrite({ kind: "amp", control, value, editEpoch: ampEditEpoch.current.get(control) ?? 0 }, state.amp[control]);
             }}
             step={1}
             value={draft[control] ?? ""}
           />
-          <Button aria-busy={busy === `amp:${control}`} aria-label={`Apply ${control}`} disabled={draft[control] == null || (busy !== null && busy !== `amp:${control}`)} fullWidth onClick={() => void apply(control)}>{busy === `amp:${control}` ? "Applying..." : "Apply"}</Button>
         </Stack>)}
       </SimpleGrid>
-      <Text c="dimmed" mt="sm" size="xs">Changes heard working state and saves nothing. Apply waits about six seconds for fresh device read-back.</Text>
+      <Text c="dimmed" mt="sm" size="xs">Changes apply when a gesture finishes, then wait about six seconds for fresh device read-back. Nothing is saved.</Text>
     </Paper>
     <Paper className="console-surface" p="md" withBorder>
       <Text c="dimmed" fw={700} size="xs" tt="uppercase">Gate / FX bypass</Text>
@@ -386,15 +428,18 @@ export function NanoChain({ state, onSetAmp, onSetGateReduction, onSetBypass, on
             min={0}
             onChange={(value) => {
               gateEditEpoch.current += 1;
-              setGateDraft(typeof value === "number" ? value : Number.parseFloat(String(value)));
-              setGateDirty(true);
+              const nextValue = typeof value === "number" ? value : Number.parseFloat(String(value));
+              setGateDraft(nextValue);
+              setGateDirty(nextValue !== state.gate_reduction);
+            }}
+            onCommit={(value) => {
+              queueAutomaticWrite({ kind: "gate", value, editEpoch: gateEditEpoch.current }, state.gate_reduction);
             }}
             step={1}
             suffix="%"
             value={gateDraft}
           />
         </div>
-        <Button aria-busy={busy === "gate:reduction"} aria-label="Apply Gate reduction" disabled={typeof gateDraft !== "number" || !gateDirty || (busy !== null && busy !== "gate:reduction")} onClick={() => void applyGateReduction()}>{busy === "gate:reduction" ? "Applying..." : "Apply"}</Button>
       </Group>
       <SimpleGrid cols={{ base: 2, sm: 3, lg: 6 }} mt="sm">
         {bypassTargets.map(({ role, target }) => {
@@ -415,7 +460,7 @@ export function NanoChain({ state, onSetAmp, onSetGateReduction, onSetBypass, on
           </Group>;
         })}
       </SimpleGrid>
-      <Text c="dimmed" mt="sm" size="xs">Toggling bypass changes heard working state and saves nothing. Each toggle waits about six seconds for fresh device read-back. The Gate&apos;s &quot;on&quot; state may read back as unknown because the device represents it by omitting the field.</Text>
+      <Text c="dimmed" mt="sm" size="xs">Toggling bypass changes heard working state and saves nothing. Each toggle waits about six seconds for fresh device read-back.</Text>
     </Paper>
     {status && <Text aria-live="polite" role="status" size="sm">{status}</Text>}
     {error && <ConsumerErrorAlert error={error} title="Nano Cortex change not applied">Nano Cortex did not confirm the change. Its device state has not been updated.</ConsumerErrorAlert>}

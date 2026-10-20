@@ -104,6 +104,79 @@ describe("Quad semantic controls", () => {
     expect(onWrite).toHaveBeenCalledWith(expect.anything(), { kind: "real", value: 7.6 });
   });
 
+  it("filters the already fetched parameter list by its Rust-provided display names", () => {
+    render(
+      <MantineProvider>
+        <ParameterEditor
+          disabled={false}
+          onWrite={vi.fn(async () => {})}
+          parameters={[
+            parameter({}),
+            parameter({ index: 1, kind: "str", name: "LABEL", units: "", normalised: null, real: null, text: "Lead" }),
+            parameter({ index: 2, kind: "switch", name: "MODE", units: "", real: 0, step_names: ["Normal", "Bright"] }),
+          ]}
+        />
+      </MantineProvider>,
+    );
+
+    const search = screen.getByRole("searchbox", { name: "Search parameters" });
+    fireEvent.change(search, { target: { value: " label " } });
+    expect(screen.getByRole("textbox", { name: "LABEL" })).toBeTruthy();
+    expect(screen.queryByRole("slider", { name: "GAIN (dB) slider" })).toBeNull();
+    expect(screen.getByText("1 of 3 parameters shown.")).toBeTruthy();
+
+    fireEvent.change(search, { target: { value: "missing" } });
+    expect(screen.getByText("No parameters match.")).toBeTruthy();
+
+    fireEvent.change(search, { target: { value: "   " } });
+    expect(screen.getByRole("slider", { name: "GAIN (dB) slider" })).toBeTruthy();
+    expect(screen.getByRole("combobox", { name: "MODE" })).toBeTruthy();
+  });
+
+  it("keeps an in-flight parameter write visible when a filter would otherwise hide it", async () => {
+    const write = new Promise<void>(() => {});
+    const onWrite = vi.fn(() => write);
+    render(
+      <MantineProvider>
+        <ParameterEditor
+          disabled={false}
+          onWrite={onWrite}
+          parameters={[parameter({}), parameter({ index: 1, name: "MODE" })]}
+        />
+      </MantineProvider>,
+    );
+
+    const input = screen.getByLabelText("GAIN (dB) numeric input");
+    fireEvent.change(input, { target: { value: "7" } });
+    fireEvent.blur(input);
+    await waitFor(() => expect(onWrite).toHaveBeenCalledTimes(1));
+
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search parameters" }), { target: { value: "mode" } });
+    expect(screen.getByRole("slider", { name: "GAIN (dB) slider" })).toBeTruthy();
+    expect(screen.getByRole("slider", { name: "MODE (dB) slider" })).toBeTruthy();
+  });
+
+  it("keeps the search mounted and reapplies its query when parameters refresh", () => {
+    const { rerender } = render(
+      <MantineProvider>
+        <ParameterEditor disabled={false} onWrite={vi.fn(async () => {})} parameters={[parameter({ name: "GAIN" })]} />
+      </MantineProvider>,
+    );
+    const search = screen.getByRole("searchbox", { name: "Search parameters" });
+    search.focus();
+    fireEvent.change(search, { target: { value: "level" } });
+
+    rerender(
+      <MantineProvider>
+        <ParameterEditor disabled={false} onWrite={vi.fn(async () => {})} parameters={[parameter({ name: "LEVEL" })]} />
+      </MantineProvider>,
+    );
+
+    expect(screen.getByRole("searchbox", { name: "Search parameters" })).toBe(search);
+    expect(document.activeElement).toBe(search);
+    expect(screen.getByRole("slider", { name: "LEVEL (dB) slider" })).toBeTruthy();
+  });
+
   it("exposes ordered grid cells with coordinates and block state", () => {
     const block: LiveBlock = {
       row: 0,

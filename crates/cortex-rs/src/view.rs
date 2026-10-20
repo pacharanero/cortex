@@ -110,21 +110,24 @@ fn block_params(
             },
         );
         let read = |pv: &crate::proto::ParamValue| match &pv.value {
-            Some(param_value::Value::FloatValue(v)) => Some(ParamValueKind::Number(f64::from(*v))),
+            // JSON has no representation for NaN or infinity. Omitting the whole
+            // parameter preserves its scene-value alignment for the next valid read.
+            Some(param_value::Value::FloatValue(v)) if v.is_finite() => {
+                Some(ParamValueKind::Number(f64::from(*v)))
+            }
             Some(param_value::Value::StringValue(v)) => Some(ParamValueKind::Text(v.clone())),
             Some(param_value::Value::IntValue(v)) => Some(ParamValueKind::Number(f64::from(*v))),
-            None => None,
+            Some(param_value::Value::FloatValue(_)) | None => None,
         };
-        let Some(value) = p.param_values.first().and_then(read) else {
+        let Some(values) = p.param_values.iter().map(read).collect::<Option<Vec<_>>>() else {
+            continue;
+        };
+        let Some(value) = values.first().cloned() else {
             continue;
         };
         // A scene-following parameter stores one value per scene. Showing
         // only the first hides exactly the difference a per-scene edit makes.
-        let per_scene: Vec<ParamValueKind> = if p.param_values.len() > 1 {
-            p.param_values.iter().filter_map(&read).collect()
-        } else {
-            Vec::new()
-        };
+        let per_scene = if values.len() > 1 { values } else { Vec::new() };
         let name = catalog_entry
             .and_then(|m| m.parameters.get(index as usize))
             .map(|p| p.name.clone());
@@ -558,6 +561,40 @@ mod tests {
         let view = Preset::from_binary(&preset, None, "live", "/fictional/setlist", false);
         assert_eq!((view.rows[0].row, view.rows[0].screen_row), (2, 3));
         assert_eq!((view.blocks[0].row, view.blocks[0].column), (2, 0));
+    }
+
+    #[test]
+    fn preset_view_omits_non_finite_parameters_before_json_transport() {
+        use crate::proto::{BinaryPreset, Chain, Model, Param, ParamValue, param_value};
+        let invalid = |value| ParamValue {
+            value: Some(param_value::Value::FloatValue(value)),
+        };
+        let preset = BinaryPreset {
+            chains: vec![Chain {
+                models: vec![Model {
+                    hash: Some(crate::proto::model::Hash::Hash(42)),
+                    params: vec![
+                        Param {
+                            param_values: vec![invalid(f32::NAN)],
+                            ..Default::default()
+                        },
+                        Param {
+                            param_values: vec![invalid(0.5), invalid(f32::INFINITY)],
+                            ..Default::default()
+                        },
+                    ],
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+
+        let view = Preset::from_binary(&preset, None, "live", "live", true);
+
+        assert!(view.blocks[0].params.is_empty());
+        let json = serde_json::to_value(&view).unwrap();
+        assert!(serde_json::from_value::<Preset>(json).is_ok());
     }
 
     #[test]
